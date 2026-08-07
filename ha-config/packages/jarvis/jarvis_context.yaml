@@ -1,0 +1,81 @@
+# Package: user-context tool (Tier 1).
+# Exposed to Assist as script.jarvis_get_user_context — one call returns
+# location, driving state, active device and hour, so the model can route
+# responses (speak vs text vs announce) per the prompt's routing table.
+#
+# ADAPT THE ENTITY IDS marked <<< to your install.
+
+template:
+  - binary_sensor:
+      - name: "Jarvis Car Bluetooth"
+        unique_id: jarvis_car_bt
+        state: >
+          {{ 'JARVIS-CAR-BT' in
+             (state_attr('sensor.pixel_bluetooth_connection', 'connected_paired_devices')
+              | default([], true) | join(',')) }}   # <<< your phone's BT sensor + car MAC/name
+
+script:
+  jarvis_get_user_context:
+    alias: "Jarvis: get user context"
+    description: >
+      Return the user's current context in one call: location (home/away),
+      driving (bool), hour (0-23), awake (bool), active_device (the satellite
+      or app that spoke last). Use it to decide whether to speak, text or
+      announce.
+    mode: parallel
+    sequence:
+      - variables:
+          ctx:
+            location: >-
+              {{ 'home' if is_state('person.owner', 'home') else 'away' }}   # <<< person entity
+            driving: >-
+              {{ is_state('binary_sensor.jarvis_car_bluetooth', 'on') }}
+            hour: "{{ now().hour }}"
+            awake: "{{ 7 <= now().hour <= 23 }}"
+            active_device: >-
+              {{ states('sensor.jarvis_last_satellite') | default('unknown', true) }}
+      - stop: "context collected"
+        response_variable: ctx
+
+  # Deterministic delivery used by background tasks and automations —
+  # mirrors the routing table in evals/routing.py (kept in sync by
+  # evals/test_routing.py which parses this file).
+  jarvis_report:
+    alias: "Jarvis: report via routing policy"
+    description: >
+      Deliver a finished-task report or status message on the right channel.
+      Applies the routing table deterministically; prefer this over notify.*
+      directly.
+    fields:
+      message: { description: "what to say", required: true }
+      kind:
+        description: "status | task_done | reply"
+        required: false
+    sequence:
+      - action: script.jarvis_get_user_context
+        response_variable: ctx
+      - choose:
+          # driving → speak on the active audio path, never notify
+          - conditions: "{{ ctx.driving }}"
+            sequence:
+              - action: assist_satellite.announce
+                target: { entity_id: assist_satellite.pixel_phone }   # <<< phone satellite
+                data: { message: "{{ message }}" }
+          # away → text notification
+          - conditions: "{{ ctx.location == 'away' }}"
+            sequence:
+              - action: notify.mobile_app_pixel                        # <<< your notify svc
+                data: { message: "{{ message }}", title: "Jarvis" }
+          # home + awake → announce aloud AND leave a notification trail
+          - conditions: "{{ ctx.location == 'home' and ctx.awake }}"
+            sequence:
+              - action: assist_satellite.announce
+                target: { entity_id: all }
+                data: { message: "{{ message }}" }
+        # home but asleep / anything unmatched → least intrusive: silent text
+        default:
+          - action: notify.mobile_app_pixel                            # <<< your notify svc
+            data:
+              message: "{{ message }}"
+              title: "Jarvis"
+              data: { ttl: 0, priority: normal }

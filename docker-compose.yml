@@ -1,0 +1,68 @@
+# Jarvis server stack. Builds ON TOP of the existing Home Assistant + Ollama +
+# Wyoming + SearXNG stack — it does not replace it. One `docker compose up -d`.
+#
+# Security posture (see docs/security.md):
+#   - jarvis-web:          LAN/WireGuard only, port 8199.
+#   - jarvis-orchestrator: reachable from HA only; no LAN inbound (ufw).
+#   - jarvis-sandbox:      network_mode: none, non-root, read-only rootfs,
+#                          cap_drop ALL, no-new-privileges, tight limits.
+#                          The ONLY crossover is ./jarvis-workspace.
+
+services:
+  jarvis-web:
+    build: ./jarvis-web
+    container_name: jarvis-web
+    restart: unless-stopped
+    environment:
+      - HA_URL=${HA_URL:-http://127.0.0.1:8123}
+      - HA_TOKEN=${JARVIS_HA_TOKEN}
+      - JARVIS_PIPELINE=${JARVIS_PIPELINE:-Jarvis}
+      - JARVIS_TTS_VOICE=${JARVIS_TTS_VOICE:-en_GB-alan-medium}
+    ports: ["8199:8199"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8199/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  jarvis-orchestrator:
+    build: ./jarvis-orchestrator
+    container_name: jarvis-orchestrator
+    restart: unless-stopped
+    environment:
+      - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+      - PLANNER_MODEL=${PLANNER_MODEL:-qwen3:8b}
+      - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
+      - WORKSPACE=/workspace
+      - ORCHESTRATOR_TOKEN=${ORCHESTRATOR_TOKEN}
+      - APPROVAL_SECRET=${APPROVAL_SECRET}
+    ports: ["8188:8188"]           # ufw: allow from HA host only
+    volumes:
+      - ./jarvis-workspace:/workspace   # shared with sandbox; NOT host root
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8188/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  jarvis-sandbox:
+    build: ./jarvis-sandbox
+    container_name: jarvis-sandbox
+    restart: unless-stopped
+    network_mode: "none"               # verified by tests/adversarial + scripts/egress-audit.sh
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    pids_limit: 128
+    cpus: 2.0
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - ./jarvis-workspace:/workspace   # the ONLY writable crossover
+    # No HA config, no Docker socket, no host mounts, no secrets, no LAN.

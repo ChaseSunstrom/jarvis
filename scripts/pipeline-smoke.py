@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""P0 gate: scripted client does a full stt→tts round trip through HA's
+assist_pipeline/run, proving the 'Jarvis' pipeline and Wyoming services are
+reachable before any HUD exists.
+
+Env: HA_URL (http://127.0.0.1:8123), HA_TOKEN, JARVIS_PIPELINE (Jarvis).
+Streams a synthetic 1s 16kHz sine tone and asserts we receive stt-end,
+intent output, and tts-end (a playable URL). Prints measured latencies.
+
+Requires: pip install websockets. Skips gracefully (exit 0 with SKIP) only
+if HA_TOKEN is unset — a real P0 run must set it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import os
+import struct
+import sys
+import time
+
+HA_URL = os.environ.get("HA_URL", "http://127.0.0.1:8123")
+TOKEN = os.environ.get("HA_TOKEN", "")
+PIPELINE = os.environ.get("JARVIS_PIPELINE", "Jarvis")
+
+
+def ws_url() -> str:
+    return HA_URL.replace("http://", "ws://").replace("https://", "wss://").rstrip("/") + "/api/websocket"
+
+
+def sine_pcm(seconds=1.0, rate=16000, freq=220) -> bytes:
+    n = int(seconds * rate)
+    return b"".join(
+        struct.pack("<h", int(0.3 * 32767 * math.sin(2 * math.pi * freq * i / rate)))
+        for i in range(n)
+    )
+
+
+async def run() -> int:
+    import websockets
+
+    async with websockets.connect(ws_url(), max_size=None) as ws:
+        assert json.loads(await ws.recv())["type"] == "auth_required"
+        await ws.send(json.dumps({"type": "auth", "access_token": TOKEN}))
+        auth = json.loads(await ws.recv())
+        if auth["type"] != "auth_ok":
+            print(f"FAIL: auth: {auth}")
+            return 1
+
+        mid = 1
+
+        async def send(msg):
+            nonlocal mid
+            msg["id"] = mid
+            mid += 1
+            await ws.send(json.dumps(msg))
+            return msg["id"]
+
+        # find the Jarvis pipeline
+        list_id = await send({"type": "assist_pipeline/pipeline/list"})
+        pipeline_id = None
+        while True:
+            m = json.loads(await ws.recv())
+            if m.get("id") == list_id and m.get("type") == "result":
+                for p in m["result"]["pipelines"]:
+                    if p["name"] == PIPELINE:
+                        pipeline_id = p["id"]
+                if pipeline_id is None:
+                    pipeline_id = m["result"].get("preferred_pipeline")
+                break
+
+        run_id = await send({
+            "type": "assist_pipeline/run",
+            "start_stage": "stt", "end_stage": "tts",
+            "input": {"sample_rate": 16000},
+            "pipeline": pipeline_id,
+        })
+
+        handler = None
+        t0 = time.monotonic()
+        marks = {}
+        pcm = sine_pcm()
+        got = {"stt": None, "intent": None, "tts": None}
+
+        async def pump_audio():
+            # wait until run-start gives us the handler id
+            while handler is None:
+                await asyncio.sleep(0.01)
+            chunk = 1024 * 2
+            for i in range(0, len(pcm), chunk):
+                await ws.send(bytes([handler]) + pcm[i:i + chunk])
+                await asyncio.sleep(0.02)
+            await ws.send(bytes([handler]))  # end-of-audio
+
+        pumper = asyncio.create_task(pump_audio())
+        try:
+            while True:
+                m = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+                if m.get("type") != "event":
+                    continue
+                ev = m["event"]
+                et = ev["type"]
+                if et == "run-start":
+                    handler = ev["data"]["runner_data"]["stt_binary_handler_id"]
+                elif et == "stt-end":
+                    got["stt"] = ev["data"]["stt_output"]["text"]
+                    marks["stt"] = time.monotonic() - t0
+                elif et == "intent-end":
+                    got["intent"] = ev["data"]["intent_output"]["response"]["speech"]["plain"]["speech"]
+                    marks["intent"] = time.monotonic() - t0
+                elif et == "tts-end":
+                    got["tts"] = ev["data"]["tts_output"]["url"]
+                    marks["tts"] = time.monotonic() - t0
+                elif et == "run-end":
+                    break
+                elif et == "error":
+                    print(f"FAIL: pipeline error: {ev['data']}")
+                    return 1
+        finally:
+            pumper.cancel()
+
+        print("transcript:", got["stt"])
+        print("response:  ", got["intent"])
+        print("tts url:   ", got["tts"])
+        print("latencies(s):", {k: round(v, 3) for k, v in marks.items()})
+        ok = got["tts"] is not None and got["intent"] is not None
+        print("P0 SMOKE:", "PASS" if ok else "FAIL")
+        return 0 if ok else 1
+
+
+def main() -> int:
+    if not TOKEN:
+        print("SKIP: HA_TOKEN unset — set it to run the real P0 smoke test.")
+        return 0
+    try:
+        import websockets  # noqa
+    except ImportError:
+        print("need: pip install websockets", file=sys.stderr)
+        return 2
+    return asyncio.run(run())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

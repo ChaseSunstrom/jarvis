@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Metadata for JarvisVoiceInteractionService (android.voice_interaction).
+  supportsAssist lets the system hand us the assist gesture; the session
+  service is a trampoline that launches JarvisAssistActivity.
+-->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="io.homeassistant.companion.android.jarvis.JarvisVoiceInteractionSessionService"
+    android:recognitionService="io.homeassistant.companion.android.jarvis.JarvisRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

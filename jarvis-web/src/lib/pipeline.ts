@@ -1,0 +1,235 @@
+// Framework-agnostic client for Home Assistant's assist_pipeline/run WebSocket
+// API. No browser globals — unit-testable in plain Node.
+//
+// The transport is injected as a `send` function; incoming socket messages are
+// fed to `handleMessage()`. Message ids are monotonically increasing integers
+// per connection.
+
+export type PipelineState = 'idle' | 'listening' | 'thinking' | 'speaking';
+
+export interface PipelineEvent {
+	type: string;
+	data?: any;
+	timestamp?: string;
+}
+
+export interface PipelineCallbacks {
+	/** Coarse state for the orb: idle / listening / thinking / speaking. */
+	onState?: (state: PipelineState) => void;
+	/** Final transcript from stt-end. */
+	onTranscript?: (text: string) => void;
+	/** Streaming LLM delta from intent-progress (data.chat_log_delta.content). */
+	onDelta?: (delta: string) => void;
+	/** Full response text from intent-end. */
+	onResponse?: (text: string) => void;
+	/** TTS media path from tts-end (data.tts_output.url). */
+	onTtsUrl?: (url: string) => void;
+	/** Pipeline error event (data.code, data.message). */
+	onError?: (code: string, message: string) => void;
+	/** run-start received: binary handler id is known, audio may be streamed. */
+	onReady?: (sttBinaryHandlerId: number) => void;
+	/** run-end received. */
+	onRunEnd?: () => void;
+	/** Every raw pipeline event (for latency instrumentation / logging). */
+	onEvent?: (event: PipelineEvent) => void;
+}
+
+export type SendFn = (data: string | Uint8Array) => void;
+
+/**
+ * Frame one chunk of 16 kHz mono PCM for the assist pipeline:
+ * 1 prefix byte (stt_binary_handler_id) + Int16 little-endian samples.
+ */
+export function frameAudio(handlerId: number, pcm: Int16Array): Uint8Array {
+	const out = new Uint8Array(1 + pcm.length * 2);
+	out[0] = handlerId & 0xff;
+	const view = new DataView(out.buffer);
+	for (let i = 0; i < pcm.length; i++) {
+		view.setInt16(1 + i * 2, pcm[i], true);
+	}
+	return out;
+}
+
+/** End-of-audio marker: a single-byte frame containing just the handler id. */
+export function endFrame(handlerId: number): Uint8Array {
+	return new Uint8Array([handlerId & 0xff]);
+}
+
+interface Pending {
+	resolve: (result: any) => void;
+	reject: (err: Error) => void;
+}
+
+export interface RunOptions {
+	pipeline?: string | null;
+	conversationId?: string | null;
+	sampleRate?: number;
+}
+
+export class PipelineClient {
+	private nextId = 1;
+	private pending = new Map<number, Pending>();
+	private runId: number | null = null;
+
+	/** stt binary handler id from run-start; null until the run is ready. */
+	sttBinaryHandlerId: number | null = null;
+	/** Kept across runs for conversation continuity (from intent-end). */
+	conversationId: string | null = null;
+	state: PipelineState = 'idle';
+
+	private send: SendFn;
+	private cb: PipelineCallbacks;
+
+	// Note: no TS "parameter properties" here — this file is also executed
+	// directly by Node's type-stripping loader (tests/web/smoke.test.mjs),
+	// which only supports erasable TypeScript syntax.
+	constructor(send: SendFn, cb: PipelineCallbacks = {}) {
+		this.send = send;
+		this.cb = cb;
+	}
+
+	/** Feed every incoming text frame from the websocket here. */
+	handleMessage(raw: string | Record<string, any>): void {
+		let msg: any;
+		if (typeof raw === 'string') {
+			try {
+				msg = JSON.parse(raw);
+			} catch {
+				return;
+			}
+		} else {
+			msg = raw;
+		}
+		if (msg.type === 'result') {
+			const p = this.pending.get(msg.id);
+			if (p) {
+				this.pending.delete(msg.id);
+				if (msg.success) p.resolve(msg.result);
+				else p.reject(new Error(msg.error?.message ?? 'command failed'));
+			}
+			return;
+		}
+		if (msg.type === 'event' && msg.id === this.runId && msg.event) {
+			this.handleEvent(msg.event as PipelineEvent);
+		}
+	}
+
+	/** Send a command and await its result message. */
+	command(payload: Record<string, any>): Promise<any> {
+		const id = this.nextId++;
+		const promise = new Promise<any>((resolve, reject) => {
+			this.pending.set(id, { resolve, reject });
+		});
+		this.send(JSON.stringify({ id, ...payload }));
+		return promise;
+	}
+
+	async listPipelines(): Promise<{ pipelines: any[]; preferred_pipeline: string | null }> {
+		return this.command({ type: 'assist_pipeline/pipeline/list' });
+	}
+
+	/**
+	 * Resolve a pipeline id by name; falls back to the preferred pipeline
+	 * when no pipeline with that name exists.
+	 */
+	async resolvePipelineId(name: string): Promise<string | null> {
+		const result = await this.listPipelines();
+		const match = result.pipelines?.find((p: any) => p.name === name);
+		return match?.id ?? result.preferred_pipeline ?? null;
+	}
+
+	/** Start an stt→tts pipeline run. Audio may be streamed after onReady. */
+	startRun(opts: RunOptions = {}): number {
+		const id = this.nextId++;
+		this.runId = id;
+		this.sttBinaryHandlerId = null;
+		const msg: Record<string, any> = {
+			id,
+			type: 'assist_pipeline/run',
+			start_stage: 'stt',
+			end_stage: 'tts',
+			input: { sample_rate: opts.sampleRate ?? 16000 },
+			conversation_id: opts.conversationId !== undefined ? opts.conversationId : this.conversationId
+		};
+		if (opts.pipeline) msg.pipeline = opts.pipeline;
+		this.send(JSON.stringify(msg));
+		return id;
+	}
+
+	/** Stream one chunk of 16 kHz Int16 PCM (no-op until run-start arrived). */
+	sendAudio(pcm: Int16Array): void {
+		if (this.sttBinaryHandlerId === null) return;
+		this.send(frameAudio(this.sttBinaryHandlerId, pcm));
+	}
+
+	/** Signal end of audio with the single-byte handler-id frame. */
+	endAudio(): void {
+		if (this.sttBinaryHandlerId === null) return;
+		this.send(endFrame(this.sttBinaryHandlerId));
+	}
+
+	private setState(s: PipelineState): void {
+		if (this.state !== s) {
+			this.state = s;
+			this.cb.onState?.(s);
+		}
+	}
+
+	private handleEvent(ev: PipelineEvent): void {
+		this.cb.onEvent?.(ev);
+		switch (ev.type) {
+			case 'run-start': {
+				const handler = ev.data?.runner_data?.stt_binary_handler_id;
+				if (typeof handler === 'number') {
+					this.sttBinaryHandlerId = handler;
+					this.cb.onReady?.(handler);
+				}
+				this.setState('listening');
+				break;
+			}
+			case 'stt-start':
+			case 'stt-vad-start':
+			case 'stt-vad-end':
+			case 'intent-start':
+			case 'tts-start':
+				break;
+			case 'stt-end': {
+				const text = ev.data?.stt_output?.text ?? '';
+				this.cb.onTranscript?.(text);
+				this.setState('thinking');
+				break;
+			}
+			case 'intent-progress': {
+				const delta = ev.data?.chat_log_delta?.content;
+				if (typeof delta === 'string' && delta.length > 0) this.cb.onDelta?.(delta);
+				break;
+			}
+			case 'intent-end': {
+				const output = ev.data?.intent_output;
+				const speech = output?.response?.speech?.plain?.speech ?? '';
+				if (output?.conversation_id) this.conversationId = output.conversation_id;
+				this.cb.onResponse?.(speech);
+				break;
+			}
+			case 'tts-end': {
+				const url = ev.data?.tts_output?.url;
+				if (typeof url === 'string') this.cb.onTtsUrl?.(url);
+				this.setState('speaking');
+				break;
+			}
+			case 'run-end': {
+				this.runId = null;
+				this.sttBinaryHandlerId = null;
+				this.cb.onRunEnd?.();
+				break;
+			}
+			case 'error': {
+				this.runId = null;
+				this.sttBinaryHandlerId = null;
+				this.cb.onError?.(ev.data?.code ?? 'unknown', ev.data?.message ?? 'pipeline error');
+				this.setState('idle');
+				break;
+			}
+		}
+	}
+}

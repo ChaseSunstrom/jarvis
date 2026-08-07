@@ -1,0 +1,72 @@
+# P8 task-decomposition eval cases. Each 3-part request must split into >=3
+# scoped sub-tasks and synthesize an answer touching all concept groups.
+cases:
+  - id: decomp-01
+    request: >
+      Plan a dinner party for Saturday: suggest a three-course menu, build a
+      shopping list for it, and draft a short invitation message.
+    min_tasks: 3
+    concept_groups:
+      - ["menu", "course", "starter", "dessert", "main"]
+      - ["shopping", "list", "buy", "ingredient"]
+      - ["invitation", "invite", "message", "rsvp"]
+    fallback_tasks:
+      - "Suggest a three-course dinner menu."
+      - "Build a shopping list for that menu."
+      - "Draft a short dinner party invitation message."
+
+  - id: decomp-02
+    request: >
+      Help me get fit: outline a weekly workout split, list the equipment I'd
+      need, and give three high-protein breakfast ideas.
+    min_tasks: 3
+    concept_groups:
+      - ["workout", "split", "training", "exercise", "week"]
+      - ["equipment", "gear", "dumbbell", "mat", "need"]
+      - ["breakfast", "protein", "egg", "meal"]
+    fallback_tasks:
+      - "Outline a weekly workout split."
+      - "List the equipment needed for that split."
+      - "Give three high-protein breakfast ideas."
+
+  - id: decomp-03
+    request: >
+      Prep me for a trip to Kyoto: list three neighbourhoods to stay in,
+      suggest a packing list for spring, and note two etiquette tips.
+    min_tasks: 3
+    concept_groups:
+      - ["neighbourhood", "district", "stay", "area", "gion", "area"]
+      - ["packing", "pack", "clothes", "spring", "layer"]
+      - ["etiquette", "custom", "bow", "shoes", "tip"]
+    fallback_tasks:
+      - "List three Kyoto neighbourhoods to stay in."
+      - "Suggest a spring packing list for Kyoto."
+      - "Note two Japanese etiquette tips for visitors."
+
+  - id: decomp-04
+    request: >
+      Set up my home office: recommend a desk layout, list ergonomic
+      essentials, and suggest a cable-management approach.
+    min_tasks: 3
+    concept_groups:
+      - ["desk", "layout", "position", "monitor", "arrange"]
+      - ["ergonomic", "chair", "wrist", "posture", "essential"]
+      - ["cable", "management", "tidy", "clip", "route"]
+    fallback_tasks:
+      - "Recommend a home-office desk layout."
+      - "List ergonomic essentials for a desk setup."
+      - "Suggest a cable-management approach."
+
+  - id: decomp-05
+    request: >
+      Launch a small blog: propose three post ideas, outline a simple weekly
+      posting schedule, and suggest how to promote it for free.
+    min_tasks: 3
+    concept_groups:
+      - ["post", "idea", "topic", "article"]
+      - ["schedule", "weekly", "calendar", "cadence", "post"]
+      - ["promote", "share", "social", "free", "audience"]
+    fallback_tasks:
+      - "Propose three blog post ideas."
+      - "Outline a simple weekly posting schedule."
+      - "Suggest free ways to promote a new blog."

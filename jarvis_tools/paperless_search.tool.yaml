@@ -1,0 +1,9 @@
+name: paperless_search
+description: "Search Paperless-ngx documents by query text"
+tier: 1
+service:
+  method: GET
+  url: "http://192.168.2.175:8000/api/documents/?query={{ query }}"
+  headers: { Authorization: "Token !secret paperless_token" }
+  fields:
+    query: { description: "search text", required: true }
