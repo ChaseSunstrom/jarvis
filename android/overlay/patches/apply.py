@@ -20,11 +20,12 @@ What it does (all inside the fork checkout):
      managers, ...) come from the minimal source set.
   3. build.gradle.kts: mirrors every `"minimalImplementation"(...)`
      dependency line as `"jarvisImplementation"(...)`.
-  4. AssistActivity.kt: inserts a tiny PUBLIC helper `newJarvisIntent()` into
-     the companion object. The overlay's JarvisAssistActivity calls this
-     instead of touching AssistActivity's private intent extras; if upstream
-     changes newInstance()'s signature the build breaks loudly at this one
-     two-line helper.
+  4. (removed) The overlay used to forward to HA's own AssistActivity via an
+     injected newJarvisIntent() helper. The jarvis flavor is now a
+     SELF-CONTAINED assist client (mic -> HA WebSocket pipeline -> TTS, driven
+     entirely by JarvisAssistActivity), so it no longer patches or depends on
+     AssistActivity at all. patch_assist_activity() is kept for reference but
+     is not run.
   5. app/google-services.json: writes a mock file if none exists, so tooling
      that expects it (google-services plugin applied when the file is
      present) does not fail. The jarvis flavor itself never uses GMS.
@@ -245,7 +246,7 @@ def main() -> None:
     print(f"Applying jarvis overlay patches to: {root}")
     patch_gradle_flavor(root)
     patch_gradle_deps(root)
-    patch_assist_activity(root)
+    # patch_assist_activity(root)  # no longer needed: overlay is self-contained
     write_mock_google_services(root)
     check_overlay_copied(root)
     print("Done. Build with: ./gradlew :app:assembleJarvisRelease")

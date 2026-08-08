@@ -8,6 +8,12 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- The self-contained assist client records audio and reaches HA directly.
+         The HA app already declares these; repeated here so the jarvis flavor
+         is correct even if merged standalone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application>
 
         <!--
@@ -32,6 +38,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Connection settings (HA URL + long-lived token + pipeline name).
+             Launched automatically the first time if unconfigured. -->
+        <activity
+            android:name=".jarvis.JarvisSettingsActivity"
+            android:exported="true"
+            android:label="Jarvis settings"
+            android:excludeFromRecents="true" />
 
         <!--
           VoiceInteractionService so the app can hold the device assistant role

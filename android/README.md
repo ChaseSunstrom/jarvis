@@ -10,10 +10,12 @@ by adding a third product flavor, `jarvis`, next to upstream's `full` and
 
 | Piece | Purpose |
 |---|---|
-| `JarvisAssistActivity` | Siri-like activation: transparent activity, edge-light sweep + rising orb (`JarvisOrbView`) + haptic tick, then forwards into HA's own `AssistActivity` (Assist pipeline, `startListening=true`). Target: <300 ms cold-to-listening. Works on the lock screen. |
+| `JarvisAssistActivity` | Siri-like activation **and** the full conversation: transparent immersive activity, edge-light sweep + arc-reactor orb (`JarvisOrbView`) + haptic tick, then runs the whole voice turn itself (LISTENING→THINKING→SPEAKING→loop) with barge-in. Target: <300 ms cold-to-listening. Works on the lock screen. |
+| `assist/AssistPipelineClient`, `assist/MicStreamer`, `assist/TtsPlayer` | Self-contained Assist client: OkHttp WebSocket to HA's public API (Kotlin port of the web `pipeline.ts`), `AudioRecord` 16 kHz mic streaming, and `MediaPlayer` TTS playback. No HA-app internals. |
+| `JarvisConfig` / `JarvisSettingsActivity` | HA URL + long-lived token + pipeline name, stored privately; a minimal settings form shown on first run. |
 | `JarvisVoiceInteractionService` (+ session service/session) | Lets the app hold ROLE_ASSISTANT / be the device assistant on GrapheneOS. The session is a trampoline that launches `JarvisAssistActivity`. |
 | `WakeWordGate` | Pure-logic battery gate for always-on "Hey Jarvis" (home zone / car Bluetooth / waking hours). The detection itself is the HA app's existing microWakeWord support. |
-| Flavor plumbing (`overlay/patches/apply.py`) | `jarvis` flavor extends **minimal** (no Google Play Services — GrapheneOS is degoogled): appId suffix `.jarvis`, minimal's source dirs + deps mirrored in, mock `google-services.json` guard, and a tiny public `newJarvisIntent()` helper patched into `AssistActivity` so the overlay never touches HA-internal intent extras. |
+| Flavor plumbing (`overlay/patches/apply.py`) | `jarvis` flavor extends **minimal** (no Google Play Services — GrapheneOS is degoogled): appId suffix `.jarvis`, minimal's source dirs + deps mirrored in, mock `google-services.json` guard. |
 
 ## Layout
 

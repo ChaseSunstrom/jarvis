@@ -17,9 +17,11 @@ We never vendor the fork. `android/apply-to-fork.sh`:
      `applicationIdSuffix ".jarvis"`, `versionNameSuffix "-jarvis"`),
    - wires the jarvis source set to also compile `src/minimal/*`,
    - mirrors `minimalImplementation` deps as `jarvisImplementation`,
-   - inserts a two-line public `newJarvisIntent()` helper into
-     `AssistActivity`'s companion object,
    - writes a mock `app/google-services.json` if none exists.
+
+   (Earlier versions also patched a `newJarvisIntent()` helper into HA's
+   `AssistActivity`; the overlay is now a self-contained assist client and no
+   longer forwards to it, so that step is disabled.)
 
 Build: `./gradlew :app:assembleJarvisRelease`, sign with our own keystore
 (`android/keystore.md`), distribute via GitHub Releases + Obtainium.
@@ -39,30 +41,55 @@ plus the jarvis source set on top. Consequences:
   file's presence doesn't break; **no flavor built from it can use FCM**,
   which is expected.
 
-### The `AssistActivity` handoff (documented tradeoff)
+### Self-contained assist client (no HA-app internals)
 
-`JarvisAssistActivity` deliberately does *not* reach into HA's Assist
-ViewModel/pipeline internals — those are private and churn upstream. It owns
-the first ~250 ms (haptic, edge sweep, orb rise) and then forwards to HA's
-`AssistActivity` with `startListening = true`, `fromFrontend = false`, via
-the patched-in public helper `AssistActivity.newJarvisIntent(context)`. The
-handoff is a plain crossfade (no shared elements): mic capture starts when
-`AssistActivity` starts it, ~250 ms in, not at frame zero. That keeps the
-overlay robust against upstream refactors at the cost of one crossfade frame;
-if upstream changes `newInstance()`, the build fails loudly at the two-line
-helper instead of misbehaving at runtime.
+`JarvisAssistActivity` owns the **entire** interaction and keeps the orb on
+screen throughout — it does not hand off to HA's own Assist UI. It speaks the
+public Home Assistant WebSocket API directly, the same protocol as the browser
+HUD (a faithful Kotlin port of `jarvis-web/src/lib/pipeline.ts`):
+
+- `assist/AssistPipelineClient.kt` — OkHttp WebSocket: auth handshake →
+  `assist_pipeline/pipeline/list` (resolve the `Jarvis` pipeline) →
+  `assist_pipeline/run` (stt→tts), streaming mic frames prefixed with the
+  run's `stt_binary_handler_id`, dispatching `run-start`/`stt-end`/
+  `intent-progress`/`intent-end`/`tts-start`/`tts-end`/`run-end`/`error`.
+- `assist/MicStreamer.kt` — `AudioRecord` 16 kHz mono PCM16, raw little-endian
+  frames straight onto the wire, with an RMS level for the orb + VAD.
+- `assist/TtsPlayer.kt` — `MediaPlayer` playing HA's `tts_output.url` with the
+  bearer token as a request header.
+- The activity runs the turn cycle **LISTENING → (VAD end-of-speech) →
+  THINKING → SPEAKING (TTS) → LISTENING**, supports **barge-in** (talking over
+  the reply cancels TTS and starts a new turn), continues multi-turn via
+  `conversation_id`, and closes on an inactivity timeout, a tap, or Back.
+
+This depends on **no** HA-app internals — only the public WebSocket API and a
+URL/token from `JarvisConfig`. OkHttp/okio are already on the app classpath
+(HA uses them), so the flavor needs no extra dependency. Tradeoff vs. the old
+handoff: we now own the pipeline plumbing (mirrored from the tested web
+client) instead of borrowing HA's, in exchange for the orb owning the whole
+experience.
+
+### Configuration (first run)
+
+The client needs the HA base URL and a long-lived token. On first launch (or
+if unconfigured) `JarvisAssistActivity` opens `JarvisSettingsActivity` — a
+minimal form for **HA URL**, **access token** (profile → Security →
+Long-lived access tokens), and **pipeline name** (default `Jarvis`), stored in
+a private `SharedPreferences` file (`JarvisConfig`), separate from the HA
+app's own session. Use the URL you reach HA on (WireGuard/LAN). `RECORD_AUDIO`
+is requested at runtime on first use.
 
 ## 2. Activation UX spec
 
 Target: **≤ 300 ms from assist trigger to visible + haptic feedback**, and
-listening as soon as `AssistActivity` attaches the pipeline.
+listening as soon as the pipeline's `run-start` arrives.
 
 | t (ms) | What happens |
 |---|---|
-| 0 | ACTION_ASSIST / assist gesture / VoiceInteractionSession.onShow → `JarvisAssistActivity` (transparent platform theme, no AppCompat, no window animation). |
-| first frame | Haptic tick (`VibrationEffect.EFFECT_TICK`, fallback `KEYBOARD_TAP`). Edge-light sweep starts (350 ms, stroked rounded-rect + rotating sweep gradient). Orb rises from bottom (250 ms, decelerate). |
-| ~250 | Forward to `AssistActivity` (`startListening=true`) with fade crossfade; `JarvisAssistActivity` finishes (`noHistory`, `excludeFromRecents`). |
-| ~250–300 | HA Assist UI up, pipeline connecting, mic opens. |
+| 0 | ACTION_ASSIST / assist gesture / VoiceInteractionSession.onShow → `JarvisAssistActivity` (transparent platform theme, immersive, no window animation). |
+| first frame | Haptic tick (`VibrationEffect.EFFECT_TICK`, fallback `KEYBOARD_TAP`). Edge-light sweep (350 ms) + arc-reactor orb scale-in (260 ms). Mic capture + WebSocket connect begin. |
+| ~250–500 | Auth + pipeline resolve complete; `run-start` arrives, orb enters LISTENING, mic frames stream. |
+| conversation | LISTENING → THINKING → SPEAKING → LISTENING, orb colour + caption tracking each state; transcript and streamed response render in the lower third. |
 
 Orb visual language mirrors the web HUD: **cyan** idle/listening, **amber**
 thinking, **gold** speaking (`JarvisOrbView.Mode`), breathing scale at rest,
@@ -80,12 +107,12 @@ adb shell am start -W -a android.intent.action.ASSIST
 
 `JarvisAssistActivity` sets `showWhenLocked` + `turnScreenOn` (manifest and
 runtime API 27+), so a long-press / "Hey Jarvis" works with the screen off or
-locked, showing the orb over the keyguard. The trampoline session uses
-`startAssistantActivity()`, which is the assistant-privileged path allowed
-from the background and over the keyguard. Note the handoff target
-(`AssistActivity`) draws over the keyguard only as far as upstream allows;
-anything that needs the WebView (dashboard follow-ups) still requires unlock
-— acceptable for voice-first use.
+locked, showing the orb over the keyguard. The voice-interaction session uses
+`startAssistantActivity()`, the assistant-privileged path allowed from the
+background and over the keyguard. Because the whole conversation now runs
+inside `JarvisAssistActivity` itself, the full voice interaction — including
+the spoken reply — works over the keyguard without unlock (voice-first, no
+WebView needed).
 
 ## 3. Assistant role on GrapheneOS
 
