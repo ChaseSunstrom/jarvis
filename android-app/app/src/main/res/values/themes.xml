@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  All three themes parent off PLATFORM themes, not AppCompat: every Jarvis
+  activity extends android.app.Activity so the assist popup and the consent
+  prompt draw their first frame without inflating AppCompat on the cold-start
+  path. Keep it that way if you care about the 300 ms activation budget.
+-->
+<resources>
+
+    <!-- Opaque dark theme: MainActivity, SettingsActivity, ManagementActivity. -->
+    <style name="Theme.Jarvis" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/jarvis_bg</item>
+        <item name="android:colorBackground">@color/jarvis_bg</item>
+        <item name="android:statusBarColor">@color/jarvis_bg</item>
+        <item name="android:navigationBarColor">@color/jarvis_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">@android:color/white</item>
+        <item name="android:textColorSecondary">@color/jarvis_dim</item>
+        <item name="android:colorAccent">@color/jarvis_accent</item>
+    </style>
+
+    <!--
+      Fully transparent, animation-free theme for JarvisAssistActivity — the
+      orb has to appear over whatever is on screen (including the lock screen)
+      with no window animation eating the budget.
+    -->
+    <style name="Theme.JarvisTransparent" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!--
+      Tier-3 consent prompt. Translucent so the user still sees the context it
+      interrupted, but dimmed hard so the prompt is unmistakably the focus, and
+      NOT closeable by touching outside (set in code, along with FLAG_SECURE).
+    -->
+    <style name="Theme.JarvisApproval" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@color/jarvis_approval_scrim</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.75</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowCloseOnTouchOutside">false</item>
+    </style>
+
+</resources>

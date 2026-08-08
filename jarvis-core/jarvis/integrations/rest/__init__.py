@@ -207,6 +207,8 @@ class RestEntity(Entity):
         self._json_attributes_path = config.get("json_attributes_path")
         self._attr_extra_attributes = {}
         self._attr_should_poll = False
+        self._is_poller = False
+        self._last_error: Exception | None = None
 
     # -- template helpers --------------------------------------------------
     def _template_vars(self) -> dict[str, Any]:
@@ -233,18 +235,27 @@ class RestEntity(Entity):
             self._attr_state = self._compute_state()
             self._apply_json_attributes()
             self._attr_available = True
+            self._last_error = None
         except TemplateError as exc:
             _LOGGER.warning("%s: %s", self._attr_name, exc)
             self._attr_available = False
+            self._last_error = exc
 
     def _compute_state(self) -> Any:
         raise NotImplementedError
 
     # -- polling -----------------------------------------------------------
     async def async_update(self) -> None:
-        await self._rest.async_update()
-        self.apply_data()
-        self._rest.notify_subscribers(exclude=self)
+        """Fetch (poller only) and recompute; siblings ride the same payload."""
+        if self._is_poller or self._rest.data is None:
+            await self._rest.async_update()
+            self.apply_data()
+            self._rest.notify_subscribers(exclude=self)
+        else:
+            self.apply_data()
+        if self._last_error is not None:
+            # Let the platform mark this entity unavailable.
+            raise self._last_error
 
 
 class RestSensor(RestEntity):
@@ -425,6 +436,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
                 if entity is None:
                     continue
                 if entity._rest.register(entity):
+                    entity._is_poller = True
                     entity._attr_should_poll = True
                 new_entities.append(entity)
 

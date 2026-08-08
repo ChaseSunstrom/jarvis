@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="activity_settings">Jarvis settings</string>
+    <string name="activity_management">Jarvis management</string>
+    <string name="activity_approval">Jarvis approval</string>
+
+    <!-- Shown in Settings > Accessibility when the user enables the service.
+         Be honest about what it does: this text is the only thing standing
+         between the user and handing an app full screen-read + tap control. -->
+    <string name="accessibility_service_description">Lets Jarvis read the screen and perform taps
+        and gestures on your behalf, so it can drive apps that have no API. Every tap or text entry
+        is Tier 3: Jarvis asks for your explicit approval each time, showing the exact action before
+        anything happens. Text captured from the screen is treated as untrusted data and can never
+        trigger an action by itself.</string>
+
+    <string name="notification_channel_approval">Approval requests</string>
+    <string name="notification_channel_approval_desc">Tier 3 actions waiting for your explicit
+        approval. Silencing this channel means those requests time out and are denied.</string>
+    <string name="notification_channel_service">Command channel</string>
+    <string name="notification_channel_service_desc">The ongoing connection to your Jarvis server.
+        Low priority; keeps the device reachable for commands.</string>
+    <string name="notification_channel_alerts">Jarvis alerts</string>
+    <string name="notification_channel_alerts_desc">Notifications Jarvis posts on your behalf
+        (reminders, task results, automation output).</string>
+
+    <string name="voice_interaction_label">Jarvis</string>
+    <string name="recognition_service_label">Jarvis (stub recognizer)</string>
+</resources>

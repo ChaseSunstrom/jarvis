@@ -1,0 +1,1044 @@
+"""Voice stack tests: Wyoming protocol, audio helpers, pipeline runner, integration.
+
+No network, no containers, no hardware — a fake Wyoming TCP server speaking the
+real framing stands in for whisper/piper/openWakeWord.
+"""
+
+import asyncio
+import io
+import json
+import math
+import sys
+import wave
+from array import array
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from jarvis.core import Jarvis  # noqa: E402
+from jarvis.integrations import voice as voice_integration  # noqa: E402
+from jarvis.store import Store  # noqa: E402
+from jarvis.voice import audio as audio_helpers  # noqa: E402
+from jarvis.voice.audio import (  # noqa: E402
+    chunk_pcm,
+    duration_seconds,
+    pcm_from_wav,
+    resample,
+    rms,
+    wav_bytes,
+)
+from jarvis.voice.pipeline import PipelineError, PipelineRun  # noqa: E402
+from jarvis.voice.pipelines import Pipeline, PipelineStore  # noqa: E402
+from jarvis.voice.wyoming import (  # noqa: E402
+    WyomingError,
+    WyomingEvent,
+    WyomingSttClient,
+    WyomingTtsClient,
+    WyomingWakeClient,
+    decode_header,
+    encode_event,
+    wyoming_info,
+)
+
+RATE = 16000
+WIDTH = 2
+CHANNELS = 1
+
+
+# ---------------------------------------------------------------------------
+# a fake Wyoming server that speaks the real framing
+# ---------------------------------------------------------------------------
+def frame(event_type, data=None, payload=None, inline_only=False):
+    """Build a wire frame by hand (independent of our encoder)."""
+    header = {"type": event_type, "version": "1.5.0"}
+    data_bytes = b""
+    if data and inline_only:
+        header["data"] = data
+    elif data:
+        data_bytes = json.dumps(data).encode("utf-8")
+        header["data_length"] = len(data_bytes)
+    if payload:
+        header["payload_length"] = len(payload)
+    return json.dumps(header).encode("utf-8") + b"\n" + data_bytes + (payload or b"")
+
+
+async def read_frame(reader):
+    """Parse a frame by hand (independent of our decoder)."""
+    line = await reader.readline()
+    if not line:
+        return None
+    header = json.loads(line)
+    data = dict(header.get("data") or {})
+    if header.get("data_length"):
+        raw = await reader.readexactly(int(header["data_length"]))
+        data.update(json.loads(raw))
+    payload = None
+    if header.get("payload_length"):
+        payload = await reader.readexactly(int(header["payload_length"]))
+    return {"type": header["type"], "data": data, "payload": payload, "header": header}
+
+
+class FakeWyomingServer:
+    """Speaks enough of Wyoming for STT, TTS, wake word and `describe`."""
+
+    def __init__(
+        self,
+        transcript="turn on the kitchen light",
+        tts_rate=22050,
+        tts_chunks=(b"\x01\x02" * 40, b"\x03\x04" * 40),
+        detection="hey_jarvis",
+        detect_after=2,
+        error_on=None,
+        info=None,
+    ):
+        self.transcript = transcript
+        self.tts_rate = tts_rate
+        self.tts_chunks = list(tts_chunks)
+        self.detection = detection
+        self.detect_after = detect_after
+        self.error_on = error_on
+        self.info = info or {"asr": [{"name": "whisper", "installed": True}]}
+        self.events = []
+        self.audio_payloads = []
+        self._server = None
+        self._transcribing = False
+        self._detecting = False
+        self.port = 0
+
+    async def start(self):
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+        return self
+
+    async def stop(self):
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    @property
+    def types(self):
+        return [event["type"] for event in self.events]
+
+    def events_of(self, event_type):
+        return [event for event in self.events if event["type"] == event_type]
+
+    async def _handle(self, reader, writer):
+        chunks_seen = 0
+        try:
+            while True:
+                event = await read_frame(reader)
+                if event is None:
+                    break
+                self.events.append(event)
+                kind = event["type"]
+
+                if kind == self.error_on:
+                    writer.write(frame("error", {"text": "boom", "code": "test"}))
+                    await writer.drain()
+                    break
+
+                if kind == "describe":
+                    # inline-data form, to prove the reader handles both
+                    writer.write(frame("info", self.info, inline_only=True))
+                    await writer.drain()
+
+                elif kind == "audio-chunk":
+                    self.audio_payloads.append(event["payload"] or b"")
+                    chunks_seen += 1
+                    if self.detection and self._detecting and chunks_seen >= self.detect_after:
+                        writer.write(
+                            frame("detection", {"name": self.detection, "timestamp": 1234})
+                        )
+                        await writer.drain()
+                        self._detecting = False
+
+                elif kind == "audio-stop":
+                    if self._transcribing:
+                        writer.write(frame("transcript", {"text": self.transcript}))
+                        await writer.drain()
+                        self._transcribing = False
+                    elif self._detecting:
+                        writer.write(frame("not-detected", {}))
+                        await writer.drain()
+                        self._detecting = False
+
+                elif kind == "transcribe":
+                    self._transcribing = True
+
+                elif kind == "detect":
+                    self._detecting = True
+
+                elif kind == "synthesize":
+                    writer.write(
+                        frame(
+                            "audio-start",
+                            {"rate": self.tts_rate, "width": 2, "channels": 1, "timestamp": 0},
+                        )
+                    )
+                    for chunk in self.tts_chunks:
+                        writer.write(
+                            frame(
+                                "audio-chunk",
+                                {"rate": self.tts_rate, "width": 2, "channels": 1},
+                                payload=chunk,
+                            )
+                        )
+                    writer.write(frame("audio-stop", {"timestamp": 100}))
+                    await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionResetError):
+            pass
+        finally:
+            writer.close()
+
+
+@pytest.fixture
+async def server():
+    fake = await FakeWyomingServer().start()
+    try:
+        yield fake
+    finally:
+        await fake.stop()
+
+
+def sine_pcm(ms=100, rate=RATE, amplitude=9000, freq=440):
+    frames = int(rate * ms / 1000)
+    values = array(
+        "h",
+        (int(amplitude * math.sin(2 * math.pi * freq * i / rate)) for i in range(frames)),
+    )
+    return values.tobytes()
+
+
+def silence_pcm(ms=100, rate=RATE):
+    return b"\x00\x00" * int(rate * ms / 1000)
+
+
+# ---------------------------------------------------------------------------
+# framing
+# ---------------------------------------------------------------------------
+def test_encode_event_framing():
+    payload = b"\x01\x02\x03\x04"
+    raw = encode_event(WyomingEvent("audio-chunk", {"rate": 16000, "width": 2}, payload))
+    line, rest = raw.split(b"\n", 1)
+    header = decode_header(line)
+    assert header["type"] == "audio-chunk"
+    assert header["payload_length"] == 4
+    data_length = header["data_length"]
+    assert json.loads(rest[:data_length]) == {"rate": 16000, "width": 2}
+    assert rest[data_length:] == payload
+
+
+def test_encode_event_without_data_or_payload():
+    raw = encode_event(WyomingEvent("audio-stop"))
+    assert raw.endswith(b"\n")
+    header = decode_header(raw.strip())
+    assert header["type"] == "audio-stop"
+    assert "data_length" not in header
+    assert "payload_length" not in header
+
+
+def test_decode_header_rejects_garbage():
+    with pytest.raises(WyomingError):
+        decode_header(b"not json at all")
+    with pytest.raises(WyomingError):
+        decode_header(b'{"no": "type"}')
+
+
+# ---------------------------------------------------------------------------
+# wyoming clients against the fake server
+# ---------------------------------------------------------------------------
+async def test_wyoming_info(server):
+    info = await wyoming_info("127.0.0.1", server.port)
+    assert info == {"asr": [{"name": "whisper", "installed": True}]}
+    assert server.types == ["describe"]
+
+
+async def test_transcribe_streams_audio_and_returns_transcript(server):
+    client = WyomingSttClient("127.0.0.1", server.port, language="en")
+    chunks = [sine_pcm(20), sine_pcm(20), sine_pcm(20)]
+
+    text = await client.transcribe(iter(chunks), rate=RATE)
+
+    assert text == "turn on the kitchen light"
+    assert server.types[0] == "transcribe"
+    assert server.events[0]["data"]["language"] == "en"
+    assert server.types[1] == "audio-start"
+    start = server.events[1]["data"]
+    assert (start["rate"], start["width"], start["channels"]) == (RATE, WIDTH, CHANNELS)
+    assert server.types.count("audio-chunk") == 3
+    assert server.types[-1] == "audio-stop"
+    assert server.audio_payloads == chunks
+    # every chunk carries the audio format alongside the payload
+    for event in server.events_of("audio-chunk"):
+        assert event["data"]["rate"] == RATE
+        assert event["data"]["width"] == WIDTH
+
+
+async def test_transcribe_accepts_async_iterator(server):
+    async def audio():
+        for _ in range(2):
+            yield sine_pcm(10)
+
+    text = await WyomingSttClient("127.0.0.1", server.port).transcribe(audio())
+    assert text == "turn on the kitchen light"
+    assert server.types.count("audio-chunk") == 2
+
+
+async def test_transcribe_raises_on_error_event():
+    fake = await FakeWyomingServer(error_on="audio-stop").start()
+    try:
+        client = WyomingSttClient("127.0.0.1", fake.port)
+        with pytest.raises(WyomingError, match="boom"):
+            await client.transcribe([sine_pcm(10)])
+    finally:
+        await fake.stop()
+
+
+async def test_stt_connection_refused_is_wyoming_error():
+    # port 1 is not listening
+    client = WyomingSttClient("127.0.0.1", 1, timeout=2.0)
+    with pytest.raises(WyomingError):
+        await client.transcribe([b"\x00\x00"])
+
+
+async def test_synthesize_returns_pcm(server):
+    client = WyomingTtsClient("127.0.0.1", server.port, voice="en_GB-alan-medium")
+
+    pcm, rate, width, channels = await client.synthesize("hello there")
+
+    assert pcm == b"".join(server.tts_chunks)
+    assert (rate, width, channels) == (22050, 2, 1)
+    request = server.events_of("synthesize")[0]["data"]
+    assert request["text"] == "hello there"
+    assert request["voice"] == {"name": "en_GB-alan-medium"}
+
+
+async def test_synthesize_voice_override(server):
+    client = WyomingTtsClient("127.0.0.1", server.port, voice="default")
+    await client.synthesize("hi", voice="en_US-amy-low")
+    assert server.events_of("synthesize")[0]["data"]["voice"]["name"] == "en_US-amy-low"
+
+
+async def test_wake_detect(server):
+    client = WyomingWakeClient("127.0.0.1", server.port, model="hey_jarvis")
+
+    async def audio():
+        for _ in range(6):
+            yield sine_pcm(20)
+            await asyncio.sleep(0)
+
+    assert await client.detect(audio()) == "hey_jarvis"
+    detect = server.events_of("detect")[0]["data"]
+    assert detect["names"] == ["hey_jarvis"]
+
+
+async def test_wake_not_detected():
+    fake = await FakeWyomingServer(detection=None).start()
+    try:
+        client = WyomingWakeClient("127.0.0.1", fake.port, model="hey_jarvis")
+        assert await client.detect([sine_pcm(20)]) is None
+    finally:
+        await fake.stop()
+
+
+# ---------------------------------------------------------------------------
+# audio helpers
+# ---------------------------------------------------------------------------
+def test_wav_bytes_is_readable_by_wave():
+    pcm = sine_pcm(50)
+    data = wav_bytes(pcm, RATE, WIDTH, CHANNELS)
+    assert data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+
+    with wave.open(io.BytesIO(data), "rb") as wav_file:
+        assert wav_file.getframerate() == RATE
+        assert wav_file.getsampwidth() == WIDTH
+        assert wav_file.getnchannels() == CHANNELS
+        assert wav_file.getnframes() == len(pcm) // 2
+        assert wav_file.readframes(wav_file.getnframes()) == pcm
+
+
+def test_pcm_from_wav_roundtrip():
+    pcm = sine_pcm(30)
+    assert pcm_from_wav(wav_bytes(pcm, 22050, 2, 1)) == (pcm, 22050, 2, 1)
+
+
+def test_wav_bytes_rejects_bad_format():
+    with pytest.raises(ValueError):
+        wav_bytes(b"\x00\x00", rate=0)
+    with pytest.raises(ValueError):
+        wav_bytes(b"\x00\x00", width=3)
+
+
+def test_rms_and_silence():
+    assert rms(b"") == 0.0
+    assert rms(silence_pcm(20)) == 0.0
+    loud = rms(sine_pcm(20, amplitude=9000))
+    assert 5000 < loud < 8000  # sine RMS is amplitude/sqrt(2)
+    assert audio_helpers.is_silence(silence_pcm(20))
+    assert not audio_helpers.is_silence(sine_pcm(20))
+
+
+def test_resample_to_16k():
+    pcm = sine_pcm(100, rate=32000, freq=200)
+    out = resample(pcm, 32000, 16000)
+    assert len(out) == pytest.approx(len(pcm) // 2, abs=4)
+    assert resample(pcm, 16000, 16000) == pcm  # same rate is a no-op
+    assert resample(b"", 8000, 16000) == b""
+
+    # upsampling keeps the waveform roughly as loud
+    up = resample(sine_pcm(50, rate=8000, freq=200), 8000, 16000)
+    assert len(up) == pytest.approx(2 * len(sine_pcm(50, rate=8000)), abs=8)
+    assert rms(up) == pytest.approx(rms(sine_pcm(50, rate=8000, freq=200)), rel=0.1)
+
+
+def test_chunk_pcm_and_duration():
+    pcm = sine_pcm(100)
+    chunks = list(chunk_pcm(pcm, chunk_ms=20, rate=RATE))
+    assert len(chunks) == 5
+    assert all(len(chunk) == 640 for chunk in chunks)
+    assert b"".join(chunks) == pcm
+    assert duration_seconds(pcm, RATE, WIDTH, CHANNELS) == pytest.approx(0.1)
+
+
+# ---------------------------------------------------------------------------
+# pipeline runner
+# ---------------------------------------------------------------------------
+class FakeStt:
+    def __init__(self, text="turn on the kitchen light", error=None):
+        self.text = text
+        self.error = error
+        self.received = b""
+        self.rate = None
+
+    async def transcribe(self, audio_iter, rate=16000):
+        self.rate = rate
+        async for chunk in audio_iter:
+            self.received += chunk
+        if self.error:
+            raise self.error
+        return self.text
+
+
+class FakeTts:
+    def __init__(self, error=None):
+        self.error = error
+        self.calls = []
+
+    async def synthesize(self, text, voice=None):
+        self.calls.append((text, voice))
+        if self.error:
+            raise self.error
+        return (sine_pcm(40, rate=22050), 22050, 2, 1)
+
+
+class FakeWake:
+    def __init__(self, name="hey_jarvis"):
+        self.name = name
+        self.chunks = 0
+
+    async def detect(self, audio_iter):
+        async for _chunk in audio_iter:
+            self.chunks += 1
+            if self.chunks >= 2:
+                return self.name
+        return None
+
+
+def make_converse(reply="Turning on the kitchen light.", error=None):
+    seen = []
+
+    async def converse(text, conversation_id):
+        seen.append((text, conversation_id))
+        if error:
+            raise error
+        for word in reply.split(" "):
+            yield word + " " if word != reply.split(" ")[-1] else word
+
+    converse.seen = seen
+    return converse
+
+
+async def queue_of(*chunks, end=True):
+    queue = asyncio.Queue()
+    for chunk in chunks:
+        queue.put_nowait(chunk)
+    if end:
+        queue.put_nowait(None)
+    return queue
+
+
+def collector():
+    events = []
+
+    async def event_cb(event_type, data):
+        events.append((event_type, data))
+
+    return events, event_cb
+
+
+async def test_pipeline_full_run_emits_exact_event_sequence(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    stt, tts = FakeStt(), FakeTts()
+    converse = make_converse("Turning on the kitchen light.")
+    run = PipelineRun(
+        jarvis,
+        pipeline=Pipeline(id="jarvis", name="Jarvis", tts_voice="en_GB-alan-medium"),
+        stt=stt,
+        tts=tts,
+        converse=converse,
+        binary_handler_id=7,
+    )
+    events, event_cb = collector()
+
+    queue = await queue_of(sine_pcm(30), sine_pcm(30), silence_pcm(1000))
+    await run.execute(queue, event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert types == [
+        "run-start",
+        "stt-start",
+        "stt-vad-start",
+        "stt-vad-end",
+        "stt-end",
+        "intent-start",
+        "intent-progress",
+        "intent-progress",
+        "intent-progress",
+        "intent-progress",
+        "intent-progress",
+        "intent-end",
+        "tts-start",
+        "tts-end",
+        "run-end",
+    ]
+    # run-start
+    run_start = events[0][1]
+    assert run_start["pipeline"] == "jarvis"
+    assert run_start["language"] == "en"
+    assert run_start["runner_data"] == {"stt_binary_handler_id": 7, "timeout": 300}
+    assert isinstance(run_start["runner_data"]["stt_binary_handler_id"], int)
+
+    by_type = {}
+    for event_type, data in events:
+        by_type.setdefault(event_type, []).append(data)
+
+    # stt
+    assert by_type["stt-start"][0]["engine"] == "wyoming"
+    assert by_type["stt-start"][0]["metadata"]["sample_rate"] == 16000
+    assert isinstance(by_type["stt-vad-start"][0]["timestamp"], int)
+    assert by_type["stt-vad-end"][0]["timestamp"] > by_type["stt-vad-start"][0]["timestamp"]
+    assert by_type["stt-end"][0] == {"stt_output": {"text": "turn on the kitchen light"}}
+    assert stt.received == sine_pcm(30) + sine_pcm(30) + silence_pcm(1000)
+
+    # intent
+    assert by_type["intent-start"][0] == {"engine": "ollama", "language": "en"}
+    deltas = [data["chat_log_delta"] for data in by_type["intent-progress"]]
+    assert all(delta["role"] == "assistant" for delta in deltas)
+    assert "".join(delta["content"] for delta in deltas) == "Turning on the kitchen light."
+    intent_end = by_type["intent-end"][0]["intent_output"]
+    assert intent_end["response"]["speech"]["plain"] == {
+        "speech": "Turning on the kitchen light.",
+        "extra_data": None,
+    }
+    assert intent_end["response"]["response_type"] == "action_done"
+    assert intent_end["response"]["data"] == {}
+    assert intent_end["conversation_id"] == run.conversation_id
+    assert converse.seen == [("turn on the kitchen light", run.conversation_id)]
+
+    # tts
+    tts_start = by_type["tts-start"][0]
+    assert tts_start["engine"] == "wyoming"
+    assert tts_start["language"] == "en"
+    assert tts_start["voice"] == "en_GB-alan-medium"
+    assert tts_start["tts_input"] == "Turning on the kitchen light."
+    assert tts.calls == [("Turning on the kitchen light.", "en_GB-alan-medium")]
+
+    tts_output = by_type["tts-end"][0]["tts_output"]
+    assert tts_output["mime_type"] == "audio/wav"
+    assert tts_output["url"].startswith("/api/tts_proxy/")
+    assert tts_output["url"].endswith(".wav")
+
+    token = tts_output["url"].removeprefix("/api/tts_proxy/").removesuffix(".wav")
+    cached, mime = jarvis.data["tts_cache"][token]
+    assert mime == "audio/wav"
+    with wave.open(io.BytesIO(cached), "rb") as wav_file:  # served audio is a real WAV
+        assert wav_file.getframerate() == 22050
+    assert by_type["run-end"][0] == {}
+    assert run.error is None
+    assert run.response_text == "Turning on the kitchen light."
+
+
+async def test_pipeline_text_only_run_skips_stt(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    run = PipelineRun(
+        jarvis,
+        stt=FakeStt(),
+        tts=FakeTts(),
+        converse=make_converse("Hello back."),
+        start_stage="intent",
+        conversation_id="conv-1",
+    )
+    events, event_cb = collector()
+
+    await run.execute_text("hello there", event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert "stt-start" not in types and "stt-end" not in types
+    assert types[0] == "run-start" and types[-1] == "run-end"
+    assert "intent-start" in types and "tts-end" in types
+    intent_end = [data for kind, data in events if kind == "intent-end"][0]
+    assert intent_end["intent_output"]["conversation_id"] == "conv-1"
+
+
+async def test_pipeline_end_stage_stt(tmp_path):
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("what time is it"),
+        tts=FakeTts(),
+        converse=make_converse(),
+        end_stage="stt",
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert types[-2:] == ["stt-end", "run-end"]
+    assert "intent-start" not in types
+    assert run.stt_text == "what time is it"
+
+
+async def test_pipeline_end_stage_intent(tmp_path):
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt(),
+        tts=FakeTts(),
+        converse=make_converse("ok"),
+        end_stage="intent",
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+    types = [event_type for event_type, _ in events]
+    assert "tts-start" not in types
+    assert types[-2:] == ["intent-end", "run-end"]
+
+
+async def test_pipeline_wake_stage(tmp_path):
+    wake = FakeWake()
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt(),
+        tts=FakeTts(),
+        wake=wake,
+        converse=make_converse("yes?"),
+        start_stage="wake",
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(*[sine_pcm(20)] * 4), event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert types[:3] == ["run-start", "wake_word-start", "wake_word-end"]
+    assert "stt-start" in types and "tts-end" in types
+    wake_end = [data for kind, data in events if kind == "wake_word-end"][0]
+    assert wake_end["wake_word_output"]["wake_word_id"] == "hey_jarvis"
+    assert run.detected_wake_word == "hey_jarvis"
+
+
+async def test_pipeline_tts_only_stage(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    run = PipelineRun(jarvis, tts=FakeTts(), start_stage="tts", end_stage="tts")
+    events, event_cb = collector()
+    await run.execute(None, event_cb, text="The kettle has boiled.")
+
+    types = [event_type for event_type, _ in events]
+    assert types == ["run-start", "tts-start", "tts-end", "run-end"]
+    assert run.tts_url and run.tts_token in jarvis.data["tts_cache"]
+
+
+async def test_pipeline_stt_failure_emits_error_then_run_end(tmp_path):
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt(error=WyomingError("stt container is down")),
+        tts=FakeTts(),
+        converse=make_converse(),
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert types[-2:] == ["error", "run-end"]
+    error = [data for kind, data in events if kind == "error"][0]
+    assert error["code"] == "stt-stream-failed"
+    assert "stt container is down" in error["message"]
+    assert run.error is not None and run.error.code == "stt-stream-failed"
+
+
+async def test_pipeline_no_text_recognized(tmp_path):
+    run = PipelineRun(
+        Jarvis(tmp_path), stt=FakeStt(text="  "), tts=FakeTts(), converse=make_converse()
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(silence_pcm(20)), event_cb)
+
+    error = [data for kind, data in events if kind == "error"][0]
+    assert error["code"] == "stt-no-text-recognized"
+    assert [kind for kind, _ in events][-1] == "run-end"
+
+
+async def test_pipeline_missing_provider(tmp_path):
+    run = PipelineRun(Jarvis(tmp_path), stt=None, converse=make_converse())
+    events, event_cb = collector()
+    await run.execute(await queue_of(silence_pcm(20)), event_cb)
+    error = [data for kind, data in events if kind == "error"][0]
+    assert error["code"] == "stt-provider-missing"
+
+
+async def test_pipeline_timeout(tmp_path):
+    class SlowStt:
+        async def transcribe(self, audio_iter, rate=16000):
+            async for _ in audio_iter:
+                pass
+            await asyncio.sleep(5)
+            return "too late"
+
+    run = PipelineRun(Jarvis(tmp_path), stt=SlowStt(), converse=make_converse(), timeout=0.1)
+    events, event_cb = collector()
+    await run.execute(await queue_of(silence_pcm(20)), event_cb)
+    error = [data for kind, data in events if kind == "error"][0]
+    assert error["code"] == "timeout"
+
+
+async def test_pipeline_no_vad_events_for_silence(tmp_path):
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt(), tts=FakeTts(), converse=make_converse())
+    events, event_cb = collector()
+    await run.execute(await queue_of(silence_pcm(50)), event_cb)
+    types = [event_type for event_type, _ in events]
+    assert "stt-vad-start" not in types and "stt-vad-end" not in types
+
+
+async def test_pipeline_accepts_plain_string_agent(tmp_path):
+    async def converse(text, conversation_id):
+        return f"you said {text}"
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=FakeTts(), converse=converse)
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+    deltas = [data["chat_log_delta"]["content"] for kind, data in events if kind == "intent-progress"]
+    assert deltas == ["you said hi"]
+
+
+async def test_pipeline_accepts_single_argument_agent(tmp_path):
+    async def converse(text):
+        return "ok"
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=FakeTts(), converse=converse)
+    await run.execute(await queue_of(sine_pcm(20)))
+    assert run.response_text == "ok"
+
+
+async def test_pipeline_accepts_dict_deltas(tmp_path):
+    async def converse(text, conversation_id):
+        for part in ("Kitchen ", "light on."):
+            yield {"role": "assistant", "content": part}
+
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("x"), tts=FakeTts(), converse=converse)
+    await run.execute(await queue_of(sine_pcm(20)))
+    assert run.response_text == "Kitchen light on."
+
+
+def test_pipeline_rejects_bad_stages(tmp_path):
+    with pytest.raises(ValueError):
+        PipelineRun(None, start_stage="nonsense")
+    with pytest.raises(ValueError):
+        PipelineRun(None, start_stage="tts", end_stage="stt")
+
+
+async def test_pipeline_binary_handler_ids_increment(tmp_path):
+    first = PipelineRun(None, tts_cache={})
+    second = PipelineRun(None, tts_cache={})
+    assert second.binary_handler_id == first.binary_handler_id + 1
+
+
+async def test_pipeline_against_real_wyoming_clients(server, tmp_path):
+    """Full run with the real protocol clients pointed at the fake server."""
+    jarvis = Jarvis(tmp_path)
+    run = PipelineRun(
+        jarvis,
+        stt=WyomingSttClient("127.0.0.1", server.port),
+        tts=WyomingTtsClient("127.0.0.1", server.port, voice="en_GB-alan-medium"),
+        converse=make_converse("Done."),
+        tts_voice="en_GB-alan-medium",
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20), sine_pcm(20)), event_cb)
+
+    assert run.error is None
+    assert run.stt_text == "turn on the kitchen light"
+    assert run.tts_url.startswith("/api/tts_proxy/")
+    cached, mime = jarvis.data["tts_cache"][run.tts_token]
+    assert pcm_from_wav(cached)[1] == 22050
+    assert [kind for kind, _ in events][-1] == "run-end"
+
+
+# ---------------------------------------------------------------------------
+# pipeline config store
+# ---------------------------------------------------------------------------
+async def test_pipeline_store_defaults(tmp_path):
+    store = PipelineStore(store=Store(tmp_path, "voice_pipelines"))
+    await store.async_load()
+    await store.async_load_config(None, {"tts_voice": "en_GB-alan-medium"})
+
+    assert [pipeline.name for pipeline in store.list()] == ["Jarvis"]
+    default = store.preferred
+    assert default.name == "Jarvis"
+    assert default.id == "jarvis"
+    assert default.language == "en"
+    assert default.tts_voice == "en_GB-alan-medium"
+    assert default.wake_word == "hey_jarvis"
+    assert default.conversation_engine == "ollama"
+    assert store.get("jarvis") is default
+    assert store.get_by_name("jarvis") is default
+    assert store.get("nope") is None
+    assert store.resolve("nope") is default
+
+
+async def test_pipeline_store_from_yaml(tmp_path):
+    store = PipelineStore(store=Store(tmp_path, "voice_pipelines"))
+    await store.async_load()
+    await store.async_load_config(
+        [
+            {"name": "Jarvis", "voice": "en_GB-alan-medium", "wake_word": "hey_jarvis"},
+            {"name": "Guest", "tts": "wyoming", "voice": "en_US-amy-low", "language": "en"},
+        ],
+        {"language": "en"},
+    )
+
+    assert sorted(pipeline.name for pipeline in store.list()) == ["Guest", "Jarvis"]
+    guest = store.get_by_name("Guest")
+    assert guest.tts_voice == "en_US-amy-low"
+    assert guest.id == "guest"
+    assert store.preferred.name == "Jarvis"
+
+
+async def test_pipeline_store_persists(tmp_path):
+    store = PipelineStore(store=Store(tmp_path, "voice_pipelines"))
+    await store.async_load()
+    await store.async_load_config(None, {"tts_voice": "en_GB-alan-medium"})
+    created = await store.async_create({"name": "Bedroom", "voice": "en_US-amy-low"})
+    await store.async_set_preferred(created.id)
+
+    reloaded = PipelineStore(store=Store(tmp_path, "voice_pipelines"))
+    await reloaded.async_load()
+    assert sorted(pipeline.name for pipeline in reloaded.list()) == ["Bedroom", "Jarvis"]
+    assert reloaded.preferred.name == "Bedroom"
+    assert reloaded.get_by_name("Bedroom").tts_voice == "en_US-amy-low"
+
+    assert await reloaded.async_update(created.id, {"voice": "en_GB-alan-medium"})
+    assert reloaded.get(created.id).tts_voice == "en_GB-alan-medium"
+    assert await reloaded.async_delete(created.id) is True
+    assert reloaded.get(created.id) is None
+    assert await reloaded.async_delete("jarvis") is False  # never delete the last one
+
+
+def test_pipeline_from_dict_aliases():
+    pipeline = Pipeline.from_dict(
+        {
+            "name": "Study",
+            "stt": "wyoming",
+            "tts": "wyoming",
+            "voice": "en_GB-alan-medium",
+            "wake_word_id": "hey_jarvis",
+            "conversation_agent": "ollama",
+            "something_custom": 42,
+        }
+    )
+    assert pipeline.id == "study"
+    assert pipeline.tts_voice == "en_GB-alan-medium"
+    assert pipeline.wake_word == "hey_jarvis"
+    assert pipeline.conversation_engine == "ollama"
+    assert pipeline.extra == {"something_custom": 42}
+    assert pipeline.as_dict()["name"] == "Study"
+
+
+# ---------------------------------------------------------------------------
+# the voice integration
+# ---------------------------------------------------------------------------
+async def setup_voice(tmp_path, config=None, stt=None, tts=None, wake=None, agent=None):
+    jarvis = Jarvis(tmp_path)
+    if stt is not None:
+        jarvis.data["voice_stt_client"] = stt
+    if tts is not None:
+        jarvis.data["voice_tts_client"] = tts
+    if wake is not None:
+        jarvis.data["voice_wake_client"] = wake
+    if agent is not None:
+        jarvis.data["conversation_agent"] = agent
+    assert await voice_integration.async_setup(jarvis, config) is True
+    return jarvis
+
+
+async def test_setup_builds_wyoming_clients_from_yaml(tmp_path):
+    jarvis = await setup_voice(
+        tmp_path,
+        {
+            "stt": {"host": "10.0.0.5", "port": 10300},
+            "tts": {"host": "10.0.0.5", "port": 10200, "voice": "en_GB-alan-medium"},
+            "wake": {"host": "10.0.0.5", "port": 10400, "model": "hey_jarvis"},
+            "pipelines": [{"name": "Jarvis"}],
+        },
+    )
+    data = jarvis.data["voice"]
+    assert isinstance(data.stt, WyomingSttClient)
+    assert (data.stt.host, data.stt.port) == ("10.0.0.5", 10300)
+    assert isinstance(data.tts, WyomingTtsClient)
+    assert (data.tts.port, data.tts.voice) == (10200, "en_GB-alan-medium")
+    assert isinstance(data.wake, WyomingWakeClient)
+    assert (data.wake.port, data.wake.model) == (10400, "hey_jarvis")
+    assert data.pipelines.preferred.name == "Jarvis"
+    assert data.pipelines.preferred.tts_voice == "en_GB-alan-medium"
+    assert jarvis.services.has_service("voice", "say")
+    assert jarvis.services.has_service("voice", "get_pipelines")
+
+
+async def test_setup_with_no_config_uses_defaults(tmp_path):
+    jarvis = await setup_voice(tmp_path, None)
+    data = jarvis.data["voice"]
+    assert (data.stt.host, data.stt.port) == ("127.0.0.1", 10300)
+    assert (data.tts.host, data.tts.port) == ("127.0.0.1", 10200)
+    assert (data.wake.host, data.wake.port) == ("127.0.0.1", 10400)
+    assert data.wake.model == "hey_jarvis"
+    assert jarvis.data["tts_cache"] == {}
+
+
+async def test_setup_can_disable_a_service(tmp_path):
+    jarvis = await setup_voice(tmp_path, {"wake": False})
+    assert jarvis.data["voice"].wake is None
+
+
+async def test_voice_say_service_caches_and_fires_event(tmp_path):
+    tts = FakeTts()
+    jarvis = await setup_voice(tmp_path, {"tts": {"voice": "en_GB-alan-medium"}}, tts=tts)
+    fired = []
+    jarvis.bus.listen("voice_said", lambda event: fired.append(event))
+
+    result = await jarvis.async_call_service(
+        "voice", "say", {"text": "The garage door is open."}, return_response=True
+    )
+
+    assert result["url"].startswith("/api/tts_proxy/")
+    assert result["mime_type"] == "audio/wav"
+    assert tts.calls == [("The garage door is open.", "en_GB-alan-medium")]
+    cached, mime = voice_integration.get_tts_audio(jarvis, result["token"])
+    assert mime == "audio/wav"
+    assert pcm_from_wav(cached)[1] == 22050
+    assert voice_integration.get_tts_audio(jarvis, result["token"] + ".wav") is not None
+    assert voice_integration.get_tts_audio(jarvis, "unknown") is None
+    assert fired and fired[0].data["text"] == "The garage door is open."
+
+
+async def test_voice_say_requires_text(tmp_path):
+    jarvis = await setup_voice(tmp_path, {}, tts=FakeTts())
+    with pytest.raises(ValueError):
+        await jarvis.async_call_service("voice", "say", {})
+
+
+async def test_voice_say_plays_on_media_player(tmp_path):
+    jarvis = await setup_voice(tmp_path, {}, tts=FakeTts())
+    calls = []
+
+    async def _play_media(call):
+        calls.append(call.data)
+
+    jarvis.services.register("media_player", "play_media", _play_media)
+    await jarvis.async_call_service(
+        "voice", "say", {"text": "hello", "entity_id": "media_player.kitchen"}
+    )
+    assert calls and calls[0]["entity_id"] == "media_player.kitchen"
+    assert calls[0]["media_id"].startswith("/api/tts_proxy/")
+    assert calls[0]["media_type"] == "music"
+
+
+async def test_get_pipelines_service(tmp_path):
+    jarvis = await setup_voice(tmp_path, {"pipelines": [{"name": "Jarvis"}, {"name": "Guest"}]})
+    result = await jarvis.async_call_service(
+        "voice", "get_pipelines", {}, return_response=True
+    )
+    assert result["preferred_pipeline"] == "jarvis"
+    assert sorted(item["name"] for item in result["pipelines"]) == ["Guest", "Jarvis"]
+
+
+async def test_integration_creates_runs_with_configured_clients(tmp_path):
+    stt, tts = FakeStt(), FakeTts()
+
+    async def agent(text, conversation_id):
+        yield f"heard {text}"
+
+    jarvis = await setup_voice(
+        tmp_path,
+        {"tts": {"voice": "en_GB-alan-medium"}},
+        stt=stt,
+        tts=tts,
+        agent=agent,
+    )
+    run = voice_integration.async_create_run(jarvis)
+    assert run.tts_voice == "en_GB-alan-medium"
+    assert run.pipeline_id == "jarvis"
+
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+
+    assert run.error is None
+    assert run.response_text == "heard turn on the kitchen light"
+    assert [kind for kind, _ in events][-1] == "run-end"
+
+
+async def test_run_without_conversation_agent_still_answers(tmp_path):
+    jarvis = await setup_voice(tmp_path, {}, stt=FakeStt(), tts=FakeTts())
+    run = voice_integration.async_create_run(jarvis)
+    await run.execute(await queue_of(sine_pcm(20)))
+    assert run.response_text == voice_integration.NO_AGENT_REPLY
+    assert run.error is None
+
+
+async def test_conversation_agent_via_service(tmp_path):
+    jarvis = Jarvis(tmp_path)
+
+    async def _process(call):
+        return {
+            "response": {"speech": {"plain": {"speech": f"echo: {call.get('text')}"}}},
+            "conversation_id": call.get("conversation_id"),
+        }
+
+    jarvis.services.register("conversation", "process", _process, supports_response=True)
+    jarvis.data["voice_stt_client"] = FakeStt("hello")
+    jarvis.data["voice_tts_client"] = FakeTts()
+    assert await voice_integration.async_setup(jarvis, {}) is True
+
+    run = voice_integration.async_create_run(jarvis)
+    await run.execute(await queue_of(sine_pcm(20)))
+    assert run.response_text == "echo: hello"
+
+
+async def test_create_run_without_setup_raises(tmp_path):
+    with pytest.raises(PipelineError):
+        voice_integration.async_create_run(Jarvis(tmp_path))
+
+
+async def test_setup_rejects_bad_config(tmp_path):
+    assert await voice_integration.async_setup(Jarvis(tmp_path), ["not", "a", "mapping"]) is False
+
+
+async def test_voice_data_info_reports_services(tmp_path, server):
+    jarvis = await setup_voice(
+        tmp_path,
+        {
+            "stt": {"host": "127.0.0.1", "port": server.port},
+            "tts": False,
+            "wake": False,
+        },
+    )
+    info = await jarvis.data["voice"].async_info()
+    assert "asr" in info["stt"]
+    assert "tts" not in info and "wake" not in info

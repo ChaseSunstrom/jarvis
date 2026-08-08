@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Density-agnostic fallback: the Jarvis reactor composited over the HUD
+  background. minSdk is 29 so mipmap-anydpi-v26 always wins in practice; this
+  exists so the resource still resolves for any launcher or tool that asks for
+  a plain drawable.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_jarvis_background" />
+    <item android:drawable="@drawable/ic_jarvis_foreground" />
+</layer-list>

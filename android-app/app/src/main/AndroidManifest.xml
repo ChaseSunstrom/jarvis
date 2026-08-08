@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Jarvis — standalone Android app (ai.jarvis.app). No Home Assistant code, no
+  Google Play Services, no Firebase.
+
+  This file is DELIBERATELY COMPLETE: it declares every permission and every
+  component the assist, automation and trigger modules need, so no other module
+  has to edit it. Components under ai.jarvis.app.automation.** are declared here
+  but IMPLEMENTED by the automation module.
+
+  About the permission list. A permission in this manifest is only a *capability
+  declaration*. Nothing here grants anything: every dangerous permission is
+  requested at runtime, at the moment it is first needed, and every action that
+  uses one is gated by the device-local policy table:
+
+    Tier 1 AUTO    — read-only or trivially reversible; runs without asking.
+    Tier 2 NOTIFY  — recoverable state change; ask once, then remember per action.
+    Tier 3 CONFIRM — full-screen consent EVERY time, showing the verbatim action,
+                     parameters and reason. Never auto-approved, never remembered.
+
+  The tier is decided by a LOCAL table on the device. The `tier` field in an
+  incoming server command may only RAISE it (max(local, incoming)), never lower
+  it. See ai.jarvis.app.ui.ApprovalBridge and the automation module's policy
+  store. Each permission below is tagged with the highest tier it serves.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ===================== transport ===================== -->
+    <!-- Tier 1. Talking to jarvis-core over LAN/WireGuard. Cleartext is
+         restricted to the documented hosts in @xml/network_security_config. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- ===================== voice ===================== -->
+    <!-- Tier 1 (the user initiates every capture: gesture, tap or wake word).
+         Audio is streamed to the server's STT and never written to disk. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Tier 1. Volume / audio routing for TTS playback and barge-in. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- ===================== notifications ===================== -->
+    <!-- Tier 1 to post a local notification; ALSO the delivery path for Tier-3
+         consent prompts when the app is in the background — denying this makes
+         approvals time out, which fails closed. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Tier 3 support: raises a pending consent prompt over the lock screen.
+         On Android 14+ this is granted only to calling/alarm apps, so we treat
+         a downgrade to a heads-up notification as the normal case. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Tier 3 support: lets the consent prompt start from the background at
+         all. Special access — the user grants it in Settings > Apps > Special
+         app access > Display over other apps. Without it, a Tier-3 request
+         arriving while the app is backgrounded can only be answered by tapping
+         its notification. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- ===================== foreground services ===================== -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Wake-word / open-mic listening in a foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Short-lived sync work kicked off by a command. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- The persistent command channel to jarvis-core. It is a long-lived
+         WebSocket, which none of the narrower FGS types describe. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Special access, user-granted in Settings; keeps the command channel
+         alive on aggressive OEM/Graphene battery policies. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- ===================== device feedback ===================== -->
+    <!-- Tier 1. Haptic tick when the orb appears. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Tier 1. Torch, via CameraManager.setTorchMode. FLASHLIGHT is a legacy
+         normal permission; the torch itself needs no dangerous permission. -->
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
+    <!-- Tier 2. Ringer mode / Do Not Disturb changes. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Tier 2. Special access (Settings.System.canWrite) — screen brightness,
+         auto-rotate and friends. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- ===================== location ===================== -->
+    <!-- Tier 1 for a coarse fix ("where am I", "is it far"). -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Tier 2. Precise fix — navigation, geofenced triggers. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Tier 2. Location-based triggers while the app is not in use. Requested
+         separately, after foreground location, exactly as the platform demands. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- ===================== people ===================== -->
+    <!-- Tier 3, always. Anything that contacts another human is CONFIRM. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- Tier 1 (resolve a name to a number for the consent prompt) — but the
+         send/call it feeds is Tier 3. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Tier 1. Call state, so Jarvis shuts up during a call. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- ===================== calendar ===================== -->
+    <!-- Tier 1 to read. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Tier 2 to create/modify an event. -->
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
+    <!-- ===================== alarms ===================== -->
+    <!-- Tier 2. Setting an alarm/timer, and scheduling automation triggers. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- ===================== camera & media ===================== -->
+    <!-- Tier 2. "What am I looking at" — an explicit, user-visible capture. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Tier 2. Reading media the user points Jarvis at. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- ===================== bluetooth ===================== -->
+    <!-- Tier 1. Car/headset connection state drives the wake-word gate. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- ===================== packages ===================== -->
+    <!-- Tier 1 to launch an app; Tier 3 to install or uninstall one. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!-- ===================== privileged shell ===================== -->
+    <!-- Tier 3, every time. Shizuku is optional and not bundled; the automation
+         module adds the client library if shell actions are wanted. Declaring
+         the permission string here costs nothing when Shizuku is absent. -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- Hardware is optional so the app installs on any device. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="true" />
+
+    <application
+        android:name=".JarvisApp"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_jarvis"
+        android:roundIcon="@mipmap/ic_jarvis"
+        android:theme="@style/Theme.Jarvis"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true"
+        android:enableOnBackInvokedCallback="false"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+
+        <!--
+          The Jarvis home: orb, tap-to-talk, live transcript, and the nav to
+          Management / Automations / Settings.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Siri-like activation surface. Transparent, never in recents, works on
+          the lock screen. exported=true is required for the system to deliver
+          ACTION_ASSIST (assist gesture / assistant role / adb am start).
+        -->
+        <activity
+            android:name=".JarvisAssistActivity"
+            android:exported="true"
+            android:theme="@style/Theme.JarvisTransparent"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="ai.jarvis.app.assist"
+            android:noHistory="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Server URL, token, pipeline, device name, wake-word gating. -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/activity_settings"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!-- WebView onto jarvis-core's own management UI, locked to that origin. -->
+        <activity
+            android:name=".ManagementActivity"
+            android:exported="false"
+            android:label="@string/activity_management"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
+          THE TIER-3 CONSENT SCREEN. Full-screen over anything, including the
+          lock screen. launchMode is standard on purpose: two concurrent
+          requests stack, and each instance answers its own request id rather
+          than one silently replacing the other. exported=false — only this app
+          may raise a consent prompt.
+        -->
+        <activity
+            android:name=".ApprovalActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisApproval"
+            android:label="@string/activity_approval"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="standard"
+            android:taskAffinity="ai.jarvis.app.approval"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
+          VoiceInteractionService so the app can hold the device assistant role
+          (Settings > Apps > Default apps > Digital assistant app, or the Secure
+          Settings written by adb — see README).
+        -->
+        <service
+            android:name=".assist.JarvisVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:label="@string/voice_interaction_label">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/jarvis_voice_interaction_service" />
+        </service>
+
+        <service
+            android:name=".assist.JarvisVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <!--
+          Stub recognizer. android:recognitionService in
+          jarvis_voice_interaction_service.xml must point at a resolvable
+          component on several OS versions or the voice-interaction entry is
+          rejected. It reports ERROR_CLIENT immediately; real STT is the
+          server's pipeline.
+        -->
+        <service
+            android:name=".assist.JarvisRecognitionService"
+            android:exported="true"
+            android:label="@string/recognition_service_label">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- ================================================================
+             Implemented by the AUTOMATION module (ai.jarvis.app.automation.**).
+             Declared here so that module never has to touch this file.
+             ================================================================ -->
+
+        <!--
+          The device command channel: authenticated WebSocket to jarvis-core,
+          device registration, command dispatch through the local policy table.
+        -->
+        <service
+            android:name="ai.jarvis.app.automation.JarvisAutomationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|dataSync|microphone">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent authenticated WebSocket to the user's self-hosted Jarvis server, so the device can receive and locally authorise commands." />
+        </service>
+
+        <!--
+          UI automation. Off until the user enables it in Settings >
+          Accessibility. Screen content it reads is untrusted data; every tap or
+          text entry it performs is Tier 3.
+        -->
+        <service
+            android:name="ai.jarvis.app.automation.accessibility.JarvisAccessibilityService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/jarvis_accessibility_service" />
+        </service>
+
+        <!--
+          Notification listener — a TRIGGER source only. Notification text is
+          untrusted data: it may start a rule evaluation, but it can never route
+          into the action dispatcher without a fresh human approval.
+        -->
+        <service
+            android:name="ai.jarvis.app.automation.notify.JarvisNotificationListener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Restarts the command channel after a reboot. Protected broadcast. -->
+        <receiver
+            android:name="ai.jarvis.app.automation.triggers.BootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Trigger sources: power, connectivity, headset, airplane mode.
+             All protected system broadcasts. -->
+        <receiver
+            android:name="ai.jarvis.app.automation.triggers.SystemEventReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="android.intent.action.BATTERY_LOW" />
+                <action android:name="android.intent.action.BATTERY_OKAY" />
+                <action android:name="android.intent.action.AIRPLANE_MODE" />
+                <action android:name="android.intent.action.HEADSET_PLUG" />
+                <action android:name="android.media.AUDIO_BECOMING_NOISY" />
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Fired only by this app's own AlarmManager PendingIntents. -->
+        <receiver
+            android:name="ai.jarvis.app.automation.triggers.AlarmReceiver"
+            android:exported="false" />
+
+    </application>
+</manifest>

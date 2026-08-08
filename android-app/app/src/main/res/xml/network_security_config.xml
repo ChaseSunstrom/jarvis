@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Transport posture.
+
+  Jarvis is never exposed to the internet: you reach jarvis-core over the LAN
+  or through WireGuard, with no port forward. That makes plain HTTP tolerable
+  on those links and nowhere else, so:
+
+    * base-config denies cleartext for EVERYTHING. A typo'd or injected
+      `http://evil.example` URL cannot leave the device in the clear.
+    * the domain-config below permits cleartext only for the documented
+      self-hosted names/addresses.
+    * user-installed CAs are trusted ONLY inside that same domain-config, so a
+      private CA can front jarvis-core with HTTPS without weakening TLS for the
+      rest of the app.
+
+  ADD YOUR SERVER HERE. `<domain>` takes hostnames and literal IPs — there is
+  no CIDR syntax, so a LAN address has to be listed literally. If you would
+  rather not edit and rebuild, put HTTPS on jarvis-core (any cert your private
+  CA signs works, thanks to the user trust-anchor below) or reach it over
+  WireGuard by hostname.
+
+  The repo's reference LAN is 192.168.2.0/24 (see docs/security.md); the few
+  entries below cover the common self-hosted cases. Anything not listed must be
+  https:// or the connection is refused by the platform before it is made.
+-->
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Loopback (adb reverse / on-device testing). -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+
+        <!-- mDNS / local-domain names for the Jarvis server. -->
+        <domain includeSubdomains="true">jarvis.local</domain>
+        <domain includeSubdomains="true">jarvis.lan</domain>
+        <domain includeSubdomains="true">jarvis.home.arpa</domain>
+
+        <!-- Reference LAN from docs/security.md. Replace with your server's
+             literal address, or add another <domain> line next to it. -->
+        <domain includeSubdomains="false">192.168.2.1</domain>
+        <domain includeSubdomains="false">192.168.2.10</domain>
+
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Lets a private CA (step-ca, mkcert, your router) front
+                 jarvis-core with real HTTPS. Scoped to these hosts only. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+
+</network-security-config>

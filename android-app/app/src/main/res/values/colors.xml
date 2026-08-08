@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Jarvis HUD palette. Same values as the web HUD and the orb view, so the
+  phone and the browser read as one system.
+-->
+<resources>
+    <!-- Deep HUD navy — every Jarvis surface sits on this. -->
+    <color name="jarvis_bg">#FF04070C</color>
+    <!-- Slightly lifted panel fill for cards/rows. -->
+    <color name="jarvis_surface">#FF0A0F16</color>
+    <!-- Arc-reactor cyan. -->
+    <color name="jarvis_accent">#FF3FD8FF</color>
+    <!-- Muted cyan for secondary chrome and transcripts. -->
+    <color name="jarvis_dim">#CC7FD7EA</color>
+    <!-- Hint / disabled text. -->
+    <color name="jarvis_faint">#FF5A7A86</color>
+    <!-- Thinking amber and speaking gold, matching JarvisOrbView.Mode. -->
+    <color name="jarvis_amber">#FFFF9E2C</color>
+    <color name="jarvis_gold">#FFFFCF5C</color>
+    <!-- Tier-3 consent: approve green, deny red. -->
+    <color name="jarvis_approve">#FF35D08A</color>
+    <color name="jarvis_deny">#FFFF5C5C</color>
+    <!-- Scrim behind the full-screen approval prompt. -->
+    <color name="jarvis_approval_scrim">#E604070C</color>
+</resources>

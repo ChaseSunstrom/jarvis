@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification small icon. The status bar renders small icons as a silhouette
+  (alpha only, tinted by the system), so this is a flat white reactor with no
+  colour information — anything else would come out as a grey blob.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <!-- outer ring -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000"
+        android:pathData="M12,2.6 a9.4,9.4 0 1,0 0.1,0" />
+    <!-- inner rim -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000"
+        android:pathData="M12,6.6 a5.4,5.4 0 1,0 0.1,0" />
+    <!-- core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,9 a3,3 0 1,0 0.1,0" />
+</vector>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  android:allowBackup is already false, so nothing leaves the device either way.
+  This file states it a second time in the API 31+ vocabulary so the intent
+  survives someone flipping allowBackup on: the app's storage holds the server
+  bearer token, the per-action policy store and the audit log. None of those
+  belong in a cloud backup, and none of them should ride a device-to-device
+  transfer to a phone that has not been re-authorised.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
