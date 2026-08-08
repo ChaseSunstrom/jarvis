@@ -9,14 +9,18 @@ FROM python:3.12-slim
 # The whole step is best-effort: if the mirrors stay unreachable the image
 # still builds and the core API (delegate, execute gate) works fully; only
 # code_task (git/OpenCode) is unavailable until the mirror network is fixed.
+# ForceIPv4 avoids the common Docker IPv6 stall (container tries an IPv6 route
+# to the mirror and hangs forever); the timeouts bound every fetch so a blocked
+# mirror fails fast into the WARN instead of hanging the build.
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
         /etc/apt/sources.list.d/debian.sources 2>/dev/null \
         || sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
         /etc/apt/sources.list 2>/dev/null || true; \
-    ( apt-get update \
-      && apt-get install -y --no-install-recommends git curl ca-certificates \
+    ( timeout 180 apt-get -o Acquire::ForceIPv4=true update \
+      && timeout 180 apt-get -o Acquire::ForceIPv4=true install -y \
+           --no-install-recommends git curl ca-certificates \
       && rm -rf /var/lib/apt/lists/* ) \
-    || echo "WARN: apt failed (mirror unreachable). Core API works; code_task needs git/curl — fix outbound network to the Debian mirrors and rebuild."
+    || echo "WARN: apt failed/timed out. Core API works; code_task needs git/curl — fix outbound network to the Debian mirrors and rebuild."
 
 # OpenCode (agentic coding CLI, runs against local Ollama). Pin the version;
 # update deliberately (docs/security.md §updates).

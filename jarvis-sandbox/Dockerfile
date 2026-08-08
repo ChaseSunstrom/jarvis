@@ -4,12 +4,19 @@
 FROM python:3.12-alpine
 
 # A small useful toolbelt for approved commands; nothing setuid.
-# A small toolbelt for approved commands. Best-effort: if the Alpine mirror is
-# unreachable (blocked outbound port 80/443, flaky CDN) the sandbox still runs
-# perfectly on busybox's built-in tools — only bash/coreutils/git/jq extras are
-# missing. The setuid strip below runs regardless of the apk outcome.
-RUN apk add --no-cache bash coreutils git jq \
- || echo "WARN: apk failed; sandbox will use busybox tools only"
+# The executor only needs python + /bin/sh, both already in the base image via
+# busybox — so the DEFAULT build makes NO network calls and cannot hang on a
+# blocked/slow/IPv6-stalled Alpine mirror. Extra convenience tools for approved
+# commands (bash, coreutils, git, jq) are opt-in and bounded by a timeout so
+# they can never hang the build:
+#   docker compose build --build-arg SANDBOX_EXTRA_TOOLS=1 jarvis-sandbox
+ARG SANDBOX_EXTRA_TOOLS=0
+RUN if [ "$SANDBOX_EXTRA_TOOLS" = "1" ]; then \
+      timeout 120 apk add --no-cache bash coreutils git jq \
+        || echo "WARN: apk failed/timed out; sandbox will use busybox tools only"; \
+    else \
+      echo "sandbox: busybox tools only (set --build-arg SANDBOX_EXTRA_TOOLS=1 for bash/coreutils/git/jq)"; \
+    fi
 RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
 RUN adduser -D -u 10001 sandbox

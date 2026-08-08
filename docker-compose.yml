@@ -50,7 +50,12 @@ services:
       retries: 3
 
   jarvis-sandbox:
-    build: ./jarvis-sandbox
+    build:
+      context: ./jarvis-sandbox
+      args:
+        # busybox-only by default (no network at build). Set to 1 to add
+        # bash/coreutils/git/jq: SANDBOX_EXTRA_TOOLS=1 docker compose build
+        SANDBOX_EXTRA_TOOLS: ${SANDBOX_EXTRA_TOOLS:-0}
     container_name: jarvis-sandbox
     restart: unless-stopped
     network_mode: "none"               # verified by tests/adversarial + scripts/egress-audit.sh
