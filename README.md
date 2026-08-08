@@ -50,6 +50,19 @@ docker compose up -d --build
 Then the HUD is at `http://<server>:8199` (over WireGuard/LAN). Phone build:
 `docs/android.md`.
 
+### Build troubleshooting
+
+**`apt-get`/`apk` "Connection timed out" during `docker compose build`** — this
+is a network problem on the build host, not the code. apt defaults to plain
+HTTP (port 80); many networks block outbound port 80. The Dockerfiles now
+switch apt to HTTPS and treat the package step as best-effort, so the images
+build even when the mirrors are unreachable — but `code_task` needs `git`, so
+if apt was skipped you'll see a `WARN:` in the build log and code tasks won't
+work until outbound HTTPS to the Debian/Alpine mirrors is available. If your
+Docker daemon needs a proxy, configure it in `~/.docker/config.json` (build
+args) or the daemon's `http-proxy`/`https-proxy` service settings and rebuild.
+The core orchestrator API and the sandbox work regardless.
+
 ## Tests
 
 ```bash
