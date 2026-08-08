@@ -42,9 +42,17 @@ tested in `jarvis-orchestrator/tests/test_api.py`.
 
 | service | network | user | rootfs | mounts | caps |
 |---|---|---|---|---|---|
-| jarvis-web | LAN/WG, :8199 | node | rw (image) | none | default |
-| jarvis-orchestrator | HA host only, :8188 | 10002 | read-only | `./jarvis-workspace` | drop ALL |
+| jarvis-web | host (:8199), LAN/WG via ufw | node | rw (image) | none | default |
+| jarvis-orchestrator | host (:8188), HA host only via ufw | 10002 | read-only | `./jarvis-workspace` | drop ALL |
 | jarvis-sandbox | **none** | 10001 | read-only | `./jarvis-workspace` | drop ALL |
+
+`jarvis-web` and `jarvis-orchestrator` use `network_mode: host` so their
+`127.0.0.1` defaults reach HA (8123) and Ollama (11434) on the same host, and
+so ufw (not Docker's DNAT, which can bypass ufw) is the single authority on
+who may reach :8199 and :8188. **`jarvis-sandbox` must never get host or LAN
+networking** — it executes LLM-proposed commands, so `network: none` and the
+workspace file-queue are its containment; this is asserted by
+`scripts/egress-audit.sh` and the compose config.
 
 `no-new-privileges` on both isolated services; sandbox `mem_limit 1g`,
 `pids_limit 128`, `cpus 2`, tmpfs `/tmp`.

@@ -2,23 +2,32 @@
 # Wyoming + SearXNG stack — it does not replace it. One `docker compose up -d`.
 #
 # Security posture (see docs/security.md):
-#   - jarvis-web:          LAN/WireGuard only, port 8199.
-#   - jarvis-orchestrator: reachable from HA only; no LAN inbound (ufw).
+#   - jarvis-web:          host networking; binds :8199. LAN/WireGuard only (ufw).
+#   - jarvis-orchestrator: host networking; binds :8188. Reachable from HA
+#                          host only; no LAN inbound (ufw).
 #   - jarvis-sandbox:      network_mode: none, non-root, read-only rootfs,
 #                          cap_drop ALL, no-new-privileges, tight limits.
-#                          The ONLY crossover is ./jarvis-workspace.
+#                          The ONLY crossover is ./jarvis-workspace. This stays
+#                          isolated by design — it runs LLM-proposed commands,
+#                          so it must NEVER get host/LAN networking.
+#
+# NOTE: web + orchestrator use host networking so their 127.0.0.1 defaults
+# reach HA (8123) and Ollama (11434) on the host. Under host mode `ports:` is
+# ignored — the app's own bind port (PORT/8199, uvicorn/8188) is what's
+# exposed, and ufw is what limits who can reach it.
 
 services:
   jarvis-web:
     build: ./jarvis-web
     container_name: jarvis-web
     restart: unless-stopped
+    network_mode: "host"
     environment:
       - HA_URL=${HA_URL:-http://127.0.0.1:8123}
       - HA_TOKEN=${JARVIS_HA_TOKEN}
+      - PORT=8199
       - JARVIS_PIPELINE=${JARVIS_PIPELINE:-Jarvis}
       - JARVIS_TTS_VOICE=${JARVIS_TTS_VOICE:-en_GB-alan-medium}
-    ports: ["8199:8199"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8199/healthz"]
       interval: 30s
@@ -29,6 +38,7 @@ services:
     build: ./jarvis-orchestrator
     container_name: jarvis-orchestrator
     restart: unless-stopped
+    network_mode: "host"           # binds :8188; ufw allows the HA host only
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
       - PLANNER_MODEL=${PLANNER_MODEL:-qwen3:8b}
@@ -36,7 +46,6 @@ services:
       - WORKSPACE=/workspace
       - ORCHESTRATOR_TOKEN=${ORCHESTRATOR_TOKEN}
       - APPROVAL_SECRET=${APPROVAL_SECRET}
-    ports: ["8188:8188"]           # ufw: allow from HA host only
     volumes:
       - ./jarvis-workspace:/workspace   # shared with sandbox; NOT host root
     read_only: true
