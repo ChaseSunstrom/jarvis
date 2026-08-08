@@ -43,13 +43,24 @@ echo "==> Copying Jarvis sources -> $FORK_DIR/app/src/main"
 rm -rf "$FORK_DIR/app/src/main/kotlin/io/homeassistant/companion/android/jarvis"
 mkdir -p "$FORK_DIR/app/src/main/kotlin/io/homeassistant/companion/android" \
          "$FORK_DIR/app/src/main/res/values" \
-         "$FORK_DIR/app/src/main/res/xml"
+         "$FORK_DIR/app/src/main/res/xml" \
+         "$FORK_DIR/app/src/main/res/drawable" \
+         "$FORK_DIR/app/src/main/res/mipmap" \
+         "$FORK_DIR/app/src/main/res/mipmap-anydpi-v26"
 cp -R "$SCRIPT_DIR/overlay/app/src/main/kotlin/io/homeassistant/companion/android/jarvis" \
       "$FORK_DIR/app/src/main/kotlin/io/homeassistant/companion/android/"
 cp "$SCRIPT_DIR/overlay/app/src/main/res/values/jarvis_styles.xml" \
    "$FORK_DIR/app/src/main/res/values/jarvis_styles.xml"
 cp "$SCRIPT_DIR/overlay/app/src/main/res/xml/jarvis_voice_interaction_service.xml" \
    "$FORK_DIR/app/src/main/res/xml/jarvis_voice_interaction_service.xml"
+# Jarvis launcher icon (adaptive + pre-26 fallback).
+cp "$SCRIPT_DIR/overlay/app/src/main/res/drawable/ic_jarvis_foreground.xml" \
+   "$SCRIPT_DIR/overlay/app/src/main/res/drawable/ic_jarvis_background.xml" \
+   "$FORK_DIR/app/src/main/res/drawable/"
+cp "$SCRIPT_DIR/overlay/app/src/main/res/mipmap/ic_jarvis.xml" \
+   "$FORK_DIR/app/src/main/res/mipmap/ic_jarvis.xml"
+cp "$SCRIPT_DIR/overlay/app/src/main/res/mipmap-anydpi-v26/ic_jarvis.xml" \
+   "$FORK_DIR/app/src/main/res/mipmap-anydpi-v26/ic_jarvis.xml"
 
 # 3. Run the idempotent patcher (manifest merge + mock google-services.json).
 echo "==> Running overlay/patches/apply.py"

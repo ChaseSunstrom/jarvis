@@ -44,6 +44,21 @@ PERMISSIONS = (
 # Inserted just before </application>. Component names are relative (".jarvis.*")
 # so they resolve against the app namespace (io.homeassistant.companion.android).
 COMPONENTS_XML = """\
+        <!-- Jarvis home / launcher: the app opens into the Jarvis HUD. -->
+        <activity
+            android:name=".jarvis.JarvisHomeActivity"
+            android:exported="true"
+            android:label="Jarvis"
+            android:theme="@style/Theme.JarvisHome"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <!-- Siri-like activation surface + full in-orb conversation. -->
         <activity
             android:name=".jarvis.JarvisAssistActivity"
@@ -162,11 +177,57 @@ def patch_main_manifest(root: Path) -> None:
     )
     text = text[:close] + comp_block + text[close:]
 
+    # 3. Demote Home Assistant's LaunchActivity so Jarvis is the sole launcher
+    #    (strip its LAUNCHER / LEANBACK_LAUNCHER categories). It stays startable
+    #    explicitly for the Dashboard button.
+    text, demoted = _demote_launcher(text)
+
+    # 4. Rebrand the app: name -> Jarvis, icon -> the Jarvis reactor.
+    text, rebranded = _rebrand_application(text)
+
     manifest.write_text(text, encoding="utf-8")
     info(
         "AndroidManifest.xml: merged Jarvis permissions + components "
-        f"({len(perms)} permission(s) added)."
+        f"({len(perms)} permission(s) added); "
+        f"launcher demoted={demoted}; rebranded={rebranded}."
     )
+
+
+def _demote_launcher(text: str) -> tuple[str, bool]:
+    m = re.search(
+        r'(<activity\b[^>]*android:name="io\.homeassistant\.companion\.android'
+        r'\.launch\.LaunchActivity".*?</activity>)',
+        text, re.S,
+    )
+    if not m:
+        info("WARN: LaunchActivity not found; you may see two launcher icons.")
+        return text, False
+    block = m.group(1)
+    new_block = re.sub(
+        r'[ \t]*<category\s+android:name="android\.intent\.category\.'
+        r'(LAUNCHER|LEANBACK_LAUNCHER)"\s*/>\n?',
+        "", block,
+    )
+    if new_block == block:
+        return text, False
+    return text[: m.start(1)] + new_block + text[m.end(1):], True
+
+
+def _rebrand_application(text: str) -> bool:
+    m = re.search(r"<application\b[^>]*>", text)
+    if not m:
+        return text, False
+    tag = m.group(0)
+    new = tag
+    new = re.sub(r'android:label="[^"]*"', 'android:label="Jarvis"', new, count=1)
+    new = re.sub(r'android:icon="[^"]*"', 'android:icon="@mipmap/ic_jarvis"', new, count=1)
+    new = re.sub(
+        r'android:roundIcon="[^"]*"',
+        'android:roundIcon="@mipmap/ic_jarvis"', new, count=1,
+    )
+    if new == tag:
+        return text, False
+    return text[: m.start()] + new + text[m.end():], True
 
 
 def write_mock_google_services(root: Path) -> None:

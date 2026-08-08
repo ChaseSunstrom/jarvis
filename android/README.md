@@ -10,6 +10,9 @@ by adding a third product flavor, `jarvis`, next to upstream's `full` and
 
 | Piece | Purpose |
 |---|---|
+| Branding | App label **Jarvis** + a vector arc-reactor launcher icon (`res/mipmap/ic_jarvis`, adaptive + monochrome + pre-26 fallback). `apply.py` rewrites the `<application>` tag and strips HA `LaunchActivity`'s launcher categories, so there's exactly one icon and it's Jarvis. |
+| `JarvisHomeActivity` | The launcher screen — the app opens into the Jarvis HUD (orb, tap-to-talk, live transcript/response) instead of HA's WebView. Buttons: **DASHBOARD** (HA's own web UI / onboarding) and **SETTINGS**. |
+| `assist/JarvisConversation` | Shared conversation engine (mic + pipeline + TTS + VAD + barge-in + multi-turn) used by **both** the home screen and the activation popup, so they behave identically. |
 | `JarvisAssistActivity` | Siri-like activation **and** the full conversation: transparent immersive activity, edge-light sweep + arc-reactor orb (`JarvisOrbView`) + haptic tick, then runs the whole voice turn itself (LISTENING→THINKING→SPEAKING→loop) with barge-in. Target: <300 ms cold-to-listening. Works on the lock screen. |
 | `assist/AssistPipelineClient`, `assist/MicStreamer`, `assist/TtsPlayer` | Self-contained Assist client: OkHttp WebSocket to HA's public API (Kotlin port of the web `pipeline.ts`), `AudioRecord` 16 kHz mic streaming, and `MediaPlayer` TTS playback. No HA-app internals. |
 | `JarvisConfig` / `JarvisSettingsActivity` | HA URL + long-lived token + pipeline name, stored privately; a minimal settings form shown on first run. |

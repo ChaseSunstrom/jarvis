@@ -16,4 +16,13 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <!-- Opaque dark theme for the Jarvis home/launcher screen. -->
+    <color name="jarvis_bg">#FF04070C</color>
+    <style name="Theme.JarvisHome" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/jarvis_bg</item>
+        <item name="android:statusBarColor">@color/jarvis_bg</item>
+        <item name="android:navigationBarColor">@color/jarvis_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

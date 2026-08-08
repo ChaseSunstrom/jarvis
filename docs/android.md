@@ -76,6 +76,32 @@ handoff: we now own the pipeline plumbing (mirrored from the tested web
 client) instead of borrowing HA's, in exchange for the orb owning the whole
 experience.
 
+### The app is Jarvis (branding, launcher, surfaces)
+
+The overlay rebrands the fork so Jarvis is the app, not a feature inside it:
+
+- **Name + icon**: `apply.py` rewrites the `<application>` tag to
+  `android:label="Jarvis"` and `android:icon/roundIcon="@mipmap/ic_jarvis"`.
+  The icon is a vector arc-reactor matching the HUD (adaptive icon with a
+  monochrome layer for themed icons, plus a pre-API-26 fallback).
+- **Launcher**: `JarvisHomeActivity` takes `MAIN`/`LAUNCHER`, and HA's
+  `launch.LaunchActivity` has its launcher categories stripped — one icon,
+  and it opens the Jarvis HUD (orb, tap-to-talk, live transcript/response).
+- **Assistant surface**: the assist gesture / assistant role / wake word open
+  `JarvisAssistActivity` (transparent, lock-screen capable) — never HA's own
+  assist dialog. That requires the assistant role to point at Jarvis: run
+  `scripts/adb-jarvis-role.sh`, or Settings → Apps → Default apps → Digital
+  assistant app → Jarvis. **Until the role is set, the system still shows the
+  previous assistant's box.**
+- Both surfaces share one engine (`assist/JarvisConversation.kt`), so the
+  popup and the home screen behave identically.
+
+**What remains Home Assistant's UI:** the Lovelace dashboard itself — that is
+HA's web frontend, and reimplementing it natively is out of scope. It stays
+reachable from the home screen's **DASHBOARD** button (which starts HA's
+`LaunchActivity`, also handling onboarding/server login). Everything
+assistant-related is Jarvis.
+
 ### Configuration (first run)
 
 The client needs the HA base URL and a long-lived token. On first launch (or
