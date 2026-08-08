@@ -17,6 +17,26 @@
 # exposed, and ufw is what limits who can reach it.
 
 services:
+  # One-shot: create the shared workspace queue dirs with perms both non-root
+  # services (uid 10001 sandbox, 10002 orchestrator) can write. Bind mounts
+  # keep host ownership, so a non-root container can't mkdir here on its own.
+  # Reuses the sandbox image (no extra pull); runs as root only to fix perms,
+  # then exits. network: none — it needs nothing but the volume.
+  jarvis-init:
+    build:
+      context: ./jarvis-sandbox
+    container_name: jarvis-init
+    user: "0:0"
+    network_mode: "none"
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      mkdir -p /workspace/.exec/queue /workspace/.exec/results /workspace/.code_jobs &&
+      chmod -R 0777 /workspace/.exec /workspace/.code_jobs &&
+      echo "jarvis-init: workspace prepared"
+    volumes:
+      - ./jarvis-workspace:/workspace
+    restart: "no"
+
   jarvis-web:
     build: ./jarvis-web
     container_name: jarvis-web
@@ -38,6 +58,9 @@ services:
     build: ./jarvis-orchestrator
     container_name: jarvis-orchestrator
     restart: unless-stopped
+    depends_on:
+      jarvis-init:
+        condition: service_completed_successfully
     network_mode: "host"           # binds :8188; ufw allows the HA host only
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
@@ -67,6 +90,9 @@ services:
         SANDBOX_EXTRA_TOOLS: ${SANDBOX_EXTRA_TOOLS:-0}
     container_name: jarvis-sandbox
     restart: unless-stopped
+    depends_on:
+      jarvis-init:
+        condition: service_completed_successfully
     network_mode: "none"               # verified by tests/adversarial + scripts/egress-audit.sh
     user: "10001:10001"
     read_only: true
