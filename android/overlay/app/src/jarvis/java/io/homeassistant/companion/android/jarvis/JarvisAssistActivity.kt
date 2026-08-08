@@ -48,7 +48,29 @@ class JarvisAssistActivity : Activity() {
             setTurnScreenOn(true)
         }
 
-        orbView = JarvisOrbView(this)
+        // Immersive: let the popup own the whole display, edge-to-edge, with
+        // system bars hidden (swipe to reveal). Guarded for older APIs.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let { c ->
+                c.hide(android.view.WindowInsets.Type.systemBars())
+                c.systemBarsBehavior =
+                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                )
+        }
+
+        orbView = JarvisOrbView(this).apply {
+            chromeEnabled = true
+            setStateLabel("LISTENING")
+        }
         setContentView(
             orbView,
             ViewGroup.LayoutParams(
