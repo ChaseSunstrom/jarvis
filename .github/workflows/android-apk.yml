@@ -74,10 +74,12 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx5g"
         run: |
           set -eu
+          # Jarvis is baked into src/main and shipped as the degoogled
+          # `minimal` flavor (no brittle custom-flavor inheritance).
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew :app:assembleJarvisRelease --no-daemon --stacktrace
+            ./gradlew :app:assembleMinimalRelease --no-daemon --stacktrace
           else
-            ./gradlew :app:assembleJarvisDebug --no-daemon --stacktrace
+            ./gradlew :app:assembleMinimalDebug --no-daemon --stacktrace
           fi
 
       - name: Package + sign APK
@@ -89,7 +91,7 @@ jobs:
           KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -eu
-          OUTDIR="ha-android-fork/app/build/outputs/apk/jarvis/$BUILD_TYPE"
+          OUTDIR="ha-android-fork/app/build/outputs/apk/minimal/$BUILD_TYPE"
           ls -la "$OUTDIR"
           SRC="$(ls "$OUTDIR"/*.apk | head -n1)"
           echo "built: $SRC"

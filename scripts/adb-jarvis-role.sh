@@ -9,30 +9,44 @@
 # launch Jarvis again. Signature-protected app data survives updates; the
 # role assignment does not.
 #
-# Component names match the jarvis flavor:
-#   applicationId = io.homeassistant.companion.android.jarvis
-#   classes live in io.homeassistant.companion.android.jarvis.* (manifest
-#   namespace io.homeassistant.companion.android + .jarvis package dir).
+# Jarvis ships inside the degoogled `minimal` flavor, so the installed
+# applicationId is io.homeassistant.companion.android.minimal (a debug build
+# adds a further .debug suffix). The Kotlin CLASSES always live in
+# io.homeassistant.companion.android.jarvis.* regardless of applicationId.
+#
+# The package is auto-detected from what's actually installed; override with
+# `JARVIS_PKG=<id> scripts/adb-jarvis-role.sh` or pass it as the first arg.
+# (The APK build workflow also prints exact commands for its resolved id.)
 #
 set -euo pipefail
 
-PKG="io.homeassistant.companion.android.jarvis"
-ASSIST_ACTIVITY="$PKG/io.homeassistant.companion.android.jarvis.JarvisAssistActivity"
-VIS_SERVICE="$PKG/io.homeassistant.companion.android.jarvis.JarvisVoiceInteractionService"
-
+CLASS_PKG="io.homeassistant.companion.android.jarvis"
 err() { echo "ERROR: $*" >&2; exit 1; }
 
 command -v adb >/dev/null 2>&1 || err "adb not found on PATH. Install Android platform-tools."
 
-STATE="$(adb get-state 2>/dev/null || true)"
-if [ "$STATE" != "device" ]; then
-    err "No device in 'device' state (adb get-state -> '${STATE:-none}').
-Check: cable connected, USB debugging enabled, this host authorized on the phone ('adb devices')."
-fi
+STATE0="$(adb get-state 2>/dev/null || true)"
+[ "$STATE0" = "device" ] || err "No device in 'device' state (adb get-state -> '${STATE0:-none}').
+Check: cable connected, USB debugging enabled, this host authorized ('adb devices')."
 
-if ! adb shell pm path "$PKG" >/dev/null 2>&1; then
-    err "Package $PKG is not installed on the device. Install the jarvis-flavor APK first."
+# Resolve the installed package: explicit override, else the first candidate
+# that adb reports installed.
+PKG="${JARVIS_PKG:-${1:-}}"
+if [ -z "$PKG" ]; then
+    for cand in \
+        io.homeassistant.companion.android.minimal \
+        io.homeassistant.companion.android.minimal.debug \
+        io.homeassistant.companion.android.jarvis \
+        io.homeassistant.companion.android.jarvis.debug \
+        io.homeassistant.companion.android; do
+        if adb shell pm path "$cand" >/dev/null 2>&1; then PKG="$cand"; break; fi
+    done
 fi
+[ -n "$PKG" ] || err "Could not find an installed Home Assistant/Jarvis package. Install the APK first, or set JARVIS_PKG."
+echo "==> Using package: $PKG"
+
+ASSIST_ACTIVITY="$PKG/$CLASS_PKG.JarvisAssistActivity"
+VIS_SERVICE="$PKG/$CLASS_PKG.JarvisVoiceInteractionService"
 
 echo "==> Setting assistant Secure Settings..."
 adb shell settings put secure assistant "$ASSIST_ACTIVITY"

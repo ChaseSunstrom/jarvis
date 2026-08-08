@@ -24,7 +24,7 @@ app data and clears the assistant role.
 
 ```bash
 # in the fork checkout, after android/apply-to-fork.sh
-./gradlew :app:assembleJarvisRelease
+./gradlew :app:assembleMinimalRelease
 
 # zipalign is handled by AGP for unsigned release outputs on recent versions;
 # if you use the -unsigned artifact, align first:
@@ -43,9 +43,9 @@ apksigner verify --print-certs jarvis-companion-vX.Y.Z.apk
 Record the SHA-256 cert digest printed by `apksigner verify --print-certs` —
 you will compare it on first install.
 
-Alternatively, configure a `jarvisRelease` signing config in the fork's
+Alternatively, configure a `minimalRelease` signing config in the fork's
 Gradle (keystore path/passwords via `~/.gradle/gradle.properties`, never
-committed) so `assembleJarvisRelease` emits a signed APK directly.
+committed) so `assembleMinimalRelease` emits a signed APK directly.
 
 ## 3. Publish to GitHub Releases
 
@@ -57,11 +57,11 @@ latest release.
 
 1. Install Obtainium (from GitHub Releases or F-Droid/Accrescent).
 2. **Add App** → paste your fork's GitHub URL (`https://github.com/<you>/android`).
-3. Obtainium detects release APKs; pick the jarvis APK if multiple are attached.
+3. Obtainium detects release APKs; pick the minimal-flavor APK if multiple are attached.
 4. On **first install**, verify the signature out-of-band:
 
    ```bash
-   adb shell pm path io.homeassistant.companion.android.jarvis
+   adb shell pm path io.homeassistant.companion.android.minimal
    adb pull <path> /tmp/installed.apk
    apksigner verify --print-certs /tmp/installed.apk
    # compare SHA-256 digest against the one recorded at signing time

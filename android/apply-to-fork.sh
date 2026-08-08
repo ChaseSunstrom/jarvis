@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Apply the Jarvis overlay to a home-assistant/android fork checkout.
-# Safe to re-run: the copy is a clean replace of app/src/jarvis and
+# Safe to re-run: the copy is a clean replace of the jarvis package dir and
 # overlay/patches/apply.py is fully idempotent.
 #
 # Usage:
@@ -33,13 +33,25 @@ if [ ! -f "$FORK_DIR/app/build.gradle.kts" ]; then
     exit 1
 fi
 
-# 2. Copy the jarvis flavor source set (clean replace so deletions propagate).
-echo "==> Copying overlay/app/src/jarvis -> $FORK_DIR/app/src/jarvis"
-rm -rf "$FORK_DIR/app/src/jarvis"
-cp -R "$SCRIPT_DIR/overlay/app/src/jarvis" "$FORK_DIR/app/src/"
+# 2. Copy the Jarvis sources + resources into the MAIN source set. Jarvis is
+#    baked into main and built as the existing degoogled `minimal` flavor, so
+#    there is no brittle flavor-inheritance to maintain. Our files are
+#    uniquely named (kotlin/.../jarvis/**, res/values/jarvis_styles.xml,
+#    res/xml/jarvis_voice_interaction_service.xml) so they never clobber
+#    upstream files. Clean-replace only our own jarvis package dir.
+echo "==> Copying Jarvis sources -> $FORK_DIR/app/src/main"
+rm -rf "$FORK_DIR/app/src/main/kotlin/io/homeassistant/companion/android/jarvis"
+mkdir -p "$FORK_DIR/app/src/main/kotlin/io/homeassistant/companion/android" \
+         "$FORK_DIR/app/src/main/res/values" \
+         "$FORK_DIR/app/src/main/res/xml"
+cp -R "$SCRIPT_DIR/overlay/app/src/main/kotlin/io/homeassistant/companion/android/jarvis" \
+      "$FORK_DIR/app/src/main/kotlin/io/homeassistant/companion/android/"
+cp "$SCRIPT_DIR/overlay/app/src/main/res/values/jarvis_styles.xml" \
+   "$FORK_DIR/app/src/main/res/values/jarvis_styles.xml"
+cp "$SCRIPT_DIR/overlay/app/src/main/res/xml/jarvis_voice_interaction_service.xml" \
+   "$FORK_DIR/app/src/main/res/xml/jarvis_voice_interaction_service.xml"
 
-# 3. Run the idempotent patcher (flavor, source sets, deps, AssistActivity
-#    helper, mock google-services.json).
+# 3. Run the idempotent patcher (manifest merge + mock google-services.json).
 echo "==> Running overlay/patches/apply.py"
 python3 "$SCRIPT_DIR/overlay/patches/apply.py" "$FORK_DIR"
 
@@ -51,11 +63,13 @@ Next steps:
   1. Create a signing keystore (once) - see android/keystore.md:
        keytool -genkeypair -v -keystore jarvis-release.keystore \\
          -alias jarvis -keyalg RSA -keysize 4096 -validity 10000
-  2. Build the release APK (inside $FORK_DIR):
-       ./gradlew :app:assembleJarvisRelease
-  3. Sign + verify:
+  2. Build the APK (inside $FORK_DIR) - Jarvis ships in the degoogled
+     'minimal' flavor:
+       ./gradlew :app:assembleMinimalDebug     # installable, no signing setup
+       ./gradlew :app:assembleMinimalRelease    # then sign per keystore.md
+  3. Sign + verify a release build:
        apksigner sign --ks jarvis-release.keystore --ks-key-alias jarvis \\
-         app/build/outputs/apk/jarvis/release/app-jarvis-release-unsigned.apk
+         app/build/outputs/apk/minimal/release/app-minimal-release-unsigned.apk
        apksigner verify --print-certs <signed.apk>
   4. Install, then re-apply the GrapheneOS assistant role (needed after
      EVERY install/update):

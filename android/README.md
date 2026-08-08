@@ -15,7 +15,7 @@ by adding a third product flavor, `jarvis`, next to upstream's `full` and
 | `JarvisConfig` / `JarvisSettingsActivity` | HA URL + long-lived token + pipeline name, stored privately; a minimal settings form shown on first run. |
 | `JarvisVoiceInteractionService` (+ session service/session) | Lets the app hold ROLE_ASSISTANT / be the device assistant on GrapheneOS. The session is a trampoline that launches `JarvisAssistActivity`. |
 | `WakeWordGate` | Pure-logic battery gate for always-on "Hey Jarvis" (home zone / car Bluetooth / waking hours). The detection itself is the HA app's existing microWakeWord support. |
-| Flavor plumbing (`overlay/patches/apply.py`) | `jarvis` flavor extends **minimal** (no Google Play Services — GrapheneOS is degoogled): appId suffix `.jarvis`, minimal's source dirs + deps mirrored in, mock `google-services.json` guard. |
+| Overlay plumbing (`overlay/patches/apply.py`) | Jarvis code lives in **`src/main`** and ships in the existing degoogled **`minimal`** flavor (no Google Play Services). The patcher just merges Jarvis permissions + components into `src/main/AndroidManifest.xml` and writes a mock `google-services.json`. No custom flavor, so there's no brittle flavor-inheritance to maintain. Installed applicationId: `io.homeassistant.companion.android.minimal` (debug adds `.debug`). |
 
 ## Layout
 
@@ -25,11 +25,13 @@ android/
 ├── keystore.md               <- signing + Obtainium distribution
 ├── apply-to-fork.sh          <- clone/copy/patch, safe to re-run
 └── overlay/
-    ├── app/src/jarvis/       <- complete flavor source set (copied verbatim)
-    │   ├── AndroidManifest.xml
-    │   ├── java/io/homeassistant/companion/android/jarvis/*.kt
-    │   └── res/{values/styles.xml, xml/jarvis_voice_interaction_service.xml}
-    └── patches/apply.py      <- idempotent Gradle/Kotlin patcher
+    ├── app/src/main/         <- copied into the fork's main source set
+    │   ├── kotlin/io/homeassistant/companion/android/jarvis/*.kt
+    │   │       └── assist/{AssistPipelineClient,MicStreamer,TtsPlayer}.kt
+    │   └── res/{values/jarvis_styles.xml, xml/jarvis_voice_interaction_service.xml}
+    └── patches/
+        ├── apply.py               <- idempotent manifest-merge patcher
+        └── flavor-manifest.old.xml <- reference: the old flavor manifest
 ```
 
 ## Build
@@ -65,15 +67,15 @@ cd android
 # or: HA_ANDROID_DIR=~/src/ha-android ./apply-to-fork.sh
 
 cd ha-android-fork
-./gradlew :app:assembleJarvisRelease  # then sign per keystore.md
-# quick installable build with no signing setup:
-./gradlew :app:assembleJarvisDebug
+./gradlew :app:assembleMinimalDebug    # installable, no signing setup
+./gradlew :app:assembleMinimalRelease  # then sign per keystore.md
 ```
 
-Requires JDK 21 and the Android SDK; the fork's `versions` files pin the
-rest. The resulting applicationId is
-`io.homeassistant.companion.android.jarvis`, so it installs alongside a stock
-HA app if one is present.
+Requires JDK 17 and the Android SDK; the fork's `versions` files pin the
+rest. Jarvis rides in the **minimal** flavor, so the applicationId is
+`io.homeassistant.companion.android.minimal` (a debug build adds `.debug`).
+It installs alongside a stock **full**-flavor HA app (base id) if one is
+present.
 
 ## The adb re-apply requirement (read this)
 

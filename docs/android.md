@@ -1,45 +1,52 @@
-# P5 — Android companion app (Jarvis flavor of home-assistant/android)
+# P5 — Android companion app (Jarvis on home-assistant/android)
 
 The phone side of Jarvis is a fork of
 [home-assistant/android](https://github.com/home-assistant/android)
-(Apache-2.0) with a third product flavor, `jarvis`, applied as an overlay —
-see `android/README.md` for the mechanics. This doc covers the design
-decisions, the GrapheneOS caveats, and the P5 acceptance gate.
+(Apache-2.0) with the Jarvis code added to the **main** source set and shipped
+in the existing degoogled **`minimal`** flavor — applied as an overlay, see
+`android/README.md` for the mechanics. This doc covers the design decisions,
+the GrapheneOS caveats, and the P5 acceptance gate.
 
 ## 1. Fork + overlay build
 
 We never vendor the fork. `android/apply-to-fork.sh`:
 
 1. clones `home-assistant/android` at depth 1 (or reuses `HA_ANDROID_DIR`),
-2. copies `android/overlay/app/src/jarvis/` → `app/src/jarvis/`,
+2. copies the Jarvis sources into the **main** source set
+   (`app/src/main/kotlin/.../jarvis/**`, `res/values/jarvis_styles.xml`,
+   `res/xml/jarvis_voice_interaction_service.xml`) — uniquely named so they
+   never clobber upstream files,
 3. runs `android/overlay/patches/apply.py` (idempotent), which
-   - registers the `jarvis` product flavor (dimension `version`,
-     `applicationIdSuffix ".jarvis"`, `versionNameSuffix "-jarvis"`),
-   - wires the jarvis source set to also compile `src/minimal/*`,
-   - mirrors `minimalImplementation` deps as `jarvisImplementation`,
+   - merges the Jarvis permissions + components into
+     `app/src/main/AndroidManifest.xml` (marker-guarded),
    - writes a mock `app/google-services.json` if none exists.
 
-   (Earlier versions also patched a `newJarvisIntent()` helper into HA's
-   `AssistActivity`; the overlay is now a self-contained assist client and no
-   longer forwards to it, so that step is disabled.)
+Build: `./gradlew :app:assembleMinimalDebug` (or `assembleMinimalRelease`,
+signed per `android/keystore.md`), distribute via GitHub Releases + Obtainium.
 
-Build: `./gradlew :app:assembleJarvisRelease`, sign with our own keystore
-(`android/keystore.md`), distribute via GitHub Releases + Obtainium.
+### Why ship in `minimal` (not a custom flavor)
 
-### Flavor rationale: extend `minimal`, not `full`
+Upstream ships two flavors via a convention plugin: `full` (Google Play
+Services: FCM push, fused location, Wear) and `minimal` (no GMS). The target
+device runs GrapheneOS, which is degoogled, so we want `minimal`.
 
-Upstream ships two flavors: `full` (Google Play Services: FCM push, fused
-location, Wear) and `minimal` (no GMS). The target device runs GrapheneOS,
-which is degoogled; even with sandboxed Play services installed we don't want
-the app depending on them. So `jarvis` **extends `minimal`**: it compiles
-minimal's flavor-specific classes (WebSocket-based push, framework location)
-plus the jarvis source set on top. Consequences:
+An earlier design added a third `jarvis` flavor that "extended" minimal, but
+upstream moved flavor **sources, dependencies and BuildConfig wiring** into
+convention plugins, and a new flavor cannot cleanly inherit all of that —
+it produced a cascade of unresolved-reference build failures
+(`LocationSensorManager`, `MatterManagerImpl`, cronet, …). So Jarvis now lives
+in **`src/main`** (compiled into every flavor) and we simply build the
+existing, known-good **`minimal`** flavor. Consequences:
 
-- Push arrives over the app's persistent WebSocket connection, not FCM.
-- No Play-services crash reporting/analytics — fine, we don't want them.
-- The mock `google-services.json` exists only so tooling that keys off the
-  file's presence doesn't break; **no flavor built from it can use FCM**,
-  which is expected.
+- Zero flavor-inheritance to maintain — robust against upstream refactors.
+- Installed applicationId is `io.homeassistant.companion.android.minimal`
+  (a debug build adds `.debug`); it installs alongside a stock **full** HA.
+- Push is over the app's WebSocket connection, not FCM; the mock
+  `google-services.json` is only a tooling-presence guard, **no FCM**.
+- The Jarvis Kotlin classes stay in package
+  `io.homeassistant.companion.android.jarvis.*` regardless of applicationId,
+  so the assistant-role component names are stable (see
+  `scripts/adb-jarvis-role.sh`, which auto-detects the installed package).
 
 ### Self-contained assist client (no HA-app internals)
 
@@ -98,7 +105,7 @@ radius/glow modulated by mic amplitude (`setAmplitude(0..1)`).
 Measure cold start:
 
 ```bash
-adb shell am force-stop io.homeassistant.companion.android.jarvis
+adb shell am force-stop io.homeassistant.companion.android.minimal
 adb shell am start -W -a android.intent.action.ASSIST
 # TotalTime / WaitTime in ms; repeat 5x, take the median
 ```
@@ -116,9 +123,9 @@ WebView needed).
 
 ## 3. Assistant role on GrapheneOS
 
-The `jarvis` flavor declares a `VoiceInteractionService`
+The app declares a `VoiceInteractionService`
 (`JarvisVoiceInteractionService` + session service + trampoline session), so
-the app is offered as a **digital assistant app** and can hold
+it is offered as a **digital assistant app** and can hold
 ROLE_ASSISTANT. Selection paths:
 
 - UI: Settings → Apps → Default apps → Digital assistant app → Jarvis.
@@ -189,7 +196,7 @@ Run in order; all must pass:
    verified.
 2. **Assist intent.** `adb shell am start -a android.intent.action.ASSIST`
    → orb + edge sweep + haptic appear, then HA Assist UI listening.
-3. **Latency.** `adb shell am force-stop io.homeassistant.companion.android.jarvis`
+3. **Latency.** `adb shell am force-stop io.homeassistant.companion.android.minimal`
    then `adb shell am start -W -a android.intent.action.ASSIST`:
    median TotalTime over 5 runs **≤ 300 ms**.
 4. **Voice round trip.** Assist gesture → speak "turn on the office lamp" →
