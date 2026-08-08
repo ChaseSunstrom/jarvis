@@ -28,11 +28,17 @@ services:
     container_name: jarvis-init
     user: "0:0"
     network_mode: "none"
+    # command MUST be a list (single literal-block element): a scalar string
+    # would be word-split by Compose, leaving `sh -c mkdir` with the paths as
+    # positional args -> "mkdir: missing operand" -> exit 1.
     entrypoint: ["/bin/sh", "-c"]
-    command: >
-      mkdir -p /workspace/.exec/queue /workspace/.exec/results /workspace/.code_jobs &&
-      chmod -R 0777 /workspace/.exec /workspace/.code_jobs &&
-      echo "jarvis-init: workspace prepared"
+    command:
+      - |
+        set -ex
+        mkdir -p /workspace/.exec/queue /workspace/.exec/results /workspace/.code_jobs
+        chmod -R 0777 /workspace/.exec /workspace/.code_jobs
+        ls -la /workspace
+        echo "jarvis-init: workspace prepared"
     volumes:
       - ./jarvis-workspace:/workspace
     restart: "no"

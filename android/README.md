@@ -34,6 +34,31 @@ android/
 
 ## Build
 
+### The easy way: GitHub Actions
+
+`.github/workflows/android-apk.yml` builds the APK for you — no local Android
+SDK needed:
+
+- **Actions → Build Jarvis APK → Run workflow** (build type `debug` needs no
+  secrets and is directly installable), then download the APK from the run's
+  **Artifacts**. The run summary prints the exact `adb` assistant-role
+  commands for the APK's actual package id.
+- Push a tag `vX.Y.Z` to build and attach the APK to a **GitHub Release**
+  (defaults to a signed release build).
+
+For **stable, updatable release** signing (so Obtainium can update in place),
+add these repo secrets (see `keystore.md` to create the keystore):
+`ANDROID_KEYSTORE_BASE64` (`base64 -w0 jarvis-release.keystore`),
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+Without them, a release build is signed with a throwaway key (installs fine,
+but updating requires an uninstall first).
+
+Note: `debug` builds may carry a `.debug` package suffix — that's why the
+workflow prints the role commands with the resolved package id rather than
+assuming one.
+
+### The manual way
+
 ```bash
 cd android
 ./apply-to-fork.sh                    # clones ha-android-fork/ and applies overlay
@@ -41,6 +66,8 @@ cd android
 
 cd ha-android-fork
 ./gradlew :app:assembleJarvisRelease  # then sign per keystore.md
+# quick installable build with no signing setup:
+./gradlew :app:assembleJarvisDebug
 ```
 
 Requires JDK 21 and the Android SDK; the fork's `versions` files pin the
