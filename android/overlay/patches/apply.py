@@ -13,6 +13,12 @@ What it does (all inside the fork checkout):
      Kotlin DSL executes it during configuration, before variants are
      computed, so appending is as good as editing the productFlavors block
      and far more robust than brace-counting regexes.
+     NOTE: upstream now declares the full/minimal flavors in a convention
+     plugin (`alias(libs.plugins.homeassistant.android.flavor)` ->
+     AndroidFullMinimalFlavorConventionPlugin, dimension "version"), not
+     inline in app/build.gradle.kts. The appended statement still works
+     because the convention plugin has already created the "version" dimension
+     by the time this runs; we just detect either arrangement.
   2. build.gradle.kts: points the jarvis source set at src/minimal/* in
      addition to src/jarvis/* -- the jarvis flavor EXTENDS "minimal" (no
      Google Play Services), which is what a degoogled GrapheneOS device
@@ -46,19 +52,27 @@ from pathlib import Path
 MARKER_BEGIN = "// JARVIS-PATCH-BEGIN"
 MARKER_END = "// JARVIS-PATCH-END"
 
-FLAVOR_BLOCK = """
+# Flavor dimension the full/minimal flavors live on. Upstream uses "version"
+# (AndroidFullMinimalFlavorConventionPlugin: flavorDimensions.add("version")).
+# Override with JARVIS_FLAVOR_DIMENSION if that ever changes.
+FLAVOR_DIMENSION = os.environ.get("JARVIS_FLAVOR_DIMENSION", "version")
+
+FLAVOR_BLOCK = f"""
 // JARVIS-PATCH-BEGIN flavor (added by jarvis overlay/patches/apply.py; do not edit)
 // The jarvis flavor extends "minimal": no Google Play Services, suitable for
 // GrapheneOS. Sources come from src/jarvis/ plus the minimal flavor's dirs.
-android.productFlavors.create("jarvis") {
-    dimension = "version"
+// Appended as a top-level statement: the flavor convention plugin has already
+// created the "{FLAVOR_DIMENSION}" dimension (and full/minimal) by the time
+// this runs, so adding another flavor here is valid.
+android.productFlavors.create("jarvis") {{
+    dimension = "{FLAVOR_DIMENSION}"
     applicationIdSuffix = ".jarvis"
     versionNameSuffix = "-jarvis"
-}
-android.sourceSets.getByName("jarvis") {
+}}
+android.sourceSets.getByName("jarvis") {{
     java.srcDirs("src/minimal/java", "src/minimal/kotlin", "src/jarvis/java", "src/jarvis/kotlin")
     res.srcDirs("src/minimal/res", "src/jarvis/res")
-}
+}}
 // JARVIS-PATCH-END flavor
 """
 
@@ -110,20 +124,38 @@ def patch_gradle_flavor(root: Path) -> None:
         info("build.gradle.kts: create(\"jarvis\") already exists (manual edit?), skipping.")
         return
 
-    # Sanity checks: the landmarks this patch relies on.
-    if not re.search(r'create\(\s*"minimal"\s*\)', text):
-        fail(
-            'app/build.gradle.kts has no create("minimal") product flavor. '
-            "Upstream flavor structure changed - update FLAVOR_BLOCK in apply.py."
-        )
-    if '"version"' not in text:
-        fail(
-            'app/build.gradle.kts does not mention the "version" flavor dimension. '
-            "Upstream changed the dimension name - update FLAVOR_BLOCK in apply.py."
+    # The full/minimal flavors (dimension "version") may be declared either
+    # inline in this file, OR by the flavor convention plugin applied in the
+    # plugins {} block. Accept either; the appended block only needs the
+    # "version" dimension to exist by configuration time, which both provide.
+    inline = re.search(r'create\(\s*"minimal"\s*\)', text)
+    via_plugin = (
+        "homeassistant.android.flavor" in text
+        or re.search(r'plugins\.[\w.]*flavor', text) is not None
+    )
+    if not (inline or via_plugin):
+        # Last resort: look for the convention plugin in build-logic.
+        blogic = root / "build-logic"
+        found = list(blogic.rglob("*FlavorConventionPlugin.kt")) if blogic.is_dir() else []
+        if not found:
+            fail(
+                "Could not find the full/minimal flavors: neither an inline "
+                'create("minimal") in app/build.gradle.kts nor the flavor '
+                "convention plugin (alias(libs.plugins.homeassistant.android."
+                "flavor) / *FlavorConventionPlugin.kt). Upstream flavor setup "
+                "changed - inspect the fork and update apply.py."
+            )
+        info(f"detected flavor convention plugin: {found[0].relative_to(root)}")
+    else:
+        info(
+            "flavors declared "
+            + ("inline in app/build.gradle.kts." if inline
+               else "via the flavor convention plugin.")
         )
 
     gradle.write_text(text.rstrip("\n") + "\n" + FLAVOR_BLOCK, encoding="utf-8")
-    info("build.gradle.kts: appended jarvis flavor + source-set block.")
+    info("build.gradle.kts: appended jarvis flavor + source-set block "
+         f'(dimension "{FLAVOR_DIMENSION}").')
 
 
 def patch_gradle_deps(root: Path) -> None:
