@@ -10,7 +10,8 @@ test('push-to-talk round trip renders transcript and response', async ({ page })
 	});
 
 	await page.goto('/?e2e=1');
-	await expect(page.getByTestId('status')).toContainText(/idle/i, { timeout: 10_000 });
+	// status label maps pipeline state to HUD copy: idle -> STANDBY
+	await expect(page.getByTestId('status')).toContainText(/standby/i, { timeout: 10_000 });
 
 	// ?e2e=1 makes the PTT auto-stop after 1.5 s, so a single click completes a run.
 	await page.getByTestId('ptt').click();
@@ -22,8 +23,8 @@ test('push-to-talk round trip renders transcript and response', async ({ page })
 		timeout: 15_000
 	});
 
-	// status line shows measured latencies
-	await expect(page.getByTestId('status')).toContainText('stt', { timeout: 10_000 });
+	// latency readout shows measured timings
+	await expect(page.getByTestId('latency')).toContainText('stt', { timeout: 10_000 });
 
 	// no pipeline error surfaced
 	await expect(page.getByTestId('error')).toHaveCount(0);

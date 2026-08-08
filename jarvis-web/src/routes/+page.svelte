@@ -212,6 +212,33 @@
 		}
 	}
 
+	// --- presentation: accent colour + labels that track pipeline state ---
+	const ACCENT: Record<string, string> = {
+		idle: '#2bb0d8',
+		listening: '#3fd8ff',
+		thinking: '#ff9e2c',
+		speaking: '#ffcf5c',
+		error: '#ff6b5c'
+	};
+	const LABEL: Record<string, string> = {
+		idle: 'STANDBY',
+		listening: 'LISTENING',
+		thinking: 'PROCESSING',
+		speaking: 'RESPONDING'
+	};
+	let accent = $derived(errorMsg ? ACCENT.error : (ACCENT[state] ?? ACCENT.idle));
+	let stateLabel = $derived(
+		statusMsg === 'disconnected' ? 'OFFLINE' : (LABEL[state] ?? state.toUpperCase())
+	);
+	let online = $derived(statusMsg !== 'disconnected' && statusMsg !== 'booting');
+	let clock = $state('--:--:--');
+
+	function tickClock(): void {
+		const d = new Date();
+		const p = (n: number) => n.toString().padStart(2, '0');
+		clock = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+	}
+
 	onMount(() => {
 		e2eMode = new URLSearchParams(location.search).has('e2e');
 		fetch('/api/config')
@@ -222,26 +249,58 @@
 			.then(() => (statusMsg = 'idle'))
 			.catch(() => (statusMsg = 'disconnected'));
 
+		tickClock();
+		const clk = setInterval(tickClock, 1000);
+
 		let raf = 0;
 		const tick = () => {
 			orbLevel = state === 'speaking' ? player.level() * 2 : Math.min(micLevel * 4, 1);
 			raf = requestAnimationFrame(tick);
 		};
 		raf = requestAnimationFrame(tick);
-		return () => cancelAnimationFrame(raf);
+		return () => {
+			cancelAnimationFrame(raf);
+			clearInterval(clk);
+		};
 	});
 </script>
 
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
-<main class="hud">
-	<div class="orb-wrap">
-		<Orb level={orbLevel} orbState={state} />
-	</div>
+<main class="hud" style="--accent: {accent}" data-state={state}>
+	<div class="grid" aria-hidden="true"></div>
+	<span class="bracket tl" aria-hidden="true"></span>
+	<span class="bracket tr" aria-hidden="true"></span>
+	<span class="bracket bl" aria-hidden="true"></span>
+	<span class="bracket br" aria-hidden="true"></span>
+
+	<header class="topbar">
+		<div class="brand">
+			<span class="logo">JARVIS</span>
+			<span class="tag">Just A Rather Very Intelligent System</span>
+		</div>
+		<div class="sysinfo">
+			<span class="status" data-testid="status">
+				<span class="dot {state}" class:off={!online}></span>
+				{stateLabel}
+			</span>
+			<span class="clock" aria-label="time">{clock}</span>
+		</div>
+	</header>
+
+	<section class="stage">
+		<div class="orb-frame">
+			<div class="orb-wrap">
+				<Orb level={orbLevel} orbState={state} />
+			</div>
+		</div>
+	</section>
 
 	<section class="readout">
 		<p class="transcript" data-testid="transcript">{transcript}</p>
-		<p class="response" data-testid="response">{response}</p>
+		<p class="response" data-testid="response">
+			{response}{#if state === 'thinking' || state === 'listening'}<span class="caret"></span>{/if}
+		</p>
 		{#if errorMsg}
 			<p class="error" data-testid="error">{errorMsg}</p>
 		{/if}
@@ -255,16 +314,17 @@
 			onclick={togglePtt}
 			aria-pressed={capturing}
 		>
-			{capturing ? 'Release to send' : 'Push to talk'}
+			<span class="ptt-ring" aria-hidden="true"></span>
+			{capturing ? 'RELEASE TO SEND' : 'PUSH TO TALK'}
 		</button>
-		<label class="handsfree">
-			<input type="checkbox" bind:checked={handsFree} data-testid="handsfree" />
-			Hands-free (VAD)
-		</label>
-		<p class="status" data-testid="status">
-			<span class="dot {state}"></span>
-			{statusMsg}{latText ? ` — ${latText}` : ''}
-		</p>
+		<div class="meta">
+			<label class="handsfree">
+				<input type="checkbox" bind:checked={handsFree} data-testid="handsfree" />
+				<span>Hands-free</span>
+			</label>
+			<span class="hint">HOLD&nbsp;SPACE</span>
+			{#if latText}<span class="latency" data-testid="latency" title="latency">{latText}</span>{/if}
+		</div>
 	</footer>
 </main>
 
@@ -272,115 +332,325 @@
 	:global(html, body) {
 		margin: 0;
 		height: 100%;
-		background: #05080d;
+		background: #04070c;
 	}
+	:global(*) {
+		box-sizing: border-box;
+	}
+
 	.hud {
+		--chrome: 'SFMono-Regular', ui-monospace, 'Cascadia Code', 'Cascadia Mono', Menlo,
+			Consolas, monospace;
+		--body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+		--dim: color-mix(in srgb, var(--accent) 60%, #8fb3c0);
+		--line: color-mix(in srgb, var(--accent) 32%, transparent);
+		--line-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+
+		position: relative;
 		height: 100vh;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 1.4rem;
-		background:
-			radial-gradient(ellipse 80% 55% at 50% 42%, rgba(14, 60, 78, 0.35), transparent 70%),
-			#05080d;
-		color: #bfeaf5;
-		font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+		height: 100dvh;
+		display: grid;
+		grid-template-rows: auto 1fr auto auto;
+		padding: clamp(0.9rem, 2.5vw, 2rem);
+		gap: clamp(0.5rem, 2vh, 1.5rem);
+		color: #d7edf5;
+		font-family: var(--body);
 		overflow: hidden;
+		background:
+			radial-gradient(
+				ellipse 70% 55% at 50% 44%,
+				color-mix(in srgb, var(--accent) 16%, transparent),
+				transparent 70%
+			),
+			#04070c;
+		transition: background 0.6s ease;
 	}
-	.orb-wrap {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-	.readout {
-		min-height: 7rem;
-		max-width: min(80vw, 46rem);
-		text-align: center;
-	}
-	.transcript {
-		color: #7fd7ea;
-		font-size: 1.05rem;
-		min-height: 1.4rem;
-		margin: 0 0 0.6rem;
-		opacity: 0.85;
-	}
-	.transcript:not(:empty)::before {
-		content: '» ';
+
+	/* faint technical grid */
+	.grid {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
 		opacity: 0.5;
+		background-image:
+			linear-gradient(var(--line-soft) 1px, transparent 1px),
+			linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+		background-size: 46px 46px;
+		mask-image: radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 88%);
+		-webkit-mask-image: radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 88%);
 	}
-	.response {
-		color: #e8f6fb;
-		font-size: 1.3rem;
-		line-height: 1.5;
-		min-height: 2rem;
-		margin: 0;
-		text-shadow: 0 0 14px rgba(80, 200, 235, 0.35);
+
+	/* corner framing brackets */
+	.bracket {
+		position: absolute;
+		width: clamp(22px, 4vw, 46px);
+		height: clamp(22px, 4vw, 46px);
+		pointer-events: none;
+		border: 2px solid var(--line);
+		transition: border-color 0.6s ease;
 	}
-	.error {
-		color: #ff7b6b;
-		font-size: 0.9rem;
+	.bracket.tl { top: 14px; left: 14px; border-right: 0; border-bottom: 0; }
+	.bracket.tr { top: 14px; right: 14px; border-left: 0; border-bottom: 0; }
+	.bracket.bl { bottom: 14px; left: 14px; border-right: 0; border-top: 0; }
+	.bracket.br { bottom: 14px; right: 14px; border-left: 0; border-top: 0; }
+
+	/* --- top bar --- */
+	.topbar {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		z-index: 1;
 	}
-	.controls {
+	.brand {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
+		gap: 0.15rem;
 	}
-	.ptt {
-		background: rgba(16, 46, 60, 0.7);
-		border: 1px solid #1e7d99;
-		color: #aee9f7;
-		padding: 0.7rem 2.2rem;
-		border-radius: 999px;
-		font-size: 1rem;
-		letter-spacing: 0.06em;
-		cursor: pointer;
-		transition:
-			background 0.15s,
-			box-shadow 0.15s;
+	.logo {
+		font-family: var(--chrome);
+		font-size: clamp(1.2rem, 3.2vw, 1.9rem);
+		font-weight: 600;
+		letter-spacing: 0.55em;
+		color: var(--accent);
+		text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent);
+		transition: color 0.6s ease;
 	}
-	.ptt:hover {
-		background: rgba(24, 68, 88, 0.85);
-	}
-	.ptt.active {
-		background: #0e5a74;
-		box-shadow: 0 0 24px rgba(30, 200, 255, 0.5);
-	}
-	.handsfree {
-		font-size: 0.8rem;
+	.tag {
+		font-family: var(--chrome);
+		font-size: clamp(0.5rem, 1.4vw, 0.68rem);
+		letter-spacing: 0.24em;
+		text-transform: uppercase;
+		color: var(--dim);
 		opacity: 0.7;
+	}
+	.sysinfo {
 		display: flex;
-		gap: 0.4rem;
-		align-items: center;
-		cursor: pointer;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.3rem;
+		font-family: var(--chrome);
 	}
 	.status {
-		font-size: 0.75rem;
-		font-variant-numeric: tabular-nums;
-		opacity: 0.6;
-		margin: 0;
 		display: flex;
 		align-items: center;
-		gap: 0.45rem;
+		gap: 0.5rem;
+		font-size: clamp(0.62rem, 1.6vw, 0.78rem);
+		letter-spacing: 0.24em;
+		color: var(--accent);
+	}
+	.clock {
+		font-size: clamp(0.62rem, 1.6vw, 0.78rem);
+		letter-spacing: 0.2em;
+		color: var(--dim);
+		font-variant-numeric: tabular-nums;
+		opacity: 0.8;
 	}
 	.dot {
 		width: 0.5rem;
 		height: 0.5rem;
 		border-radius: 50%;
-		background: #3d6b78;
+		background: var(--accent);
+		box-shadow: 0 0 10px var(--accent);
+		animation: blink 2.4s ease-in-out infinite;
+	}
+	.dot.listening, .dot.thinking { animation-duration: 0.9s; }
+	.dot.speaking { animation-duration: 1.3s; }
+	.dot.off {
+		background: #3d5560;
+		box-shadow: none;
+		animation: none;
+	}
+	@keyframes blink {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.35; }
+	}
+
+	/* --- centre stage --- */
+	.stage {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 0;
+		z-index: 1;
+	}
+	.orb-frame {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: min(58vmin, 520px);
+		height: min(58vmin, 520px);
+	}
+	/* slowly rotating outer ring behind the canvas for depth */
+	.orb-frame::before {
+		content: '';
+		position: absolute;
+		inset: -3%;
+		border-radius: 50%;
+		border: 1px solid var(--line-soft);
+		border-top-color: var(--line);
+		border-right-color: var(--line);
+		animation: spin 18s linear infinite;
+	}
+	.orb-frame::after {
+		content: '';
+		position: absolute;
+		inset: 6%;
+		border-radius: 50%;
+		border: 1px dashed var(--line-soft);
+		animation: spin 40s linear infinite reverse;
+	}
+	@keyframes spin { to { transform: rotate(360deg); } }
+	.orb-wrap {
+		position: relative;
+		width: 100%;
+		height: 100%;
+		filter: drop-shadow(0 0 26px color-mix(in srgb, var(--accent) 35%, transparent));
+	}
+	/* --- readout --- */
+	.readout {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-start;
+		gap: 0.5rem;
+		min-height: 6.5rem;
+		max-width: min(86vw, 52rem);
+		margin: 0 auto;
+		text-align: center;
+		z-index: 1;
+	}
+	.transcript {
+		font-family: var(--chrome);
+		color: var(--dim);
+		font-size: clamp(0.8rem, 2vw, 1rem);
+		letter-spacing: 0.04em;
+		min-height: 1.3rem;
+		margin: 0;
+		opacity: 0.9;
+	}
+	.transcript:not(:empty)::before {
+		content: '‹ ';
+		opacity: 0.55;
+	}
+	.transcript:not(:empty)::after {
+		content: ' ›';
+		opacity: 0.55;
+	}
+	.response {
+		color: #eaf7fc;
+		font-size: clamp(1.15rem, 3vw, 1.6rem);
+		line-height: 1.45;
+		font-weight: 300;
+		min-height: 2rem;
+		margin: 0;
+		text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+	}
+	.caret {
 		display: inline-block;
+		width: 0.5ch;
+		height: 1.05em;
+		margin-left: 0.15em;
+		vertical-align: -0.15em;
+		background: var(--accent);
+		box-shadow: 0 0 8px var(--accent);
+		animation: caret 1s steps(2) infinite;
 	}
-	.dot.listening {
-		background: #17d3ff;
-		box-shadow: 0 0 8px #17d3ff;
+	@keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+	.error {
+		font-family: var(--chrome);
+		color: #ff6b5c;
+		font-size: 0.8rem;
+		letter-spacing: 0.05em;
+		margin: 0.2rem 0 0;
 	}
-	.dot.thinking {
-		background: #ffa626;
-		box-shadow: 0 0 8px #ffa626;
+
+	/* --- controls --- */
+	.controls {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.8rem;
+		z-index: 1;
 	}
-	.dot.speaking {
-		background: #ffd25e;
-		box-shadow: 0 0 8px #ffd25e;
+	.ptt {
+		position: relative;
+		background: color-mix(in srgb, var(--accent) 12%, #06121a);
+		border: 1px solid var(--line);
+		color: var(--accent);
+		padding: 0.85rem 2.6rem;
+		border-radius: 999px;
+		font-family: var(--chrome);
+		font-size: clamp(0.72rem, 1.8vw, 0.9rem);
+		letter-spacing: 0.22em;
+		cursor: pointer;
+		transition: background 0.18s, box-shadow 0.18s, color 0.18s, transform 0.1s;
+		box-shadow: 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+	}
+	.ptt:hover {
+		background: color-mix(in srgb, var(--accent) 22%, #06121a);
+		box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 30%, transparent);
+	}
+	.ptt:active { transform: scale(0.98); }
+	.ptt.active {
+		background: color-mix(in srgb, var(--accent) 35%, #06121a);
+		color: #fff;
+		box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 55%, transparent);
+	}
+	.ptt.active .ptt-ring {
+		position: absolute;
+		inset: -4px;
+		border-radius: 999px;
+		border: 1px solid var(--accent);
+		opacity: 0.6;
+		animation: ptt-pulse 1.4s ease-out infinite;
+	}
+	@keyframes ptt-pulse {
+		0% { transform: scale(1); opacity: 0.6; }
+		100% { transform: scale(1.25); opacity: 0; }
+	}
+	.meta {
+		display: flex;
+		align-items: center;
+		gap: 1.2rem;
+		font-family: var(--chrome);
+		font-size: 0.66rem;
+		letter-spacing: 0.18em;
+		color: var(--dim);
+		text-transform: uppercase;
+	}
+	.handsfree {
+		display: flex;
+		gap: 0.45rem;
+		align-items: center;
+		cursor: pointer;
+		user-select: none;
+	}
+	.handsfree input {
+		appearance: none;
+		width: 0.85rem;
+		height: 0.85rem;
+		border: 1px solid var(--line);
+		border-radius: 3px;
+		background: transparent;
+		cursor: pointer;
+		position: relative;
+	}
+	.handsfree input:checked {
+		background: var(--accent);
+		box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
+	}
+	.hint {
+		opacity: 0.55;
+	}
+	.latency {
+		opacity: 0.7;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.08em;
+		text-transform: none;
+	}
+
+	@media (max-width: 560px) {
+		.tag { display: none; }
 	}
 </style>
