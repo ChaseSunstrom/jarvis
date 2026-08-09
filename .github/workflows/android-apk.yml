@@ -19,7 +19,11 @@ on:
         options: ["debug", "release"]
   push:
     tags: ["v*"]
-    paths-ignore: ["**/*.md"]
+  # Build (and publish an installable artifact) whenever the app changes, so
+  # there is always a current APK to download without dispatching by hand.
+  push:
+    branches: ["**"]
+    paths: ["android-app/**", ".github/workflows/android-apk.yml"]
 
 permissions:
   contents: write # attach the APK to a Release on tag
