@@ -237,8 +237,13 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | Boot timeline, geofence, schedules, screen pruning, task trust/vars | Automated *as Python mirrors* | the remaining `android-app/tools/*.py` |
 | **The Kotlin compiles** | **Unproven** | There is no Android SDK in this environment. `./gradlew assembleDebug` has never been run here. |
 | **The Kotlin matches its Python mirrors** | **Unproven** | The mirrors are a specification of the intended logic. Nothing mechanically checks that `ai.jarvis.app.*` implements them. This is the single largest unverified claim in the project. |
+| Headset routing rules (kind × opt-in × link availability) | Automated *as a Python mirror* | `audio_route_test.py` — 19 checks, 28 combinations |
+| Headset button policy, incl. "never answers a consent prompt" | Automated *as a Python mirror* | `media_button_test.py` — 16 checks, all 400 input combinations |
+| The earpiece feature is *wired*, not just tested | Automated | `audio_route_test.py` asserts JarvisConversation resolves a route, passes the profile to the mic, ties playback usage to it, and releases the route on teardown |
+| Gradle Kotlin DSL traps (`java.` accessor shadowing, import order) | Automated | `gradle_script_test.py` |
 | The app on a real GrapheneOS phone | **Unproven** | Needs the device. See *Closing the gaps*. |
-| Wake word on-device | **Unproven** | — |
+| **Wake word on-device** | **Not implemented** | Not "unproven" — absent. There is no hotword service in the app. `WakeWordGate` is tested but has no production caller, the Settings switch writes a preference nothing reads, and `AssistPipelineClient` hardcodes `start_stage: "stt"`. jarvis-core's `wake` stage (openWakeWord over Wyoming) is ready and unused. |
+| An actual Bluetooth earpiece | **Unproven** | The routing rules and the wiring are checked; no headset has been paired to a real phone running this build. Echo cancellation in particular is a claim about hardware behaviour that only hardware can settle. |
 | Assist gesture, lock-screen popup, Tier-3 consent screen | **Unproven** | Needs the device. |
 
 ### jarvis-desktop / jarvis-browser / jarvis-orchestrator
@@ -274,6 +279,29 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | **The on-device policy engine enforces this in Kotlin** | **Unproven** | Proven only in the Python mirror. See the android-app row above. |
 
 ---
+
+## Two failures that this document would not have caught
+
+Worth recording, because both were failures of *process* rather than of
+coverage, and this file is exactly the sort of document that makes them
+possible.
+
+**A mutation stub was committed and pushed.** `PolicyEngine.effective_tier` in
+jarvis-desktop was replaced with `return requested_tier or local_tier` — the
+inverse of the invariant the device-side safety model rests on — and shipped in
+db44263. Three existing tests fail against it. Nobody re-ran them between
+mutating the code and committing, and the push was reported as green from a
+local run that predated the commit while CI was still in progress. Fixed in
+9696f19; `.github/workflows/ci.yml` now fails on a `MUTANT` marker in any
+source file. **The lesson is that "the suite is green" means nothing unless the
+suite ran against the commit.**
+
+**The APK had not built since 9a6777a and the matrix did not say so.** This
+document recorded "The Kotlin compiles — Unproven", which reads like a gap in
+tooling. It was worse than that: the build was actively red for four commits
+with a script-compilation error, so `assertNoTestHooksInRelease` — the check
+that keeps debug-only hooks out of a release APK — had never executed once.
+"Unproven" and "broken" are different states and this file conflated them.
 
 ## Known failures, as of 2026-08-09
 
