@@ -5,7 +5,18 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="dark" />
 		<title>Jarvis</title>
-		<link rel="icon" href="data:," />
+		<!--
+			The arc reactor, in the tab strip. Generated from one description by
+			`npm run icons` (scripts/icons.mjs); do not hand-edit static/favicon.*.
+
+			Order is deliberate: browsers that understand `image/svg+xml` take the
+			vector and render it crisply at any scale factor, and the rest fall back
+			to the .ico above it. Declaring the .ico as 32x32 is what makes that
+			preference happen rather than being a coin toss.
+		-->
+		<link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="32x32" />
+		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

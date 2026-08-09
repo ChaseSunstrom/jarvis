@@ -512,3 +512,45 @@ test('the console header stays put when the page scrolls', async ({ page }) => {
 	const badge = (await page.getByTestId('link-status').boundingBox())!;
 	expect(badge.y).toBeLessThan(80);
 });
+
+// The tab icon. Committing a favicon proves nothing on its own — it has to be
+// served under the path app.html asks for, and the browser has to be able to
+// decode it. A 404 or a malformed SVG both show up as the generic globe, which
+// is exactly what this replaced.
+test('the arc reactor is served as the tab icon', async ({ page, request }) => {
+	for (const [path, type] of [
+		['/favicon.svg', 'image/svg+xml'],
+		['/favicon.ico', 'icon'],
+		['/apple-touch-icon.png', 'image/png']
+	] as const) {
+		const res = await request.get(path);
+		expect(res.status(), path).toBe(200);
+		expect(res.headers()['content-type'], path).toContain(type);
+		expect((await res.body()).length, path).toBeGreaterThan(500);
+	}
+
+	await page.goto('/');
+	// The links survive SvelteKit's app.html templating: `%sveltekit.assets%`
+	// must have been substituted, not shipped literally.
+	const hrefs = await page.locator('link[rel="icon"], link[rel="apple-touch-icon"]').evaluateAll(
+		(nodes) => nodes.map((n) => (n as HTMLLinkElement).getAttribute('href') ?? '')
+	);
+	expect(hrefs.some((h) => h.endsWith('/favicon.svg'))).toBe(true);
+	expect(hrefs.some((h) => h.endsWith('/favicon.ico'))).toBe(true);
+	expect(hrefs.some((h) => h.endsWith('/apple-touch-icon.png'))).toBe(true);
+	expect(hrefs.some((h) => h.includes('%sveltekit'))).toBe(false);
+
+	// Chromium decodes it: a malformed SVG resolves with naturalWidth 0, and a
+	// blocked one (the CSP's img-src) never resolves at all.
+	const decoded = await page.evaluate(
+		() =>
+			new Promise<{ ok: boolean; w: number }>((resolve) => {
+				const img = new Image();
+				img.onload = () => resolve({ ok: true, w: img.naturalWidth });
+				img.onerror = () => resolve({ ok: false, w: 0 });
+				img.src = '/favicon.svg';
+			})
+	);
+	expect(decoded.ok).toBe(true);
+	expect(decoded.w).toBe(64);
+});

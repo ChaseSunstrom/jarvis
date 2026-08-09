@@ -203,6 +203,31 @@ The recurring devices: **corner brackets** (`.jv-bracket` ×4, overridable via
 **glow as elevation** (`--jv-glow-sm|md|lg` for lit things, `--jv-elev-panel` /
 `--jv-elev-float` for things that sit above the page).
 
+### The tab icon
+
+The arc reactor, in the browser tab. It is generated, not drawn: `scripts/icons.mjs`
+holds the whole thing as a list of rings, ticks, arcs and discs on a 64-unit
+canvas, and emits both the vector and the rasters from that one description.
+
+```
+npm run icons              # regenerate static/favicon.{svg,ico} + apple-touch-icon.png
+npm run icons -- --check   # fail if the committed files are stale
+```
+
+Each primitive declares the pixel range it survives (`minPx` / `maxPx`), because
+a 16 px favicon cannot hold a dashed ring whose gaps are a third of a pixel —
+the tab-strip sizes get a purpose-drawn simplification with the same silhouette
+(dark plate, cyan ring, hot core) instead of a downsample of detail that was
+never legible. `--jv-bg` and `--jv-accent` come from `tokens.css`, and
+`icons.test.ts` fails if they stop matching, if the committed files stop matching
+the description, or if `app.html` stops linking them.
+
+The generated files are committed rather than built, so `vite dev` has a favicon
+too. Note that `mrmime` — which sirv, and therefore both `vite dev` and
+adapter-node, type static files with — has no entry for `.ico`; the dev plugin in
+`vite.config.ts` and the launcher in `scripts/postbuild.mjs` each set
+`image/x-icon` before sirv runs, which sirv then keeps.
+
 ## Motion
 
 Fast, consistent, and always optional.

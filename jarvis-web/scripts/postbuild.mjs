@@ -19,7 +19,19 @@ import { attachWsProxy } from './ws-proxy.js';
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
 
-const server = http.createServer(handler);
+// adapter-node serves static/ with sirv, which types files through mrmime —
+// and mrmime has no entry for '.ico', so /favicon.ico went out with a literally
+// empty Content-Type. Browsers sniff their way past that; proxies and Safari
+// are less forgiving. sirv keeps a Content-Type that is already on the
+// response (see its send(): \`if (tmp = res.getHeader('content-type'))\`), so
+// setting it before the handler runs is the entire fix. vite.config.ts does
+// the same for \`vite dev\`.
+const server = http.createServer((req, res) => {
+	if (req.url && req.url.split('?')[0].endsWith('.ico')) {
+		res.setHeader('Content-Type', 'image/x-icon');
+	}
+	handler(req, res);
+});
 attachWsProxy(server);
 
 server.listen(port, host, () => {
