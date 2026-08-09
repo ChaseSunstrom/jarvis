@@ -27,18 +27,26 @@ reads a policy hint off the wire, or accepts an override flag. The device
 enforces the real policy; this side simply never asks for less than the truth.
 
 **A device only speaks for itself.** Every inbound frame is attributed to the
-device that socket registered as. A ``device_result`` for a command id this
-link never issued is ignored, presence signals are filtered to a fixed
-allow-list of measurable facts (so a payload cannot rename a device, mark
-itself connected, or overwrite another device's entry), and a socket that never
-registers is simply a socket that cannot do any of this — it is not an error
-and it must never break the connection.
+device that socket registered as, *and to the socket that registered it*. A
+``device_result`` for a command id this link never issued is ignored; so is one
+from a socket that used to hold this device_id and has since been replaced —
+otherwise a superseded connection could report "ok" for a Tier-3 command the
+live device is still showing a confirmation prompt for. Presence signals are
+filtered to a fixed allow-list of measurable facts (so a payload cannot rename
+a device, mark itself connected, or overwrite another device's entry). An
+answer to a proactive question (``jarvis_message_result``) is only taken from a
+device the question was actually delivered to — ``companion.ask`` is how camera
+consent and web approvals reach a human, so an answer is a consent token and
+must not be accepted from a bystander. A socket that never registers is simply
+a socket that cannot do any of this — it is not an error and it must never
+break the connection.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable
@@ -156,6 +164,21 @@ BOOL_SIGNALS = (
 )
 
 
+def _is_real_number(value: Any) -> bool:
+    """A number we can safely do arithmetic on.
+
+    ``json.loads`` happily parses the non-standard ``NaN``/``Infinity``
+    literals into floats, and ``int(nan)`` raises ``ValueError`` while
+    ``int(inf)`` raises ``OverflowError``. A device sending
+    ``{"battery": NaN}`` must not blow up the frame it arrived in — that would
+    silently drop the whole ``device_event``, presence update and bus event
+    with it.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    return math.isfinite(value)
+
+
 def presence_signals(data: Any, now: float | None = None) -> dict[str, Any]:
     """Filter and coerce a ``presence`` event payload into safe signals."""
     if not isinstance(data, dict):
@@ -174,11 +197,11 @@ def presence_signals(data: Any, now: float | None = None) -> dict[str, Any]:
             out["zone"] = cleaned
 
     battery = data.get("battery")
-    if isinstance(battery, (int, float)) and not isinstance(battery, bool):
+    if _is_real_number(battery):
         out["battery"] = max(0, min(100, int(battery)))
 
     interaction = data.get("last_interaction")
-    if isinstance(interaction, (int, float)) and not isinstance(interaction, bool):
+    if _is_real_number(interaction):
         if interaction > 0:
             # Clamped to now: a device cannot vote itself permanently ACTIVE by
             # claiming an interaction in the future.
@@ -324,6 +347,34 @@ class DeviceLink:
         except Exception:  # a dead socket is not this caller's problem
             _LOGGER.debug("Could not push to %s", self.device_id, exc_info=True)
             return False
+
+    def adopt(
+        self,
+        name: str,
+        platform: str,
+        capabilities: list[str],
+        actions: dict[str, DeviceAction],
+        sender: Sender,
+        app_version: str | None = None,
+    ) -> None:
+        """Take a fresh manifest on the *same* socket, keeping commands in flight.
+
+        A device re-registers whenever its manifest changes — the Android app
+        does it every time a permission is granted or revoked. Replacing the
+        link object at that moment would strand every ``dispatch`` already
+        waiting: their futures live on the old object, the real
+        ``device_result`` routes to the new one and matches nothing, and the
+        caller blocks for the full timeout before reporting a failure for a
+        command the device actually completed. Nothing about the connection
+        changed, so the pending table must survive.
+        """
+        self.name = name or self.name
+        self.platform = platform or self.platform
+        self.capabilities = capabilities
+        self.actions = actions
+        self.app_version = app_version
+        self._sender = sender
+        self.connected = True
 
     def action(self, action_id: str) -> DeviceAction | None:
         return self.actions.get(action_id)
@@ -477,7 +528,26 @@ class ConnectedDevices:
         manifest = parse_manifest(actions)
 
         previous = self.links.get(device_id)
-        if previous is not None and previous.owner is not owner:
+        if previous is not None and previous.owner is owner:
+            # Same socket, new manifest. Keep the link object so anything
+            # already in flight can still be answered.
+            previous.adopt(
+                name,
+                platform,
+                capability_list,
+                manifest,
+                sender,
+                app_version=_text(app_version, 64) or None,
+            )
+            self._fire(EVENT_DEVICE_REGISTERED, previous.as_dict(include_actions=False))
+            _LOGGER.info(
+                "Device re-registered: %s (%s) with %d action(s)",
+                previous.name,
+                device_id,
+                len(manifest),
+            )
+            return previous
+        if previous is not None:
             # The device reconnected on a new socket. Nothing in flight on the
             # old one can be answered any more.
             previous.connected = False
@@ -519,6 +589,20 @@ class ConnectedDevices:
 
     def get(self, device_id: Any) -> DeviceLink | None:
         return self.links.get(str(device_id or ""))
+
+    def owned(self, device_id: Any, owner: Any) -> DeviceLink | None:
+        """The link for ``device_id``, but only if ``owner`` still holds it.
+
+        A socket that has been superseded still knows the device_id it used to
+        speak for. Without this check it can go on answering — and the frame
+        that matters is ``device_result``: forging ``{"status": "ok"}`` for a
+        Tier-3 command tells the model, and then the user, that something ran
+        while the real device is still showing the confirmation prompt.
+        """
+        link = self.links.get(str(device_id or ""))
+        if link is None or link.owner is not owner:
+            return None
+        return link
 
     def all(self) -> list[DeviceLink]:
         return list(self.links.values())

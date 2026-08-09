@@ -112,6 +112,12 @@ object CompanionMessageHandler {
      * Handle one inbound frame. Returns false when it was not a
      * `jarvis_message` this device can act on, so a caller can keep its own
      * dispatch table honest.
+     *
+     * Called on the socket's reader thread. The admission decision is taken
+     * there — it is a synchronized map lookup, and taking it inline is what
+     * makes a redelivery arriving hard behind the first one see `InFlight`
+     * rather than raising a second copy of the question. Everything after it is
+     * handed to the main thread; see [present].
      */
     fun handle(context: Context, frame: JSONObject): Boolean {
         val message = CompanionProtocol.parse(frame)
@@ -140,16 +146,35 @@ object CompanionMessageHandler {
             CompanionLedger.Admission.Fresh -> Unit
         }
 
-        return when (message.mode) {
+        onMain { present(app, message) }
+        return true
+    }
+
+    /**
+     * Put the message in front of the user. MAIN THREAD ONLY.
+     *
+     * Every branch either touches a View — [CompanionSpeechHost] drives the orb,
+     * and `JarvisOrbView.setMode` starts a `ValueAnimator`, which needs a
+     * Looper and throws on a bare thread — or makes a binder round trip
+     * (`NotificationManager.notify`, `startActivity`). The caller is the
+     * WebSocket reader thread, which has neither a Looper nor any business
+     * waiting on the system server: the same reason `sendRegister` is pushed
+     * off it in [ai.jarvis.app.channel.JarvisChannel].
+     */
+    private fun present(app: Context, message: CompanionProtocol.Message) {
+        when (message.mode) {
             CompanionProtocol.MODE_ASK -> ask(app, message)
             CompanionProtocol.MODE_SPEAK -> speak(app, message)
             CompanionProtocol.MODE_NOTIFY -> notify(app, message)
             else -> {
                 Log.w(TAG, "unknown companion mode '${message.mode}'; reporting undeliverable")
                 settle(app, message.messageId, CompanionProtocol.STATUS_UNDELIVERABLE, null)
-                true
             }
         }
+    }
+
+    private inline fun onMain(crossinline block: () -> Unit) {
+        if (Looper.myLooper() === Looper.getMainLooper()) block() else main.post { block() }
     }
 
     /**
@@ -175,7 +200,7 @@ object CompanionMessageHandler {
 
     // --- the three modes ----------------------------------------------------
 
-    private fun ask(app: Context, message: CompanionProtocol.Message): Boolean {
+    private fun ask(app: Context, message: CompanionProtocol.Message) {
         val intent = askIntent(app, message)
 
         // Notification first. If the direct start is refused by background
@@ -191,16 +216,15 @@ object CompanionMessageHandler {
 
         if (!reachable) {
             settle(app, message.messageId, CompanionProtocol.STATUS_UNDELIVERABLE, null)
-            return true
+            return
         }
         armWatchdog(app, message)
-        return true
     }
 
-    private fun speak(app: Context, message: CompanionProtocol.Message): Boolean {
+    private fun speak(app: Context, message: CompanionProtocol.Message) {
         if (message.text.isBlank()) {
             settle(app, message.messageId, CompanionProtocol.STATUS_UNDELIVERABLE, null)
-            return true
+            return
         }
         val host = speechHost
         if (host != null && host.isForeground) {
@@ -223,18 +247,16 @@ object CompanionMessageHandler {
             if (started) {
                 // The host owns the outcome now, but not forever.
                 armWatchdog(app, message)
-                return true
+                return
             }
         }
         // Nothing on screen to speak through: raise it as a notification that
         // speaks when it is opened.
         notifyOrFail(app, message)
-        return true
     }
 
-    private fun notify(app: Context, message: CompanionProtocol.Message): Boolean {
+    private fun notify(app: Context, message: CompanionProtocol.Message) {
         notifyOrFail(app, message)
-        return true
     }
 
     private fun notifyOrFail(app: Context, message: CompanionProtocol.Message) {

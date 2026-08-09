@@ -264,6 +264,31 @@ web:
   act_allowlist: []
 
 # ---------------------------------------------------------------------------
+# Orchestrator — delegation, coding jobs, and the network-less sandbox.
+# ---------------------------------------------------------------------------
+# The front door to the `jarvis-orchestrator` service and, behind it,
+# `jarvis-sandbox`. Both are commented out in docker-compose.yml; until you
+# start them and set the two secrets below, the tools register but answer
+# "not configured" rather than pretending to work.
+#
+# The persona prompt tells the model that delegate_to_agents, code_task and
+# execute_command exist, so this block is what makes that true.
+orchestrator:
+  url: http://127.0.0.1:8188
+  # Two secrets, deliberately different values — same rule as the browser.
+  # `token` authenticates every call; `approval_secret` is the ONLY thing that
+  # can run a command or apply a diff, and Jarvis sends it only after a human
+  # has approved that exact action. Holding the API token must never be
+  # enough to execute anything.
+  token: !env_var ORCHESTRATOR_TOKEN ""
+  approval_secret: !env_var APPROVAL_SECRET ""
+  # Seconds to wait on a fan-out. Specialist agents run in parallel but each
+  # is a full model turn, so this is minutes-scale work, not milliseconds.
+  timeout: 120
+  # Scoped tasks per delegation. The service refuses more than 8 regardless.
+  max_tasks: 8
+
+# ---------------------------------------------------------------------------
 # MQTT — the one integration that covers most real hardware.
 # ---------------------------------------------------------------------------
 # Discovery is why this matters: Zigbee2MQTT, Tasmota, ESPHome and Shelly all

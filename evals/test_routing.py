@@ -1,11 +1,19 @@
-"""P3 gate: the routing table test. Every row from the plan's §3b policy."""
+"""The routing table test: every row of the policy, plus its two mirrors.
 
-import re
+`routing.py` is the normative definition. What actually reaches the model at
+runtime is (a) the `guidance` string `get_user_context` returns and (b) rule 4
+of the shipped persona prompt. Those two drift silently — nothing crashes when
+a prompt loses a rule — so they are asserted here against the same table.
+"""
+
 from pathlib import Path
 
 import pytest
 
 from routing import CHANNELS, Ctx, decide
+
+REPO = Path(__file__).resolve().parents[1]
+CORE = REPO / "jarvis-core"
 
 CASES = [
     # driving beats everything
@@ -44,37 +52,38 @@ def test_all_outputs_are_known_channels():
         assert expected in CHANNELS
 
 
-def test_ha_script_mirrors_the_table():
-    """jarvis_report must branch in the same priority order:
-    driving → away → home+awake → default silent."""
-    text = (
-        Path(__file__).resolve().parents[1]
-        / "ha-config/packages/jarvis/jarvis_context.yaml"
-    ).read_text()
-    block = text[text.index("jarvis_report") :]
-    order = [
-        m
-        for m in re.findall(
-            r"ctx\.driving|ctx\.location == 'away'|ctx\.location == 'home' and ctx\.awake",
-            block,
-        )
-    ]
-    assert order == [
-        "ctx.driving",
-        "ctx.location == 'away'",
-        "ctx.location == 'home' and ctx.awake",
-    ]
-    assert "default" in block  # least-intrusive fallback exists
+def test_the_tool_guidance_mirrors_the_table():
+    """`get_user_context` is what the model consults mid-turn.
+
+    It returns a one-line `guidance` string. If that loses a rule the table
+    still passes and the running assistant still gets it wrong, so the string
+    itself is asserted — in the same priority order as `decide`.
+    """
+    source = (CORE / "jarvis/llm/tools.py").read_text()
+    start = source.index('"guidance"')
+    guidance = source[start : source.index("}", start)]
+
+    for needle in ("driving: speak", "away: notify by text", "least intrusive"):
+        assert needle in guidance, f"get_user_context lost routing rule: {needle}"
+    # Priority order matters as much as the rules: driving beats away, and the
+    # least-intrusive fallback is last.
+    assert (
+        guidance.index("driving: speak")
+        < guidance.index("away: notify by text")
+        < guidance.index("least intrusive")
+    ), "the guidance no longer states the rules in priority order"
 
 
 def test_prompt_states_the_same_rules():
-    prompt = (
-        Path(__file__).resolve().parents[1]
-        / "ha-config/prompts/jarvis_system_prompt.txt"
-    ).read_text()
+    """Rule 4 of the shipped persona, which is loaded by `llm: persona_file:`."""
+    prompt = (CORE / "config/prompts/jarvis.txt").read_text()
     for needle in (
         "driving: speak",
-        "away + status/finished-task: send a text",
+        "send a text",
         "least intrusive",
     ):
         assert needle in prompt, f"prompt lost routing rule: {needle}"
+    # The away branch must stay tied to status/finished-task work, not to
+    # every reply — otherwise an answered question goes to the phone.
+    assert "status update or a finished task" in prompt
+    assert "announce" in prompt

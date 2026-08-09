@@ -134,16 +134,29 @@ class CompanionAskActivity : Activity() {
             CompanionProtocol.DEFAULT_ASK_TIMEOUT_MS
         )
 
-        // An id nobody is waiting for: the process was killed and restarted, or
-        // the socket dropped everything in flight. Say so rather than showing a
-        // question whose answer can no longer reach anyone.
-        if (mode == CompanionProtocol.MODE_ASK &&
-            CompanionMessageHandler.ledger.statusOf(id) == null &&
-            !CompanionMessageHandler.ledger.isInFlight(id)
-        ) {
-            CompanionMessageHandler.reportUndeliverable(this, id)
-            finish()
-            return
+        // A question is only answerable while it is genuinely in flight, and
+        // there are two different ways for that not to be true:
+        //
+        //  * ALREADY SETTLED — the countdown ran out, the watchdog reported
+        //    `timeout`, or another copy of this screen answered it. The ledger
+        //    refuses a second answer, so rendering the buttons here would let
+        //    the user choose, watch the screen close, and have nothing happen.
+        //    Close instead of lying about it.
+        //  * NEVER ADMITTED — the process was killed and restarted, or the
+        //    socket dropped everything in flight. Nobody is waiting for this
+        //    answer, so say `undeliverable` and let the server escalate now
+        //    rather than burn the whole timeout first.
+        if (mode == CompanionProtocol.MODE_ASK) {
+            val settledAs = CompanionMessageHandler.ledger.statusOf(id)
+            if (settledAs != null) {
+                finish()
+                return
+            }
+            if (!CompanionMessageHandler.ledger.isInFlight(id)) {
+                CompanionMessageHandler.reportUndeliverable(this, id)
+                finish()
+                return
+            }
         }
 
         setContentView(buildUi())

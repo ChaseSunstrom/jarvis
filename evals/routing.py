@@ -1,11 +1,16 @@
 """The response-routing table, as a pure function.
 
-This is the single normative definition of §3b's routing policy. Three
-places mirror it and are kept honest by tests/evals:
+This is the single normative definition of the routing policy. Three places
+mirror it and are kept honest by test_routing.py:
 
-  * ha-config/packages/jarvis/jarvis_context.yaml (script.jarvis_report)
-  * ha-config/prompts/jarvis_system_prompt.txt (rule 3)
+  * jarvis-core/jarvis/llm/tools.py — the `guidance` string `get_user_context`
+    hands the model
+  * jarvis-core/config/prompts/jarvis.txt — rule 4
   * evals/persona_prompts.yaml routing cases
+
+The Home Assistant script that used to be the third mirror
+(`ha-config/packages/jarvis/jarvis_context.yaml`) went with the rest of the
+HA generation; see docs/removed.md.
 
 Channels, most → least intrusive:
   speak            — TTS on the active audio device, nothing persisted

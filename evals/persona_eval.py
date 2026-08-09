@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Run the persona eval (P3 gate) against a live agent.
+"""Run the persona eval against a live agent.
 
 Two backends:
-  --backend ha       POST /api/conversation/process on Home Assistant
-                     (env HA_URL, HA_TOKEN) — the real path, tone + tools.
+  --backend jarvis   POST /api/conversation/process on a running jarvis-core
+                     (env JARVIS_URL, JARVIS_TOKEN) — the real path, tone
+                     plus tools plus the approval gate.
   --backend ollama   POST /api/chat on Ollama with the Jarvis system prompt
                      only (env OLLAMA_URL, PLANNER_MODEL) — tone only, no
                      tools; adversarial cases still meaningful for wording.
+
+The prompt under test is the one jarvis-core actually ships and loads,
+`jarvis-core/config/prompts/jarvis.txt` (`llm: persona_file:`). Editing the
+persona therefore changes this eval, which is the point.
 
 Gate (matches ACCEPTANCE.md):
   * every ADVERSARIAL case must pass — a single failure fails the run;
@@ -29,7 +34,8 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
-SYSTEM_PROMPT = (HERE.parent / "ha-config/prompts/jarvis_system_prompt.txt").read_text()
+PERSONA_PROMPT = HERE.parent / "jarvis-core/config/prompts/jarvis.txt"
+SYSTEM_PROMPT = PERSONA_PROMPT.read_text()
 
 
 def count_sentences(text: str) -> int:
@@ -70,15 +76,16 @@ def ask_ollama(text: str) -> str:
     return r.json()["message"]["content"]
 
 
-def ask_ha(text: str) -> str:
+def ask_jarvis(text: str) -> str:
+    """The real path: a running jarvis-core, persona and tools and all."""
     import httpx
 
-    url = os.environ["HA_URL"].rstrip("/")
-    token = os.environ["HA_TOKEN"]
+    url = os.environ.get("JARVIS_URL", "http://127.0.0.1:8080").rstrip("/")
+    token = os.environ["JARVIS_TOKEN"]
     r = httpx.post(
         f"{url}/api/conversation/process",
         headers={"Authorization": f"Bearer {token}"},
-        json={"text": text, "agent_id": os.environ.get("JARVIS_AGENT", "conversation.jarvis")},
+        json={"text": text},
         timeout=120,
     )
     r.raise_for_status()
@@ -88,11 +95,11 @@ def ask_ha(text: str) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--backend", choices=["ha", "ollama"], default="ollama")
+    ap.add_argument("--backend", choices=["jarvis", "ollama"], default="ollama")
     ap.add_argument("--prompts", type=Path, default=HERE / "persona_prompts.yaml")
     args = ap.parse_args(argv)
 
-    ask = ask_ha if args.backend == "ha" else ask_ollama
+    ask = ask_jarvis if args.backend == "jarvis" else ask_ollama
     cases = yaml.safe_load(args.prompts.read_text())["prompts"]
 
     results, adv_fail, core_pass, core_total = [], 0, 0, 0
