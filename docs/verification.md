@@ -71,18 +71,18 @@ Within `jarvis-core`, by file:
 | File | Tests | Covers |
 |---|---:|---|
 | `test_sensors.py` | 173 | the sensor layer and its inference |
+| `test_features.py` | 115 | the shipped feature set, end to end |
 | `test_web_integration.py` | 109 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
 | `test_vision.py` | 106 | camera frames as fenced, untrusted input |
 | `test_api.py` | 94 | REST + websocket wire contract, auth, binary audio frames |
-| `test_features.py` | 115 | the shipped feature set, end to end |
 | `test_packaging.py` | 74 | the shipped `config/` is coherent; compose/YAML agreement |
 | `test_automation.py` | 72 | triggers, conditions, actions, run modes |
 | `test_voice.py` | 67 | pipeline runner, Wyoming protocol framing, pipeline store |
 | `test_mqtt.py` | 50 | discovery, entity mapping, value templates |
 | `test_llm.py` | 48 | agent, tool registry, the approval gate |
 | `test_domains.py` | 47 | every domain service verb |
-| `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
 | `test_orchestrator.py` | 47 | delegation, coding jobs, the double-gated shell path |
+| `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
 | `test_device_control.py` | 38 | cross-device command dispatch and tiering |
 | `test_local_integrations.py` | 36 | template, rest, command_line, hue, wled, demo |
 | `test_api_companion.py` | 28 | the device channel over the websocket |
@@ -205,6 +205,8 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | `execute_command` is unreachable from a model turn | Automated | `test_orchestrator.py` |
 | The approval secret rides on exactly two request paths | Automated | `test_orchestrator.py` |
 | Agent output, diffs and command stdout are fenced | Automated | `test_orchestrator.py` |
+| A command too long for the service is refused, never trimmed to fit | Automated | `test_orchestrator.py` |
+| A released command is audited before the result comes back, so a failed call cannot hide it | Automated | `test_orchestrator.py` |
 | The orchestrator against a **real** running service | **Unproven** | Needs the container up; see *Closing the gaps* |
 | MQTT discovery and entity mapping | Automated *with `FakeMqttClient`* | `test_mqtt.py` |
 | MQTT against a **real broker** with real devices | **Unproven** | see *Closing the gaps* |

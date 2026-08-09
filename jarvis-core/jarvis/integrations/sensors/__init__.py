@@ -55,7 +55,9 @@ Wiring the route
     layer to mount at ``/api/sensor/{sensor_id}``. Until it does, the same
     handler is reachable through the existing webhook door:
     ``POST /api/webhook/sensor?sensor_id=<id>`` (auth is still enforced by
-    the handler, not by the route).
+    the handler, not by the route). That door is a
+    :class:`~jarvis.automation.triggers.WebhookHandler`, so an automation
+    using the same webhook id joins it instead of replacing it.
 """
 
 from __future__ import annotations
@@ -775,6 +777,7 @@ __all__ = [
     "SensorIngest",
     "SensorManager",
     "SensorRecord",
+    "SensorWebhook",
     "async_setup",
     "handle_sensor_post",
 ]
