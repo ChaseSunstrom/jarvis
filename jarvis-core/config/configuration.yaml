@@ -152,7 +152,10 @@ llm:
   # This was hardcoded to loopback, so setting that variable did nothing at all
   # and the log cheerfully reported url=http://127.0.0.1:11434 either way.
   url: !env_var OLLAMA_URL http://127.0.0.1:11434
-  model: qwen3:8b
+  # The chat model. PLANNER_MODEL/CODER_MODEL in .env are the orchestrator's,
+  # not this one — setting those and expecting the conversation to change is an
+  # easy and unrewarding mistake to make.
+  model: !env_var OLLAMA_MODEL qwen3:8b
   persona_file: prompts/jarvis.txt
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.

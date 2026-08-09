@@ -93,6 +93,7 @@ services:
       # Where Ollama is. Loopback by default because it is usually on the host;
       # with `network_mode: host` a container or LAN address works unchanged.
       - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
       # Named zone for time-of-day triggers and the sun integration. Keep this
       # in step with `jarvis: time_zone:` in config/configuration.yaml.
       - TZ=${TZ:-Europe/London}
