@@ -228,6 +228,30 @@ adapter-node, type static files with — has no entry for `.ico`; the dev plugin
 `vite.config.ts` and the launcher in `scripts/postbuild.mjs` each set
 `image/x-icon` before sirv runs, which sirv then keeps.
 
+### QR codes
+
+`src/lib/qr.ts` is a complete QR encoder — byte mode, versions 1-40, all four
+error-correction levels — in about 300 lines with no dependencies. It exists
+because the CSP (`script-src: self`, `img-src: self data:`) blocks a CDN library
+and a remote QR image alike, and rendering a pairing code server-side would send
+the secret through an extra hop for nothing.
+
+A QR encoder cannot be checked by eye: wrong output still looks like a QR code.
+So it is verified against OpenCV, which shares no code with it:
+
+```
+pip install opencv-python-headless numpy
+node --experimental-strip-types tools/qr_fixtures.mjs | python3 tools/qr_roundtrip.py
+```
+
+That established three things, recorded in `qr.test.ts`: 165 symbols round-trip
+through OpenCV's *detector* (below the 73-module ceiling that detector was
+measured to have — past it, it cannot read its own encoder's output); pinned to
+the same mask, the two encoders agree byte for byte at versions 2, 7, 9, 12, 14,
+33 and 40; and all 160 (version, level) byte capacities match. CI runs the cheap
+consequences of that — the layout count, the format-bit round trip, the capacity
+table and golden digests — and needs no OpenCV.
+
 ## Motion
 
 Fast, consistent, and always optional.
