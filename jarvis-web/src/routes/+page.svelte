@@ -239,8 +239,18 @@
 		speaking: 'RESPONDING'
 	};
 	let accent = $derived(accentFor(state, Boolean(errorMsg)));
+	// `booting` is not a pipeline state. It is the window between the server
+	// rendering this page and the browser having run any of it: no handler is
+	// bound to the PTT button yet and there is no socket. Reporting STANDBY
+	// there — the word this HUD uses for "ready, say something" — is a claim the
+	// markup makes before anything can act on it, and a press in that window
+	// goes nowhere. `online` already knew the difference; the label did not.
 	let stateLabel = $derived(
-		statusMsg === 'disconnected' ? 'OFFLINE' : (LABEL[state] ?? state.toUpperCase())
+		statusMsg === 'booting'
+			? 'CONNECTING'
+			: statusMsg === 'disconnected'
+				? 'OFFLINE'
+				: (LABEL[state] ?? state.toUpperCase())
 	);
 	let online = $derived(statusMsg !== 'disconnected' && statusMsg !== 'booting');
 	let clock = $state('--:--:--');

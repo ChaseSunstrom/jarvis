@@ -62,8 +62,8 @@ done
 | `jarvis-orchestrator` | 17 | all pass | ~1 s |
 | `jarvis-sandbox` | 6 | all pass | ~1 s |
 | `evals` (routing table + its mirrors) | 17 | all pass | <1 s |
-| `jarvis-web` (vitest, 13 files) | 194 | all pass | ~2 s |
-| `jarvis-web` (Playwright, chromium) | 20 | all pass | ~18 s |
+| `jarvis-web` (vitest, 13 files) | 203 | all pass | ~2 s |
+| `jarvis-web` (Playwright, chromium) | 20 | all pass | ~19 s |
 | `android-app/tools` (spec files) | all pass | all pass | ~3 s |
 
 Within `jarvis-core`, by file:
@@ -387,10 +387,40 @@ one uncovered a third that had been invisible.
   browser from the default cache on CI and from `PLAYWRIGHT_BROWSERS_PATH` in a
   container. **20 of 20 pass.**
 
-  The pinned path was also the cause of the one apparently-behavioural failure
-  (`push-to-talk round trip renders transcript and response`): it launched a
-  different chromium build than the one Playwright provisions, and the fake
-  media device behaved differently. Nothing was wrong with the HUD.
+  **And the third bug under *that*.** One report was still unexplained: a run
+  in the dev container — where the pinned path does resolve — in which 19
+  passed and only `push-to-talk round trip renders transcript and response`
+  failed, timing out at 15 s on the transcript. A missing executable cannot
+  produce that shape; it fails every test that needs a browser, not one. Nor
+  did the browser binary matter: under both the pinned chromium and the
+  headless shell Playwright resolves for itself, the fake device delivers the
+  same 47 104 PCM bytes to the mock and the suite is green here, 11 full runs
+  and 21 repeats of that test alone.
+
+  The defect is in the HUD, and it is the race the rest of this file already
+  guards against. `page.goto` resolves on `load`, which is earlier than
+  hydration. The line after it — `expect(status).toContainText(/standby/i)` —
+  looks like the gate for that and was not one: `statusMsg` starts at
+  `booting`, the label ignored `booting`, so the *server-rendered* markup
+  already said STANDBY. The assertion passed off HTML no client code had
+  touched, the click that follows landed on a button with no handler bound
+  yet, and nothing ever started a run — 15 s later the transcript was still
+  empty. Every other test in the file waits for
+  `link-status[data-status=connected]` first, with a comment saying that is
+  how it proves the page hydrated. This one had no equivalent, because the
+  HUD offered none.
+
+  Fixed in the app, not the test: `booting` now renders CONNECTING, so
+  STANDBY means what this HUD uses it to mean — hydrated, socket open, ready
+  for a press — and the assertion already in the test becomes the gate it was
+  written to be. `online` had drawn that distinction all along; only the label
+  did not. Reproduced in both directions by delaying every module 1.2 s
+  (`page.route('**/*.js', …)`): before the change the transcript assertion
+  times out at 15 s against an empty `transcript`, the reported failure
+  exactly; after it, the same body completes the round trip in 4.2 s.
+  Whether that is what the original run hit cannot be settled after the fact —
+  the suite passes here with and without the fix at normal speed — but it is a
+  defect that produces that failure and nothing else found does.
 
 The lesson is the one this document keeps relearning, alongside the mutation
 stub and the four-commit APK breakage: a suite that does not run is

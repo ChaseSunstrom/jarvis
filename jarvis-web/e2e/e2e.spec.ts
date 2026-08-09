@@ -10,7 +10,11 @@ test('push-to-talk round trip renders transcript and response', async ({ page })
 	});
 
 	await page.goto('/?e2e=1');
-	// status label maps pipeline state to HUD copy: idle -> STANDBY
+	// Status label maps pipeline state to HUD copy: idle -> STANDBY. The HUD
+	// only says STANDBY once it has hydrated and opened its socket (before that
+	// it says CONNECTING), so this doubles as the gate that stops the click
+	// below from landing on a button with no handler bound yet. `goto` resolves
+	// on `load`, which is earlier than that.
 	await expect(page.getByTestId('status')).toContainText(/standby/i, { timeout: 10_000 });
 
 	// ?e2e=1 makes the PTT auto-stop after 1.5 s, so a single click completes a run.
