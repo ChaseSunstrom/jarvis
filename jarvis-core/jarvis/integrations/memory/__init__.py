@@ -752,9 +752,35 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         _LOGGER.debug("memory: no LLM tool registry; services registered without tools")
         return
 
+    from ...api.devices import turn_is_untrusted
     from ...llm.tools import schema_object
 
     async def tool_remember(args: dict[str, Any], context: Any = None) -> Any:
+        # A turn that has read somebody else's words may not write to memory.
+        #
+        # The checks inside `async_add` are about the *text*: `looks_fenced`
+        # catches content still wearing its fence, and `source:` catches content
+        # that admits where it came from. Neither survives paraphrase — the
+        # fence is gone by the time the model repeats a page in its own words,
+        # and `source` defaults to "conversation", which is trusted.
+        #
+        # That matters more here than anywhere else, because this is the only
+        # model-reachable write that outlives the turn: `remembered_notes()`
+        # puts it in the system prompt of every future conversation. Without
+        # this check a hostile page can write itself into Jarvis's standing
+        # instructions and still be there next week. `undo_last_action` has
+        # refused on a tainted turn all along; this is the same refusal.
+        if turn_is_untrusted(jarvis, context):
+            return {
+                "stored": False,
+                "reason": "refused: this turn has read content the user did not write",
+                "message": (
+                    "I won't commit that to memory, Sir — I have been reading "
+                    "something you did not write. Tell me in your own words and "
+                    "I will remember it."
+                ),
+            }
+
         # `allow_untrusted` is deliberately absent: the model cannot grant
         # itself permission to memorise something it read off a web page.
         return await memory.async_add(
@@ -780,6 +806,20 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         }
 
     async def tool_forget(args: dict[str, Any], context: Any = None) -> Any:
+        # Deleting is a durable write too, and nothing puts a note back. A page
+        # that can say "forget what you were told about the alarm code" is a
+        # cheaper attack than one that has to get something new stored.
+        if turn_is_untrusted(jarvis, context):
+            return {
+                "forgotten": [],
+                "count": 0,
+                "reason": "refused: this turn has read content the user did not write",
+                "message": (
+                    "I won't forget anything on this turn, Sir — I have been "
+                    "reading something you did not write."
+                ),
+            }
+
         # `forget_all` is deliberately never passed on, for the same reason
         # `remember` never passes `allow_untrusted`: it is not the model's to
         # grant. With no id and no query it means "delete everything", which is

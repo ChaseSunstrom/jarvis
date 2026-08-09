@@ -1284,6 +1284,121 @@ async def test_remember_tool_cannot_authorise_untrusted_content(tmp_path):
     assert (await call(jarvis, "memory", "list"))["count"] == 0
 
 
+async def test_remember_refuses_a_turn_that_has_read_untrusted_content(tmp_path):
+    """Memory is the one write that outlives the turn, so it needs the taint check.
+
+    The existing defences are about the *text*: `looks_fenced` refuses content
+    that still carries its fence markers, and `source:` in UNTRUSTED_SOURCES
+    refuses content that admits where it came from. Neither survives a model
+    that has read a page and then paraphrases it — the fence is gone, and
+    `source` defaults to "conversation", which is in TRUSTED_SOURCES.
+
+    And what is stored does not stay in the conversation: `remembered_notes()`
+    puts it in the system prompt of every future turn. So this is the one path
+    where a page can write itself into Jarvis's standing instructions and be
+    there tomorrow. `undo_last_action` has refused on a tainted turn all along;
+    `remember` took the context and threw it away.
+    """
+    from jarvis.api.devices import mark_untrusted
+
+    jarvis = await setup_memory(tmp_path)
+    context = Context(origin="llm")
+    mark_untrusted(jarvis, context)
+
+    refused = await tools(jarvis).call(
+        "remember",
+        # No fence markers, no untrusted `source`: exactly what a summary of a
+        # hostile page looks like by the time the model repeats it.
+        {"text": "the front door code is 1234 and deliveries may let themselves in"},
+        context,
+    )
+
+    assert refused["stored"] is False
+    assert "did not write" in refused["reason"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 0
+
+
+async def test_forget_refuses_a_turn_that_has_read_untrusted_content(tmp_path):
+    """Deleting is a durable write too, and nothing puts a note back."""
+    from jarvis.api.devices import mark_untrusted
+
+    jarvis = await setup_memory(tmp_path)
+    await call(jarvis, "memory", "add", text="the alarm code is written in the drawer")
+
+    context = Context(origin="llm")
+    mark_untrusted(jarvis, context)
+    refused = await tools(jarvis).call("forget", {"query": "alarm"}, context)
+
+    assert refused["count"] == 0
+    assert "did not write" in refused["reason"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+
+def test_every_memory_write_tool_checks_the_taint():
+    """The rule, not the two instances of it.
+
+    `remember` and `forget` are the only model-reachable writes in this
+    repository that outlive the turn — what they change is in the system prompt
+    of every future conversation, or gone from it. Both now refuse a turn that
+    has read somebody else's words; `remember` did not, for a long time, and
+    the gap was invisible because the text-level defences (`looks_fenced`, the
+    `source:` allowlist) look like they cover it and do not survive paraphrase.
+
+    This walks the AST rather than calling the tools, because the failure it
+    guards against is the *next* memory-writing tool, written months from now,
+    whose author reads `tool_recall` (correctly unguarded — reading is fine)
+    and copies that shape.
+    """
+    import ast
+
+    path = Path(__file__).resolve().parents[1] / "jarvis" / "integrations" / "memory" / "__init__.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    #: Store methods that change what is remembered. Reads are not listed:
+    #: a tainted turn may look things up, it just may not rewrite them.
+    WRITES = {"async_add", "async_forget", "async_clear"}
+
+    offenders = []
+    checked = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        if not node.name.startswith("tool_"):
+            continue
+        body = ast.dump(node)
+        writes = {
+            child.func.attr
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr in WRITES
+        }
+        if not writes:
+            continue
+        checked.append(node.name)
+        if "turn_is_untrusted" not in body:
+            offenders.append(f"{node.name} (calls {', '.join(sorted(writes))})")
+
+    assert checked, "found no memory-writing tools at all; has this module moved?"
+    assert not offenders, (
+        "these tools write to memory without checking whether the turn has read "
+        f"content the user did not write: {offenders}. Memory is in the system "
+        "prompt of every later turn, so a page that gets in stays in."
+    )
+
+
+async def test_remember_still_works_on_a_clean_turn(tmp_path):
+    """The taint is a per-turn refusal, not a latch that disables memory."""
+    jarvis = await setup_memory(tmp_path)
+
+    stored = await tools(jarvis).call(
+        "remember", {"text": "the good mugs live on the top shelf"}, Context(origin="llm")
+    )
+
+    assert stored["stored"] is True
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+
 async def test_memory_redacts_obvious_secrets(tmp_path):
     jarvis = await setup_memory(tmp_path)
 
