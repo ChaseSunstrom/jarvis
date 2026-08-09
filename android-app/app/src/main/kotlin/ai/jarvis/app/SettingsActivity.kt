@@ -1,5 +1,8 @@
 package ai.jarvis.app
 
+import ai.jarvis.app.automation.JarvisAutomationService
+import ai.jarvis.app.automation.actions.ActionEnv
+import ai.jarvis.app.channel.DeviceChannelHost
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.ui.JarvisScreens
@@ -283,6 +286,17 @@ class SettingsActivity : Activity() {
             ?: config.wakingHourStart
         config.wakingHourEnd = wakeEndField.text.toString().trim().toIntOrNull()
             ?: config.wakingHourEnd
+
+        // Both of these run once at startup and then never again, so without
+        // this the app keeps the values it read before the user typed anything:
+        // ActionEnv would hold the OLD jarvis-core host (the one exemption
+        // `http_request` has from its SSRF guard) and the command channel would
+        // sit out its backoff before noticing the new URL.
+        runCatching { ActionEnv.refreshFromConfig(applicationContext) }
+        runCatching { DeviceChannelHost.configChanged() }
+        // A phone that has just been given a server for the first time should
+        // not have to wait for a reboot to connect to it.
+        runCatching { JarvisAutomationService.ensureRunning(this, "settings-saved") }
 
         check.warning?.let { toast(it) }
         toast("Saved")

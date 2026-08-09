@@ -924,6 +924,101 @@ def test_kotlin_lanhost_only_reads_a_dotted_tail_for_v4_mapped_prefixes():
     assert "Locale.ROOT" in src, "host normalisation is back on the device locale"
 
 
+# --- the channel is actually started by shipping code -----------------------
+#
+# This is the check that would have caught the whole defect. Every rule above
+# was correct, every instrumented test was green, and the phone still could not
+# be sent a single command — because the ONLY thing that ever constructed a
+# JarvisChannel was `TestHooks.startChannel` in the debug source set. The
+# instrumented suite starts the channel itself, so DeviceChannelTest proved the
+# protocol and proved nothing at all about startup.
+#
+# Two independent halves, and neither is sufficient on its own:
+#   1. something in src/main builds and starts a channel;
+#   2. something in src/main starts JarvisAutomationService from a FOREGROUND
+#      path, because that is what fills AutomationBridge.dispatcher — without
+#      it a working socket answers every command "unsupported".
+
+MAIN_KOTLIN = Path(__file__).resolve().parent.parent / "app/src/main/kotlin"
+
+
+def _code_only(src: str) -> str:
+    """Kotlin with whole-line comments dropped.
+
+    Load-bearing here: `AutomationRuntime`'s own KDoc shows the wiring it
+    expects (`AutomationRuntime.deviceEvents = myWebSocketClient`), and a
+    grep that counted documentation as a call site would report the seam as
+    filled by the file that merely describes it.
+    """
+    return "\n".join(
+        line for line in src.splitlines()
+        if not line.lstrip().startswith(("//", "*", "/*", "*/"))
+    )
+
+
+def _shipping_sources() -> dict[str, str]:
+    return {str(p): _code_only(_read(p)) for p in sorted(MAIN_KOTLIN.rglob("*.kt"))}
+
+
+def test_shipping_code_constructs_and_starts_the_device_channel():
+    sources = _shipping_sources()
+    builders = [
+        name for name, src in sources.items()
+        if re.search(r"JarvisChannel\s*\(\s*$|JarvisChannel\s*\(\s*context", src, re.M)
+        and "class JarvisChannel" not in src
+    ]
+    assert builders, (
+        "no file in src/main constructs a JarvisChannel. With no transport, "
+        "jarvis-core cannot send this phone a single device_command — the phone "
+        "is not answering 'unsupported', it is not being asked. Every registered "
+        "action is unreachable."
+    )
+    starters = [
+        name for name, src in sources.items()
+        if re.search(r"\.start\(\s*subscribeToBridgeEvents", src)
+    ]
+    assert starters, (
+        "a JarvisChannel is built in src/main but nothing calls start() on it"
+    )
+
+
+def test_the_shipping_channel_does_not_double_send_trigger_events():
+    """`DeviceLink` and `AutomationBridge` are two paths for the same events."""
+    sources = _shipping_sources()
+    wires_link = [
+        n for n, s in sources.items()
+        if "AutomationRuntime.deviceEvents =" in s and "object AutomationRuntime" not in s
+    ]
+    assert wires_link, "nothing in src/main fills AutomationRuntime.deviceEvents"
+    for name in wires_link:
+        src = sources[name]
+        if "JarvisChannel(" not in src:
+            continue
+        assert "subscribeToBridgeEvents = false" in src, (
+            f"{name} installs a DeviceLink AND starts the channel with the "
+            "default subscribeToBridgeEvents = true, so every trigger event "
+            "reaches the server twice"
+        )
+
+
+def test_a_foreground_path_starts_the_automation_service():
+    sources = _shipping_sources()
+    callers = [
+        name for name, src in sources.items()
+        if "JarvisAutomationService.ensureRunning(" in src
+        and "JarvisAutomationService.kt" not in name
+    ]
+    activities = [n for n in callers if "/triggers/" not in n]
+    assert activities, (
+        "JarvisAutomationService is started only from the trigger receivers. "
+        "BOOT_COMPLETED is exempt from the Android 12+ background-FGS rules but "
+        "a plain broadcast is not, so on a fresh install the automation runtime "
+        "never exists: AutomationBridge.dispatcher stays null and every command "
+        "is answered 'unsupported' until the phone is rebooted. Start it from a "
+        "foreground path too."
+    )
+
+
 def test_kotlin_bucket_defaults_match_this_mirror():
     src = _read(KOTLIN_BUCKET)
     capacity = re.search(r"DEFAULT_CAPACITY\s*=\s*([\d.]+)", src)

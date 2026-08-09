@@ -32,6 +32,7 @@ import ai.jarvis.app.automation.triggers.SystemEventBus
 import ai.jarvis.app.automation.triggers.SystemEventReceiver
 import ai.jarvis.app.automation.triggers.TriggerEvent
 import ai.jarvis.app.automation.triggers.TriggerManager
+import ai.jarvis.app.channel.DeviceChannelHost
 import ai.jarvis.app.config.JarvisConfig
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -110,6 +111,16 @@ class JarvisAutomationService : Service() {
         prefs = AutomationPrefs(applicationContext)
         AutomationRuntime.ensure(applicationContext)
 
+        // The command channel. This service is its owner because it is the only
+        // long-lived component in the process — the socket has to outlive every
+        // Activity, and a background process on Graphene lives for seconds.
+        //
+        // Until this line existed, `JarvisChannel` had no production call site
+        // at all: 48 registered actions, 0 reachable, because there was no
+        // transport for jarvis-core to ask on. The phone was not answering
+        // "unsupported"; it was not being asked.
+        DeviceChannelHost.start(applicationContext)
+
         startForegroundNotification()
         watchPolicy()
         watchTasks()
@@ -143,6 +154,10 @@ class JarvisAutomationService : Service() {
         Log.i(TAG, "onDestroy: releasing everything")
         teardownTriggers()
         unregisterDynamicReceiver()
+        // Closing the socket cancels every in-flight command, and cancelling a
+        // command cancels its consent prompt: nothing that was waiting on a
+        // human tap proceeds after the service goes away.
+        DeviceChannelHost.stop()
 
         policyWatcher?.let { watcher ->
             runCatching { policyPrefs?.unregisterOnSharedPreferenceChangeListener(watcher) }

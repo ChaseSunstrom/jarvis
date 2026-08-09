@@ -5,6 +5,7 @@ import ai.jarvis.app.assist.MicStreamer
 import ai.jarvis.app.automation.AutomationRuntime
 import ai.jarvis.app.automation.policy.PolicyStore
 import ai.jarvis.app.channel.ChannelConfig
+import ai.jarvis.app.channel.DeviceChannelHost
 import ai.jarvis.app.channel.JarvisChannel
 import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.config.JarvisConfig
@@ -39,11 +40,14 @@ import java.io.File
  *     trip can be tested. [feedSyntheticSpeech] installs a
  *     [MicStreamer.PcmSource] in place of the capture device — see
  *     [MicStreamer.debugPcmSource] for why that seam is where it is.
- *  3. **The command channel.** Nothing in the shipping app constructs
- *     [JarvisChannel] yet (grep: the class has no production call site). The
- *     wiring is documented on `ai.jarvis.app.channel.DeviceLink`, and
- *     [startChannel] performs exactly that documented wiring — the real channel,
- *     the real `ChannelConfig`, the real dispatcher from
+ *  3. **The command channel, on the test's schedule.** The shipping app starts
+ *     one of its own now — `ai.jarvis.app.channel.DeviceChannelHost`, owned by
+ *     `JarvisAutomationService` — but a test needs the socket to come up at a
+ *     known moment against a server it controls, and it needs to be the only
+ *     one, because two channels to one server means two registrations and a
+ *     coin toss over which socket a `device_command` lands on. [startChannel]
+ *     therefore stops the app's channel and starts an equivalent one: the real
+ *     `JarvisChannel`, the real `ChannelConfig`, the real dispatcher from
  *     `AutomationRuntime.ensure`, the real `UiApprovalGateway`.
  *
  * ## What these hooks are NOT for
@@ -176,6 +180,12 @@ object TestHooks {
     fun startChannel(context: Context): JarvisChannel {
         val app = context.applicationContext
         stopChannel(app)
+        // The shipping app now owns a channel of its own (DeviceChannelHost,
+        // started by JarvisAutomationService). Two channels to one server is
+        // two registrations and a coin toss over which socket a device_command
+        // arrives on, so the hook takes sole ownership for the duration of the
+        // test rather than racing the real one.
+        runCatching { DeviceChannelHost.stop() }
         AutomationRuntime.ensure(app)
         val started = JarvisChannel(
             context = app,
@@ -189,6 +199,10 @@ object TestHooks {
 
     /** Stop the channel started by [startChannel]. Safe to call when there is none. */
     fun stopChannel(context: Context) {
+        // Also the app's own, in case a test started an Activity that brought
+        // the automation service up: JarvisTestRule calls this between tests,
+        // and a socket left open belongs to the next test's failure otherwise.
+        runCatching { DeviceChannelHost.stop() }
         val existing = channel ?: return
         channel = null
         runCatching { existing.stop() }

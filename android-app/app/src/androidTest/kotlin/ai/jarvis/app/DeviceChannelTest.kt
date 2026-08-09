@@ -50,11 +50,17 @@ import java.util.UUID
  *
  * ## About the wiring
  *
- * Nothing in the shipping app constructs `JarvisChannel` yet — grep it: the
- * class has no production call site. `TestHooks.startChannel` performs exactly
- * the wiring `ai.jarvis.app.channel.DeviceLink` documents, which is what the
- * foreground service is expected to do when that lands. This test therefore
- * proves the channel works; it does not prove anything starts it.
+ * The shipping app now starts a channel of its own —
+ * `ai.jarvis.app.channel.DeviceChannelHost`, owned by `JarvisAutomationService`
+ * — so `TestHooks.startChannel` stops that one first and takes sole ownership
+ * for the duration of the test. Two channels to one server means two
+ * registrations and a coin toss over which socket a `device_command` arrives on.
+ *
+ * That startup path is NOT what this test proves. It proves the protocol, with
+ * the socket brought up at a moment the test chooses against a server it
+ * scripts. That the app starts one at all is asserted statically, in
+ * `android-app/tools/channel_protocol_test.py` — which is where the gap this
+ * comment used to describe would have been caught.
  */
 @RunWith(AndroidJUnit4::class)
 @LargeTest

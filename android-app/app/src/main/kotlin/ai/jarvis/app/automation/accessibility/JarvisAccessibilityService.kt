@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
+import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.automation.actions.ActionEnv
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
@@ -89,6 +90,40 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (ActionEnv.uiDelegate == null) {
             ActionEnv.uiDelegate = UiAutomator.shared(applicationContext)
         }
+        publishCapabilities()
+    }
+
+    /**
+     * Tell the server what this phone can do now that the switch is on.
+     *
+     * `ActionRegistry.capabilities()` filters on LIVE availability, and the
+     * capability list is only sent in the register frame. Without this the
+     * server was told once, at startup, that this device has no `ui_automation`
+     * — and kept believing it forever: the user enables the scariest toggle
+     * Android has and the model still never asks for a tap.
+     *
+     * `AutomationBridge.onCapabilitiesChanged` is a no-op when no channel is
+     * attached, so this is safe on a phone with no server.
+     */
+    private fun publishCapabilities() {
+        runCatching {
+            AutomationBridge.uiAutomation = object : AutomationBridge.UiAutomationStatus {
+                override fun isReady(): Boolean = JarvisAccessibilityService.isRunning()
+                override fun supportedActions(): Set<String> =
+                    ActionEnv.uiDelegate?.supportedActions.orEmpty()
+            }
+            AutomationBridge.onCapabilitiesChanged()
+        }.onFailure { Log.w(TAG, "could not publish UI-automation capabilities", it) }
+    }
+
+    /**
+     * …and tell it again when the switch goes off. The status object stays in
+     * place and simply answers `isReady() == false`, which is what the
+     * re-registration needs to read.
+     */
+    private fun retractCapabilities() {
+        runCatching { AutomationBridge.onCapabilitiesChanged() }
+            .onFailure { Log.w(TAG, "could not retract UI-automation capabilities", it) }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -142,6 +177,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         instance = null
         UiAutomator.abortInFlight()
+        retractCapabilities()
         Log.i(TAG, "accessibility service unbound")
         return super.onUnbind(intent)
     }
@@ -149,6 +185,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         UiAutomator.abortInFlight()
+        retractCapabilities()
         Log.i(TAG, "accessibility service destroyed")
         super.onDestroy()
     }

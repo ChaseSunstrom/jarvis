@@ -1,6 +1,7 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisBootAnimation
@@ -76,6 +77,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     override fun onResume() {
         super.onResume()
+        startAutomationLayer()
         // Settings may have changed the server behind our back.
         if (convo?.isRunning != true && !booting) showIdle()
         // Not while the power-on is playing. The banner sits inside
@@ -84,6 +86,25 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // view on the cold-start critical path. The sequence's onComplete
         // refreshes it the moment there is something to see.
         if (!booting) refreshStatusBanner()
+    }
+
+    /**
+     * Bring the automation layer up from a foreground path.
+     *
+     * Until this existed, `JarvisAutomationService` was started only by
+     * `BootReceiver` on BOOT_COMPLETED / MY_PACKAGE_REPLACED, or by a manifest
+     * broadcast that Android 12+ refuses outright (the receiver says so
+     * itself). So a fresh install had no `AutomationRuntime`, which means no
+     * `AutomationBridge.dispatcher` and no `ActionEnv` — and every command from
+     * the server would have been answered "unsupported" even once there was a
+     * socket to receive one on — until the phone was next rebooted.
+     *
+     * Starting a foreground service from a resumed Activity is always
+     * permitted; the guard is here because a refused start must not take the
+     * home screen down with it.
+     */
+    private fun startAutomationLayer() {
+        runCatching { JarvisAutomationService.ensureRunning(this, "home") }
     }
 
     // --- the power-on -------------------------------------------------------
