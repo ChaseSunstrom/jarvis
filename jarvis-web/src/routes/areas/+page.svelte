@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
+	import { toasts } from '$lib/toast';
+	import { staggerStyle } from '$lib/motion';
+	import Skeleton from '$lib/components/Skeleton.svelte';
 	import {
 		areaForEntity,
 		areaKey,
@@ -18,6 +21,7 @@
 	let err = $state('');
 	let hint = $state('');
 	let busy = $state(false);
+	let loading = $state(true);
 	let newAreaName = $state('');
 	let renaming = $state<Record<string, string>>({});
 
@@ -60,15 +64,17 @@
 		}
 	}
 
-	async function run(fn: () => Promise<any>): Promise<void> {
+	async function run(what: string, fn: () => Promise<any>): Promise<void> {
 		if (!conn) return;
 		busy = true;
 		err = '';
 		try {
 			await fn();
 			await refresh();
+			toasts.success(what);
 		} catch (e) {
 			err = describeError(e);
+			toasts.error(`${what} failed`, describeError(e));
 		} finally {
 			busy = false;
 		}
@@ -77,7 +83,7 @@
 	function createArea(): void {
 		const name = newAreaName.trim();
 		if (!name) return;
-		void run(async () => {
+		void run(`Created ${name}`, async () => {
 			await conn!.client.createArea(name);
 			newAreaName = '';
 		});
@@ -87,20 +93,22 @@
 		const id = areaKey(area);
 		const name = (renaming[id] ?? '').trim();
 		if (!name || name === area.name) return;
-		void run(async () => {
+		void run(`Renamed to ${name}`, async () => {
 			await conn!.client.updateArea(id, { name });
 			delete renaming[id];
 		});
 	}
 
 	function deleteArea(area: AreaEntry): void {
-		void run(() => conn!.client.deleteArea(areaKey(area)));
+		void run(`Deleted ${area.name}`, () => conn!.client.deleteArea(areaKey(area)));
 	}
 
 	function assign(entityId: string, areaId: string): void {
 		// jarvis-core skips null-valued registry fields, so '' is how an
 		// assignment gets cleared.
-		void run(() => conn!.client.updateEntity(entityId, { area_id: areaId }));
+		void run(areaId ? `Moved ${entityId}` : `Unassigned ${entityId}`, () =>
+			conn!.client.updateEntity(entityId, { area_id: areaId })
+		);
 	}
 
 	onMount(() => {
@@ -116,6 +124,8 @@
 				await refresh();
 			} catch (e) {
 				err = describeError(e);
+			} finally {
+				if (!disposed) loading = false;
 			}
 		})();
 		return () => {
@@ -131,7 +141,7 @@
 <h1>AREAS</h1>
 <p class="lede">{areas.length} area(s) · link {status}</p>
 
-{#if err}<p class="err" data-testid="error">{err}</p>{/if}
+{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
 <section class="panel">
@@ -150,9 +160,16 @@
 	</div>
 </section>
 
-{#each areas as area (areaKey(area))}
+{#if loading && !areas.length}
+	<section class="panel" aria-label="Loading areas">
+		<div class="panel-head"><span>Areas</span><span class="muted">…</span></div>
+		<Skeleton rows={4} label="Loading areas" />
+	</section>
+{/if}
+
+{#each areas as area, ai (areaKey(area))}
 	{@const id = areaKey(area)}
-	<section class="panel" data-testid="area-{id}">
+	<section class="panel jv-stagger" style={staggerStyle(ai)} data-testid="area-{id}">
 		<div class="panel-head">
 			<span>{area.name}</span>
 			<span class="muted">{id}</span>
@@ -161,13 +178,28 @@
 			<input
 				type="text"
 				value={renaming[id] ?? area.name}
+				aria-label="New name for {area.name}"
 				data-testid="rename-{id}"
 				oninput={(e) => (renaming[id] = (e.currentTarget as HTMLInputElement).value)}
 			/>
-			<button class="btn ghost" data-testid="save-{id}" disabled={busy} onclick={() => renameArea(area)}>
+			<button
+				type="button"
+				class="btn ghost"
+				data-testid="save-{id}"
+				disabled={busy}
+				aria-label="Rename {area.name}"
+				onclick={() => renameArea(area)}
+			>
 				RENAME
 			</button>
-			<button class="btn danger" data-testid="delete-{id}" disabled={busy} onclick={() => deleteArea(area)}>
+			<button
+				type="button"
+				class="btn danger"
+				data-testid="delete-{id}"
+				disabled={busy}
+				aria-label="Delete {area.name}"
+				onclick={() => deleteArea(area)}
+			>
 				DELETE
 			</button>
 		</div>
@@ -180,6 +212,7 @@
 				</span>
 				<select
 					data-testid="assign-{entry.entity_id}"
+					aria-label="Area for {entry.entity_id}"
 					value={id}
 					onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
 				>
@@ -194,9 +227,17 @@
 		{/each}
 	</section>
 {:else}
-	<p class="muted" data-testid="empty">
-		{status === 'open' ? 'No areas yet — create one above.' : 'Connecting to the backend…'}
-	</p>
+	{#if !loading}
+		<div class="jv-empty" data-testid="empty">
+			<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>
+			<p class="jv-empty-title">{status === 'open' ? 'No areas yet' : 'No link to the backend'}</p>
+			<p class="jv-empty-body">
+				{status === 'open'
+					? 'Areas are how voice commands like “turn off the kitchen” resolve. Create one above, then assign entities to it.'
+					: `The websocket relay is ${status}.`}
+			</p>
+		</div>
+	{/if}
 {/each}
 
 <section class="panel" data-testid="area-unassigned">
@@ -212,6 +253,7 @@
 			</span>
 			<select
 				data-testid="assign-{entry.entity_id}"
+				aria-label="Area for {entry.entity_id}"
 				value=""
 				onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
 			>

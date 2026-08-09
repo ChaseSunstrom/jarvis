@@ -68,6 +68,26 @@ class JarvisConfig(context: Context) {
     val isConfigured: Boolean
         get() = serverUrl.isNotEmpty() && token.isNotEmpty()
 
+    /**
+     * How many actions this device registered with the server the last time
+     * `jarvis/device/register` succeeded; 0 if it never has.
+     *
+     * Written by [ai.jarvis.app.channel.JarvisChannel] on registration and read
+     * by the power-on sequence, which types it as its third system-check line.
+     * It is a display value and nothing else — no policy, no tier and no
+     * dispatch decision reads it, so a stale or absent count costs one line of
+     * the boot animation and nothing more.
+     */
+    var lastActionCount: Int
+        get() = try {
+            prefs.getInt(KEY_ACTION_COUNT, 0).coerceAtLeast(0)
+        } catch (t: ClassCastException) {
+            // Something wrote a non-int under this key. A cosmetic count is not
+            // worth throwing on the cold-start path.
+            0
+        }
+        set(v) = prefs.edit().putInt(KEY_ACTION_COUNT, v.coerceAtLeast(0)).apply()
+
     // --- wake-word gating --------------------------------------------------
     //
     // Third-party apps get no low-power DSP hotword path on Android, so
@@ -119,6 +139,7 @@ class JarvisConfig(context: Context) {
         private const val KEY_WAKE_AT_HOME = "wake_at_home"
         private const val KEY_WAKE_HOUR_START = "wake_hour_start"
         private const val KEY_WAKE_HOUR_END = "wake_hour_end"
+        private const val KEY_ACTION_COUNT = "last_action_count"
 
         const val DEFAULT_PIPELINE = "Jarvis"
     }

@@ -5,6 +5,7 @@
 	import { Player } from '$lib/audio/playback';
 	import { EnergyVAD } from '$lib/wake';
 	import Orb from '$lib/components/Orb.svelte';
+	import { accentFor } from '$lib/tokens';
 
 	let state = $state<PipelineState>('idle');
 	let transcript = $state('');
@@ -42,11 +43,25 @@
 		return parts.join(' · ');
 	}
 
+	// The dial that is currently in flight, so a click that lands while the
+	// on-mount connect is still handshaking joins it instead of opening a second
+	// socket. Two sockets is not merely wasteful: `client` would be rebound to
+	// the newer one while the older one's `onmessage` still routes frames into
+	// it, and a run's events can end up on a socket nobody is listening to.
+	let wsPending: Promise<void> | null = null;
+
 	function connectWs(): Promise<void> {
 		if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve();
+		if (wsPending) return wsPending;
+		wsPending = openSocket().finally(() => (wsPending = null));
+		return wsPending;
+	}
+
+	function openSocket(): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-			ws = new WebSocket(`${proto}://${location.host}/ws`);
+			const socket = new WebSocket(`${proto}://${location.host}/ws`);
+			ws = socket;
 			ws.binaryType = 'arraybuffer';
 			client = new PipelineClient(
 				(data) => {
@@ -109,12 +124,14 @@
 					}
 				}
 			);
-			ws.onopen = () => resolve();
-			ws.onerror = () => reject(new Error('websocket error'));
-			ws.onmessage = (e) => {
+			socket.onopen = () => resolve();
+			socket.onerror = () => reject(new Error('websocket error'));
+			socket.onmessage = (e) => {
 				if (typeof e.data === 'string') client?.handleMessage(e.data);
 			};
-			ws.onclose = () => {
+			socket.onclose = () => {
+				// Only the socket that is still the live one may declare us offline.
+				if (ws !== socket) return;
 				statusMsg = 'disconnected';
 				ws = null;
 			};
@@ -213,20 +230,15 @@
 	}
 
 	// --- presentation: accent colour + labels that track pipeline state ---
-	const ACCENT: Record<string, string> = {
-		idle: '#2bb0d8',
-		listening: '#3fd8ff',
-		thinking: '#ff9e2c',
-		speaking: '#ffcf5c',
-		error: '#ff6b5c'
-	};
+	// The colours come from `$lib/tokens` (STATE_ACCENT), the same table the
+	// design tokens declare — the HUD does not own a private palette.
 	const LABEL: Record<string, string> = {
 		idle: 'STANDBY',
 		listening: 'LISTENING',
 		thinking: 'PROCESSING',
 		speaking: 'RESPONDING'
 	};
-	let accent = $derived(errorMsg ? ACCENT.error : (ACCENT[state] ?? ACCENT.idle));
+	let accent = $derived(accentFor(state, Boolean(errorMsg)));
 	let stateLabel = $derived(
 		statusMsg === 'disconnected' ? 'OFFLINE' : (LABEL[state] ?? state.toUpperCase())
 	);
@@ -268,11 +280,11 @@
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 <main class="hud" style="--accent: {accent}" data-state={state}>
-	<div class="grid" aria-hidden="true"></div>
-	<span class="bracket tl" aria-hidden="true"></span>
-	<span class="bracket tr" aria-hidden="true"></span>
-	<span class="bracket bl" aria-hidden="true"></span>
-	<span class="bracket br" aria-hidden="true"></span>
+	<div class="jv-grid" aria-hidden="true"></div>
+	<span class="jv-bracket tl" aria-hidden="true"></span>
+	<span class="jv-bracket tr" aria-hidden="true"></span>
+	<span class="jv-bracket bl" aria-hidden="true"></span>
+	<span class="jv-bracket br" aria-hidden="true"></span>
 
 	<header class="topbar">
 		<div class="brand">
@@ -280,15 +292,15 @@
 			<span class="tag">Just A Rather Very Intelligent System</span>
 		</div>
 		<div class="sysinfo">
-			<span class="status" data-testid="status">
-				<span class="dot {state}" class:off={!online}></span>
+			<span class="status" data-testid="status" role="status" aria-live="polite">
+				<span class="dot {state}" class:off={!online} aria-hidden="true"></span>
 				{stateLabel}
 			</span>
-			<span class="clock" aria-label="time">{clock}</span>
+			<span class="clock" aria-label="Local time">{clock}</span>
 		</div>
 	</header>
 
-	<section class="stage">
+	<section class="stage" aria-hidden="true">
 		<div class="orb-frame">
 			<div class="orb-wrap">
 				<Orb level={orbLevel} orbState={state} />
@@ -296,23 +308,30 @@
 		</div>
 	</section>
 
-	<section class="readout">
-		<p class="transcript" data-testid="transcript">{transcript}</p>
-		<p class="response" data-testid="response">
-			{response}{#if state === 'thinking' || state === 'listening'}<span class="caret"></span>{/if}
+	<section class="readout" aria-label="Conversation">
+		<p class="transcript" data-testid="transcript" aria-live="polite" aria-label="What you said">
+			{transcript}
+		</p>
+		<p class="response" data-testid="response" aria-live="polite" aria-label="Jarvis says">
+			{response}{#if state === 'thinking' || state === 'listening'}<span
+					class="caret"
+					aria-hidden="true"
+				></span>{/if}
 		</p>
 		{#if errorMsg}
-			<p class="error" data-testid="error">{errorMsg}</p>
+			<p class="error" data-testid="error" role="alert">{errorMsg}</p>
 		{/if}
 	</section>
 
 	<footer class="controls">
 		<button
+			type="button"
 			class="ptt"
 			class:active={capturing}
 			data-testid="ptt"
 			onclick={togglePtt}
 			aria-pressed={capturing}
+			aria-keyshortcuts="Space"
 		>
 			<span class="ptt-ring" aria-hidden="true"></span>
 			{capturing ? 'RELEASE TO SEND' : 'PUSH TO TALK'}
@@ -322,29 +341,35 @@
 				<input type="checkbox" bind:checked={handsFree} data-testid="handsfree" />
 				<span>Hands-free</span>
 			</label>
-			<span class="hint">HOLD&nbsp;SPACE</span>
-			{#if latText}<span class="latency" data-testid="latency" title="latency">{latText}</span>{/if}
+			<span class="hint" aria-hidden="true">HOLD&nbsp;SPACE</span>
+			{#if latText}<span class="latency" data-testid="latency" aria-label="Pipeline latency"
+					>{latText}</span
+				>{/if}
 		</div>
 	</footer>
 </main>
 
 <style>
-	:global(html, body) {
-		margin: 0;
-		height: 100%;
-		background: #04070c;
-	}
-	:global(*) {
-		box-sizing: border-box;
-	}
-
+	/*
+	 * The HUD's one liberty with the design system: `--accent` is a *live*
+	 * colour that tracks the pipeline state (see STATE_ACCENT in $lib/tokens),
+	 * so the shared line/dim tokens are re-derived from it here. Every shared
+	 * utility below — .jv-grid, .jv-bracket — then picks the state colour up by
+	 * inheritance instead of needing a HUD-specific copy.
+	 */
 	.hud {
-		--chrome: 'SFMono-Regular', ui-monospace, 'Cascadia Code', 'Cascadia Mono', Menlo,
-			Consolas, monospace;
-		--body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-		--dim: color-mix(in srgb, var(--accent) 60%, #8fb3c0);
+		--chrome: var(--jv-font-chrome);
+		--body: var(--jv-font-body);
+		--dim: color-mix(in srgb, var(--accent) 60%, var(--jv-text-faint));
 		--line: color-mix(in srgb, var(--accent) 32%, transparent);
 		--line-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+
+		--jv-line: var(--line);
+		--jv-line-soft: var(--line-soft);
+		/* #000 here is a mask stencil, not a colour — only its alpha is read. */
+		--jv-grid-mask: radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 88%);
+		--jv-bracket-size: clamp(22px, 4vw, 46px);
+		--jv-bracket-inset: 14px;
 
 		position: relative;
 		height: 100vh;
@@ -353,7 +378,7 @@
 		grid-template-rows: auto 1fr auto auto;
 		padding: clamp(0.9rem, 2.5vw, 2rem);
 		gap: clamp(0.5rem, 2vh, 1.5rem);
-		color: #d7edf5;
+		color: var(--jv-text);
 		font-family: var(--body);
 		overflow: hidden;
 		background:
@@ -362,37 +387,9 @@
 				color-mix(in srgb, var(--accent) 16%, transparent),
 				transparent 70%
 			),
-			#04070c;
+			var(--jv-bg);
 		transition: background 0.6s ease;
 	}
-
-	/* faint technical grid */
-	.grid {
-		position: absolute;
-		inset: 0;
-		pointer-events: none;
-		opacity: 0.5;
-		background-image:
-			linear-gradient(var(--line-soft) 1px, transparent 1px),
-			linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
-		background-size: 46px 46px;
-		mask-image: radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 88%);
-		-webkit-mask-image: radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 88%);
-	}
-
-	/* corner framing brackets */
-	.bracket {
-		position: absolute;
-		width: clamp(22px, 4vw, 46px);
-		height: clamp(22px, 4vw, 46px);
-		pointer-events: none;
-		border: 2px solid var(--line);
-		transition: border-color 0.6s ease;
-	}
-	.bracket.tl { top: 14px; left: 14px; border-right: 0; border-bottom: 0; }
-	.bracket.tr { top: 14px; right: 14px; border-left: 0; border-bottom: 0; }
-	.bracket.bl { bottom: 14px; left: 14px; border-right: 0; border-top: 0; }
-	.bracket.br { bottom: 14px; right: 14px; border-left: 0; border-top: 0; }
 
 	/* --- top bar --- */
 	.topbar {
@@ -456,7 +453,7 @@
 	.dot.listening, .dot.thinking { animation-duration: 0.9s; }
 	.dot.speaking { animation-duration: 1.3s; }
 	.dot.off {
-		background: #3d5560;
+		background: color-mix(in srgb, var(--jv-text-faint) 45%, var(--jv-bg));
 		box-shadow: none;
 		animation: none;
 	}
@@ -538,7 +535,7 @@
 		opacity: 0.55;
 	}
 	.response {
-		color: #eaf7fc;
+		color: var(--jv-text-bright);
 		font-size: clamp(1.15rem, 3vw, 1.6rem);
 		line-height: 1.45;
 		font-weight: 300;
@@ -559,7 +556,7 @@
 	@keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 	.error {
 		font-family: var(--chrome);
-		color: #ff6b5c;
+		color: var(--jv-danger);
 		font-size: 0.8rem;
 		letter-spacing: 0.05em;
 		margin: 0.2rem 0 0;
@@ -575,7 +572,7 @@
 	}
 	.ptt {
 		position: relative;
-		background: color-mix(in srgb, var(--accent) 12%, #06121a);
+		background: color-mix(in srgb, var(--accent) 12%, var(--jv-bg-raised));
 		border: 1px solid var(--line);
 		color: var(--accent);
 		padding: 0.85rem 2.6rem;
@@ -588,13 +585,13 @@
 		box-shadow: 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
 	}
 	.ptt:hover {
-		background: color-mix(in srgb, var(--accent) 22%, #06121a);
+		background: color-mix(in srgb, var(--accent) 22%, var(--jv-bg-raised));
 		box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 30%, transparent);
 	}
 	.ptt:active { transform: scale(0.98); }
 	.ptt.active {
-		background: color-mix(in srgb, var(--accent) 35%, #06121a);
-		color: #fff;
+		background: color-mix(in srgb, var(--accent) 35%, var(--jv-bg-raised));
+		color: var(--jv-text-bright);
 		box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 55%, transparent);
 	}
 	.ptt.active .ptt-ring {

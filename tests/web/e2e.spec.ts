@@ -237,3 +237,274 @@ test('settings page reports the selected backend and streams events', async ({ p
 	await page2.getByTestId('toggle-switch.desk_fan').click();
 	await page2.close();
 });
+
+// --- chrome: boot sequence, motion, palette, shortcuts, toasts -------------
+
+test('the boot sequence plays, never blocks a click, and runs once per session', async ({
+	page
+}) => {
+	// `commit` returns before hydration, so the poll below starts early enough
+	// to catch a 1.2 s overlay instead of racing it.
+	await page.goto('/devices', { waitUntil: 'commit' });
+	await expect(page.getByTestId('boot')).toBeAttached({ timeout: 10_000 });
+
+	// The precise claim is "pointer-events: none": while the overlay is on
+	// screen, a hit test at the nav's centre must still land on the nav. Simply
+	// clicking would not prove it — Playwright would happily wait the animation
+	// out and then click.
+	const hit = await page.evaluate(() => {
+		const nav = document.querySelector('[data-testid="nav-settings"]') as HTMLElement | null;
+		if (!nav) return { bootUp: false, hitsNav: false };
+		const r = nav.getBoundingClientRect();
+		const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+		return {
+			bootUp: Boolean(document.querySelector('[data-testid="boot"]')),
+			hitsNav: Boolean(top && nav.contains(top))
+		};
+	});
+	expect(hit.bootUp).toBe(true);
+	expect(hit.hitsNav).toBe(true);
+
+	// It dissolves on its own and marks the session.
+	await expect(page.getByTestId('boot')).toHaveCount(0, { timeout: 10_000 });
+	expect(await page.evaluate(() => sessionStorage.getItem('jarvis:boot-played'))).toBe('1');
+
+	// And does not replay on the next load in the same session.
+	await page.reload();
+	await expect(page.getByTestId('nav-devices')).toBeVisible();
+	await expect(page.getByTestId('boot')).toHaveCount(0);
+});
+
+test('prefers-reduced-motion skips the boot sequence entirely', async ({ page }) => {
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await page.goto('/devices', { waitUntil: 'commit' });
+	await expect(page.getByTestId('nav-devices')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('boot')).toHaveCount(0);
+	// Not merely "gone quickly" — never shown at all.
+	await page.waitForTimeout(400);
+	await expect(page.getByTestId('boot')).toHaveCount(0);
+	await page.emulateMedia({ reducedMotion: null });
+});
+
+test('route changes swap the console body and mark the current nav item', async ({ page }) => {
+	await page.goto('/devices');
+	const route = page.getByTestId('route');
+	await expect(route).toHaveAttribute('data-route', '/devices');
+	await expect(page.getByTestId('nav-devices')).toHaveAttribute('aria-current', 'page');
+
+	await page.getByTestId('nav-automations').click();
+	await expect(route).toHaveAttribute('data-route', '/automations');
+	await expect(route).toContainText('AUTOMATIONS');
+	await expect(page.getByTestId('nav-automations')).toHaveAttribute('aria-current', 'page');
+	await expect(page.getByTestId('nav-devices')).not.toHaveAttribute('aria-current', 'page');
+
+	// The transition wrapper is the thing the animation hangs off; it must
+	// actually be in the tree, not an idea in a stylesheet.
+	await expect(route).toHaveClass(/jv-route/);
+});
+
+test('the connection indicator reports the real websocket state', async ({ page }) => {
+	await page.goto('/devices');
+	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
+		timeout: 15_000
+	});
+	await expect(page.getByTestId('link-status')).toContainText('LINK OK');
+});
+
+test('the command palette opens from the keyboard, filters, and toggles an entity', async ({
+	page
+}) => {
+	await page.goto('/devices');
+	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
+		timeout: 15_000
+	});
+	await expect(page.getByTestId('state-light.lab_lights')).toHaveText('off');
+
+	await page.keyboard.press('Control+k');
+	await expect(page.getByTestId('palette')).toBeVisible();
+
+	// Centred, and inside the viewport. `translateX(-50%)` plus an entrance
+	// animation that ends on `transform: none` is an easy way to lose this.
+	const box = (await page.getByTestId('palette').boundingBox())!;
+	const viewport = page.viewportSize()!;
+	expect(box.x).toBeGreaterThan(0);
+	expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+	expect(Math.abs(box.x + box.width / 2 - viewport.width / 2)).toBeLessThan(2);
+
+	// Esc closes it again.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('palette')).toHaveCount(0);
+
+	await page.keyboard.press('Control+k');
+	await page.getByTestId('palette-input').fill('lab lights');
+	await expect(page.getByTestId('palette-item-entity:light.lab_lights')).toBeVisible();
+	// Filtering is exclusive, not just a highlight.
+	await expect(page.getByTestId('palette-item-entity:cover.garage_door')).toHaveCount(0);
+	await expect(page.getByTestId('palette-hint')).toContainText('turn on');
+
+	// Enter on a flippable entity performs the call and closes the palette.
+	await page.keyboard.press('Enter');
+	await expect(page.getByTestId('palette')).toHaveCount(0);
+	await expect(page.getByTestId('state-light.lab_lights')).toHaveText('on', { timeout: 10_000 });
+	await expect(page.getByTestId('toast').first()).toContainText('Lab Lights');
+
+	// Put the world back the way the earlier tests left it.
+	await page.keyboard.press('Control+k');
+	await page.getByTestId('palette-input').fill('lab lights');
+	await expect(page.getByTestId('palette-hint')).toContainText('turn off');
+	await page.keyboard.press('Enter');
+	await expect(page.getByTestId('state-light.lab_lights')).toHaveText('off', { timeout: 10_000 });
+});
+
+test('the command palette jumps to a page', async ({ page }) => {
+	await page.goto('/devices');
+	// data-status only becomes "connected" from client code, so this doubles as
+	// "the page has hydrated" — a keystroke sent before that lands nowhere.
+	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
+		timeout: 15_000
+	});
+	await page.keyboard.press('Control+k');
+	await page.getByTestId('palette-input').fill('settings');
+	await page.keyboard.press('Enter');
+	await expect(page).toHaveURL(/\/settings$/);
+});
+
+test('keyboard shortcuts focus the filter and navigate', async ({ page }) => {
+	await page.goto('/devices');
+	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
+		timeout: 15_000
+	});
+	await expect(page.getByTestId('filter')).toBeVisible();
+
+	await page.keyboard.press('/');
+	expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe(
+		'filter'
+	);
+	// `/` focused the field rather than being typed into it.
+	await expect(page.getByTestId('filter')).toHaveValue('');
+
+	// A bare letter inside a text field must stay a letter.
+	await page.keyboard.type('gd');
+	await expect(page).toHaveURL(/\/devices$/);
+	await expect(page.getByTestId('filter')).toHaveValue('gd');
+
+	await page.getByTestId('filter').fill('');
+	await page.keyboard.press('Escape');
+	await page.keyboard.press('g');
+	await page.keyboard.press('a');
+	await expect(page).toHaveURL(/\/automations$/);
+
+	await page.keyboard.press('g');
+	await page.keyboard.press('d');
+	await expect(page).toHaveURL(/\/devices$/);
+});
+
+// The mock has a lock entity but no `lock` domain in its service catalogue —
+// exactly the shape of "the UI offers a control the backend cannot perform".
+// It used to fail in silence.
+test('a rejected call_service raises a toast as well as an inline error', async ({ page }) => {
+	await page.goto('/devices');
+	const lock = page.getByTestId('lock-lock.front_door');
+	await expect(lock).toBeVisible({ timeout: 15_000 });
+	await page.getByTestId('filter').fill('front door');
+	await expect(lock).toBeVisible();
+
+	await lock.click();
+
+	const toast = page.getByTestId('toast').first();
+	await expect(toast).toBeVisible({ timeout: 10_000 });
+	await expect(toast).toContainText('Lock failed');
+	await expect(toast).toContainText('unknown service lock.lock');
+	await expect(page.getByTestId('error')).toContainText('unknown service lock.lock');
+
+	// It is dismissible, not just decorative.
+	await page.getByTestId('toast-dismiss').first().click();
+	await expect(page.getByTestId('toast')).toHaveCount(0);
+});
+
+test('the console is usable at phone width without sideways scrolling', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/devices');
+	await expect(page.getByTestId('entity-light.lab_lights')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('nav-devices')).toBeVisible();
+	await expect(page.getByTestId('toggle-light.lab_lights')).toBeVisible();
+
+	const overflow = await page.evaluate(
+		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+	);
+	expect(overflow).toBeLessThanOrEqual(1);
+
+	// html { overflow-x: hidden } would hide a genuine overflow from the check
+	// above, so the header cluster is measured directly: nothing may be clipped
+	// off the right edge.
+	for (const id of ['link-status', 'palette-open', 'filter']) {
+		const box = (await page.getByTestId(id).boundingBox())!;
+		expect(box.x + box.width, id).toBeLessThanOrEqual(391);
+		expect(box.x, id).toBeGreaterThanOrEqual(-1);
+	}
+
+	// The palette has to fit too — it is the phone's main way around.
+	await page.getByTestId('palette-open').click();
+	const box = (await page.getByTestId('palette').boundingBox())!;
+	expect(box.width).toBeLessThanOrEqual(390);
+	expect(box.x).toBeGreaterThanOrEqual(0);
+	expect(box.x + box.width).toBeLessThanOrEqual(390);
+	await page.keyboard.press('Escape');
+});
+
+test('keyboard focus is visible, and icon-only controls are labelled', async ({ page }) => {
+	await page.goto('/devices');
+	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
+		timeout: 15_000
+	});
+
+	// The first tab stop is the skip link, and it is drawn.
+	await page.keyboard.press('Tab');
+	const focus = await page.evaluate(() => {
+		const el = document.activeElement as HTMLElement | null;
+		if (!el) return null;
+		const s = getComputedStyle(el);
+		return {
+			cls: el.className,
+			text: el.textContent?.trim(),
+			outlineWidth: parseFloat(s.outlineWidth),
+			outlineStyle: s.outlineStyle
+		};
+	});
+	expect(focus?.cls).toContain('jv-skip');
+	expect(focus?.text).toBe('Skip to content');
+	// A focus ring that renders as 0px or `none` is not a focus ring.
+	expect(focus!.outlineWidth).toBeGreaterThanOrEqual(2);
+	expect(focus!.outlineStyle).not.toBe('none');
+
+	// Buttons whose label is a glyph still say what they do.
+	await expect(page.getByTestId('prev-media_player.speaker')).toHaveAttribute(
+		'aria-label',
+		/previous track/i
+	);
+	await expect(page.getByTestId('next-media_player.speaker')).toHaveAttribute(
+		'aria-label',
+		/next track/i
+	);
+	await expect(page.getByTestId('toggle-light.lab_lights')).toHaveAttribute(
+		'aria-label',
+		/turn on lab lights/i
+	);
+});
+
+test('the console header stays put when the page scrolls', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 480 });
+	await page.goto('/devices');
+	await expect(page.getByTestId('entity-light.lab_lights')).toBeVisible({ timeout: 15_000 });
+
+	await page.evaluate(() => window.scrollTo(0, 900));
+	await page.waitForTimeout(200);
+	expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
+
+	// `overflow-x: hidden` on the root is one careless line away from turning the
+	// document into a scroll container and quietly breaking `position: sticky`.
+	const nav = (await page.getByTestId('nav-devices').boundingBox())!;
+	expect(nav.y).toBeLessThan(80);
+	const badge = (await page.getByTestId('link-status').boundingBox())!;
+	expect(badge.y).toBeLessThan(80);
+});

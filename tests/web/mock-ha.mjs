@@ -126,7 +126,13 @@ export function makeWorld() {
 			mkState('automation.morning_lights', 'off', {
 				friendly_name: 'Morning Lights',
 				last_triggered: null
-			})
+			}),
+			// A lock with no `lock` domain in SERVICES below, and no entity
+			// registry entry: it stands in for the very ordinary case of a UI that
+			// offers a control the backend cannot actually perform. Pressing LOCK
+			// answers `service_not_found`, which is what the e2e suite uses to prove
+			// a rejected call_service is surfaced instead of swallowed.
+			mkState('lock.front_door', 'locked', { friendly_name: 'Front Door' })
 		].map((s) => [s.entity_id, s])
 	);
 	const entities = [

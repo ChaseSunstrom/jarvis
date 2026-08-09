@@ -137,6 +137,116 @@ object JarvisUi {
         )
     }
 
+    /**
+     * A warning strip with one action — used for "Network permission denied",
+     * which on GrapheneOS is by far the most common reason nothing works.
+     *
+     * Amber rather than red: this is a thing the user can fix in two taps, not
+     * a failure. The button is the whole point; a banner that only complains
+     * makes the user go hunting through Settings themselves.
+     */
+    fun banner(
+        context: Context,
+        text: String,
+        actionLabel: String,
+        onAction: () -> Unit,
+    ): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = GradientDrawable().apply {
+            cornerRadius = dp(context, 10).toFloat()
+            setColor(0x22FF9E2C)
+            setStroke(dp(context, 1), 0x88FF9E2C.toInt())
+        }
+        val p = dp(context, 12)
+        setPadding(p, p, p, p)
+        addView(
+            TextView(context).apply {
+                this.text = text
+                setTextColor(0xFFFFC773.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setLineSpacing(dp(context, 3).toFloat(), 1f)
+            }
+        )
+        addView(
+            ghost(context, actionLabel, onAction),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(context, 10) }
+        )
+    }
+
+    /**
+     * One line of a checklist: a state glyph, a label, and an explanation.
+     * The glyph is text rather than an icon so it survives any font and any
+     * accessibility scale, and so it copies into a bug report as-is.
+     */
+    fun checkRow(
+        context: Context,
+        satisfied: Boolean,
+        essential: Boolean,
+        label: String,
+        why: String,
+        onClick: (() -> Unit)?,
+    ): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        val p = dp(context, 10)
+        setPadding(p, p, p, p)
+        background = panel(
+            context,
+            fill = SURFACE,
+            stroke = if (!satisfied && essential) 0x66FF9E2C else 0x333FD8FF
+        )
+
+        val tone = when {
+            satisfied -> APPROVE
+            essential -> 0xFFFF9E2C.toInt()
+            else -> FAINT
+        }
+        addView(
+            TextView(context).apply {
+                text = if (satisfied) "[ok]" else if (essential) "[--]" else "[  ]"
+                setTextColor(tone)
+                typeface = Typeface.MONOSPACE
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, 0, dp(context, 10), 0)
+            }
+        )
+
+        val col = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(
+            TextView(context).apply {
+                text = if (essential) label else "$label (optional)"
+                setTextColor(if (satisfied) Color.WHITE else tone)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            }
+        )
+        col.addView(
+            TextView(context).apply {
+                this.text = why
+                setTextColor(FAINT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setLineSpacing(dp(context, 2).toFloat(), 1f)
+                setPadding(0, dp(context, 3), 0, 0)
+            }
+        )
+        addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        if (onClick != null) {
+            addView(
+                TextView(context).apply {
+                    text = if (satisfied) "" else "OPEN >"
+                    setTextColor(ACCENT)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    typeface = Typeface.MONOSPACE
+                    setPadding(dp(context, 8), 0, 0, 0)
+                }
+            )
+            setOnClickListener { onClick() }
+        }
+    }
+
     // --- controls -----------------------------------------------------------
 
     fun field(

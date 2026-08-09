@@ -219,6 +219,51 @@ llm:
   tools_dir: tools
 
 # ---------------------------------------------------------------------------
+# Web — private search and gated browsing.
+# ---------------------------------------------------------------------------
+# Registers web.search / web.fetch / web.crawl / web.browse, and the matching
+# LLM tools. Full reference: ../docs/search.md.
+#
+# Everything returned by these comes back wrapped in <untrusted_web_content>.
+# A web page is text an attacker chose — anyone can rank for a query — so it is
+# information the model reads, never instructions it follows, and nothing
+# fetched can reach an action without a fresh human approval.
+#
+# Search goes to SearXNG and nowhere else. If it is unset or unreachable,
+# web.search fails with an explanation. It will NOT quietly fall back to Google
+# or Bing: a private stack that phones a cloud engine behind your back is worse
+# than one that says "not configured", because you never find out.
+web:
+  # Start one with `docker compose --profile search up -d`, or point this at a
+  # SearXNG you already run. The JSON format must be enabled on it — it is off
+  # by default upstream. See ../searxng/README.md.
+  searxng_url: !env_var SEARXNG_URL http://127.0.0.1:8888
+  safe_search: 1               # 0 off | 1 moderate | 2 strict
+
+  # jarvis-browser does the fetching, crawling and browser automation.
+  browser_url: http://127.0.0.1:8210
+  # Two secrets, deliberately different values. The first authenticates every
+  # call; the second is the ONLY thing that can approve a sensitive browser
+  # step, and Jarvis sends it only after a human has said yes out loud. Holding
+  # the API token must never be enough to click "Pay".
+  #
+  # These read the environment (compose passes both through from .env). To keep
+  # them in secrets.yaml instead — copy secrets.yaml.example first, or startup
+  # fails on the missing key:
+  #
+  #   browser_token: !secret jarvis_browser_token
+  #   browser_approval_secret: !secret jarvis_browser_approval_secret
+  browser_token: !env_var JARVIS_BROWSER_TOKEN ""
+  browser_approval_secret: !env_var BROWSER_APPROVAL_SECRET ""
+
+  # Domains where the agent may CLICK AND TYPE, not merely read. Empty means
+  # every domain is refused, and that is the right default: reading a page is
+  # one thing, acting on one is another. jarvis-browser keeps its own copy
+  # (BROWSER_ACT_ALLOWLIST) and is the authority — this list is what Jarvis
+  # tells you about, not what enforces it. Add a domain here and there.
+  act_allowlist: []
+
+# ---------------------------------------------------------------------------
 # MQTT — the one integration that covers most real hardware.
 # ---------------------------------------------------------------------------
 # Discovery is why this matters: Zigbee2MQTT, Tasmota, ESPHome and Shelly all

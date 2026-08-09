@@ -128,11 +128,67 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- ===================== packages ===================== -->
-    <!-- Tier 1 to launch an app; Tier 3 to install or uninstall one. -->
+    <!--
+      "Open <app>" by name needs the full launcher list, which is what
+      QUERY_ALL_PACKAGES is for. Everything else Jarvis resolves is an
+      INTENT, and an intent is visible through a <queries> entry without
+      any permission at all — see the <queries> block below.
+
+      That distinction matters on GrapheneOS. QUERY_ALL_PACKAGES is one of
+      the permissions a hardened setup is most likely to have stripped, and a
+      feature that silently stops working is worse than one that was never
+      built. So the intents Jarvis needs are declared explicitly and keep
+      working when this permission is gone; only "list every installed app"
+      degrades, and it degrades to a clear "no matching app" rather than a
+      crash.
+    -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!--
+      Package visibility for the specific things Jarvis hands off to. None of
+      these needs QUERY_ALL_PACKAGES; declaring them means the handoff still
+      resolves on a device where that permission was denied.
+    -->
+    <queries>
+        <!-- Anything with a launcher entry: "open Maps". -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Browser, for opening a link. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- Dialler and SMS. -->
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+        <!-- Navigation. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <!-- Sharing text, e.g. a task result. -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <!-- The QR scanner the settings screen offers to hand the token to. -->
+        <intent>
+            <action android:name="com.google.zxing.client.android.SCAN" />
+        </intent>
+        <!-- Shizuku, when the user has installed it for shell actions. -->
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
 
     <!-- ===================== privileged shell ===================== -->
     <!-- Tier 3, every time. Shizuku is optional and not bundled; the automation
@@ -207,6 +263,28 @@
             android:exported="false"
             android:label="@string/activity_settings"
             android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
+          The GrapheneOS checklist: every permission and special access Jarvis
+          can use, whether it has it, what breaks without it, and a button that
+          opens the exact settings page. This is the screen that answers "it
+          installed but nothing happens".
+        -->
+        <activity
+            android:name=".ui.SystemCheckActivity"
+            android:exported="false"
+            android:label="@string/activity_system_check"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
+          Crash logs, readable on the device. crash/JarvisCrashHandler writes
+          them; this shows them. No cable, no laptop, no logcat.
+        -->
+        <activity
+            android:name=".ui.CrashLogActivity"
+            android:exported="false"
+            android:label="@string/activity_crash_logs"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 
         <!-- WebView onto jarvis-core's own management UI, locked to that origin. -->

@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import EntityRow from '$lib/components/EntityRow.svelte';
+	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
+	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
+	import { staggerStyle } from '$lib/motion';
 	import {
 		applyStateChanged,
 		areaForEntity,
@@ -22,6 +26,7 @@
 	let err = $state('');
 	let hint = $state('');
 	let filter = $state('');
+	let loading = $state(true);
 	let states = $state<EntityState[]>([]);
 	let areas = $state<AreaEntry[]>([]);
 	let entries = $state<EntityRegistryEntry[]>([]);
@@ -32,6 +37,13 @@
 
 	let entryMap = $derived(new Map(entries.map((e) => [e.entity_id, e])));
 	let deviceMap = $derived(new Map(devices.map((d) => [d.id, d])));
+
+	// The command palette jumps here with ?focus=<entity_id>; narrowing the
+	// filter to it is both the highlight and a usable starting point.
+	let focused = $derived(page.url.searchParams.get('focus') ?? '');
+	$effect(() => {
+		if (focused) filter = focused;
+	});
 
 	let groups = $derived.by(() => {
 		const needle = filter.trim().toLowerCase();
@@ -64,13 +76,22 @@
 		states = [...stateMap.values()];
 	}
 
+	function labelFor(entityId: string): string {
+		return friendlyName(stateMap.get(entityId), entryMap.get(entityId));
+	}
+
 	async function call(entityId: string, service: string, data: Record<string, any> = {}) {
 		if (!conn) return;
 		err = '';
+		const label = labelFor(entityId);
 		try {
 			await conn.client.callService(domainOf(entityId), service, { entity_id: entityId, ...data });
+			toasts.success(serviceSuccessText(service, label), entityId);
 		} catch (e) {
+			// Both channels on purpose: the toast is what you notice, the inline
+			// error is what is still on screen ten seconds later.
 			err = describeError(e);
+			toasts.error(serviceFailureText(service, label), describeError(e));
 		}
 	}
 
@@ -113,6 +134,8 @@
 				}, 'state_changed');
 			} catch (e) {
 				err = describeError(e);
+			} finally {
+				if (!disposed) loading = false;
 			}
 		})();
 		return () => {
@@ -131,41 +154,77 @@
 	{total} entit{total === 1 ? 'y' : 'ies'} · live over websocket · link {status}
 </p>
 
-{#if err}<p class="err" data-testid="error">{err}</p>{/if}
+{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
 <div class="toolbar">
+	<label class="jv-sr-only" for="device-filter">Filter devices</label>
 	<input
+		id="device-filter"
 		type="text"
-		placeholder="filter by name or entity_id"
+		placeholder="filter by name or entity_id  ( / )"
 		data-testid="filter"
+		data-jv-filter
 		bind:value={filter}
 	/>
+	{#if filter}
+		<button type="button" class="btn ghost" data-testid="clear-filter" onclick={() => (filter = '')}>
+			CLEAR
+		</button>
+	{/if}
 </div>
 
-{#each groups as group (group.id)}
-	<section class="panel" data-testid="area-{group.id}">
-		<div class="panel-head">
-			<span>{group.name}</span>
-			<span class="muted">{group.items.length}</span>
-		</div>
-		{#each group.items as state (state.entity_id)}
-			<EntityRow
-				{state}
-				name={friendlyName(state, entryMap.get(state.entity_id))}
-				call={(service, data) => call(state.entity_id, service, data)}
-			/>
-		{/each}
+{#if loading && !states.length}
+	<section class="panel" aria-label="Loading devices">
+		<div class="panel-head"><span>Devices</span><span class="muted">…</span></div>
+		<Skeleton rows={6} label="Loading devices" />
 	</section>
 {:else}
-	<p class="muted" data-testid="empty">
-		{status === 'open' ? 'No entities matched.' : 'Connecting to the backend…'}
-	</p>
-{/each}
+	{#each groups as group, gi (group.id)}
+		<section
+			class="panel jv-stagger"
+			style={staggerStyle(gi)}
+			data-testid="area-{group.id}"
+			aria-label={group.name}
+		>
+			<div class="panel-head">
+				<span>{group.name}</span>
+				<span class="muted">{group.items.length}</span>
+			</div>
+			{#each group.items as state, i (state.entity_id)}
+				<EntityRow
+					{state}
+					index={i}
+					name={friendlyName(state, entryMap.get(state.entity_id))}
+					call={(service, data) => call(state.entity_id, service, data)}
+				/>
+			{/each}
+		</section>
+	{:else}
+		<div class="jv-empty" data-testid="empty">
+			<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>
+			{#if status === 'open'}
+				<p class="jv-empty-title">No entities matched</p>
+				<p class="jv-empty-body">
+					{filter
+						? `Nothing here is called “${filter}”. Clear the filter to see everything the backend exposes.`
+						: 'The backend reported no entities. Add an integration in jarvis-core and they will appear here live.'}
+				</p>
+			{:else}
+				<p class="jv-empty-title">No link to the backend</p>
+				<p class="jv-empty-body">
+					The websocket relay is {status}. Check that jarvis-core is reachable and that
+					JARVIS_URL / JARVIS_TOKEN are set where this server runs.
+				</p>
+			{/if}
+		</div>
+	{/each}
+{/if}
 
 <style>
 	.toolbar {
 		display: flex;
+		align-items: center;
 		gap: 0.6rem;
 		margin-bottom: 0.9rem;
 	}

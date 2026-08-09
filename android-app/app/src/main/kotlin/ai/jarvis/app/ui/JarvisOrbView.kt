@@ -53,6 +53,32 @@ class JarvisOrbView @JvmOverloads constructor(
         SPEAKING(0xFFFFCF5C.toInt())   // gold
     }
 
+    /**
+     * The frame the boot sequence wants, written by [JarvisBootAnimation] once
+     * per frame while the power-on plays.
+     *
+     * Mutable and reused on purpose: this is touched 60 times a second on the
+     * main thread and a fresh object per frame is pure garbage. Only the boot
+     * animation writes it, and only between [beginBoot] and [endBoot].
+     *
+     * Values follow [BootTimeline]: [ringReveal] may briefly exceed 1 (that is
+     * the overshoot), [ringAlpha] never does.
+     */
+    class BootDrive {
+        /** Core radius as a fraction of its resting radius. Starts at a point. */
+        var coreScale = 0f
+
+        /** Master opacity for the reactor itself. */
+        var coreAlpha = 0f
+
+        /** Opacity for the brackets, wordmark and caption. */
+        var chromeAlpha = 0f
+
+        /** Per-ring arrival, outward: inner rim, mid dashes, fine dashes, gauge. */
+        val ringReveal = FloatArray(JarvisOrbView.RING_COUNT)
+        val ringAlpha = FloatArray(JarvisOrbView.RING_COUNT)
+    }
+
     // --- state -------------------------------------------------------------
 
     private var mode = Mode.LISTENING
@@ -68,6 +94,9 @@ class JarvisOrbView @JvmOverloads constructor(
     /** Draw brackets + wordmark + caption (for the activation popup). */
     var chromeEnabled = true
     private var stateLabel = "LISTENING"
+
+    /** Non-null only while the power-on sequence is driving this view. */
+    private var bootDrive: BootDrive? = null
 
     // --- paints / geometry -------------------------------------------------
 
@@ -159,6 +188,43 @@ class JarvisOrbView @JvmOverloads constructor(
         if (!breathAnimator.isStarted) breathAnimator.start()
     }
 
+    /**
+     * Hand this view over to the power-on sequence. The orb keeps its clocks
+     * running (breathing, ring spin) but takes its size, opacity and ring
+     * arrival from [drive] instead of from its own entrance animator.
+     *
+     * This is what makes the boot seamless: the splash and the home screen are
+     * the same orb object, so there is nothing to swap out at the handoff.
+     * Pass null to hand control back.
+     */
+    fun setBootDrive(drive: BootDrive?) {
+        bootDrive = drive
+        invalidate()
+    }
+
+    /** Start the clocks for a boot: no entrance animator, no edge sweep. */
+    fun beginBoot() {
+        entranceAnimator.cancel()
+        edgeSweepAnimator.cancel()
+        entranceProgress = 0f
+        edgeSweepDone = true
+        if (!spinAnimator.isStarted) spinAnimator.start()
+        if (!breathAnimator.isStarted) breathAnimator.start()
+    }
+
+    /**
+     * The boot is over. Settle into the idle breathing state — fully arrived,
+     * chrome on, no entrance replay. Safe to call twice.
+     */
+    fun endBoot() {
+        bootDrive = null
+        entranceProgress = 1f
+        edgeSweepDone = true
+        if (!spinAnimator.isStarted) spinAnimator.start()
+        if (!breathAnimator.isStarted) breathAnimator.start()
+        invalidate()
+    }
+
     /** Live mic level, 0..1. Modulates core radius, glow and ring brightness. */
     fun setAmplitude(level: Float) {
         amplitude = min(1f, max(0f, level))
@@ -205,6 +271,7 @@ class JarvisOrbView @JvmOverloads constructor(
         spinAnimator.cancel()
         breathAnimator.cancel()
         colorAnimator?.cancel()
+        bootDrive = null
         super.onDetachedFromWindow()
     }
 
@@ -214,38 +281,59 @@ class JarvisOrbView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (width == 0 || height == 0) return
 
+        val boot = bootDrive
         val cx = width / 2f
         val cy = height / 2f
         // Base reactor radius: fits the smaller screen dimension.
         val base = min(width, height) * 0.20f
         val breath = 1f + 0.04f * sin(breathPhase.toDouble()).toFloat()
-        val scale = (0.7f + 0.3f * entranceProgress) * breath * (1f + 0.14f * smoothedAmplitude)
+        // During the boot the core scale IS the ignition: it starts at a point
+        // and decelerates out to full size. Outside it, the entrance animator.
+        val arrival = boot?.coreScale ?: (0.7f + 0.3f * entranceProgress)
+        val scale = arrival * breath * (1f + 0.14f * smoothedAmplitude)
         val r = base * scale
-        val a = entranceProgress                    // master fade
-        val spin = spinAnimator.animatedFraction    // 0..1 continuous
+        val a = boot?.coreAlpha ?: entranceProgress          // master fade
+        val chromeA = boot?.chromeAlpha ?: a
+        val spin = spinAnimator.animatedFraction             // 0..1 continuous
 
         drawScrim(canvas, cx, cy, a)
-        if (chromeEnabled) drawBrackets(canvas, a)
-        drawEdgeLight(canvas)
+        if (chromeEnabled) drawBrackets(canvas, chromeA)
+        // The boot draws its own scan line; the edge sweep would fight it.
+        if (boot == null) drawEdgeLight(canvas)
 
-        // radii as fractions of r (mirror the web shader proportions)
-        val rInnerRim = r * 1.45f
-        val rMidDash = r * 2.15f
-        val rFineDash = r * 2.55f
-        val rGauge = r * 3.0f
-        val rOuter = r * 3.6f
+        // radii as fractions of r (mirror the web shader proportions). During
+        // the boot each ring is also pushed out from 55% to its resting radius,
+        // one at a time, overshooting slightly as it lands.
+        val rInnerRim = r * 1.45f * ringScale(boot, RING_INNER_RIM)
+        val rMidDash = r * 2.15f * ringScale(boot, RING_MID_DASH)
+        val rFineDash = r * 2.55f * ringScale(boot, RING_FINE_DASH)
+        val rGauge = r * 3.0f * ringScale(boot, RING_GAUGE)
+        val rOuter = r * 3.6f * ringScale(boot, RING_GAUGE)
 
-        drawAnnulusSweep(canvas, cx, cy, r * 1.5f, rGauge, spin, a)
-        drawTicks(canvas, cx, cy, rGauge, 72, dp(6f), dp(1f), a * 0.8f)
-        drawTicks(canvas, cx, cy, rGauge, 12, dp(11f), dp(1.6f), a)
-        drawDashedRing(canvas, cx, cy, rMidDash, 28, spin * 360f, dp(2.5f), a)
-        drawDashedRing(canvas, cx, cy, rFineDash, 64, -spin * 720f, dp(1.4f), a * 0.75f)
-        drawRing(canvas, cx, cy, rOuter, dp(1f), a * 0.4f)
-        drawRing(canvas, cx, cy, rInnerRim, dp(1.6f), a)
+        val aInnerRim = a * ringAlpha(boot, RING_INNER_RIM)
+        val aMidDash = a * ringAlpha(boot, RING_MID_DASH)
+        val aFineDash = a * ringAlpha(boot, RING_FINE_DASH)
+        val aGauge = a * ringAlpha(boot, RING_GAUGE)
+
+        drawAnnulusSweep(canvas, cx, cy, r * 1.5f, rGauge, spin, aGauge)
+        drawTicks(canvas, cx, cy, rGauge, 72, dp(6f), dp(1f), aGauge * 0.8f)
+        drawTicks(canvas, cx, cy, rGauge, 12, dp(11f), dp(1.6f), aGauge)
+        drawDashedRing(canvas, cx, cy, rMidDash, 28, spin * 360f, dp(2.5f), aMidDash)
+        drawDashedRing(canvas, cx, cy, rFineDash, 64, -spin * 720f, dp(1.4f), aFineDash * 0.75f)
+        drawRing(canvas, cx, cy, rOuter, dp(1f), aGauge * 0.4f)
+        drawRing(canvas, cx, cy, rInnerRim, dp(1.6f), aInnerRim)
         drawCore(canvas, cx, cy, r, a)
 
-        if (chromeEnabled) drawText(canvas, cx, cy, rOuter, a)
+        if (chromeEnabled) drawText(canvas, cx, cy, chromeA)
     }
+
+    /** Ring radius multiplier: 1 when idle, pushing outward during the boot. */
+    private fun ringScale(boot: BootDrive?, index: Int): Float =
+        if (boot == null) 1f else 0.55f + 0.45f * boot.ringReveal[index]
+
+    /** Ring opacity multiplier: 1 when idle, per-ring arrival during the boot. */
+    private fun ringAlpha(boot: BootDrive?, index: Int): Float =
+        if (boot == null) 1f else boot.ringAlpha[index]
 
     private fun drawScrim(canvas: Canvas, cx: Float, cy: Float, a: Float) {
         scrimPaint.shader = RadialGradient(
@@ -296,6 +384,11 @@ class JarvisOrbView @JvmOverloads constructor(
     }
 
     private fun drawCore(canvas: Canvas, cx: Float, cy: Float, r: Float, a: Float) {
+        // The boot ignites the core from a literal point, so the first frames
+        // ask for a zero radius — and RadialGradient throws on that. Every
+        // primitive below takes the same precaution: nothing invisible is worth
+        // a shader, and nothing degenerate is worth a crash.
+        if (r < MIN_DRAW_PX || a <= 0f) return
         val glowR = r * 2.4f
         glowPaint.shader = RadialGradient(
             cx, cy, glowR,
@@ -317,6 +410,7 @@ class JarvisOrbView @JvmOverloads constructor(
     }
 
     private fun drawRing(canvas: Canvas, cx: Float, cy: Float, r: Float, stroke: Float, a: Float) {
+        if (r < MIN_DRAW_PX || a <= 0f) return
         ringPaint.shader = null
         ringPaint.color = currentColor
         ringPaint.strokeWidth = stroke
@@ -328,8 +422,12 @@ class JarvisOrbView @JvmOverloads constructor(
         canvas: Canvas, cx: Float, cy: Float, r: Float,
         dashes: Int, rotationDeg: Float, stroke: Float, a: Float
     ) {
+        if (r < MIN_DRAW_PX || a <= 0f || dashes <= 0) return
         val circumference = (2.0 * Math.PI * r).toFloat()
         val seg = circumference / (dashes * 2f)
+        // A DashPathEffect whose intervals sum to zero is undefined behaviour
+        // in Skia; at a sub-pixel radius the ring is invisible anyway.
+        if (seg <= 0f) return
         ringPaint.shader = null
         ringPaint.color = currentColor
         ringPaint.strokeWidth = stroke
@@ -346,6 +444,7 @@ class JarvisOrbView @JvmOverloads constructor(
         canvas: Canvas, cx: Float, cy: Float, r: Float,
         count: Int, length: Float, stroke: Float, a: Float
     ) {
+        if (r < MIN_DRAW_PX || a <= 0f || count <= 0) return
         tickPaint.color = currentColor
         tickPaint.strokeWidth = stroke
         tickPaint.alpha = (255 * a).toInt().coerceIn(0, 255)
@@ -362,6 +461,7 @@ class JarvisOrbView @JvmOverloads constructor(
     private fun drawAnnulusSweep(
         canvas: Canvas, cx: Float, cy: Float, rIn: Float, rOut: Float, spin: Float, a: Float
     ) {
+        if (rOut < MIN_DRAW_PX || rOut <= rIn || a <= 0f) return
         annulus.reset()
         annulus.fillType = Path.FillType.EVEN_ODD
         annulus.addCircle(cx, cy, rOut, Path.Direction.CW)
@@ -384,19 +484,35 @@ class JarvisOrbView @JvmOverloads constructor(
         sweepPaint.shader = null
     }
 
-    private fun drawText(canvas: Canvas, cx: Float, cy: Float, rOuter: Float, a: Float) {
+    private fun drawText(canvas: Canvas, cx: Float, cy: Float, a: Float) {
+        if (a <= 0f) return
         wordmarkPaint.color = withAlpha(currentColor, (235 * a).toInt())
-        wordmarkPaint.textSize = dp(26f)
-        wordmarkPaint.letterSpacing = 0.5f
-        val topY = max(dp(72f), cy - rOuter - dp(48f))
-        canvas.drawText("JARVIS", cx, topY, wordmarkPaint)
+        wordmarkPaint.textSize = dp(WORDMARK_DP)
+        wordmarkPaint.letterSpacing = WORDMARK_SPACING
+        canvas.drawText("JARVIS", cx, wordmarkBaselineY(), wordmarkPaint)
 
         captionPaint.color = withAlpha(currentColor, (200 * a).toInt())
         captionPaint.textSize = dp(13f)
         captionPaint.letterSpacing = 0.4f
-        val botY = min(height - dp(56f), cy + rOuter + dp(56f))
+        val botY = min(height - dp(56f), cy + restingOuterRadius() + dp(56f))
         canvas.drawText(stateLabel, cx, botY, captionPaint)
     }
+
+    /**
+     * The outer boundary radius with the breathing and the mic level taken out.
+     * The chrome is positioned against this rather than the live radius so the
+     * wordmark and the caption stay put while the orb breathes — and so the
+     * boot animation can land its own wordmark on exactly this baseline.
+     */
+    private fun restingOuterRadius(): Float = min(width, height) * REST_OUTER_FACTOR
+
+    /**
+     * Baseline of the JARVIS wordmark. [JarvisBootAnimation] calls this so the
+     * letters it resolves in finish exactly where the idle wordmark lives —
+     * there is no jump at the handoff because there is nowhere to jump to.
+     */
+    fun wordmarkBaselineY(): Float =
+        max(dp(72f), height / 2f - restingOuterRadius() - dp(48f))
 
     // --- colour helpers ----------------------------------------------------
 
@@ -417,8 +533,31 @@ class JarvisOrbView @JvmOverloads constructor(
         /** One full edge-light sweep. */
         const val EDGE_SWEEP_MS = 350L
 
+        /** Rings, outward. The boot sequence brings them in in this order. */
+        const val RING_INNER_RIM = 0
+        const val RING_MID_DASH = 1
+        const val RING_FINE_DASH = 2
+        const val RING_GAUGE = 3
+        const val RING_COUNT = 4
+
+        /** Wordmark metrics, shared with [JarvisBootAnimation]. */
+        const val WORDMARK_DP = 26f
+        const val WORDMARK_SPACING = 0.55f
+
+        /** Outer boundary radius as a fraction of the smaller screen edge. */
+        const val REST_OUTER_FACTOR = 0.20f * 3.6f
+
         private const val BREATH_MS = 1600L
         private const val SPIN_MS = 8000L
         private const val EDGE_STROKE_DP = 3f
+
+        /**
+         * Below this radius (in px) a shape is not worth drawing, and a shader
+         * built for it is worth a crash: `RadialGradient` rejects a radius of
+         * zero outright, and a `DashPathEffect` whose intervals sum to zero is
+         * undefined in Skia. The boot sequence starts the core at exactly zero,
+         * so this is a live path, not a theoretical one.
+         */
+        private const val MIN_DRAW_PX = 0.5f
     }
 }

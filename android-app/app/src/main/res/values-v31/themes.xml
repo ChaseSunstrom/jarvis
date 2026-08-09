@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ splash screen.
+
+  From API 31 the platform draws a splash for EVERY cold start whether you ask
+  for it or not, using windowBackground and the launcher icon. Left alone on a
+  light-themed device that is a white flash followed by a black app — the exact
+  thing the boot animation exists to avoid. So the splash is configured to be
+  the first frame of the power-on: the same #04070C ground, the same reactor.
+
+  MainActivity then takes the exit over with setOnExitAnimationListener and
+  hands straight to ui/JarvisBootAnimation, whose first frame is also black.
+  Nothing between the two ever renders a different colour.
+
+  This file only overrides the splash attributes; everything else is inherited
+  from the base theme in values/themes.xml.
+-->
+<resources>
+
+    <style name="Theme.Jarvis" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/jarvis_bg</item>
+        <item name="android:colorBackground">@color/jarvis_bg</item>
+        <item name="android:statusBarColor">@color/jarvis_bg</item>
+        <item name="android:navigationBarColor">@color/jarvis_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">@android:color/white</item>
+        <item name="android:textColorSecondary">@color/jarvis_dim</item>
+        <item name="android:colorAccent">@color/jarvis_accent</item>
+
+        <!-- The splash ground. Must match JarvisUi.BG exactly. -->
+        <item name="android:windowSplashScreenBackground">@color/jarvis_bg</item>
+        <!-- The reactor, on the same ground, with no icon backplate. -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_jarvis_splash</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+    </style>
+
+</resources>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Android 12+ splash icon: the arc reactor alone, on the splash's own
+  #04070C ground (no icon backplate — see values-v31/themes.xml).
+
+  The splash icon canvas is 288dp with only the inner two thirds guaranteed
+  visible, the same ratio as an adaptive icon, so the art stays inside roughly
+  r = 33 of centre (54,54) in this 108-unit viewport.
+
+  Deliberately simpler than the launcher icon. This is on screen for a few
+  hundred milliseconds at most before ui/JarvisBootAnimation ignites the real
+  orb over it, and fine dashes would only shimmer at that size.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- gauge ring -->
+    <path
+        android:strokeColor="#3FD8FF"
+        android:strokeWidth="1.6"
+        android:strokeAlpha="0.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,25 a29,29 0 1,0 0.1,0" />
+
+    <!-- four major ticks -->
+    <path android:strokeColor="#3FD8FF" android:strokeWidth="2.2" android:strokeAlpha="0.85"
+        android:pathData="M54,21 L54,28" />
+    <path android:strokeColor="#3FD8FF" android:strokeWidth="2.2" android:strokeAlpha="0.85"
+        android:pathData="M54,80 L54,87" />
+    <path android:strokeColor="#3FD8FF" android:strokeWidth="2.2" android:strokeAlpha="0.85"
+        android:pathData="M21,54 L28,54" />
+    <path android:strokeColor="#3FD8FF" android:strokeWidth="2.2" android:strokeAlpha="0.85"
+        android:pathData="M80,54 L87,54" />
+
+    <!-- inner rim -->
+    <path
+        android:strokeColor="#7FE9FF"
+        android:strokeWidth="2.2"
+        android:fillColor="#00000000"
+        android:pathData="M54,39 a15,15 0 1,0 0.1,0" />
+
+    <!-- glow + hot core -->
+    <path android:fillColor="#3FD8FF" android:fillAlpha="0.32"
+        android:pathData="M54,42 a12,12 0 1,0 0.1,0" />
+    <path android:fillColor="#AEF2FF"
+        android:pathData="M54,45 a9,9 0 1,0 0.1,0" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,48 a6,6 0 1,0 0.1,0" />
+</vector>

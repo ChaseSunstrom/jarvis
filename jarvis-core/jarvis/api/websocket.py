@@ -20,6 +20,28 @@ identical and is **not** a place to be creative.
     client  <binary>  0x01                      (lone id byte = end of audio)
     server  {"id": 2, "type": "event", "event": {"type": "run-end", ...}}
 
+The same socket carries the device channel the phone and the desktop agent
+speak (``docs/cross-device.md``, ``android-app/docs/device-channel.md``). A
+client that identifies itself becomes reachable:
+
+    client  {"id": 3, "type": "jarvis/device/register", "device": {
+                "id": "...", "name": "Pixel 8", "platform": "android",
+                "capabilities": [...], "actions": [<manifest>]}}
+    server  {"id": 3, "type": "result", "success": true, "result": {"ok": true}}
+
+    client  {"type": "device_event", "event": "presence", "data": {...}}
+    server  {"type": "device_command", "command_id": "c-1", "action": "lock_screen",
+             "params": {}, "tier": 2, "reason": "You asked me to lock the laptop."}
+    client  {"type": "device_result", "command_id": "c-1", "status": "ok", ...}
+    server  {"type": "jarvis_message", "message_id": "a1b2", "kind": "ask", ...}
+    client  {"type": "jarvis_message_result", "message_id": "a1b2",
+             "status": "answered", "answer": "no"}
+
+Those four inbound frames are pushes: they carry no ``id`` and get no reply.
+Registration is *optional* — a socket that never registers (the browser HUD,
+a script) simply has none of this, which is a state to be ignored quietly and
+never an error that ends the connection.
+
 Every outbound frame goes through one queue drained by a single writer task,
 so results, subscribed events and pipeline events can never interleave
 mid-frame — and bus listeners (which run synchronously inside ``bus.fire``)
@@ -47,6 +69,21 @@ from ..auth import AuthManager, extract_bearer_token, get_auth
 from ..const import MATCH_ALL
 from . import common
 from .common import ApiError, HA_VERSION
+from .devices import (
+    DATA_COMPANION,
+    DATA_PRESENCE,
+    EVENT_DEVICE_EVENT,
+    MAX_ID,
+    MAX_TEXT,
+    PRESENCE_EVENT,
+    TYPE_DEVICE_EVENT,
+    TYPE_DEVICE_RESULT,
+    TYPE_MESSAGE_RESULT,
+    TYPE_REGISTER,
+    get_devices,
+    get_presence,
+    presence_signals,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..core import Jarvis
@@ -85,6 +122,10 @@ HANDLED = object()
 #: Queued after the last command to stop the worker without cancelling it.
 _STOP = object()
 
+#: Queued in place of a frame that was not JSON, so the error is still reported
+#: in the order it arrived rather than jumping the commands ahead of it.
+_BAD_JSON = object()
+
 
 def _run_kwargs(msg: dict[str, Any]) -> dict[str, Any]:
     """Pipeline-run options taken off an ``assist_pipeline/run`` message."""
@@ -111,6 +152,9 @@ class WebSocketHandler:
         self.ws = websocket
         self.auth = auth if auth is not None else get_auth(jarvis)
         self.user_id: str | None = None
+        #: Set by ``jarvis/device/register``. While it is None this connection
+        #: is an anonymous client and every device frame is ignored.
+        self.device_id: str | None = None
 
         self._out: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._writer: asyncio.Task | None = None
@@ -146,6 +190,7 @@ class WebSocketHandler:
 
         Returns the tasks it asked to stop, for the caller to await.
         """
+        self._release_device()
         for unsub in list(self._subscriptions.values()):
             with contextlib.suppress(Exception):
                 unsub()
@@ -309,7 +354,12 @@ class WebSocketHandler:
         """Read frames and route them. Never executes a command itself.
 
         Binary audio is delivered straight to its run: it must not queue behind
-        a command, or a voice run stalls for as long as the command takes.
+        a command, or a voice run stalls for as long as the command takes. The
+        device channel's push frames go the same way, for a sharper reason —
+        a ``device_result`` is the *answer* to a command the worker may be
+        sitting inside right now (the desktop agent asks Jarvis a question over
+        the same socket it takes commands on), and an answer that queues behind
+        the thing waiting for it is a deadlock until the dispatch times out.
         """
         while True:
             message = await self.ws.receive()
@@ -320,18 +370,24 @@ class WebSocketHandler:
                 self._handle_binary(payload)
                 continue
             raw = message.get("text")
-            if raw is not None:
-                self._work.put_nowait(raw)
-
-    async def _worker_loop(self) -> None:
-        """Execute queued text commands, one at a time, in the order sent."""
-        while True:
-            raw = await self._work.get()
-            if raw is _STOP:
-                return
+            if raw is None:
+                continue
             try:
                 msg = json.loads(raw)
             except (TypeError, ValueError):
+                self._work.put_nowait(_BAD_JSON)
+                continue
+            if isinstance(msg, dict) and self._handle_push(msg):
+                continue
+            self._work.put_nowait(msg)
+
+    async def _worker_loop(self) -> None:
+        """Execute queued commands, one at a time, in the order they were sent."""
+        while True:
+            msg = await self._work.get()
+            if msg is _STOP:
+                return
+            if msg is _BAD_JSON:
                 self.error(None, ERR_INVALID_FORMAT, "message is not valid JSON")
                 continue
             if not isinstance(msg, dict):
@@ -342,6 +398,23 @@ class WebSocketHandler:
                 await self._dispatch(msg)
             finally:
                 self._busy = False
+
+    def _handle_push(self, msg: dict[str, Any]) -> bool:
+        """Deal with a push frame inline, if that is what this is.
+
+        Every one of these is synchronous and cheap by construction — they hand
+        a value to something that was already waiting — so running them on the
+        read loop costs nothing and keeps them off the command queue. A handler
+        that raised would take the socket down with it, hence the catch-all.
+        """
+        handler = self._PUSH_HANDLERS.get(msg.get("type"))
+        if handler is None:
+            return False
+        try:
+            handler(self, msg)
+        except Exception:  # pragma: no cover - a push must never kill a socket
+            _LOGGER.exception("Error handling push frame %r", msg.get("type"))
+        return True
 
     async def _dispatch(self, msg: dict[str, Any]) -> None:
         msg_id = msg.get("id")
@@ -368,6 +441,48 @@ class WebSocketHandler:
 
     def _context(self) -> Any:
         return common.api_context(self.user_id)
+
+    # --- device channel ---------------------------------------------------
+    def _release_device(self) -> None:
+        """Mark this connection's device gone. Synchronous, idempotent.
+
+        A phone that dropped and came straight back is registered on a *newer*
+        socket by the time this one finishes dying. Nothing here may touch it:
+        unregistering it, or marking it absent in presence, would take a device
+        the user is holding out of the routing until its next heartbeat.
+        """
+        device_id, self.device_id = self.device_id, None
+        if device_id is None:
+            return
+        try:
+            hub = get_devices(self.jarvis)
+            link = hub.get(device_id)
+            if link is not None and link.owner is not self:
+                _LOGGER.debug("%s is already back on a newer socket", device_id)
+                return
+            hub.disconnect(device_id, owner=self)
+            get_presence(self.jarvis).disconnect(device_id)
+        except Exception:  # pragma: no cover - teardown must never raise
+            _LOGGER.exception("Could not release device %s", device_id)
+
+    def _touch_interaction(self) -> None:
+        """Record that the user is using Jarvis *here*.
+
+        Talking to the assistant is the strongest presence signal there is —
+        stronger than a screen-on flag — and it is the one signal no device can
+        report, because it is the server that gets spoken to. Every pipeline run
+        and every conversation turn on a registered socket lands here, which is
+        what makes "answer me where I'm actually sitting" work.
+        """
+        if self.device_id is None:
+            return
+        presence = self.jarvis.data.get(DATA_PRESENCE)
+        if presence is None:
+            return
+        try:
+            presence.touch_interaction(self.device_id)
+        except Exception:  # pragma: no cover - presence is never load-bearing
+            _LOGGER.debug("Could not touch presence for %s", self.device_id, exc_info=True)
 
     # --- binary audio -----------------------------------------------------
     def _handle_binary(self, payload: bytes) -> None:
@@ -466,6 +581,7 @@ class WebSocketHandler:
         return result
 
     async def _cmd_conversation_process(self, msg: dict[str, Any]) -> Any:
+        self._touch_interaction()
         return await common.async_conversation_process(
             self.jarvis,
             str(msg.get("text") or ""),
@@ -509,6 +625,127 @@ class WebSocketHandler:
     async def _cmd_area_delete(self, msg: dict[str, Any]) -> Any:
         return await common.async_delete_area(self.jarvis, msg)
 
+    # devices
+    async def _cmd_device_register(self, msg: dict[str, Any]) -> Any:
+        """``jarvis/device/register`` — this socket says who it is.
+
+        The reply is the device's go-ahead: the phone treats anything other than
+        a successful result for *its* id as "not registered" and ignores every
+        command that follows, so this must fail loudly rather than half-succeed.
+        """
+        device = msg.get("device")
+        if not isinstance(device, dict):
+            raise ApiError(ERR_INVALID_FORMAT, "device/register needs a 'device' object")
+        device_id = str(device.get("id") or "").strip()[:MAX_ID]
+        if not device_id:
+            raise ApiError(ERR_INVALID_FORMAT, "the device needs an 'id'")
+
+        name = str(device.get("name") or device_id).strip()[:MAX_TEXT] or device_id
+        platform = str(device.get("platform") or "unknown").strip()[:64] or "unknown"
+        capabilities = device.get("capabilities")
+
+        # One socket speaks for one device. Re-registering under a different id
+        # (a capability refresh should reuse the same one) releases the old.
+        if self.device_id is not None and self.device_id != device_id:
+            self._release_device()
+
+        hub = get_devices(self.jarvis)
+        link = hub.register(
+            device_id,
+            name,
+            platform,
+            capabilities,
+            device.get("actions"),
+            self._device_sender,
+            app_version=device.get("app_version"),
+            owner=self,
+        )
+        self.device_id = device_id
+        get_presence(self.jarvis).register(device_id, name, platform, link.capabilities)
+
+        # There is somewhere to deliver to now, so hand the companion manager a
+        # transport (again — re-arming it also drains anything that queued up
+        # while nothing was reachable).
+        companion = self.jarvis.data.get(DATA_COMPANION)
+        setter = getattr(companion, "set_transport", None)
+        if callable(setter):
+            try:
+                setter(hub.async_send)
+            except Exception:  # pragma: no cover - a broken manager is not fatal
+                _LOGGER.exception("Could not install the companion transport")
+
+        return {"ok": True, "device_id": device_id, "actions": len(link.actions)}
+
+    def _device_sender(self, payload: dict[str, Any]) -> bool:
+        """Put a frame on this socket. False once it is closing."""
+        if self._closed:
+            return False
+        self.send(payload)
+        return True
+
+    def _push_device_event(self, msg: dict[str, Any]) -> None:
+        """A device reporting something about itself. Never a command."""
+        if self.device_id is None:
+            _LOGGER.debug("Ignoring a device_event from an unregistered socket")
+            return
+        event = str(msg.get("event") or "").strip()[:64]
+        data = msg.get("data")
+        data = data if isinstance(data, dict) else {}
+
+        if event == PRESENCE_EVENT:
+            signals = presence_signals(data)
+            if signals:
+                get_presence(self.jarvis).update(self.device_id, **signals)
+
+        # Everything else is forwarded for automations to trigger on. `trust`
+        # rides along untouched: a payload holding text somebody else wrote is
+        # data to show a user, never an instruction, and a listener that cannot
+        # see which is which cannot honour that.
+        self.jarvis.bus.fire(
+            EVENT_DEVICE_EVENT,
+            {
+                "device_id": self.device_id,
+                "event": event,
+                "data": data,
+                "trust": "untrusted" if msg.get("trust") == "untrusted" else "trusted",
+            },
+            self._context(),
+        )
+
+    def _push_device_result(self, msg: dict[str, Any]) -> None:
+        """The answer to one ``device_command`` this device was sent."""
+        if self.device_id is None:
+            return
+        if not get_devices(self.jarvis).on_result(self.device_id, msg):
+            _LOGGER.debug(
+                "Ignoring a device_result for an unknown command from %s", self.device_id
+            )
+
+    def _push_message_result(self, msg: dict[str, Any]) -> None:
+        """``jarvis_message_result`` — the answer to a proactive question.
+
+        An answer is *data*. It resolves a waiting ``companion.ask`` and nothing
+        else; there is no path from here to a service call, so "yes" can never
+        be an authorisation token.
+        """
+        manager = self.jarvis.data.get(DATA_COMPANION)
+        handler = getattr(manager, "on_device_answer", None)
+        if not callable(handler):
+            return
+        message_id = str(msg.get("message_id") or "").strip()[:MAX_ID]
+        if not message_id:
+            return
+        answer = msg.get("answer")
+        if answer is not None and not isinstance(answer, str):
+            answer = str(answer)[:MAX_TEXT]
+        status = str(msg.get("status") or "answered").strip().lower()[:32]
+        try:
+            # An unknown message_id answers False and is dropped: a device
+            # cannot answer a question it was never asked.
+            handler(message_id, answer, status)
+        except Exception:  # pragma: no cover - a broken manager is not fatal
+            _LOGGER.exception("companion could not take the answer to %s", message_id)
+
     # voice
     async def _cmd_pipeline_list(self, msg: dict[str, Any]) -> Any:
         return common.pipeline_list_payload(self.jarvis)
@@ -516,6 +753,7 @@ class WebSocketHandler:
     async def _cmd_pipeline_run(self, msg: dict[str, Any]) -> Any:
         msg_id = msg.get("id")
         self._reserve_id(msg_id)
+        self._touch_interaction()
         start_stage = str(msg.get("start_stage") or "stt")
         end_stage = str(msg.get("end_stage") or "tts")
         payload = msg.get("input")
@@ -584,6 +822,7 @@ class WebSocketHandler:
             self._runs.pop(msg_id, None)
 
     _HANDLERS: dict[str, Any] = {}
+    _PUSH_HANDLERS: dict[str, Any] = {}
 
 
 WebSocketHandler._HANDLERS = {
@@ -607,6 +846,16 @@ WebSocketHandler._HANDLERS = {
     "config/area_registry/delete": WebSocketHandler._cmd_area_delete,
     "assist_pipeline/pipeline/list": WebSocketHandler._cmd_pipeline_list,
     "assist_pipeline/run": WebSocketHandler._cmd_pipeline_run,
+    # the device channel (phone, desktop agent, satellites)
+    TYPE_REGISTER: WebSocketHandler._cmd_device_register,
+}
+
+#: Handled straight off the read loop, in order, without a reply. See
+#: ``_receive_loop`` for why these must never sit in the command queue.
+WebSocketHandler._PUSH_HANDLERS = {
+    TYPE_DEVICE_EVENT: WebSocketHandler._push_device_event,
+    TYPE_DEVICE_RESULT: WebSocketHandler._push_device_result,
+    TYPE_MESSAGE_RESULT: WebSocketHandler._push_message_result,
 }
 
 

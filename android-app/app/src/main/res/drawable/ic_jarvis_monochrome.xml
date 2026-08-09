@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Themed-icon layer (Android 13+ "Themed icons").
+
+  The launcher throws away this drawable's colour and keeps only its alpha,
+  then tints the result with the wallpaper palette. So this cannot be the
+  cyan foreground: every hue in it would collapse to the same flat tint and
+  the reactor would come out as a filled blob.
+
+  Instead the depth is carried entirely by alpha — a faint gauge ring, a
+  stronger rim, a solid core — which survives the tint and still reads as the
+  Jarvis reactor at 48dp on someone's home screen.
+
+  Art stays inside the adaptive-icon safe zone: within r = 33 of centre (54,54).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- gauge ring -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeAlpha="0.45"
+        android:fillColor="#00000000"
+        android:pathData="M54,25 a29,29 0 1,0 0.1,0" />
+
+    <!-- major ticks, cardinal then diagonal -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.4" android:strokeAlpha="0.8"
+        android:pathData="M54,20 L54,28" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.4" android:strokeAlpha="0.8"
+        android:pathData="M54,80 L54,88" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.4" android:strokeAlpha="0.8"
+        android:pathData="M20,54 L28,54" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.4" android:strokeAlpha="0.8"
+        android:pathData="M80,54 L88,54" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:strokeAlpha="0.55"
+        android:pathData="M31,31 L36,36" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:strokeAlpha="0.55"
+        android:pathData="M77,31 L72,36" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:strokeAlpha="0.55"
+        android:pathData="M31,77 L36,72" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:strokeAlpha="0.55"
+        android:pathData="M77,77 L72,72" />
+
+    <!-- inner rim -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:strokeAlpha="0.9"
+        android:fillColor="#00000000"
+        android:pathData="M54,39 a15,15 0 1,0 0.1,0" />
+
+    <!-- core -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.35"
+        android:pathData="M54,43 a11,11 0 1,0 0.1,0" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,47 a7,7 0 1,0 0.1,0" />
+</vector>

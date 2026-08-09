@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
+import ai.jarvis.app.compat.GrapheneCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -410,8 +411,26 @@ class JarvisChannel(
         inbound.reset(clock())
         setState(State.READY)
         Log.i(TAG, "registered; channel is ready")
+        rememberActionCount(tierTable.size)
         startHeartbeat(current)
         flushEvents(current)
+    }
+
+    /**
+     * Persist how many actions this device just registered, for the power-on
+     * sequence's third system-check line to read on the next cold start.
+     *
+     * Display only — nothing reads it back to make a decision — so it is
+     * written with `apply()` and its failure is logged, never propagated. This
+     * runs on OkHttp's reader thread; `apply()` is the asynchronous commit, so
+     * nothing here touches the disk inline.
+     */
+    private fun rememberActionCount(count: Int) {
+        try {
+            JarvisConfig(appContext).lastActionCount = count
+        } catch (t: Throwable) {
+            Log.d(TAG, "could not record the action count", t)
+        }
     }
 
     // --- outbound requests --------------------------------------------------
@@ -983,6 +1002,12 @@ class JarvisChannel(
                 return
             }
             Log.i(TAG, "socket open to $actual; waiting for auth_required")
+            // Positive proof that this app can reach the network, which clears
+            // any GrapheneOS "your Network toggle is off" suspicion the failure
+            // path accumulated. Recorded here rather than after auth: the
+            // socket is open, so the packets got out — whether the token is
+            // any good is a different question and a different banner.
+            GrapheneCompat.noteNetworkSuccess()
             setState(State.AUTHENTICATING)
         }
 
@@ -1004,6 +1029,17 @@ class JarvisChannel(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            // Fold what actually happened on the wire into the network verdict.
+            // Without this call site GrapheneCompat only ever sees the
+            // permission check — which on GrapheneOS may still read GRANTED
+            // while every socket is being refused — and SUSPECT could never
+            // fire at all. A response means we reached the server, so that is
+            // recorded as a success even when the server said no.
+            if (response != null) {
+                GrapheneCompat.noteNetworkSuccess()
+            } else {
+                GrapheneCompat.noteNetworkFailure(t)
+            }
             val code = response?.code
             // 401/403 on the upgrade is a token problem, not a network blip.
             val fatal = code == 401 || code == 403

@@ -1115,8 +1115,60 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "wyoming-whisper",
         "wyoming-piper",
         "photon",
+        "jarvis-browser",
+        "searxng",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
+
+
+def test_compose_keeps_searxng_behind_the_search_profile(compose: dict[str, Any]) -> None:
+    """`docker compose up -d` must not start a search engine you did not ask for.
+
+    Plenty of installations already run SearXNG somewhere on the LAN and only
+    want SEARXNG_URL pointed at it. The profile is the opt-in:
+    `docker compose --profile search up -d` starts one here as well.
+    """
+    assert compose["services"]["searxng"]["profiles"] == ["search"]
+    # ...and nothing else may be profile-gated, or `up -d` stops being the
+    # whole stack.
+    gated = {
+        name for name, service in compose["services"].items() if service.get("profiles")
+    }
+    assert gated == {"searxng"}
+
+
+def test_compose_ships_no_secrets(compose: dict[str, Any]) -> None:
+    """Every credential comes from the environment, never from this file.
+
+    The searxng secret key in particular: `settings.yml` keeps the upstream
+    `ultrasecretkey` sentinel so a missing SEARXNG_SECRET fails loudly, and
+    the day someone "fixes" that by pasting a real key into compose is the day
+    the key is in every clone of the repository.
+    """
+    for name, service in compose["services"].items():
+        for entry in service.get("environment") or []:
+            key, _, value = str(entry).partition("=")
+            if not any(
+                marker in key for marker in ("SECRET", "TOKEN", "PASSWORD", "KEY")
+            ):
+                continue
+            assert value.startswith("${"), (
+                f"{name} hardcodes {key}; it must come from the environment"
+            )
+
+
+def test_compose_browser_keeps_its_two_secrets_separate(compose: dict[str, Any]) -> None:
+    """The model holds the API token. Holding it must not be enough to approve."""
+    env = dict(
+        str(entry).split("=", 1)
+        for entry in compose["services"]["jarvis-browser"]["environment"]
+    )
+    assert env["JARVIS_BROWSER_TOKEN"] != env["BROWSER_APPROVAL_SECRET"]
+    assert "${JARVIS_BROWSER_TOKEN" in env["JARVIS_BROWSER_TOKEN"]
+    assert "${BROWSER_APPROVAL_SECRET" in env["BROWSER_APPROVAL_SECRET"]
+    # Acting on a page is never implicitly open: an unset allowlist must stay
+    # unset rather than defaulting to something.
+    assert env["BROWSER_ACT_ALLOWLIST"] == "${BROWSER_ACT_ALLOWLIST:-}"
 
 
 def test_compose_keeps_the_existing_wyoming_stack(compose: dict[str, Any]) -> None:

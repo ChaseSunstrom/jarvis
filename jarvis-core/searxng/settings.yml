@@ -1,0 +1,129 @@
+# SearXNG — the metasearch engine behind `web.search`.
+#
+# Mounted at /etc/searxng/settings.yml by the `searxng` service in
+# ../docker-compose.yml. See ./README.md for what to change and ../docs/search.md
+# for how Jarvis uses it.
+#
+# Two settings here are load-bearing rather than taste, and both of them are
+# the opposite of the upstream default:
+#
+#   search.formats     must include `json`. SearXNG serves HTML only unless
+#                      told otherwise, and a JSON request against an instance
+#                      without it comes back 403 — not a downgrade to HTML.
+#                      Every Jarvis search would fail with a bare "403".
+#   server.limiter     off. The limiter exists to stop strangers scraping a
+#                      public instance. This one answers 127.0.0.1 and one
+#                      LAN host; leaving it on rate-limits *you* into 429s
+#                      during a normal conversation, and it wants a Valkey
+#                      container we otherwise do not run.
+#
+# Enabling the JSON API is what makes this instance machine-readable, so keep
+# it off the public internet: bind it to loopback (the default below), and let
+# ufw decide who else may reach the port.
+
+use_default_settings:
+  engines:
+    # A deliberately small, mostly-scraper-free set. Every engine here answers
+    # without an API key, so nothing in this file is a cloud account.
+    #
+    # Google is absent on purpose: it blocks datacentre and residential
+    # scrapers aggressively, and an engine that silently returns nothing is
+    # worse than one that is not listed. Add it back if it works for you.
+    keep_only:
+      - duckduckgo
+      - brave
+      - mojeek
+      - startpage
+      - wikipedia
+      - wikidata
+      - openstreetmap
+      - github
+      - stackoverflow
+      - hackernews
+      - arxiv
+      - pypi
+
+general:
+  debug: false
+  instance_name: "Jarvis Search"
+  # This instance is not public and has no operator to contact.
+  contact_url: false
+  donation_url: false
+  privacypolicy_url: false
+  # No /stats, no per-engine timing histograms, nothing accumulating a record
+  # of what was searched for. Metrics here are local-only, but the useful ones
+  # are a query log by another name.
+  enable_metrics: false
+
+brand:
+  # Blank the "report a bug" / "public instances" chrome. It is dead weight on
+  # a private instance and every one of those links is an outbound request.
+  new_issue_url: ""
+  docs_url: ""
+  public_instances: ""
+  wiki_url: ""
+  issue_url: ""
+
+search:
+  # 0 off | 1 moderate | 2 strict. Jarvis sends its own `safesearch` on every
+  # query (web: safe_search: in configuration.yaml); this is the floor for
+  # anything that asks without one.
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "en"
+  # REQUIRED for API use. Without `json` here, GET /search?format=json is 403.
+  formats:
+    - html
+    - json
+  # Back off a failing engine briefly instead of hammering it.
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+
+server:
+  # Overridden by SEARXNG_SECRET from the environment — see ./README.md for
+  # the one-liner that generates one. Left as the upstream sentinel on
+  # purpose: SearXNG refuses to start while it still says "ultrasecretkey", so
+  # a missing secret is a loud failure rather than an instance running on a
+  # key that is in every copy of this repository.
+  secret_key: "ultrasecretkey"
+  # Loopback. The stack is on host networking, so this is what decides who can
+  # reach SearXNG at all — change it to 0.0.0.0 only if another machine needs
+  # it, and then let ufw say which machine.
+  bind_address: "127.0.0.1"
+  port: 8888
+  base_url: false
+  # See the note at the top: off for LAN use, and it needs Valkey/Redis.
+  limiter: false
+  public_instance: false
+  # The proxy would make SearXNG fetch every thumbnail on every results page.
+  # Jarvis reads text; images are pure outbound traffic here.
+  image_proxy: false
+  # GET, because the JSON API is called as GET /search?q=...&format=json.
+  # The upstream default (POST) applies to the search *form*, but pinning it
+  # keeps the two in step if that ever changes.
+  method: "GET"
+
+ui:
+  static_use_hash: true
+  infinite_scroll: false
+  center_alignment: false
+  query_in_title: false
+
+outgoing:
+  # SearXNG makes the upstream fetch, and it is the stack's only intended
+  # runtime egress (../docs/security.md). Keep the budget tight: a voice
+  # answer that arrives after ten seconds has already lost.
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+  # No proxies, no Tor. If you add one, remember it changes who sees the
+  # queries — which is the entire reason this container exists.
+
+# The checker is the background "is every engine still working" prober. It is
+# left unscheduled deliberately — `checker.scheduling` is what turns it on,
+# and for an instance with one user it is a steady trickle of outbound
+# requests buying nothing. Add a `scheduling:` block here if you want it.
+checker:
+  off_when_debug: true

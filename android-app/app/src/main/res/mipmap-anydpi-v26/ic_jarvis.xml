@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Jarvis adaptive launcher icon (API 26+, i.e. always at minSdk 29). -->
+<!--
+  Jarvis adaptive launcher icon (API 26+, i.e. always at minSdk 29).
+
+  Three layers, three jobs:
+   - background: the HUD navy the whole app sits on, so the icon reads as the
+     same object as the app it opens;
+   - foreground: the cyan arc reactor, inside the 66/108 safe zone;
+   - monochrome: an ALPHA-ONLY reactor for Android 13+ themed icons. It is a
+     separate drawable on purpose — the launcher discards colour and keeps
+     alpha, so reusing the cyan foreground there would flatten into a blob.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_jarvis_background" />
     <foreground android:drawable="@drawable/ic_jarvis_foreground" />
-    <monochrome android:drawable="@drawable/ic_jarvis_foreground" />
+    <monochrome android:drawable="@drawable/ic_jarvis_monochrome" />
 </adaptive-icon>

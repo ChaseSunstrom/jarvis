@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, relayUrl, type Connection } from '$lib/connection';
+	import { toasts } from '$lib/toast';
 	import type { BusEvent, Subscription } from '$lib/jarvisClient';
 
 	interface ClientConfig {
@@ -56,8 +57,10 @@
 			liveFilter = next || '(all events)';
 			log = [];
 			counter = 0;
+			toasts.success(`Subscribed to ${liveFilter}`);
 		} catch (e) {
 			err = describeError(e);
+			toasts.error('Subscription failed', describeError(e));
 		}
 	}
 
@@ -113,9 +116,9 @@
 <h1>SETTINGS</h1>
 <p class="lede">link {status} · relay {typeof location === 'undefined' ? '' : relayUrl()}</p>
 
-{#if err}<p class="err" data-testid="error">{err}</p>{/if}
+{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
-{#if config.problem}<p class="err" data-testid="config-problem">{config.problem}</p>{/if}
+{#if config.problem}<p class="err" data-testid="config-problem" role="alert">{config.problem}</p>{/if}
 
 <section class="panel">
 	<div class="panel-head">
@@ -151,7 +154,7 @@
 	<div class="panel-head"><span>Voice pipeline</span></div>
 	<div class="row">
 		<span class="name"><b>Pipeline</b><span class="eid">JARVIS_PIPELINE</span></span>
-		<select data-testid="pipeline-select" bind:value={selectedPipeline}>
+		<select data-testid="pipeline-select" aria-label="Assist pipeline" bind:value={selectedPipeline}>
 			{#each pipelines as pipeline (pipeline.id)}
 				<option value={pipeline.name}>
 					{pipeline.name}{pipeline.id === preferred ? ' (preferred)' : ''}
@@ -180,21 +183,34 @@
 		<span class="muted" data-testid="live-filter">{liveFilter || '(all events)'}</span>
 	</div>
 	<div class="row">
+		<label class="jv-sr-only" for="event-filter">Event type filter</label>
 		<input
+			id="event-filter"
 			type="text"
-			placeholder="event_type filter (blank = everything)"
+			placeholder="event_type filter (blank = everything)  ( / )"
 			data-testid="event-filter"
+			data-jv-filter
 			bind:value={eventFilter}
 			onkeydown={(e) => e.key === 'Enter' && applyFilter()}
 		/>
-		<button class="btn" data-testid="apply-filter" onclick={applyFilter}>SUBSCRIBE</button>
-		<button class="btn ghost" data-testid="pause" onclick={() => (paused = !paused)}>
+		<button type="button" class="btn" data-testid="apply-filter" onclick={applyFilter}>
+			SUBSCRIBE
+		</button>
+		<button
+			type="button"
+			class="btn ghost"
+			data-testid="pause"
+			aria-pressed={paused}
+			onclick={() => (paused = !paused)}
+		>
 			{paused ? 'RESUME' : 'PAUSE'}
 		</button>
-		<button class="btn ghost" onclick={() => (log = [])}>CLEAR</button>
+		<button type="button" class="btn ghost" aria-label="Clear the event log" onclick={() => (log = [])}>
+			CLEAR
+		</button>
 		<span class="muted" data-testid="event-count">{log.length}</span>
 	</div>
-	<pre data-testid="event-log">{log
+	<pre data-testid="event-log" aria-label="Live event stream">{log
 			.map((e) => `${e.at}  ${e.type}  ${e.body}`)
 			.join('\n') || 'waiting for events…'}</pre>
 </section>

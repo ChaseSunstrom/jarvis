@@ -217,28 +217,39 @@ void main() {
 		height: 100%;
 		display: block;
 	}
+	/*
+	 * No-WebGL fallback. One shape, one colour variable per state, mixed against
+	 * the page ground — the shader above has its own copy of these four colours
+	 * because GLSL cannot read a custom property, but nothing in CSS should.
+	 */
 	.orb-fallback {
+		--orb: var(--jv-accent-deep);
 		width: 100%;
 		height: 100%;
 		border-radius: 50%;
-		background: radial-gradient(circle at 50% 45%, #0e5a68 0%, #062a33 55%, transparent 72%);
-		box-shadow: 0 0 60px 10px rgba(20, 180, 210, 0.25);
+		background: radial-gradient(
+			circle at 50% 45%,
+			color-mix(in srgb, var(--orb) 84%, var(--jv-bg)) 0%,
+			color-mix(in srgb, var(--orb) 26%, var(--jv-bg)) 57%,
+			transparent 73%
+		);
+		box-shadow: 0 0 60px 10px color-mix(in srgb, var(--orb) 26%, transparent);
 		transform: scale(calc(1 + var(--lvl, 0) * 0.15));
 		animation: breathe 3.5s ease-in-out infinite;
 	}
 	.orb-fallback.listening {
-		background: radial-gradient(circle at 50% 45%, #17d3ff 0%, #05364a 60%, transparent 75%);
-		box-shadow: 0 0 80px 16px rgba(30, 210, 255, 0.45);
+		--orb: var(--jv-accent);
+		box-shadow: 0 0 80px 16px color-mix(in srgb, var(--orb) 45%, transparent);
 		animation-duration: 1.4s;
 	}
 	.orb-fallback.thinking {
-		background: radial-gradient(circle at 50% 45%, #ffa626 0%, #4a2c05 60%, transparent 75%);
-		box-shadow: 0 0 80px 16px rgba(255, 166, 38, 0.4);
+		--orb: var(--jv-amber);
+		box-shadow: 0 0 80px 16px color-mix(in srgb, var(--orb) 40%, transparent);
 		animation-duration: 1s;
 	}
 	.orb-fallback.speaking {
-		background: radial-gradient(circle at 50% 45%, #ffd25e 0%, #4a3a08 60%, transparent 75%);
-		box-shadow: 0 0 90px 18px rgba(255, 210, 94, 0.45);
+		--orb: var(--jv-gold);
+		box-shadow: 0 0 90px 18px color-mix(in srgb, var(--orb) 45%, transparent);
 		animation-duration: 1.2s;
 	}
 	@keyframes breathe {

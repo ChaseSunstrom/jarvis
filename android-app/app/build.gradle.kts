@@ -83,6 +83,18 @@ android {
             "/META-INF/DEPENDENCIES"
         )
     }
+
+    /**
+     * AGP otherwise embeds a Google-signed, encrypted blob listing this app's
+     * dependencies in every APK. Nothing in Jarvis reads it, nothing on a
+     * degoogled phone can decrypt it, and an opaque encrypted section is a poor
+     * fit for an app whose whole pitch is that it is yours and inspectable. It
+     * also makes builds non-reproducible.
+     */
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
 }
 
 dependencies {

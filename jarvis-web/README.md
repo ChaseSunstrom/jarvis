@@ -123,6 +123,134 @@ Two consequences worth stating plainly:
   the relay. Until `server/ws-proxy.js` rejects upgrades whose `Origin` header
   is not an allow-listed one, a reverse proxy that enforces it is the mitigation.
 
+## Design system
+
+One source of truth, in three files under `src/lib/styles/`, all imported once
+by `+layout.svelte`:
+
+| File | What is in it |
+| --- | --- |
+| `tokens.css` | every `--jv-*` custom property on `:root` — the whole palette, type scale, spacing, radii, glows, durations |
+| `base.css` | document ground, focus ring, selection, scrollbars, and the reduced-motion kill switch |
+| `chrome.css` | the shared vocabulary: `.jv-grid`, `.jv-bracket`, panels, rows, pills, buttons, skeletons, toasts, palette, boot |
+
+`src/lib/tokens.ts` mirrors `tokens.css` as data, for the values that have to
+reach JavaScript (the HUD's per-state accent). `tokens.test.ts` diffs the two
+and fails if they drift, so a colour cannot be changed in one place only.
+
+**No file outside `tokens.css` may contain a raw hex value.** The HUD is the one
+place that looks like an exception: it sets `--accent` per pipeline state and
+re-derives `--jv-line` / `--jv-line-soft` from it, so the grid, brackets and
+glow track the state without any of them owning a colour.
+
+### Palette
+
+| Token | Value | Used for |
+| --- | --- | --- |
+| `--jv-bg` | `#04070C` | the page ground |
+| `--jv-panel` / `--jv-panel-solid` | `rgba(6,18,26,.72)` / `#06121A` | panels; the solid one for anything floating |
+| `--jv-accent` | `#3FD8FF` | the system colour: active state, focus, links, the orb |
+| `--jv-accent-deep` | `#2BB0D8` | idle/standby |
+| `--jv-amber` | `#FF9E2C` | thinking |
+| `--jv-gold` | `#FFCF5C` | speaking; notices; reconnecting |
+| `--jv-danger` / `--jv-danger-text` | `#FF6B5C` / `#FF9184` | failures — the lighter one for text, so it clears AA |
+| `--jv-line` / `--jv-line-soft` / `--jv-line-hair` | accent at 32% / 12% / 8% | borders, the grid, row rules |
+| `--jv-text` / `--jv-text-bright` / `--jv-text-dim` | `#D7EDF5` / `#EAF7FC` / `#9FC0CC` | body, emphasis, captions |
+
+Every text token clears **WCAG AA (4.5:1)** on `--jv-bg`, and still clears it at
+the lowest opacity the CSS applies. `tokens.test.ts` computes the ratios rather
+than trusting the eye.
+
+### Type and chrome
+
+Two families: `--jv-font-chrome` (monospace) for everything that is *system
+furniture* — headings, labels, pills, buttons, entity ids, the readout — and
+`--jv-font-body` for content the user wrote or the backend named. Chrome text is
+uppercase with generous tracking (`--jv-track-chrome` `.16em`,
+`--jv-track-wide` `.24em`, `--jv-track-logo` `.5em` for the wordmark).
+
+Size scale: `--jv-fs-2xs` `.55rem` → `--jv-fs-display` `clamp(1.2rem, 3.2vw, 1.9rem)`.
+
+The recurring devices: **corner brackets** (`.jv-bracket` ×4, overridable via
+`--jv-bracket-size` / `--jv-bracket-inset`), the **masked technical grid**
+(`.jv-grid`, sized by `--jv-grid-size`, faded out by `--jv-grid-mask`), and
+**glow as elevation** (`--jv-glow-sm|md|lg` for lit things, `--jv-elev-panel` /
+`--jv-elev-float` for things that sit above the page).
+
+## Motion
+
+Fast, consistent, and always optional.
+
+| Rule | How |
+| --- | --- |
+| Boot sequence | scan line → reactor ignite → rings → JARVIS wordmark → system checks → dissolve. ~1.2 s, **once per browser session** (`sessionStorage`), skippable with any key or click, and `pointer-events: none` throughout so it never gates the app |
+| Route transition | the console body cross-fades and drifts up `--jv-drift` over `--jv-dur-base` (180 ms) |
+| List entrance | rows stagger by `--jv-stagger-step` (26 ms), **capped at `--jv-stagger-cap`** (320 ms) — 200 rows cost 320 ms, not five seconds |
+| State change | the affected value pulses (`.jv-pulse`, `--jv-dur-pulse`); restarted imperatively so the second change is as visible as the first |
+| Loading | skeleton rows, never an empty flash; then a friendly empty state or a visible error |
+| Press | `translateY(1px) scale(.98)` for `--jv-dur-instant` |
+| Durations | `--jv-dur-instant` 90 ms · `--jv-dur-fast` 120 ms · `--jv-dur-base` 180 ms · `--jv-dur-slow` 320 ms |
+| Easing | `--jv-ease-out` for arrivals, `--jv-ease-in-out` for loops, `--jv-ease-overshoot` where something should land with weight |
+
+**`prefers-reduced-motion: reduce` turns all of it off.** `base.css` cuts every
+animation and transition to 0.001 ms — the end state is identical, it simply
+arrives at once — and `motion.ts:prefersReducedMotion()` makes the boot sequence
+not run at all, since a timeline that gates content cannot be neutralised by
+shortening it. `prefersReducedMotion` defaults to **true** when there is no
+`matchMedia` to ask (SSR), because guessing "animate" and being wrong is the
+failure that actually costs someone.
+
+The boot timeline itself is pure arithmetic in `src/lib/boot.ts` — the web mirror
+of the Android app's `ui/BootTimeline.kt`, same six stages, same discipline: one
+rAF loop asks it what to draw at time `t`, nothing schedules itself, and
+`boot.test.ts` asserts the stages tile `[0, TOTAL_MS]` exactly and that skipping
+lands on the same frame the animation would have reached on its own.
+
+## Console: keyboard and status
+
+| Key | Does |
+| --- | --- |
+| `Ctrl`/`Cmd` `K` | command palette |
+| `/` | focus this page's filter |
+| `g d` `g r` `g a` `g t` `g s` `g h` | devices · areas · automations · tools · settings · HUD |
+| `Esc` | close the palette, or drop focus |
+| `↑` `↓` `Enter` `Shift+Enter` | in the palette: move, act, and "open instead of act" |
+
+The palette indexes every entity, area, automation and route. `Enter` on an
+entity that can be flipped **toggles it**; on anything else it jumps to the page
+that owns it (`?focus=<id>`, which pre-fills that page's filter).
+`Shift+Enter` forces the jump. Ranking, wrap-around and "what does Enter mean
+here" are pure functions in `src/lib/commandPalette.ts`.
+
+The header's connection indicator is driven by `src/lib/consoleLink.ts` — the
+console's own socket, and the only one in the app that reconnects (pages
+deliberately do not: a page that lost its socket also lost its subscriptions,
+and silently reattaching would leave stale rows looking live). It backs off
+exponentially with jitter and says `OFFLINE` after three consecutive failures
+while still retrying.
+
+Every `call_service` raises a toast, success or failure (`src/lib/toast.ts`),
+alongside the inline error — the toast is what you notice, the inline error is
+what is still on screen ten seconds later.
+
+## Accessibility
+
+- Real `<button>`s with `type="button"`; `aria-label` on every icon-only control
+  and every unlabelled input.
+- `aria-live="polite"` on the HUD transcript and response, on the toast rail and
+  on the event log; `role="alert"` on failures.
+- A visible focus ring on everything focusable — an `outline`, not a
+  `box-shadow`, because half these controls already carry a glow and a
+  shadow-based ring loses to it.
+- A skip link as the first tab stop; `aria-current="page"` on the active nav
+  item, which also gets a lit underline so the current route is not signalled by
+  colour alone.
+- The command palette is a proper combobox/listbox with `aria-activedescendant`.
+- Colour contrast passes AA for text, asserted numerically in `tokens.test.ts`.
+- Usable down to phone width (the Android app's WebView): the nav scrolls
+  horizontally, panel-head filters take their own line, rows stack, and the
+  connection badge drops to its dot with the state left on its `aria-label`.
+
 ## Secure context / mkcert
 
 `getUserMedia` requires a secure context:
@@ -169,7 +297,10 @@ Docker: `docker build -t jarvis-web .` — multi-stage, listens on 8199,
 ```sh
 npm test                             # vitest unit tests (framing, downsample, pipeline
                                      # events, jarvisClient, the browser transport,
-                                     # backend resolution, tts path allow-list)
+                                     # backend resolution, tts path allow-list, and the
+                                     # UI logic: design tokens, motion policy, the boot
+                                     # timeline, palette ranking, chords, toasts, the
+                                     # reconnecting console link)
 node ../tests/web/smoke.test.mjs     # protocol smoke test against the mock backend
 npx playwright test                  # e2e: built app + mock backend + fake mic in chromium
 ```
@@ -192,6 +323,17 @@ npx playwright test                  # e2e: built app + mock backend + fake mic 
   1.5 s so runs are deterministic.
 - Latency measurements (audio-end → stt-end / first delta / tts-start) are
   shown in the status line and logged to the console.
+- The chrome has its own e2e coverage: the boot sequence plays and — proved with
+  a hit test rather than a click, which would merely wait it out — never
+  intercepts a pointer; `page.emulateMedia({ reducedMotion: 'reduce' })` skips it
+  entirely; route changes swap the body and move `aria-current`; the palette
+  opens from the keyboard, filters, and toggles an entity; a rejected
+  `call_service` raises a toast; the first tab stop has a real focus ring; and
+  the console fits a 390 px viewport with nothing clipped off the right edge.
+- The mock backend carries a `lock.front_door` with no `lock` domain in its
+  service catalogue. That is not an oversight — it is the fixture for "the UI
+  offers a control the backend cannot perform", which is the path a silent
+  failure used to hide on.
 
 ## Audio path
 

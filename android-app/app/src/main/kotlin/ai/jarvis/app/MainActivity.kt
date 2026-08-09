@@ -1,16 +1,21 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.ui.JarvisBootAnimation
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.SystemCheckActivity
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
@@ -20,10 +25,16 @@ import android.widget.TextView
 /**
  * The Jarvis home — the face of the app. Opening it lands on the orb, not a
  * dashboard: tap to talk, watch the transcript and the reply, and get to the
- * three other surfaces from the bottom row.
+ * other surfaces from the bottom row.
  *
  * The conversation itself is [JarvisConversation], the same engine the assist
  * popup uses, so the two behave identically down to the barge-in timing.
+ *
+ * On a **cold start** the screen opens with the power-on sequence
+ * ([JarvisBootAnimation]) playing over this exact layout: same orb object, same
+ * position, controls faded out until the sequence hands them back. On a warm
+ * resume, a rotation, or a return from Settings, none of that happens — see
+ * [JarvisApp.consumeColdStart].
  */
 class MainActivity : Activity(), JarvisConversation.Ui {
 
@@ -32,29 +43,128 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private lateinit var responseView: TextView
     private lateinit var talkButton: Button
     private lateinit var config: JarvisConfig
+
+    /** Everything that is not the orb: transcript, reply, controls, nav. */
+    private lateinit var homeControls: LinearLayout
+    private lateinit var root: FrameLayout
+    private lateinit var bannerSlot: FrameLayout
+
     private var convo: JarvisConversation? = null
+    private var boot: JarvisBootAnimation? = null
+
+    /** Set before the layout is built, so the orb knows not to play its entrance. */
+    private var coldStart = false
+
+    /** True while the power-on is playing. */
+    private val booting: Boolean get() = boot != null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // A saved instance state means a rotation or a process restore, not a
+        // launch — the boot sequence belongs to a genuinely cold start only.
+        coldStart = savedInstanceState == null && JarvisApp.consumeColdStart(this)
+
         super.onCreate(savedInstanceState)
+        // Before setContentView: the listener has to be in place before the
+        // first frame, or the platform runs its own exit animation instead.
+        installSplashHandoff()
         JarvisUi.immersive(this)
         config = JarvisConfig(this)
         setContentView(buildUi())
         showIdle()
+        if (coldStart) startBootAnimation()
     }
 
     override fun onResume() {
         super.onResume()
         // Settings may have changed the server behind our back.
-        if (convo?.isRunning != true) showIdle()
+        if (convo?.isRunning != true && !booting) showIdle()
+        refreshStatusBanner()
     }
 
+    // --- the power-on -------------------------------------------------------
+
+    /**
+     * Android 12+ only. The platform splash otherwise cross-fades out on its
+     * own schedule; taking the exit over means the boot sequence starts on the
+     * very frame the splash icon leaves, with #04070C behind both, so there is
+     * no white flash and no empty frame anywhere on the launch path.
+     *
+     * Best-effort throughout: a ROM with a broken SplashScreen implementation
+     * gets the default exit and the fallback timer below, never a crash.
+     */
+    private fun installSplashHandoff() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            splashScreen.setOnExitAnimationListener { splashView ->
+                // Remove it immediately rather than animating: the boot
+                // sequence's first frame is black, which is what the splash
+                // was already showing.
+                try {
+                    splashView.remove()
+                } catch (t: Throwable) {
+                    // Nothing to do; the platform will tear it down itself.
+                }
+                boot?.start()
+            }
+        } catch (t: Throwable) {
+            // No splash handoff on this ROM. The fallback timer covers it.
+        }
+    }
+
+    /**
+     * Add the power-on overlay over the finished home layout and arrange for it
+     * to start.
+     *
+     * Below API 31 there is no splash exit to wait for, so it starts now. At or
+     * above it, the splash listener starts it — with a timer as a backstop,
+     * because a listener that never fires would leave the user looking at a
+     * black screen forever. [JarvisBootAnimation.start] is idempotent, so
+     * whichever path arrives first wins and the other is a no-op.
+     */
+    private fun startBootAnimation() {
+        val animation = JarvisBootAnimation(this).apply {
+            orb = orbView
+            actionCount = JarvisBootAnimation.lastActionCount(this@MainActivity)
+            onHomeAlpha = { a -> homeControls.alpha = a }
+            onComplete = {
+                boot = null
+                homeControls.alpha = 1f
+                showIdle()
+                refreshStatusBanner()
+            }
+        }
+        boot = animation
+        homeControls.alpha = 0f
+        root.addView(
+            animation,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        // Waiting for the splash exit only buys a seamless handoff if there is
+        // something to hand off to. With animations off the sequence collapses
+        // to its end state, so waiting would just hold the home UI at alpha 0
+        // for as long as the splash takes — a black screen for the one user who
+        // explicitly asked for no animation.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !animation.willPlay()) {
+            animation.start()
+        } else {
+            root.postDelayed({ boot?.start() }, SPLASH_FALLBACK_MS)
+        }
+    }
+
+    // --- layout -------------------------------------------------------------
+
     private fun buildUi(): ViewGroup {
-        val root = FrameLayout(this).apply { setBackgroundColor(JarvisUi.BG) }
+        root = FrameLayout(this).apply { setBackgroundColor(JarvisUi.BG) }
 
         orbView = JarvisOrbView(this).apply {
             chromeEnabled = true
             setStateLabel("TAP TO SPEAK")
-            startEntrance()
+            // On a cold start the boot sequence drives this orb from a point;
+            // playing the entrance underneath would fight the ignition.
+            if (coldStart) beginBoot() else startEntrance()
         }
         root.addView(
             orbView,
@@ -70,7 +180,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             val m = JarvisUi.dp(this@MainActivity, 24)
             setPadding(m, 0, m, JarvisUi.dp(this@MainActivity, 36))
         }
+        homeControls = col
 
+        bannerSlot = FrameLayout(this)
         transcriptView = JarvisUi.transcriptView(this)
         responseView = JarvisUi.responseView(this)
         talkButton = JarvisUi.pill(this, "TAP TO SPEAK") { toggleTalk() }
@@ -86,6 +198,13 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             addView(JarvisUi.ghost(this@MainActivity, "SETTINGS") { openSettings() })
         }
 
+        col.addView(
+            bannerSlot,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 14) }
+        )
         col.addView(transcriptView)
         col.addView(responseView)
         col.addView(
@@ -108,13 +227,56 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         return root
     }
 
-    private fun navSpacer(): android.view.View = android.view.View(this).apply {
+    private fun navSpacer(): View = View(this).apply {
         layoutParams = LinearLayout.LayoutParams(JarvisUi.dp(this@MainActivity, 10), 1)
+    }
+
+    // --- the GrapheneOS status banner ---------------------------------------
+
+    /**
+     * The one thing the home screen says about its own health, and the only
+     * route to [SystemCheckActivity] — deliberately, because a diagnostics
+     * screen buried in a menu is a screen nobody finds on the day they need it.
+     *
+     * Network first: on GrapheneOS the per-app Network toggle can be off while
+     * every permission check still reads GRANTED, and the only symptom is that
+     * nothing works. That deserves the exact settings path in the banner text.
+     * Otherwise, anything else essential that is missing. When everything is in
+     * order the banner is not there at all.
+     */
+    private fun refreshStatusBanner() {
+        bannerSlot.removeAllViews()
+
+        val network = GrapheneCompat.networkBanner(this)
+        val message = if (network != null) {
+            network
+        } else {
+            val missing = GrapheneCompat.missingEssentials(this)
+            when {
+                missing.isEmpty() -> return
+                missing.size == 1 -> "${missing[0].label} is not granted. ${missing[0].why}"
+                else -> missing.joinToString(
+                    prefix = "Setup incomplete: ",
+                    separator = ", ",
+                ) { it.label.lowercase() } + " not granted."
+            }
+        }
+
+        bannerSlot.addView(
+            JarvisUi.banner(this, message, "SYSTEM CHECK") { openSystemCheck() },
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
     }
 
     // --- actions ------------------------------------------------------------
 
     private fun toggleTalk() {
+        // A tap during the power-on means "skip it", not "start talking".
+        boot?.let { it.skip(); return }
+
         val c = convo
         if (c != null && c.isRunning) {
             c.stop(); showIdle(); return
@@ -146,6 +308,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     private fun openSettings() =
         startActivity(Intent(this, SettingsActivity::class.java))
+
+    private fun openSystemCheck() =
+        startActivity(Intent(this, SystemCheckActivity::class.java))
 
     private fun openManagement() {
         if (!config.isConfigured) {
@@ -200,10 +365,22 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     override fun onDestroy() {
         convo?.stop()
         convo = null
+        // Detaching the overlay cancels its clock and drops its reference to
+        // the orb; skipping first makes sure the orb is left settled rather
+        // than frozen mid-ignition if this Activity dies during the boot.
+        boot?.skip()
+        boot = null
         super.onDestroy()
     }
 
     companion object {
         private const val REQ_MIC = 4712
+
+        /**
+         * Backstop for a splash-exit listener that never fires. Long enough
+         * that the normal handoff always wins, short enough that a broken ROM
+         * costs a beat rather than a black screen.
+         */
+        private const val SPLASH_FALLBACK_MS = 700L
     }
 }

@@ -10,7 +10,17 @@
 #   wyoming-whisper         :10300  speech to text
 #   wyoming-piper           :10200  text to speech
 #   photon                  :2322   offline geocoder
+#   jarvis-browser          :8210   fetching, crawling, gated browser automation
+#   searxng                 :8888   private metasearch  (profile: search)
 #   ollama                  :11434  the model (commented — usually on the host)
+#
+# SearXNG is behind a compose profile, so it is opt-in:
+#
+#   docker compose --profile search up -d      # brings SearXNG up too
+#   docker compose up -d                       # without it — then point
+#                                              # SEARXNG_URL at an existing one
+#
+# Everything else starts either way. See searxng/README.md and docs/search.md.
 #
 # Everything is `network_mode: host`, matching the existing stack. Under host
 # mode `ports:` is ignored: the port a service binds is what is reachable, and
@@ -160,6 +170,127 @@ services:
       - UPDATE_STRATEGY=${PHOTON_UPDATE_STRATEGY:-PARALLEL}
     volumes:
       - ./photon:/photon/photon_data
+
+  # --- The web: fetching, crawling, gated browser automation --------------
+  # Everything Jarvis reads off the internet goes through here, and every byte
+  # it returns comes back wrapped in <untrusted_web_content>. The service is
+  # the boundary between "the model can read a page" and "the model can click
+  # on one": reading is open to any public host, while clicking and typing are
+  # confined to BROWSER_ACT_ALLOWLIST (empty = refused everywhere) and anything
+  # sensitive needs a human approval carrying a SECOND secret.
+  #
+  # Both secrets are required — the service refuses to start without them, on
+  # the grounds that an unauthenticated browser-automation service on the LAN
+  # is a remote-code-execution-shaped hole. Generate them once:
+  #
+  #   echo "JARVIS_BROWSER_TOKEN=$(openssl rand -hex 32)"    >> .env
+  #   echo "BROWSER_APPROVAL_SECRET=$(openssl rand -hex 32)" >> .env
+  #
+  # Keep them DIFFERENT. The model holds the API token; holding it must not be
+  # enough to click "Pay". See ../jarvis-browser/README.md.
+  jarvis-browser:
+    build: ../jarvis-browser
+    image: jarvis-browser:local
+    container_name: jarvis-browser
+    restart: unless-stopped
+    # Host networking for the same reason as everything else here: it binds
+    # :8210, and ufw — not Docker's DNAT — decides who may reach it. Treat the
+    # port like the orchestrator's: this host and WireGuard, never forwarded.
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Required. Bearer token on every route, /healthz included.
+      - JARVIS_BROWSER_TOKEN=${JARVIS_BROWSER_TOKEN:-}
+      # Required, and NOT the same value. Only /approve accepts it.
+      - BROWSER_APPROVAL_SECRET=${BROWSER_APPROVAL_SECRET:-}
+      # Where /search proxies to. Unset => /search 503s with an explanation
+      # and never reaches for a cloud engine.
+      - SEARXNG_URL=${SEARXNG_URL:-http://127.0.0.1:8888}
+      # Domains where clicking and typing are permitted. Empty means every
+      # domain is refused, which is the correct default — reading a page is
+      # one thing, acting on it is another.
+      - BROWSER_ACT_ALLOWLIST=${BROWSER_ACT_ALLOWLIST:-}
+      - BROWSER_DENYLIST=${BROWSER_DENYLIST:-}
+      # LAN hosts exempt from the SSRF block (your printer's status page, say).
+      - BROWSER_LAN_ALLOWLIST=${BROWSER_LAN_ALLOWLIST:-}
+      - BROWSER_RESPECT_ROBOTS=${BROWSER_RESPECT_ROBOTS:-true}
+      # Chromium's own sandbox needs unprivileged user namespaces in the
+      # container. If it dies with "Operation not permitted", prefer granting
+      # those over setting this to 1 — it removes a real layer.
+      - BROWSER_CHROMIUM_NO_SANDBOX=${BROWSER_CHROMIUM_NO_SANDBOX:-0}
+    # Chromium crashes on the default 64 MB /dev/shm as soon as a page is
+    # non-trivial. This is the fix, not --disable-dev-shm-usage.
+    shm_size: 512m
+    tmpfs:
+      - /tmp:size=512m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request as u; r=u.Request('http://127.0.0.1:8210/healthz', headers={'Authorization':'Bearer '+os.environ.get('JARVIS_BROWSER_TOKEN','')}); exit(0 if u.urlopen(r,timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --- SearXNG: private metasearch (optional, profile: search) -------------
+  # Opt-in because plenty of installations already run one:
+  #
+  #   docker compose --profile search up -d      # start it here
+  #   docker compose up -d                       # don't — SEARXNG_URL points
+  #                                              # at yours instead
+  #
+  # It is a metasearch engine, not an index: it asks DuckDuckGo, Brave, Mojeek
+  # and friends on your behalf and merges the answers, so the upstream engines
+  # see this container's IP and a bare query — no account, no cookie, no
+  # history. It is the stack's only intended runtime egress (docs/security.md).
+  #
+  # First run needs a secret key. SearXNG refuses to start without one:
+  #
+  #   grep -q '^SEARXNG_SECRET=' .env 2>/dev/null || \
+  #     echo "SEARXNG_SECRET=$(openssl rand -hex 32)" >> .env
+  #
+  # settings.yml enables the `json` format, which is OFF by default upstream
+  # and REQUIRED for API use — without it every Jarvis search is a bare 403.
+  # See searxng/README.md.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    profiles: [search]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Overrides `server.secret_key` in settings.yml, which ships as the
+      # upstream sentinel so that a missing secret fails loudly instead of
+      # running on a key that is in every copy of this repository.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+      # Loopback by default. Host networking means this is what decides who
+      # can reach SearXNG at all; widen it only if another machine needs it,
+      # and then let ufw say which machine.
+      - SEARXNG_BIND_ADDRESS=${SEARXNG_BIND_ADDRESS:-127.0.0.1}
+      - SEARXNG_PORT=${SEARXNG_PORT:-8888}
+      # Deliberately NOT derived from SEARXNG_URL: that variable says where
+      # Jarvis looks for search, which is a different question from where this
+      # instance thinks it lives, and the two differ the moment someone points
+      # SEARXNG_URL at a box on the LAN while this profile is also up.
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://127.0.0.1:${SEARXNG_PORT:-8888}/}
+      # Off for LAN use: the limiter defends a public instance from strangers,
+      # and here all it can do is rate-limit you into 429s mid-conversation.
+      # It also wants a Valkey/Redis container this stack does not run.
+      - SEARXNG_LIMITER=false
+    volumes:
+      - ./searxng:/etc/searxng
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    # The image drops to its own unprivileged user, which needs these three
+    # to do it. Nothing else.
+    cap_add: [CHOWN, SETGID, SETUID]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   # --- Ollama (usually already on the host) -------------------------------
   # Uncomment only if you are NOT running Ollama natively. Jarvis talks to

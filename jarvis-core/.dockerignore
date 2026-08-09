@@ -16,6 +16,7 @@ config/
 photon/
 wyoming/
 ollama/
+searxng/
 tests/
 docs/
 *.md

@@ -4,6 +4,8 @@
     <string name="activity_settings">Jarvis settings</string>
     <string name="activity_management">Jarvis management</string>
     <string name="activity_approval">Jarvis approval</string>
+    <string name="activity_system_check">Jarvis system check</string>
+    <string name="activity_crash_logs">Jarvis crash logs</string>
 
     <!-- Shown in Settings > Accessibility when the user enables the service.
          Be honest about what it does: this text is the only thing standing
