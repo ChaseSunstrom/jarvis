@@ -11,15 +11,17 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.graphics.Typeface
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.TextUtils
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -33,6 +35,7 @@ import android.widget.TextView
 class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
     private lateinit var orbView: JarvisOrbView
+    private lateinit var captionView: TextView
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
     private lateinit var config: JarvisConfig
@@ -48,6 +51,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
         config = JarvisConfig(this)
         setContentView(buildUi())
+        sizeAsCard()
 
         if (!config.isConfigured) {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -80,40 +84,89 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         }
     }
 
+    /**
+     * A small card near the bottom of the screen, not a full-screen surface.
+     *
+     * The theme carries `windowIsFloating`; without it this call is a no-op
+     * because the platform forces an Activity window to MATCH_PARENT. Bottom
+     * gravity because this is a thumb-reachable popup, and the point of a
+     * dimmed floating window is that the user can still see what it
+     * interrupted.
+     */
+    private fun sizeAsCard() {
+        val screen = resources.displayMetrics.widthPixels
+        val width = minOf(screen - JarvisUi.dp(this, 32), JarvisUi.dp(this, 340))
+        window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+        window.attributes = window.attributes.also {
+            it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            it.y = JarvisUi.dp(this, 56)
+        }
+    }
+
     private fun buildUi(): ViewGroup {
-        val root = FrameLayout(this)
+        val pad = JarvisUi.dp(this, 20)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(pad, pad, pad, pad)
+            background = JarvisUi.panel(
+                this@JarvisAssistActivity,
+                fill = 0xF20A0F16.toInt(),
+                stroke = 0x553FD8FF,
+            ).apply { cornerRadius = JarvisUi.dp(this@JarvisAssistActivity, 24).toFloat() }
+        }
+
         orbView = JarvisOrbView(this).apply {
-            chromeEnabled = true
-            setStateLabel("LISTENING")
+            // The chrome is screen-scale: corner brackets 18dp from the VIEW
+            // edges and a wordmark anchored to the resting outer radius, both
+            // of which are nonsense inside a 200dp box. The scrim is worse — a
+            // near-opaque vignette the size of the view is exactly what turned
+            // this popup into a blackout, and the card's own panel is the
+            // ground now.
+            chromeEnabled = false
+            scrimEnabled = false
         }
         root.addView(
             orbView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            LinearLayout.LayoutParams(
+                JarvisUi.dp(this, ORB_DP),
+                JarvisUi.dp(this, ORB_DP)
             )
         )
 
-        val texts = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            val m = JarvisUi.dp(this@JarvisAssistActivity, 24)
-            setPadding(m, 0, m, JarvisUi.dp(this@JarvisAssistActivity, 96))
+        // The state readout the orb used to paint itself. A real view, so it is
+        // in the accessibility tree and a test can read it.
+        captionView = TextView(this).apply {
+            text = "LISTENING"
+            setTextColor(JarvisOrbView.Mode.LISTENING.color)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            letterSpacing = 0.2f
+            typeface = Typeface.MONOSPACE
+            gravity = Gravity.CENTER
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 10), 0, 0)
         }
-        transcriptView = JarvisUi.transcriptView(this)
-        responseView = JarvisUi.responseView(this)
-        texts.addView(transcriptView)
-        texts.addView(responseView)
-        root.addView(
-            texts,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            )
-        )
+        root.addView(captionView, fullWidth())
+
+        transcriptView = JarvisUi.transcriptView(this).apply {
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 12), 0, 0)
+        }
+        responseView = JarvisUi.responseView(this).apply {
+            maxLines = 4
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        root.addView(transcriptView, fullWidth())
+        root.addView(responseView, fullWidth())
 
         root.setOnClickListener { finish() }
         return root
     }
+
+    private fun fullWidth() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
 
     private fun begin() {
         // A second assist invocation is delivered to this same instance
@@ -141,7 +194,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     // --- JarvisConversation.Ui (main thread) ------------------------------
 
     override fun onMode(mode: JarvisOrbView.Mode, label: String) {
-        orbView.setMode(mode); orbView.setStateLabel(label)
+        orbView.setMode(mode)
+        captionView.text = label
+        captionView.setTextColor(mode.color)
     }
 
     override fun onAmplitude(level: Float) = orbView.setAmplitude(level)
@@ -151,7 +206,10 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     override fun onResponse(text: String) { responseView.text = text }
 
     override fun onError(message: String) {
-        responseView.text = message; orbView.setStateLabel("ERROR")
+        responseView.text = message
+        captionView.text = "ERROR"
+        captionView.setTextColor(JarvisOrbView.Mode.ERROR.color)
+        orbView.setMode(JarvisOrbView.Mode.ERROR)
     }
 
     override fun onIdle() { if (!isFinishing) finish() }
@@ -190,6 +248,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     companion object {
         private const val TAG = "JarvisAssist"
         private const val REQ_MIC = 4711
+
+        /** Side of the orb's slot in the card. The reactor sizes itself to it. */
+        private const val ORB_DP = 200
 
         fun newIntent(context: Context): Intent =
             Intent(context, JarvisAssistActivity::class.java)

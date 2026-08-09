@@ -37,13 +37,25 @@
       Fully transparent, animation-free theme for JarvisAssistActivity — the
       orb has to appear over whatever is on screen (including the lock screen)
       with no window animation eating the budget.
+
+      windowIsFloating is what makes it a POPUP rather than a takeover. Without
+      it the platform forces an Activity window to MATCH_PARENT, Window.setLayout
+      does nothing, and JarvisAssistActivity's card fills the display — which,
+      with the orb's own vignette painted across it, is a near-opaque blackout
+      rather than the small Siri-like surface this is supposed to be. It is also
+      what gives the surrounding dim and the touch-outside dismissal.
     -->
     <style name="Theme.JarvisTransparent" parent="@android:style/Theme.Translucent.NoTitleBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.5</item>
+        <!-- A tap anywhere outside the card dismisses it. The card itself has
+             its own click listener, so both halves of the screen close it. -->
+        <item name="android:windowCloseOnTouchOutside">true</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
