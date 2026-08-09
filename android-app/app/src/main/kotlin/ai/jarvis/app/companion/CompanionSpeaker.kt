@@ -89,7 +89,7 @@ class OrbSpeechHost(
 
         fun restore() {
             orb?.setAmplitude(0f)
-            orb?.setMode(JarvisOrbView.Mode.LISTENING)
+            orb?.setMode(JarvisOrbView.Mode.IDLE)
             orb?.setStateLabel(IDLE_LABEL)
         }
 
@@ -130,7 +130,15 @@ class OrbSpeechHost(
     private companion object {
         private const val TAG = "JarvisOrbSpeech"
 
-        /** What the orb caption goes back to once Jarvis has finished. */
-        private const val IDLE_LABEL = "TAP TO SPEAK"
+        /**
+         * What the orb caption goes back to once Jarvis has finished.
+         *
+         * A state word rather than "TAP TO SPEAK". This seam is dormant —
+         * nothing constructs `OrbSpeechHost` outside this file — but the
+         * moment it is wired into a screen that also has a talk button, an
+         * instruction here would reintroduce the duplicate affordance
+         * `MainActivity.showIdle` exists to avoid.
+         */
+        private const val IDLE_LABEL = "STANDBY"
     }
 }

@@ -166,7 +166,10 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
         orbView = JarvisOrbView(this).apply {
             chromeEnabled = true
-            setStateLabel("TAP TO SPEAK")
+            // A STATUS word, not an instruction. The instruction is the pill
+            // below, which is the only thing that actually starts a turn — see
+            // showIdle().
+            setStateLabel(IDLE_CAPTION)
             // On a cold start the boot sequence drives this orb from a point;
             // playing the entrance underneath would fight the ignition.
             if (coldStart) beginBoot() else startEntrance()
@@ -329,10 +332,21 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Automations")
     }
 
+    /**
+     * Back to tap-to-speak.
+     *
+     * The orb's caption and the pill are two different views a few dp apart in
+     * the same accent monospace, and they used to carry the same string — so
+     * the home screen showed "TAP TO SPEAK" twice, the second one being canvas
+     * text with no click listener and no accessibility node. The caption is the
+     * one that gives: it is a status readout (LISTENING / PROCESSING /
+     * RESPONDING / ERROR everywhere else), and the pill is the only affordance
+     * that is real, tappable and visible to TalkBack.
+     */
     private fun showIdle() {
         orbView.setAmplitude(0f)
-        orbView.setMode(JarvisOrbView.Mode.LISTENING)
-        orbView.setStateLabel("TAP TO SPEAK")
+        orbView.setMode(JarvisOrbView.Mode.IDLE)
+        orbView.setStateLabel(IDLE_CAPTION)
         talkButton.text = "TAP TO SPEAK"
         if (!config.isConfigured) {
             responseView.text = "Tap SETTINGS to point me at your Jarvis server."
@@ -363,6 +377,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     override fun onError(message: String) {
         responseView.text = message
         orbView.setStateLabel("ERROR")
+        orbView.setMode(JarvisOrbView.Mode.ERROR)
     }
 
     override fun onIdle() = showIdle()
@@ -385,6 +400,12 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     companion object {
         private const val REQ_MIC = 4712
+
+        /**
+         * The orb's caption while idle. A state word, deliberately NOT the
+         * talk button's label — see [showIdle].
+         */
+        private const val IDLE_CAPTION = "STANDBY"
 
         /**
          * Backstop for a splash-exit listener that never fires. Long enough
