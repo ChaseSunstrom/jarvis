@@ -269,7 +269,11 @@ def check_kotlin_still_says_so() -> list[str]:
         "MAX_LENGTH = 512": "the length cap",
         '[A-Za-z0-9_-]{16,64}': "the code charset",
         "ServerUrl.check(decoded)": "reuse of the typed path's validator",
-        "isIsoControl()": "the control-character refusal",
+        # Spelled as the Kotlin stdlib spells it, and as ServerUrl.kt:106 and
+        # SsrfGuard.kt:50 next door already do. `isIsoControl` is not a symbol;
+        # the first draft of this file asserted that misspelling, agreed with
+        # itself, and the typo reached CI as a compile error.
+        "isISOControl()": "the control-character refusal",
     }
     return [f"PairingPayload.kt no longer contains {what} ({snippet!r})"
             for snippet, what in required.items() if snippet not in text]

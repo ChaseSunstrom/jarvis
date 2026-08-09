@@ -83,7 +83,7 @@ data class PairingPayload(
             // how a scanned string smuggles a newline into a log line or a
             // terminator into something downstream. Checked on the raw text,
             // before any decoding, and again after — see below.
-            if (text.any { it.isIsoControl() }) {
+            if (text.any { it.isISOControl() }) {
                 return Result.Refused("That QR code contains characters a pairing code cannot.")
             }
             if (!text.startsWith("$SCHEME://", ignoreCase = true)) {
@@ -120,7 +120,7 @@ data class PairingPayload(
             } catch (e: IllegalArgumentException) {
                 return Result.Refused("That pairing code's server address is not readable.")
             }
-            if (decoded.any { it.isIsoControl() }) {
+            if (decoded.any { it.isISOControl() }) {
                 return Result.Refused("That QR code contains characters a pairing code cannot.")
             }
 

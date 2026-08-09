@@ -34,7 +34,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .store import Store
