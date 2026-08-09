@@ -16,7 +16,7 @@ keywords = ["jarvis", "automation", "self-hosted", "assistant"]
 # no psutil means stdlib metrics, no pyperclip means the platform CLI, no
 # pyautogui means input automation reports itself unsupported, no tkinter means
 # the consent prompt falls back to the terminal.
-dependencies = ["websockets>=12,<16"]
+dependencies = ["websockets>=12,<18"]
 
 [project.optional-dependencies]
 # Better system metrics (CPU percent, memory, battery).

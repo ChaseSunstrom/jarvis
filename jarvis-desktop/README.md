@@ -47,6 +47,12 @@ python3 -m pip install -e '.[full]'                   # everything
 On Linux the consent dialog wants `python3-tk`. Without it the agent falls back
 to a terminal prompt, and without a terminal it denies. It never falls open.
 
+The terminal prompt answers one question at a time. `readline()` cannot be
+interrupted, so a prompt nobody answers leaves its reader holding stdin for the
+life of the process; rather than start a second reader and have two prompts race
+for the same keystroke, the next request is refused outright. A refusal is a
+denial, so this fails in the safe direction.
+
 Check what this machine can actually do:
 
 ```bash
@@ -117,12 +123,21 @@ Every action carries a tier. The tier decides whether a human is asked.
 
 | tier | meaning | examples |
 |---|---|---|
-| **1 AUTO** | read-only or trivially reversible; runs without asking | `get_system_state`, `read_file`, `list_dir`, `list_windows`, `launch_app`, `open_url`, `notify`, `set_volume` |
+| **1 AUTO** | read-only or trivially reversible; runs without asking | `get_system_state`, `read_file`, `list_dir`, `list_windows`, `launch_app` (no arguments), `open_url`, `notify`, `set_volume` |
 | **2 NOTIFY** | changes state but is recoverable; asks once, then may be remembered | `write_file`, `read_clipboard`, `write_clipboard`, `http_request` (GET), `screenshot`, `focus_window` |
-| **3 CONFIRM** | asks **every single time**, showing the verbatim action, parameters and reason | `run_command`, `delete_file`, `type_text`, `click`, `move_mouse`, `lock_screen`, `sleep`, `http_request` (POST/PUT/PATCH/DELETE) |
+| **3 CONFIRM** | asks **every single time**, showing the verbatim action, parameters and reason | `run_command`, `delete_file`, `type_text`, `click`, `move_mouse`, `lock_screen`, `sleep`, `http_request` (POST/PUT/PATCH/DELETE), `launch_app` (with arguments) |
 
-`python3 -m jarvis_desktop tiers` prints the table for your machine, along with
-your standing answer for each action.
+`python3 -m jarvis_desktop tiers` prints the base tier for each action on your
+machine, along with your standing answer. Two of them raise themselves from the
+parameters, so the table is a floor rather than the whole story:
+
+* `http_request` is Tier 2 for GET/HEAD and Tier 3 for anything that writes.
+* `launch_app` is Tier 1 to *open* an app and Tier 3 to hand one a command line.
+  Opening Firefox is not the same act as `{"app": "sh", "args": ["-c", "..."]}`,
+  and if arguments were free then Tier 1 would be worth exactly as much as the
+  Tier 3 shell gate. Interpreters, privilege tools and power commands (`sh`,
+  `python3`, `sudo`, `poweroff`, `rundll32`, ...) are refused as app names
+  outright, with or without arguments — `run_command` is where those belong.
 
 ### The rules that hold in code
 
@@ -272,8 +287,21 @@ cloud-metadata names — in every spelling a libc resolver accepts, so
 all blocked. Hostnames are resolved and **every** returned address is re-checked
 before the socket opens, and every redirect hop is checked again.
 
+A credential does not travel across a redirect: if a hop changes scheme, host or
+port, `Authorization` and every other credential-shaped header is dropped before
+the next request goes out. An open redirect on a site you hold a token for is
+not a way to hand that token to somebody else.
+
 The single exemption is the configured jarvis-core host: it is the machine we
 already talk to over an authenticated socket.
+
+One honest limit: the guard resolves the name, checks every address, and then
+`urllib` resolves it again to open the socket. A name whose DNS answer changes
+between those two moments (classic DNS rebinding) is checked on the first answer
+and connected on the second. Closing that needs pinning the socket to the
+address that was checked, which `urllib` does not expose. The blast radius is
+bounded by the tier — `http_request` is Tier 2, and its body comes back flagged
+untrusted either way.
 
 ---
 
@@ -498,6 +526,15 @@ replays the stored reply rather than running the action again), one in-flight
 command per action id, a global concurrency cap, an inbound rate limit of ten
 commands burst / one per second sustained, and host pinning.
 
+Host pinning is checked twice, because once is not enough. The configured URL is
+matched against `pinned_host` *before* connecting — and then, once the socket is
+up, the `Host` of the handshake that actually happened is compared against the
+host we dialled. The WebSocket client follows HTTP 3xx during the handshake,
+cross-origin redirects included, so "the connection succeeded" is not the same
+statement as "we are talking to the server we aimed at". The second check runs
+before the token is sent: a redirected session is closed with the credential
+still in this process.
+
 ---
 
 ## Tests
@@ -507,7 +544,7 @@ cd jarvis-desktop
 python3 -m pytest tests -q
 ```
 
-589 tests, no network, no display, no hardware. The ones that carry weight:
+626 tests, no network, no display, no hardware. The ones that carry weight:
 
 * `test_policy.py` — the truth table, every combination of tier × requested tier
   × policy × switches × trust. Copied case for case from
@@ -525,3 +562,6 @@ python3 -m pytest tests -q
   command never reaches the action.
 * `test_integration.py` — the injection story end to end: a poisoned file is
   read, the server asks for a shell command claiming Tier 1, and nothing runs.
+  Also the escalation paths an adversarial review found: `launch_app` used as a
+  shell, a notification title used as PowerShell, an `Authorization` header
+  followed across a redirect.
