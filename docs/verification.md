@@ -56,7 +56,7 @@ done
 
 | Suite | Tests | Result | Runtime |
 |---|---:|---|---:|
-| `jarvis-core` | 1158 | all pass | ~53 s |
+| `jarvis-core` | 1203 | all pass | ~53 s |
 | `jarvis-desktop` | 722 | all pass | ~16 s |
 | `jarvis-browser` | 328 | all pass | ~2 s |
 | `jarvis-orchestrator` | 17 | all pass | ~1 s |
@@ -70,11 +70,11 @@ Within `jarvis-core`, by file:
 
 | File | Tests | Covers |
 |---|---:|---|
-| `test_sensors.py` | 171 | the sensor layer and its inference |
+| `test_sensors.py` | 173 | the sensor layer and its inference |
 | `test_web_integration.py` | 109 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
-| `test_vision.py` | 105 | camera frames as fenced, untrusted input |
+| `test_vision.py` | 106 | camera frames as fenced, untrusted input |
 | `test_api.py` | 94 | REST + websocket wire contract, auth, binary audio frames |
-| `test_features.py` | 84 | the shipped feature set, end to end |
+| `test_features.py` | 115 | the shipped feature set, end to end |
 | `test_packaging.py` | 74 | the shipped `config/` is coherent; compose/YAML agreement |
 | `test_automation.py` | 72 | triggers, conditions, actions, run modes |
 | `test_voice.py` | 67 | pipeline runner, Wyoming protocol framing, pipeline store |
@@ -82,7 +82,7 @@ Within `jarvis-core`, by file:
 | `test_llm.py` | 48 | agent, tool registry, the approval gate |
 | `test_domains.py` | 47 | every domain service verb |
 | `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
-| `test_orchestrator.py` | 40 | delegation, coding jobs, the double-gated shell path |
+| `test_orchestrator.py` | 47 | delegation, coding jobs, the double-gated shell path |
 | `test_device_control.py` | 38 | cross-device command dispatch and tiering |
 | `test_local_integrations.py` | 36 | template, rest, command_line, hue, wled, demo |
 | `test_api_companion.py` | 28 | the device channel over the websocket |

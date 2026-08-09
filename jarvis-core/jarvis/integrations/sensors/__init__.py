@@ -606,6 +606,58 @@ class SensorIngest:
         return 1 if result.get("ok") else 0
 
 
+class SensorWebhook(WebhookHandler):
+    """The fallback ingest door, shaped so it can *share* its webhook id.
+
+    ``jarvis.data["webhooks"]`` is not this integration's namespace — the
+    automation layer writes there too, and
+    :func:`jarvis.automation.triggers.async_attach_webhook` replaces anything
+    it finds under an id that is not a :class:`WebhookHandler`. Registering a
+    bare function meant an automation with ``webhook_id: sensor`` silently
+    killed HTTP ingest, with no warning on either side.
+
+    Being a ``WebhookHandler`` fixes both directions: an automation attaching
+    to the same id joins this door instead of replacing it, and its detach
+    cannot evict us, because our own callback keeps ``callbacks`` non-empty.
+    """
+
+    def __init__(self, ingest: "SensorIngest") -> None:
+        super().__init__(FALLBACK_WEBHOOK_ID)
+        self.ingest = ingest
+        # A real entry rather than a sentinel: it is what `_detach` counts.
+        self.add(self._ingest_callback)
+
+    async def _ingest_callback(
+        self,
+        data: Any = None,
+        query: Mapping[str, Any] | None = None,
+        headers: Mapping[str, Any] | None = None,
+        method: str = "POST",
+    ) -> None:
+        await self.ingest.webhook(data, query, headers, method)
+
+    async def __call__(
+        self,
+        data: Any = None,
+        query: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        method: str = "POST",
+    ) -> int:
+        """Ingest, then fan out to anything else attached to the same id.
+
+        The count reports the ingest's own verdict rather than "a callback
+        ran", so a post with no valid credential still reads as zero.
+        """
+        delivered = 0
+        for callback in list(self.callbacks):
+            if callback is self._ingest_callback:
+                delivered += await self.ingest.webhook(data, query, headers, method)
+                continue
+            result = await callback(data, query, headers, method)
+            delivered += result if isinstance(result, int) else 1
+        return delivered
+
+
 # ---------------------------------------------------------------------------
 # setup
 # ---------------------------------------------------------------------------
@@ -624,13 +676,28 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     jarvis.data[DATA_INGEST] = ingest
 
     webhooks = jarvis.data.setdefault(DATA_WEBHOOKS, {})
-    if FALLBACK_WEBHOOK_ID in webhooks:
+    existing = webhooks.get(FALLBACK_WEBHOOK_ID)
+    if isinstance(existing, SensorWebhook):
+        existing.ingest = ingest  # a reload keeps whatever else joined the id
+    elif isinstance(existing, WebhookHandler):
+        # An automation got here first. Take the id over rather than lose the
+        # ingest door, and keep the automation's handler as one of ours — it
+        # is callable with the same signature, and leaving it intact means its
+        # own attach/detach bookkeeping still works.
+        door = SensorWebhook(ingest)
+        door.add(existing)
+        webhooks[FALLBACK_WEBHOOK_ID] = door
+        _LOGGER.info(
+            "sensors: sharing webhook id %r with an automation trigger",
+            FALLBACK_WEBHOOK_ID,
+        )
+    elif existing is not None:
         _LOGGER.warning(
             "sensors: webhook id %r is already taken; the fallback ingest door is off",
             FALLBACK_WEBHOOK_ID,
         )
     else:
-        webhooks[FALLBACK_WEBHOOK_ID] = ingest.webhook
+        webhooks[FALLBACK_WEBHOOK_ID] = SensorWebhook(ingest)
 
     _register_services(jarvis, manager)
     jarvis.register_shutdown(manager.stop)
