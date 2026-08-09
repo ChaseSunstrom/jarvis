@@ -136,6 +136,15 @@ The webhook route itself is unauthenticated by design (its id is the secret),
 so the credential check happens inside the handler either way: a post without a
 valid token writes nothing and reports `{"delivered": 0}`.
 
+The token may also travel in the body (`{"token": "...", "state": true}`) for
+senders that cannot set a header. It is read and then dropped: a credential is
+never a reading and never an attribute, so it cannot end up on the state
+machine where `/api/states` would hand it back out.
+
+`jarvis.data["webhooks"]` is shared with the automation layer, so this door is
+a `WebhookHandler`. An automation with `webhook_id: sensor` *joins* it — both
+the ingest and the trigger run, in that order — instead of replacing it.
+
 ### Way 3: YAML, for sensors you want named and typed up front
 
 ```yaml
@@ -390,7 +399,8 @@ first, so forty trips of the same doorway do not bury the one line that
 mattered. Pass `collapse: false` for the raw entries.
 
 The same view is an LLM tool, `recent_events`, so "has anything moved since I
-left?" works out loud.
+left?" works out loud. What that tool returns is fenced as untrusted data and
+marks the turn — see [Security notes](#security-notes).
 
 ### Services
 
@@ -447,12 +457,32 @@ On top of the ceilings:
   already be `[a-z0-9_]` (optionally `domain.object_id`); it is not quietly
   slugified into something else.
 * **Auto-registration is capped** (`max_sensors`, default 500) and can be turned
-  off, so a broken or hostile poster cannot fill the entity registry.
+  off, so a broken or hostile poster cannot fill the entity registry. The cap
+  and the "is this id already registered?" check are taken under a lock, because
+  posts arrive concurrently and creating an entity awaits.
+* **Credentials are never stored.** `token`, `api_key`, `password`, `secret`,
+  `authorization` and their neighbours are read out of a body and dropped —
+  never a reading, never an attribute, never a hint. The same filter covers the
+  attribute bag `sensors.set` passes through.
 * **Device-supplied text is data.** Sensor names arrive from firmware and end up
   in a notification and in `recent_events` output. They are stripped of control
   characters, collapsed, capped, and anything shaped like a fence marker is
   neutralised. Attribute bags are bounded in count and size.
-* Narration is delivery only. It reaches `companion.notify` and nothing else —
-  there is no path from a sensor payload to an action dispatcher.
+* **`recent_events` is fenced and taints its turn.** The digest is somebody
+  else's words — a name out of firmware, a reading out of an MQTT payload — so
+  it comes back wrapped in `<untrusted_sensor_content>` markers *and* marked
+  through `mark_untrusted_result`, which is what raises every later
+  `control_device` in that turn to CONFIRM. Fencing talks to the model; the
+  mark is the half that binds.
+* Narration is delivery only. It reaches `companion.notify` and nothing else.
+
+One trade-off worth writing down: a device chooses its own `device_class`, and
+`smoke`, `gas`, `carbon_monoxide` and `safety` are `critical` by default —
+the one importance that passes mute and quiet hours. That is deliberate (a
+smoke alarm swallowed by quiet hours is a broken house), but it does mean a
+device holding only the shared `sensors.token` can talk past a mute. What it
+cannot do is talk past the ceilings: `max_burst` and `max_per_hour` still
+apply to `critical`, so the worst case is twenty notifications in an hour, and
+none of them reach an action dispatcher.
 
 See [`security.md`](security.md) for the whole model.

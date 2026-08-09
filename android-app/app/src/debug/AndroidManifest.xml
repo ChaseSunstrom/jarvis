@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG VARIANT ONLY.
+
+  AGP merges this file into the debug manifest and into no other, so nothing
+  declared here can appear in a release APK. `assertNoTestHooksInRelease` in
+  app/build.gradle.kts additionally fails the build if the ai.jarvis.app.testing
+  package reaches a release DEX at all.
+
+  One component lives here: TestHostActivity, an empty Jarvis-shaped surface for
+  BootAnimationTest. Nothing but the instrumented test starts it, and it can do
+  nothing — no intent filter, exported=false, no extras, no network, no actions.
+
+  The other debug-only change is a RESOURCE override, not a manifest one:
+  src/debug/res/xml/network_security_config.xml replaces the shipping cleartext
+  allow-list for this variant so the tests can reach a jarvis-core harness on
+  the emulator's host. The <application> element already names that resource in
+  the main manifest, so there is nothing to restate here — the resource merger
+  swaps the file underneath it.
+
+  Theme.JarvisBase, not Theme.Jarvis: from API 31 the latter carries the splash
+  attributes, and a platform splash drawn over the first frames is exactly what
+  a boot-animation test must not have to fight.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <activity
+            android:name="ai.jarvis.app.testing.TestHostActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisBase"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+    </application>
+</manifest>

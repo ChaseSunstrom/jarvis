@@ -57,10 +57,17 @@ docker compose logs -f jarvis-core     # the first-run token is printed here
 Copy that token — it is stored as a SHA-256 digest and never shown again.
 
 ```bash
-# 2. the HUD (and friends)
+# 2. the HUD
 cd ..
 cp .env.example .env                   # put the token in JARVIS_TOKEN
 docker compose up -d
+```
+
+The orchestrator and the sandbox are a separate opt-in, because a command
+broker that starts by default is not optional:
+
+```bash
+docker compose --profile agents up -d  # adds the orchestrator and the sandbox
 ```
 
 The HUD is then at `http://<server>:8199` and jarvis-core's own API at

@@ -267,9 +267,11 @@ web:
 # Orchestrator — delegation, coding jobs, and the network-less sandbox.
 # ---------------------------------------------------------------------------
 # The front door to the `jarvis-orchestrator` service and, behind it,
-# `jarvis-sandbox`. Both are commented out in docker-compose.yml; until you
-# start them and set the two secrets below, the tools register but answer
-# "not configured" rather than pretending to work.
+# `jarvis-sandbox`. Both live in the parent repo's compose file behind its
+# `agents` profile (`docker compose --profile agents up -d`, one directory
+# up), so neither runs until you ask for it. Until you do — and until the two
+# secrets below are set — the tools register but answer "not configured"
+# rather than pretending to work.
 #
 # The persona prompt tells the model that delegate_to_agents, code_task and
 # execute_command exist, so this block is what makes that true.

@@ -35,6 +35,9 @@ DOCS = ROOT / "docs"
 PARENT_DOCS = ROOT.parent / "docs"
 DOCKERFILE = ROOT / "Dockerfile"
 COMPOSE = ROOT / "docker-compose.yml"
+#: The parent repo's companion stack — the HUD, and the two agent services
+#: whose "optional" has to be enforced by a profile rather than by a comment.
+PARENT_COMPOSE = ROOT.parent / "docker-compose.yml"
 REQUIREMENTS = ROOT / "requirements.txt"
 README = ROOT / "README.md"
 
@@ -1132,6 +1135,56 @@ def test_dockerfile_apt_is_best_effort_and_ipv4() -> None:
 @pytest.fixture(scope="module")
 def compose() -> dict[str, Any]:
     return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def parent_compose() -> dict[str, Any]:
+    return yaml.safe_load(PARENT_COMPOSE.read_text(encoding="utf-8"))
+
+
+def test_the_command_broker_does_not_start_on_a_plain_up(
+    parent_compose: dict[str, Any],
+) -> None:
+    """"Optional" has to mean the container does not run.
+
+    The parent repo's compose is what the quick start tells you to bring up
+    for the HUD. It also defines `jarvis-orchestrator` — the approval-gated
+    command broker — and `jarvis-sandbox`. Described as optional, and with
+    `restart: unless-stopped`, an ungated definition means every installation
+    that followed the quick start is running a command broker on :8188 from
+    then on, across reboots, whether or not it ever wanted one.
+
+    So both sit behind the `agents` profile, the same opt-in searxng gets
+    here. `jarvis-init` goes with them: it exists only to prepare the
+    workspace those two share.
+    """
+    services = parent_compose["services"]
+    gated = {name for name, svc in services.items() if svc.get("profiles")}
+    assert gated == {"jarvis-init", "jarvis-orchestrator", "jarvis-sandbox"}
+    for name in gated:
+        assert services[name]["profiles"] == ["agents"], name
+    # The HUD is the one thing a plain `up -d` is meant to start.
+    assert not services["jarvis-web"].get("profiles")
+
+
+def test_the_agent_services_are_defined_in_exactly_one_compose_file(
+    compose: dict[str, Any],
+) -> None:
+    """Two live definitions of one container name is a failed `up`, not a spare.
+
+    jarvis-core's compose carries a commented-out sketch of the orchestrator
+    and sandbox for the standalone case. The parent's defines them for real,
+    with the same `container_name`s, the same host port and the same bind
+    mount. If the sketch is ever uncommented while the parent stack exists,
+    the two collide — so it stays commented, and this says so out loud.
+    """
+    assert "jarvis-orchestrator" not in compose["services"]
+    assert "jarvis-sandbox" not in compose["services"]
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "cd .. && docker compose --profile agents up -d" in text, (
+        "the commented sketch must point at the parent stack rather than "
+        "inviting someone to uncomment a duplicate"
+    )
 
 
 def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:

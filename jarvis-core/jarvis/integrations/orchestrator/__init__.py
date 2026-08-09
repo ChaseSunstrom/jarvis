@@ -367,10 +367,16 @@ def _error(message: str, **extra: Any) -> dict[str, Any]:
     return {"status": "error", "error": message, **extra}
 
 
-def _as_task_list(value: Any, limit: int) -> list[str]:
-    """Normalise whatever the model produced into scoped task strings."""
+def _as_task_list(value: Any, limit: int) -> tuple[list[str], int]:
+    """Normalise whatever the model produced into scoped task strings.
+
+    Returns the tasks that will be sent and how many were dropped for being
+    over the cap. The count is not decoration: a fan-out that quietly does
+    eight of the twenty things it was asked for and answers "ok" is the same
+    silence as a command trimmed to fit, one layer up.
+    """
     if value is None:
-        return []
+        return [], 0
     if isinstance(value, str):
         # A model that ignores the array schema tends to send one newline
         # separated blob. Splitting is friendlier than refusing.
@@ -384,7 +390,7 @@ def _as_task_list(value: Any, limit: int) -> list[str]:
         text = _scalar(item)
         if text:
             tasks.append(text)
-    return tasks[:limit]
+    return tasks[:limit], max(0, len(tasks) - limit)
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +400,7 @@ async def async_delegate(
     client: OrchestratorClient, tasks_value: Any
 ) -> dict[str, Any]:
     """Fan a job out to specialist agents and return the merged answer."""
-    tasks = _as_task_list(tasks_value, client.config.max_tasks)
+    tasks, dropped = _as_task_list(tasks_value, client.config.max_tasks)
     if not tasks:
         return _error("delegate needs at least one task")
     try:
@@ -416,7 +422,7 @@ async def async_delegate(
                 "result": fence(_scalar(entry.get("result")), source=source),
             }
         )
-    return {
+    result = {
         "status": _scalar(payload.get("status")) or "ok",
         "count": len(agents),
         "agents": agents,
@@ -424,6 +430,14 @@ async def async_delegate(
         "synthesis": fence(_scalar(payload.get("synthesis")), source=source),
         "detail": _scalar(payload.get("detail")),
     }
+    if dropped:
+        result["tasks_dropped"] = dropped
+        result["incomplete"] = (
+            f"Only the first {len(tasks)} tasks were run; {dropped} more were "
+            f"dropped at the cap of {client.config.max_tasks}. Say so — this "
+            "answer does not cover them."
+        )
+    return result
 
 
 async def async_code_task(

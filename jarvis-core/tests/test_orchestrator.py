@@ -872,3 +872,26 @@ async def test_approve_outlasts_the_services_own_result_budget(tmp_path: Path) -
     await call_service(jarvis, "execute", {"command": "df -h"})
     assert seen and seen[0]["read"] > 120.0
     await shutdown(jarvis)
+
+
+async def test_a_capped_fan_out_says_what_it_did_not_do(tmp_path: Path) -> None:
+    """Eight of twenty tasks, answered "ok", is the same silence as a trimmed command."""
+    fake = FakeOrchestrator({"POST /delegate": DELEGATE_OK})
+    jarvis, _ = await build(tmp_path, fake)
+    result = await call_service(
+        jarvis, "delegate", {"tasks": [f"t{i}" for i in range(20)]}
+    )
+    assert len(json.loads(fake.requests[0].content)["tasks"]) == MAX_TASKS
+    assert result["tasks_dropped"] == 20 - MAX_TASKS
+    assert "does not cover them" in result["incomplete"]
+    await shutdown(jarvis)
+
+
+async def test_a_fan_out_within_the_cap_claims_nothing_was_dropped(
+    tmp_path: Path,
+) -> None:
+    fake = FakeOrchestrator({"POST /delegate": DELEGATE_OK})
+    jarvis, _ = await build(tmp_path, fake)
+    result = await call_service(jarvis, "delegate", {"tasks": ["a", "b"]})
+    assert "tasks_dropped" not in result and "incomplete" not in result
+    await shutdown(jarvis)

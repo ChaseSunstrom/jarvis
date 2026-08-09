@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "The fake Ollama's default brain. Every rule matches a substring of what",
+    "the USER said (never the system prompt, which lists every exposed",
+    "entity). Responses are consumed in order on successive calls and the",
+    "last one repeats, so a rule that first asks for a tool call answers with",
+    "words on the round after jarvis-core has run it.",
+    "Point the harness at your own file with --ollama-script."
+  ],
+
+  "models": ["qwen3:8b", "llama3.2:3b"],
+
+  "default": { "say": "Very good, Sir." },
+
+  "rules": [
+    {
+      "name": "lab lights on",
+      "match": "turn on the lab lights",
+      "responses": [
+        {
+          "tool_calls": [
+            { "name": "turn_on", "arguments": { "entity_id": "light.bed_light" } }
+          ]
+        },
+        { "say": "Turning on the lab lights, Sir." }
+      ]
+    },
+    {
+      "name": "lab lights off",
+      "match": "turn off the lab lights",
+      "responses": [
+        {
+          "tool_calls": [
+            { "name": "turn_off", "arguments": { "entity_id": "light.bed_light" } }
+          ]
+        },
+        { "say": "The lab lights are off, Sir." }
+      ]
+    },
+    {
+      "name": "kitchen lights on",
+      "match": "turn on the kitchen light",
+      "responses": [
+        {
+          "tool_calls": [
+            { "name": "turn_on", "arguments": { "entity_id": "light.kitchen_lights" } }
+          ]
+        },
+        { "say": "Kitchen lights on, Sir." }
+      ]
+    },
+    {
+      "name": "read a state",
+      "match": "is the bed light",
+      "responses": [
+        {
+          "tool_calls": [
+            { "name": "get_state", "arguments": { "entity_id": "light.bed_light" } }
+          ]
+        },
+        { "say": "I have read the bed light, Sir." }
+      ]
+    },
+    {
+      "name": "greeting",
+      "match": "hello",
+      "responses": [{ "say": "Good evening, Sir. Systems nominal." }]
+    },
+    {
+      "name": "who are you",
+      "match": "who are you",
+      "responses": [{ "say": "Jarvis, Sir. At your disposal." }]
+    }
+  ]
+}

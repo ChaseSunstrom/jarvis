@@ -340,14 +340,25 @@ services:
   #             capabilities: [gpu]
 
   # --- Agent fan-out and the execution jail (optional) --------------------
-  # These already exist in the parent repo and are unchanged by the move to
-  # standalone: the orchestrator does multi-agent delegation and OpenCode
-  # coding jobs, the sandbox runs approval-gated commands with no network at
-  # all. They are commented out because most installations do not need them,
-  # and because the build contexts sit one directory up.
+  # The orchestrator does multi-agent delegation and OpenCode coding jobs; the
+  # sandbox runs approval-gated commands with no network at all. Most
+  # installations do not need either.
   #
-  # Fill ORCHESTRATOR_TOKEN and APPROVAL_SECRET in .env first (see
-  # ../.env.example), then uncomment. The sandbox's `network_mode: none` is a
+  # RUN THEM FROM THE PARENT REPO, NOT FROM HERE:
+  #
+  #     cd .. && docker compose --profile agents up -d
+  #
+  # ../docker-compose.yml defines both, with the workspace-permissions init
+  # job they need and the resource limits the sandbox needs, behind an
+  # `agents` profile. Uncommenting the sketch below *as well* gives you two
+  # definitions fighting over the container names `jarvis-orchestrator` and
+  # `jarvis-sandbox`, one host port, and one bind mount — which is a failed
+  # `up`, not a second copy.
+  #
+  # It is kept, commented, for the standalone case in ../docs/standalone.md:
+  # jarvis-core extracted on its own, with no parent repo to run. Fill
+  # ORCHESTRATOR_TOKEN and APPROVAL_SECRET in .env first, and vendor the two
+  # build contexts next to this file. The sandbox's `network_mode: none` is a
   # security boundary, not a default — it runs LLM-proposed commands and must
   # never be given host or LAN networking.
   #

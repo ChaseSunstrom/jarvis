@@ -626,8 +626,12 @@ class SensorWebhook(WebhookHandler):
     def __init__(self, ingest: "SensorIngest") -> None:
         super().__init__(FALLBACK_WEBHOOK_ID)
         self.ingest = ingest
-        # A real entry rather than a sentinel: it is what `_detach` counts.
-        self.add(self._ingest_callback)
+        # Bound once and kept, because `self.method` makes a *new* object on
+        # every attribute access and `__call__` has to recognise this entry by
+        # identity. A real entry rather than a sentinel: it is what the
+        # automation layer's detach counts when it decides whether to evict.
+        self._slot = self._ingest_callback
+        self.add(self._slot)
 
     async def _ingest_callback(
         self,
@@ -635,8 +639,8 @@ class SensorWebhook(WebhookHandler):
         query: Mapping[str, Any] | None = None,
         headers: Mapping[str, Any] | None = None,
         method: str = "POST",
-    ) -> None:
-        await self.ingest.webhook(data, query, headers, method)
+    ) -> int:
+        return await self.ingest.webhook(data, query, headers, method)
 
     async def __call__(
         self,
@@ -652,11 +656,11 @@ class SensorWebhook(WebhookHandler):
         """
         delivered = 0
         for callback in list(self.callbacks):
-            if callback is self._ingest_callback:
-                delivered += await self.ingest.webhook(data, query, headers, method)
-                continue
             result = await callback(data, query, headers, method)
-            delivered += result if isinstance(result, int) else 1
+            if callback is self._slot:
+                delivered += int(result or 0)
+            else:
+                delivered += result if isinstance(result, int) else 1
         return delivered
 
 

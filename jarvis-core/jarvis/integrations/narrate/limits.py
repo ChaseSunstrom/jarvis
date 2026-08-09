@@ -39,6 +39,17 @@ DEFAULT_MAX_PER_HOUR = 20
 DEFAULT_MAX_BURST = 5
 DEFAULT_BURST_WINDOW = 60.0
 
+#: How many ``(rule, entity)`` debounce stamps to hold before sweeping the
+#: expired ones. A rule that selects a whole domain keeps one stamp per entity
+#: it has ever narrated about, and entities outlive the sensors that made them
+#: (an MQTT broker can mint them, and `sensors.forget` does not un-narrate the
+#: past), so without a sweep this dict only ever grows.
+DEFAULT_MAX_TRACKED = 4096
+
+#: The sweep walks the whole table, so it is rate-limited: an oversized table
+#: is scanned at most once a minute, however many state changes arrive.
+SWEEP_INTERVAL = 60.0
+
 _HHMM_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 
@@ -117,18 +128,44 @@ class NarrationLimiter:
     max_per_hour: int = DEFAULT_MAX_PER_HOUR
     max_burst: int = DEFAULT_MAX_BURST
     burst_window: float = DEFAULT_BURST_WINDOW
+    max_tracked: int = DEFAULT_MAX_TRACKED
 
     _global: Deque[float] = field(default_factory=deque, repr=False)
     _per_rule: dict[str, Deque[float]] = field(default_factory=dict, repr=False)
     _last: dict[tuple[str, str], float] = field(default_factory=dict, repr=False)
+    _longest_interval: float = field(default=0.0, repr=False)
+    _last_sweep: float = field(default=0.0, repr=False)
 
     # --- reads ------------------------------------------------------------
     def _prune(self, now: float) -> None:
         while self._global and now - self._global[0] > HOUR:
             self._global.popleft()
-        for stamps in self._per_rule.values():
+        for key, stamps in list(self._per_rule.items()):
             while stamps and now - stamps[0] > HOUR:
                 stamps.popleft()
+            if not stamps:
+                del self._per_rule[key]  # a rule that has gone quiet
+        self._sweep_debounce(now)
+
+    def _sweep_debounce(self, now: float) -> None:
+        """Drop debounce stamps too old to hold anything back any more.
+
+        Kept off the hot path twice over: nothing is scanned while the table is
+        within its bound, and an oversized table is scanned at most once every
+        :data:`SWEEP_INTERVAL`.
+        """
+        if len(self._last) <= self.max_tracked:
+            return
+        if self._last_sweep and now - self._last_sweep < SWEEP_INTERVAL:
+            return
+        self._last_sweep = now
+        # An entry only matters while it can still debounce something, so the
+        # horizon is the longest `min_interval` this limiter has been asked
+        # about — never less than the hour the other ceilings use.
+        horizon = max(HOUR, self._longest_interval)
+        self._last = {
+            key: stamp for key, stamp in self._last.items() if now - stamp <= horizon
+        }
 
     def check(
         self,
@@ -139,6 +176,8 @@ class NarrationLimiter:
         rule_max_per_hour: int | None = None,
     ) -> Decision:
         """Would this be delivered? Records nothing."""
+        if min_interval > self._longest_interval:
+            self._longest_interval = min_interval
         self._prune(now)
 
         last = self._last.get((rule_key, entity_id))
@@ -186,16 +225,23 @@ class NarrationLimiter:
     def delivered_in_last(self, seconds: float, now: float) -> int:
         return sum(1 for t in self._global if now - t <= seconds)
 
+    def tracked(self) -> int:
+        """How many debounce stamps are being held (for tests and status)."""
+        return len(self._last)
+
     def reset(self) -> None:
         self._global.clear()
         self._per_rule.clear()
         self._last.clear()
+        self._longest_interval = 0.0
+        self._last_sweep = 0.0
 
 
 __all__ = [
     "DEFAULT_BURST_WINDOW",
     "DEFAULT_MAX_BURST",
     "DEFAULT_MAX_PER_HOUR",
+    "DEFAULT_MAX_TRACKED",
     "DEFAULT_MIN_INTERVAL",
     "Decision",
     "NarrationLimiter",

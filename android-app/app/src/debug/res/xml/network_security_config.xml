@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG VARIANT ONLY. This file REPLACES res/xml/network_security_config.xml for
+  the debug build; the release APK never sees it. Resource qualifiers and
+  variant source sets select a winner, they do not merge, so this is a full copy
+  of the shipping config plus the emulator entries at the bottom.
+
+  KEEP IN STEP WITH src/main/res/xml/network_security_config.xml. If you add a
+  host there, add it here too — otherwise a debug build would refuse a
+  connection the release build allows, which is the most confusing possible way
+  for this file to be wrong.
+
+  ## What is added, and why it is not in the shipping config
+
+  The Android emulator reaches the machine it runs on at 10.0.2.2 (a QEMU alias
+  for the host's loopback), and gives itself 10.0.2.15/10.0.2.16 on that virtual
+  network. `ConversationE2ETest` needs to reach the CI machine's jarvis-core
+  harness over plain http, because the harness is a throwaway process with fake
+  model and voice backends and no certificate.
+
+  Those addresses are inside 10.0.0.0/8, which `ai.jarvis.app.channel.LanHost`
+  already classifies as private and permits cleartext to, so this file is not
+  relaxing the app's own transport policy — it is telling the PLATFORM about a
+  host the app's policy would already have allowed. It stays out of the shipping
+  config all the same: on a real phone 10.0.2.2 is just another RFC1918 address
+  belonging to whoever is on that network, and a shipping app should not carry a
+  cleartext exemption that exists for a test harness.
+
+  If your CI forwards the harness with `adb reverse tcp:8080 tcp:8080` instead,
+  no entry is needed at all: 127.0.0.1 is already permitted below, in the
+  shipping config, for exactly that reason.
+-->
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Loopback (adb reverse / on-device testing). -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+
+        <!-- mDNS / local-domain names for the Jarvis server. -->
+        <domain includeSubdomains="true">jarvis.local</domain>
+        <domain includeSubdomains="true">jarvis.lan</domain>
+        <domain includeSubdomains="true">jarvis.home.arpa</domain>
+
+        <!-- Reference LAN from docs/security.md. -->
+        <domain includeSubdomains="false">192.168.2.1</domain>
+        <domain includeSubdomains="false">192.168.2.10</domain>
+
+        <!-- DEBUG ADDITION: the emulator's host-loopback alias and its own
+             addresses on the QEMU network. See the header. -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">10.0.2.15</domain>
+        <domain includeSubdomains="false">10.0.2.16</domain>
+
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Lets a private CA (step-ca, mkcert, your router) front
+                 jarvis-core with real HTTPS. Scoped to these hosts only. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+
+</network-security-config>

@@ -4,12 +4,21 @@
 # jarvis-core itself plus Wyoming STT/TTS/wake, photon and jarvis-browser.
 # Start that first. This file adds the three things that live outside it:
 #
-#   jarvis-web           the browser HUD, on :8199
+#   jarvis-web           the browser HUD, on :8199              (always)
 #   jarvis-orchestrator  multi-agent fan-out, coding jobs, the command broker
 #   jarvis-sandbox       the network-less jail those commands actually run in
 #
-#   cd jarvis-core && docker compose up -d      # the assistant
-#   cd ..           && docker compose up -d     # the HUD and, optionally, these
+#   cd jarvis-core && docker compose up -d              # the assistant
+#   cd ..           && docker compose up -d             # the HUD, on its own
+#   cd ..           && docker compose --profile agents up -d   # ...and these
+#
+# The orchestrator and the sandbox sit behind the `agents` profile, the same
+# opt-in searxng gets in jarvis-core's compose. "Optional" has to mean the
+# thing does not start, and a plain `up -d` bringing up a command broker with
+# `restart: unless-stopped` is not optional — it is on, on every boot, in
+# every installation that ran the quick start. Both secrets have to be in
+# `.env` before the profile does anything anyway: the orchestrator refuses to
+# start without them.
 #
 # Security posture (see docs/security.md and jarvis-core/docs/security.md):
 #   - jarvis-web:          host networking; binds :8199. LAN/WireGuard only (ufw).
@@ -41,6 +50,7 @@ services:
     build:
       context: ./jarvis-sandbox
     container_name: jarvis-init
+    profiles: [agents]
     user: "0:0"
     network_mode: "none"
     # command MUST be a list (single literal-block element): a scalar string
@@ -81,6 +91,7 @@ services:
   jarvis-orchestrator:
     build: ./jarvis-orchestrator
     container_name: jarvis-orchestrator
+    profiles: [agents]
     restart: unless-stopped
     depends_on:
       jarvis-init:
@@ -115,6 +126,7 @@ services:
         # bash/coreutils/git/jq: SANDBOX_EXTRA_TOOLS=1 docker compose build
         SANDBOX_EXTRA_TOOLS: ${SANDBOX_EXTRA_TOOLS:-0}
     container_name: jarvis-sandbox
+    profiles: [agents]
     restart: unless-stopped
     depends_on:
       jarvis-init:
