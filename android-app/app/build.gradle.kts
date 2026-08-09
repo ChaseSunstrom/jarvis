@@ -1,3 +1,15 @@
+// `java.util.zip.ZipFile(...)` does NOT work in a Gradle Kotlin DSL script: the
+// Android plugin contributes a `java` extension accessor, so a leading `java.`
+// resolves to that extension rather than to the package root and fails with
+// "Unresolved reference: util". The knock-on is worse than the error itself —
+// the ZipFile call becomes error-typed, so `zip`, `entry` and every value
+// derived from them do too, and the compiler then reports confusing cascade
+// failures pages away (an "overload resolution ambiguity" on Int.compareTo in
+// assertNoTestHooksInRelease, whose real cause is this line).
+//
+// Importing the type and calling it unqualified sidesteps the accessor.
+import java.util.zip.ZipFile
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -253,7 +265,7 @@ val assertNoTestHooksInRelease = tasks.register("assertNoTestHooksInRelease") {
 
         var entriesScanned = 0
         for (archive in archives) {
-            java.util.zip.ZipFile(archive).use { zip ->
+            ZipFile(archive).use { zip ->
                 for (entry in zip.entries()) {
                     if (entry.isDirectory) continue
                     val bytes = zip.getInputStream(entry).readBytes()
