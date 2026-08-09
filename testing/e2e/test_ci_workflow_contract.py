@@ -598,5 +598,119 @@ def test_the_emulator_script_is_handed_every_variable_it_refuses_to_run_without(
         )
 
 
+# ---------------------------------------------------------------------------
+# the compose smoke job's own promises
+# ---------------------------------------------------------------------------
+COMPOSE_SMOKE = WORKFLOW_DIR / "compose-smoke.yml"
+
+
+def _compose_smoke_job() -> dict[str, Any]:
+    doc = _strict_load(COMPOSE_SMOKE)
+    jobs = doc["jobs"]
+    assert len(jobs) == 1, f"expected one job, found {sorted(jobs)}"
+    job = next(iter(jobs.values()))
+    job["_env"] = doc.get("env") or {}
+    return job
+
+
+def test_the_compose_smoke_job_accounts_for_every_service_in_the_stack():
+    """Adding a service must be a decision, not a silent gap in coverage.
+
+    The job makes this check itself, at run time, against
+    ``docker compose config --services``. It is repeated here because that
+    version only runs on a machine with Docker, half an hour into a job — and
+    because the whole reason this workflow exists is that a compose file nobody
+    executed drifted away from what a real install does.
+    """
+    env = _compose_smoke_job()["_env"]
+    started = set(str(env["SMOKE_SERVICES"]).split())
+    skipped = set(str(env["SKIPPED_SERVICES"]).split())
+    assert started, "SMOKE_SERVICES is empty; the job would start nothing"
+
+    compose = yaml.safe_load(
+        (REPO_ROOT / "jarvis-core" / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    declared = set(compose["services"])
+
+    unaccounted = sorted(declared - started - skipped)
+    assert not unaccounted, (
+        "jarvis-core/docker-compose.yml declares services that compose-smoke.yml "
+        f"neither starts nor explicitly skips: {unaccounted}. Add them to "
+        "SMOKE_SERVICES, or to SKIPPED_SERVICES with a reason in the workflow's "
+        "header."
+    )
+    phantom = sorted((started | skipped) - declared)
+    assert not phantom, (
+        f"compose-smoke.yml names services that no longer exist: {phantom}"
+    )
+
+
+def test_the_compose_smoke_job_keeps_the_assertions_it_exists_for():
+    """The job is only worth its runner minutes while these survive.
+
+    Every one of them is here because dropping it turns the job into an
+    expensive way to prove that `docker compose up` exits 0 — which it does
+    even when three containers are crash-looping behind it.
+    """
+    steps = _compose_smoke_job()["steps"]
+    program = "\n".join(str(step.get("run", "")) for step in steps)
+
+    assert "RestartCount" in program, (
+        "nothing reads .RestartCount any more. `docker compose ps` reports a "
+        "flapping container as 'Up 1 second' if you sample it during its up "
+        "phase; the restart counter is what makes the check survive timing."
+    )
+    assert "/healthz" in program, "the API is no longer probed"
+    assert "docker compose logs" in program, (
+        "the log dump is gone, so a crash loop in CI would have to be "
+        "reproduced locally to be understood"
+    )
+
+    dumps = [
+        step for step in steps
+        if "docker compose logs" in str(step.get("run", ""))
+        and str(step.get("if", "")).strip() == "failure()"
+    ]
+    assert dumps, "no step dumps `docker compose logs` on failure()"
+
+    teardown = [
+        step for step in steps
+        if "docker compose down" in str(step.get("run", ""))
+    ]
+    assert teardown, "the job never tears the stack down"
+    for step in teardown:
+        assert str(step.get("if", "")).strip() == "always()", (
+            "teardown must be if: always(); the default is success(), which "
+            "skips it on exactly the runs that left containers behind"
+        )
+        assert "--volumes" in str(step["run"]), (
+            "tear down volumes too, or mosquitto-data survives into the next run"
+        )
+
+
+def test_the_compose_smoke_job_enables_the_profiles_the_bugs_lived_behind():
+    """mosquitto is behind `mqtt`, searxng behind `search`.
+
+    Both carry `cap_add: [CHOWN, SETGID, SETUID]`, without which their
+    entrypoints cannot drop privileges and they crash-loop. A job that leaves
+    the profiles off starts neither and cannot see it.
+    """
+    env = _compose_smoke_job()["_env"]
+    profiles = {p.strip() for p in str(env["COMPOSE_PROFILES"]).split(",")}
+    assert {"mqtt", "search"} <= profiles, profiles
+
+    compose = yaml.safe_load(
+        (REPO_ROOT / "jarvis-core" / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    started = set(str(env["SMOKE_SERVICES"]).split())
+    for name, service in compose["services"].items():
+        if service.get("cap_add"):
+            assert name in started, (
+                f"{name} needs cap_add to de-escalate, which is the shape of a "
+                "crash loop this job is supposed to catch, but the job never "
+                "starts it"
+            )
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(pytest.main([__file__, "-v"]))

@@ -1,0 +1,511 @@
+name: Compose smoke
+
+# Does `docker compose up` actually produce a working install?
+#
+# Nothing in CI had ever run it. That gap let six bugs reach a real machine in
+# one afternoon, three of them startup failures that a single `up` would have
+# shown inside a minute:
+#
+#   * `WHISPER_MODEL` in .env.example named a sherpa model while the pinned
+#     image IS faster-whisper — `ValueError: Invalid model size`, restart loop,
+#     and a default install with no speech-to-text at all.
+#   * jarvis-core runs as uid 10003 and `./config` is a bind mount owned by the
+#     host user, so the Dockerfile's chown was masked the moment the mount
+#     landed: `PermissionError: [Errno 13] Permission denied: '/config/.storage'`.
+#   * `cap_drop: [ALL]` took CHOWN/SETGID/SETUID away from mosquitto's
+#     entrypoint, which needs exactly those three to stop being root:
+#     `chown: /mosquitto/data: Operation not permitted`.
+#
+# All three presented identically — `Restarting (N)` — which is why the
+# load-bearing assertion in this file is "no container has restarted", not "the
+# API answered". An API that answers proves one service; a restart count of
+# zero across the project proves the install.
+#
+# WHY THIS IS NOT A JOB IN ci.yml
+# ------------------------------
+# ci.yml is the fast lane and says so in its own header: every job there is
+# 10-25 minutes and runs on every push. This one builds two images from source
+# (jarvis-browser fetches chromium), pulls roughly 6 GB of Wyoming images, and
+# then deliberately sits still for a settle window — call it 25-40 minutes. It
+# also has to strip the runner's preinstalled toolchains to make room, which is
+# destructive and pointless for a job that only runs pytest. Same reasoning
+# e2e.yml already used for the emulator.
+#
+# WHAT IT COVERS, AND WHAT IT DOES NOT
+# ------------------------------------
+# Covered: jarvis-config-init, jarvis-core, jarvis-browser, wyoming-whisper,
+# wyoming-piper, wyoming-openwakeword, plus mosquitto (`--profile mqtt`, where
+# bug 3 lived) and searxng (`--profile search`, which carries the identical
+# cap_add fix and is the only other place it can regress).
+#
+# Skipped: photon, and only photon. It is an offline geocoder whose first start
+# downloads a planet index — tens of GB with `PHOTON_REGION` unset, which is
+# what .env.example ships — and the runner has neither the disk nor the hour.
+# Nothing else in the file is excluded, and the "every service is accounted
+# for" step below fails if a new service appears in neither list, so narrowing
+# this job further has to be a decision somebody writes down.
+#
+# Ollama is NOT in the stack (it lives on the host), so jarvis-core will log
+# connection failures for it all the way through this job. That is expected and
+# is never a failure here: nothing in this workflow greps logs for errors. The
+# question it asks is "is the process alive and serving", not "is the log
+# clean".
+
+on:
+  push:
+    branches: ["**"]
+    # Only for the things that can break the stack. A web-only change should
+    # not pay for 6 GB of image pulls.
+    paths:
+      - "jarvis-core/**"
+      - "jarvis-browser/**"
+      - ".github/workflows/compose-smoke.yml"
+  # Every upstream image here is pinned to `:latest`, so a default install can
+  # break with no commit of ours involved. Once a week catches that drift.
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Both optional profiles, for every compose invocation in the job. mosquitto
+  # is behind `mqtt` and searxng behind `search`; without these the two
+  # services that need cap_add to de-escalate would never start, and bug 3
+  # would sail through again.
+  COMPOSE_PROFILES: mqtt,search
+
+  # What this job starts, and what it knowingly leaves out. Keep both in step
+  # with the header — "Every service is covered or explicitly skipped" below
+  # fails the job if the compose file grows a service that is in neither.
+  SMOKE_SERVICES: >-
+    jarvis-config-init
+    jarvis-core
+    jarvis-browser
+    wyoming-whisper
+    wyoming-piper
+    wyoming-openwakeword
+    mosquitto
+    searxng
+  SKIPPED_SERVICES: photon
+
+  # How long to sit still before asking whether anything restarted. A crash
+  # loop shows up in seconds — docker's backoff starts at 100 ms — so this is
+  # deliberately generous rather than finely tuned.
+  SETTLE_SECONDS: "60"
+
+  # Sentinel values for the two Ollama knobs. Nothing listens on 11439 and no
+  # such model exists, which is the point: the log line jarvis-core prints at
+  # startup has to echo BOTH of them back. When `llm.url` was hardcoded, the
+  # log cheerfully reported loopback whatever OLLAMA_URL said, and that is the
+  # only way to see the wire is cut from outside the container.
+  OLLAMA_URL_SENTINEL: http://127.0.0.1:11439
+  OLLAMA_MODEL_SENTINEL: jarvis-ci-smoke-model
+
+jobs:
+  compose:
+    name: compose · the stack really comes up
+    runs-on: ubuntu-latest
+    # Two source builds (chromium is the slow one), ~6 GB of pulls, a model
+    # download and a settle window. 50 rather than 60 so a wedged job is not an
+    # hour of runner time.
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reclaim disk before pulling the image set
+        run: |
+          set -uo pipefail
+          # Same problem the emulator job has: the hosted runner ships with
+          # ~15 GB of toolchains this job will never touch, and the Wyoming
+          # images plus two locally built ones do not fit around them.
+          echo '----- free space before -----'
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /usr/local/.ghcup \
+            /opt/ghc \
+            /usr/local/share/powershell \
+            /usr/share/swift \
+            /opt/hostedtoolcache/CodeQL || true
+          docker image prune --all --force >/dev/null 2>&1 || true
+          echo '----- free space after -----'
+          df -h /
+
+      - name: Write the .env a real install writes
+        working-directory: jarvis-core
+        run: |
+          set -euo pipefail
+          # Verbatim, because the documented defaults are exactly what this job
+          # exists to run. WHISPER_MODEL, PIPER_VOICE and WAKE_WORD come from
+          # .env.example unedited: substituting CI-friendly values here would
+          # have let the sherpa model name through untouched.
+          cp .env.example .env
+
+          # The three secrets .env.example leaves empty on purpose, generated
+          # the way its own instructions say to. Compose parses .env into a
+          # mapping, so a later assignment wins over the empty one above —
+          # which is what `>> .env` in those instructions relies on, and is
+          # therefore worth exercising rather than hand-editing the file.
+          {
+            echo "SEARXNG_SECRET=$(openssl rand -hex 32)"
+            echo "JARVIS_BROWSER_TOKEN=$(openssl rand -hex 32)"
+            echo "BROWSER_APPROVAL_SECRET=$(openssl rand -hex 32)"
+          } >> .env
+
+          # And the two sentinels. Ollama is not in this stack either way; the
+          # values are here so the startup log can be checked against them.
+          {
+            echo "OLLAMA_URL=${OLLAMA_URL_SENTINEL}"
+            echo "OLLAMA_MODEL=${OLLAMA_MODEL_SENTINEL}"
+          } >> .env
+
+          # The file holds secrets now. Print the keys, never the values.
+          echo "keys in .env:"
+          sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/  \1/p' .env | sort -u
+
+      - name: The compose file resolves, and every service is accounted for
+        working-directory: jarvis-core
+        run: |
+          set -euo pipefail
+          docker compose config -q
+
+          # A service added to docker-compose.yml must be a deliberate decision
+          # here, not a silent gap: the whole value of this job is that it
+          # starts what a real install starts.
+          declared="$(docker compose config --services | sort -u)"
+          accounted="$(printf '%s\n' $SMOKE_SERVICES $SKIPPED_SERVICES | sort -u)"
+          echo "declared:  $(echo $declared | tr '\n' ' ')"
+          echo "accounted: $(echo $accounted | tr '\n' ' ')"
+
+          unaccounted="$(comm -23 <(printf '%s\n' "$declared") <(printf '%s\n' "$accounted"))"
+          if [ -n "$unaccounted" ]; then
+            echo "::error::docker-compose.yml declares services this job neither starts nor explicitly skips: $(echo $unaccounted | tr '\n' ' '). Add them to SMOKE_SERVICES, or to SKIPPED_SERVICES with a reason in this file's header."
+            exit 1
+          fi
+
+          phantom="$(comm -13 <(printf '%s\n' "$declared") <(printf '%s\n' "$accounted"))"
+          if [ -n "$phantom" ]; then
+            echo "::error::SMOKE_SERVICES/SKIPPED_SERVICES name services that are not in docker-compose.yml: $(echo $phantom | tr '\n' ' ')"
+            exit 1
+          fi
+
+      - name: Build the local images and start the stack
+        working-directory: jarvis-core
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP:-/tmp}/compose-up.log"
+          docker compose up -d --build $SMOKE_SERVICES 2>&1 | tee "$log"
+
+          # jarvis-core and jarvis-browser declare `image:` AND `build:`, which
+          # makes compose try a registry pull first unless `pull_policy: build`
+          # says otherwise. The result is not an error — it builds anyway — so
+          # the only trace is two lines of
+          #
+          #     ! Image jarvis-core:local  pull access denied for jarvis-core,
+          #       repository does not exist or may require 'docker login'
+          #
+          # in the middle of a successful install, which reads exactly like the
+          # install has failed on step one. Match only compose's own wording —
+          # apt and pip have their own ways of complaining about repositories
+          # and neither says this.
+          if grep -qi 'pull access denied' "$log"; then
+            echo "::error::compose tried to PULL an image this repository builds. A service with both image: and build: needs pull_policy: build."
+            exit 1
+          fi
+
+          docker compose ps -a
+
+      - name: Wait for the jarvis-core API on :8080/healthz
+        working-directory: jarvis-core
+        run: |
+          set -uo pipefail
+          # /healthz is the open route (no bearer token) in jarvis/api/rest.py,
+          # the same one the image's HEALTHCHECK uses. Host networking, so
+          # :8080 is the runner's own port and not a published mapping.
+          body="${RUNNER_TEMP:-/tmp}/healthz.json"
+          deadline=$(( $(date +%s) + 240 ))
+          answered=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            # Do not spend four minutes waiting on a corpse: a container that
+            # has already been restarted once is looping, not starting.
+            restarts="$(docker inspect -f '{{.RestartCount}}' jarvis-core 2>/dev/null || echo 0)"
+            if [ "${restarts:-0}" -gt 0 ]; then
+              echo "::error::jarvis-core has restarted ${restarts} time(s) before ever answering — it is crash-looping, not booting."
+              exit 1
+            fi
+            if curl -fsS --max-time 5 -o "$body" http://127.0.0.1:8080/healthz; then
+              answered=1
+              break
+            fi
+            sleep 3
+          done
+          if [ "$answered" != "1" ]; then
+            echo "::error::no answer from http://127.0.0.1:8080/healthz within 240s"
+            exit 1
+          fi
+          python3 - "$body" <<'PY'
+          import json, sys
+
+          doc = json.load(open(sys.argv[1]))
+          print("healthz:", doc)
+          if doc.get("status") != "ok" or doc.get("running") is not True:
+              print(f"::error::/healthz answered but the platform is not running: {doc!r}")
+              sys.exit(1)
+          PY
+
+      - name: Every service is really listening on its port
+        working-directory: jarvis-core
+        run: |
+          set -euo pipefail
+          # "The container is up" and "the service is serving" are different
+          # claims, and for wyoming-whisper the gap between them is the whole
+          # bug: faster-whisper resolves the model name BEFORE it binds, so a
+          # socket answering on 10300 is the positive proof that WHISPER_MODEL
+          # is a name it accepts. Absence of a crash is the weaker statement.
+          python3 - <<'PY'
+          import socket, sys, time
+
+          PORTS = {
+              10300: "wyoming-whisper — binds only after faster-whisper has "
+                     "resolved and loaded WHISPER_MODEL",
+              10200: "wyoming-piper — binds after PIPER_VOICE is available",
+              10400: "wyoming-openwakeword — binds after WAKE_WORD is preloaded",
+              1883: "mosquitto (profile: mqtt) — the broker jarvis-core's "
+                    "mqtt: block points at",
+              8210: "jarvis-browser",
+              8080: "jarvis-core",
+          }
+
+          pending = dict(PORTS)
+          deadline = time.monotonic() + 300
+          while pending and time.monotonic() < deadline:
+              for port in list(pending):
+                  try:
+                      with socket.create_connection(("127.0.0.1", port), timeout=3):
+                          why = pending.pop(port)
+                      print(f"listening: {port:>5}  {why}")
+                  except OSError:
+                      pass
+              if pending:
+                  time.sleep(3)
+
+          if pending:
+              for port, why in sorted(pending.items()):
+                  print(f"::error::nothing is listening on 127.0.0.1:{port} — {why}")
+              sys.exit(1)
+          print("every expected port answers")
+          PY
+
+      - name: Every healthcheck reports healthy
+        working-directory: jarvis-core
+        run: |
+          set -uo pipefail
+          cids="$(docker compose ps -aq)"
+          if [ -z "$cids" ]; then
+            echo "::error::the project has no containers, so this check would pass vacuously"
+            exit 1
+          fi
+          deadline=$(( $(date +%s) + 180 ))
+          while : ; do
+            pending=""
+            sick=""
+            while IFS='|' read -r name health restarts; do
+              case "$health" in
+                healthy|none) ;;
+                starting)     pending="$pending ${name#/}" ;;
+                *)            sick="$sick ${name#/}($health)" ;;
+              esac
+              if [ "${restarts:-0}" -ne 0 ]; then
+                sick="$sick ${name#/}(restarted $restarts)"
+              fi
+            done < <(docker inspect \
+                       --format '{{.Name}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}' \
+                       $cids)
+            if [ -n "$sick" ]; then
+              echo "::error::not healthy:$sick"
+              exit 1
+            fi
+            if [ -z "$pending" ]; then
+              echo "every healthcheck that exists reports healthy"
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::still 'starting' after 180s:$pending"
+              exit 1
+            fi
+            echo "waiting on:$pending"
+            sleep 5
+          done
+
+      - name: Settle, then prove NOTHING is in a restart loop
+        working-directory: jarvis-core
+        run: |
+          set -uo pipefail
+          # THE assertion. Bugs 1, 2 and 3 all presented as `Restarting (N)`
+          # and nothing else: the API answered, the ports were open, and three
+          # containers were quietly dying and coming back.
+          #
+          # `docker inspect` rather than `docker compose ps`: the STATUS column
+          # is prose written for a human ("Restarting (1) 3 seconds ago", "Up 2
+          # minutes (healthy)"), its wording has changed between compose
+          # releases, and — worse — it describes the container AT THIS INSTANT.
+          # Sample a flapping container during its up phase and `ps` says "Up 1
+          # second", which is true and useless. `.RestartCount` is a counter
+          # that only goes up, so it is non-zero however the timing falls.
+          echo "settling for ${SETTLE_SECONDS}s so a slow crash has time to show ..."
+          sleep "$SETTLE_SECONDS"
+          docker compose ps -a
+
+          fail=0
+
+          # Named service -> container, before looking at any state. A typo in
+          # SMOKE_SERVICES, or a service that never got created at all, would
+          # otherwise mean this step inspects nothing and passes.
+          for svc in $SMOKE_SERVICES; do
+            if [ -z "$(docker compose ps -aq "$svc")" ]; then
+              echo "::error::$svc has no container — it was never created"
+              fail=1
+            fi
+          done
+
+          cids="$(docker compose ps -aq)"
+          if [ -z "$cids" ]; then
+            echo "::error::the project has no containers, so this check would pass vacuously"
+            exit 1
+          fi
+
+          printf '%-24s %-10s %-9s %-6s %s\n' NAME STATUS RESTARTS EXIT HEALTH
+          while IFS='|' read -r name status restarts code policy health; do
+            name="${name#/}"
+            printf '%-24s %-10s %-9s %-6s %s\n' "$name" "$status" "$restarts" "$code" "$health"
+
+            # A restart is the failure, whatever caused it. This is the only
+            # check here that does not care WHY.
+            if [ "${restarts:-0}" -ne 0 ]; then
+              echo "::error::$name has restarted ${restarts} time(s). Something is crash-looping — read the log dump below for the traceback."
+              fail=1
+            fi
+
+            case "$policy" in
+              no|"")
+                # A one-shot (jarvis-config-init chowns the bind mount and
+                # exits). Its correct end state is a clean exit, not `running`.
+                if [ "$status" != "exited" ] || [ "$code" != "0" ]; then
+                  echo "::error::$name is a one-shot and should have exited 0; it is '$status' with exit=$code"
+                  fail=1
+                fi
+                ;;
+              *)
+                if [ "$status" != "running" ]; then
+                  echo "::error::$name is '$status' (exit=$code), not running"
+                  fail=1
+                fi
+                ;;
+            esac
+
+            case "$health" in
+              healthy|none) ;;
+              *)
+                echo "::error::$name reports health '$health'"
+                fail=1
+                ;;
+            esac
+          done < <(docker inspect \
+                     --format '{{.Name}}|{{.State.Status}}|{{.RestartCount}}|{{.State.ExitCode}}|{{.HostConfig.RestartPolicy.Name}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                     $cids)
+
+          exit "$fail"
+
+      - name: uid 10003 can write the bind-mounted /config
+        working-directory: jarvis-core
+        run: |
+          set -euo pipefail
+          # The positive half of bug 2. "jarvis-core did not crash" is not the
+          # same claim as "the user it runs as can write your config
+          # directory": an app that starts writing later, or that swallows the
+          # EACCES, would look identical from outside. This asks the container,
+          # as the uid it really runs as, on the mount that really came from
+          # the host.
+          docker compose exec -T jarvis-core python - <<'PY'
+          import os, pathlib, sys
+
+          storage = pathlib.Path("/config/.storage")
+          print("euid:", os.geteuid(), "storage exists:", storage.is_dir())
+          probe = storage / "ci-write-probe"
+          try:
+              probe.write_text("ok", encoding="utf-8")
+              probe.unlink()
+          except OSError as err:
+              print(f"::error::uid {os.geteuid()} cannot write /config/.storage: {err}")
+              print("the jarvis-config-init one-shot is what makes this work; the "
+                    "Dockerfile's chown is masked by the bind mount.")
+              sys.exit(1)
+          print("wrote and removed", probe)
+          PY
+
+      - name: The Ollama knobs are wired to something
+        working-directory: jarvis-core
+        run: |
+          set -euo pipefail
+          # Bugs 4 and 5, from outside. OLLAMA_URL was documented in
+          # .env.example and read by nothing — configuration.yaml hardcoded the
+          # URL — and the chat model had no variable at all. Both are the kind
+          # of defect a running stack hides perfectly: everything is up, and
+          # the knob on the dashboard is not connected to anything.
+          #
+          # jarvis-core prints `LLM agent ready: model=... url=...` at setup
+          # with the values it will really use, so handing it two sentinels and
+          # requiring them back is the whole test. If this line is ever
+          # reworded, update the expectation here rather than deleting it.
+          expected="model=${OLLAMA_MODEL_SENTINEL} url=${OLLAMA_URL_SENTINEL}"
+          if ! docker compose logs --no-color jarvis-core | grep -F "LLM agent ready: $expected"; then
+            echo "::error::jarvis-core never reported '$expected'. OLLAMA_URL/OLLAMA_MODEL reached the container (compose passes them) but something downstream is not reading them — which is exactly how a hardcoded llm.url looks from the outside."
+            docker compose logs --no-color jarvis-core | grep -F "LLM agent ready" || true
+            exit 1
+          fi
+
+      - name: Logs, because something failed
+        if: failure()
+        working-directory: jarvis-core
+        run: |
+          set -uo pipefail
+          # A crash loop's cause is in the container's own output, and it is
+          # gone the moment the runner is recycled. Print it here so nobody has
+          # to reproduce this locally to find out what happened.
+          echo '===== docker compose ps ====='
+          docker compose ps -a || true
+          echo '===== container state ====='
+          # This step must never be the thing that fails: it runs because
+          # something else already did, and its whole job is to say what.
+          cids="$(docker compose ps -aq || true)"
+          if [ -n "$cids" ]; then
+            docker inspect \
+              --format '{{.Name}} status={{.State.Status}} restarts={{.RestartCount}} exit={{.State.ExitCode}} error={{.State.Error}} oom={{.State.OOMKilled}}' \
+              $cids || true
+          fi
+          echo '===== disk ====='
+          df -h / || true
+          echo '===== docker compose logs ====='
+          docker compose logs --no-color --timestamps --tail 400 || true
+
+      - name: Tear down, volumes and all
+        if: always()
+        working-directory: jarvis-core
+        run: |
+          set -uo pipefail
+          docker compose down --volumes --remove-orphans --timeout 20
+          docker compose ps -a
+          # ./config was chowned to uid 10003 by the init container and now
+          # holds .storage/ and a recorder database this job created; the
+          # bind-mount parents were created by docker as root. The runner is
+          # thrown away, but leave the checkout as it was found anyway.
+          sudo rm -rf .env config/.storage config/jarvis.db config/jarvis.db-wal \
+                      config/jarvis.db-shm wyoming photon

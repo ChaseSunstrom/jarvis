@@ -19,6 +19,7 @@ trusting them; the commands are given so you can.
 | Level | Meaning |
 |---|---|
 | **Automated** | A test in this repo fails if the behaviour breaks. Needs no hardware, no network, no containers. This is the strongest claim here. |
+| **Containerised** | A GitHub Actions job (`.github/workflows/compose-smoke.yml`) starts the real `docker compose` stack and fails if it does not come up. Needs Docker, the network and roughly half an hour, which is why it is a CI job and not a pytest suite. |
 | **Scripted** | `scripts/e2e-smoke.sh` checks it on your box, against your real services. Proves the install, not just the code. |
 | **Manual** | Needs a human, a phone, a microphone or a GPU. The command or procedure is given; nothing runs it for you. |
 | **Unproven** | Nothing checks this. It may well work. Nobody has demonstrated that it does. |
@@ -176,6 +177,83 @@ audio, never drives a browser, and never touches a phone. Those are below.
 
 ---
 
+## What `.github/workflows/compose-smoke.yml` proves
+
+Until this job existed, nothing in CI had ever run `docker compose up`.
+`test_packaging.py` reads the compose file as a document and checks what it
+*says*; `scripts/e2e-smoke.sh` boots jarvis-core from source on your own
+machine. Neither one starts a container, so "the stack comes up" rested on the
+last time somebody typed the command by hand.
+
+That gap cost six bugs in one fresh install. Three were startup failures:
+`WHISPER_MODEL` in `.env.example` named a sherpa model while the pinned image is
+faster-whisper (`ValueError: Invalid model size`); jarvis-core could not write
+its bind-mounted `/config` as uid 10003 (`PermissionError: [Errno 13]`); and
+`cap_drop: [ALL]` removed the three capabilities mosquitto's entrypoint needs in
+order to stop being root (`chown: /mosquitto/data: Operation not permitted`).
+From outside, all three looked identical — `Restarting (N)` — and none was
+visible to a test that reads the file rather than running it. The other three
+were config wiring: `OLLAMA_URL` documented and read by nothing, a chat model
+with no variable at all, and `pull access denied` warnings from services
+declaring `image:` and `build:` with no `pull_policy`.
+
+The job copies `.env.example` to `.env` verbatim, adds only the three secrets
+that file says to generate, builds `jarvis-core:local` and
+`jarvis-browser:local` from source, and starts the stack with both optional
+profiles enabled. Running the *documented defaults* is the point: substituting
+CI-friendly model names would have let the sherpa one through untouched.
+
+| Check | What it catches |
+|---|---|
+| No container has a non-zero `RestartCount`, and every long-running one is `running` | The load-bearing one. A crash loop, whatever caused it. `docker inspect` rather than `docker compose ps`: the STATUS column is prose that has changed wording between releases, and it describes the container at that instant — sample a flapping container during its up phase and it says "Up 1 second". `.RestartCount` only goes up. |
+| The one-shot `jarvis-config-init` exited 0 | The chown that makes the bind mount writable never ran, or failed. |
+| `GET :8080/healthz` returns `status: ok` and `running: true` | jarvis-core boots from the shipped `config/` in a container, not just under pytest. |
+| Sockets accept a connection on 10300, 10200, 10400, 1883, 8210, 8080 | Stronger than "did not crash". faster-whisper resolves the model name *before* it binds, so an open 10300 is positive proof that `WHISPER_MODEL` is a name it accepts. |
+| Every healthcheck reports `healthy`, never `starting` or `unhealthy` | mosquitto's healthcheck publishes to its own broker, so this is the broker accepting a client and not merely holding a port. |
+| A file can be written to `/config/.storage` from inside the container, as the uid it really runs as | The positive half of the permissions bug. An app that swallowed the `EACCES`, or wrote later, would look identical from outside. |
+| `LLM agent ready: model=… url=…` echoes back two sentinel values handed in through `.env` | A knob documented in `.env.example` that reaches the container and is then ignored — which is exactly how a hardcoded `llm.url` looks from outside. |
+| The `up` output contains no `pull access denied` | A service with both `image:` and `build:` but no `pull_policy: build`. |
+| Every service in `docker-compose.yml` is either started or named in the skip list | Silent narrowing. Adding a service to the compose file fails this job until someone decides, in writing, whether it is covered. |
+
+On failure the job prints `docker compose ps`, each container's `docker inspect`
+state (including `OOMKilled`) and `docker compose logs`, so a crash loop is read
+in the run rather than reproduced locally. It always tears down with
+`docker compose down --volumes --remove-orphans`.
+
+**What it covers:** jarvis-config-init, jarvis-core, jarvis-browser,
+wyoming-whisper, wyoming-piper, wyoming-openwakeword, mosquitto (`--profile
+mqtt`) and searxng (`--profile search`). The last two are in deliberately: they
+are the only services carrying the `cap_add: [CHOWN, SETGID, SETUID]` fix, so
+they are the only places that particular bug can come back.
+
+**What it does not prove:**
+
+* **photon is never started.** It is the one service excluded. Its first run
+  downloads a geocoding index — tens of GB with `PHOTON_REGION` unset, which is
+  what `.env.example` ships — and the runner has neither the disk nor the hour.
+  A photon-specific startup failure would still reach a fresh install.
+* **Nothing is asked to do its job.** Whisper is never given audio, Piper never
+  synthesises, openWakeWord never hears a wake word, the browser never fetches a
+  page, and no MQTT device is discovered. The claim is "it started and it is
+  listening", which is the claim the three startup bugs falsified. Ollama is not
+  in the stack at all, so no model turn happens.
+* **Ollama connection failures are expected and ignored.** The job never greps
+  logs for errors; it asks whether processes are alive and serving. A service
+  that logs a stack trace every second and stays up passes.
+* **Host networking on a runner is not your LAN.** Every service binds a port on
+  a throwaway machine that has nothing else on those ports, and the only client
+  is the job itself. A conflict with something you already run, and the ufw
+  rules in `scripts/apply-firewall.sh` that decide who may reach any of it, are
+  still unproven.
+* **Upstream images are pinned to `:latest`.** A green run says the stack came
+  up against whatever those tags meant that day. The job runs weekly on a cron
+  for exactly that reason, but between runs the claim ages.
+* **One architecture, one kernel.** amd64 on GitHub's Ubuntu image. Nothing here
+  says anything about arm64, a Raspberry Pi, or a host whose kernel refuses the
+  unprivileged user namespaces chromium's sandbox wants.
+
+---
+
 ## The matrix
 
 ### jarvis-core
@@ -195,7 +273,8 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | Token auth: creation, verification, revocation | Automated | `test_api.py`; smoke script checks it live |
 | Voice pipeline runner and its event contract | Automated | `test_voice.py`, `test_e2e.py` |
 | Wyoming protocol framing | Automated *against a local fake server* | `test_voice.py` |
-| Wyoming against **real** whisper/piper/openWakeWord | Scripted (reachability + one real synthesis) | `./scripts/e2e-smoke.sh` |
+| The **real** whisper/piper/openWakeWord containers start and listen | Containerised | `compose-smoke.yml` — an open socket on 10300 is proof faster-whisper accepted `WHISPER_MODEL`, since it resolves the name before it binds |
+| Wyoming against **real** whisper/piper/openWakeWord, with audio | Scripted (reachability + one real synthesis) | `./scripts/e2e-smoke.sh` — the CI job never speaks or transcribes |
 | Ollama client: streaming, tool-call parsing | Automated *against `httpx.MockTransport`* | `test_llm.py`, `test_e2e.py` |
 | A **real** model turn | Scripted | `./scripts/e2e-smoke.sh` |
 | Tool tiering and the approval gate | Automated | `test_llm.py`, `test_e2e.py` |
@@ -209,10 +288,14 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | A released command is audited before the result comes back, so a failed call cannot hide it | Automated | `test_orchestrator.py` |
 | The orchestrator against a **real** running service | **Unproven** | Needs the container up; see *Closing the gaps* |
 | MQTT discovery and entity mapping | Automated *with `FakeMqttClient`* | `test_mqtt.py` |
-| MQTT against a **real broker** with real devices | **Unproven** | see *Closing the gaps* |
+| The shipped broker starts and accepts a client | Containerised | `compose-smoke.yml --profile mqtt`; mosquitto's healthcheck is a real `mosquitto_pub` against itself |
+| MQTT against a real broker with **real devices** | **Unproven** | Nothing publishes a discovery message or drives a device. see *Closing the gaps* |
 | Hue and WLED | Automated *against `httpx.MockTransport`* | `test_local_integrations.py` |
 | Hue / WLED against **real hardware** | **Unproven** | see *Closing the gaps* |
 | Cross-device presence, routing, escalation | Automated | `test_companion.py`, `test_api_companion.py`, `test_e2e.py` |
+| The shipped `docker compose` stack builds, starts and stays up | Containerised | `compose-smoke.yml` — no container may have restarted, and the API answers `/healthz` from inside one |
+| `./config` is writable by the uid the image runs as | Containerised | the job writes and removes a probe file from inside jarvis-core, as uid 10003, on the real bind mount |
+| `OLLAMA_URL` and `OLLAMA_MODEL` reach the agent rather than being decoration | Automated + Containerised | `test_packaging.py` reads the wiring; the job hands both a sentinel and requires the startup log to echo them back |
 
 ### jarvis-web (HUD + management console)
 
@@ -254,7 +337,8 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | Browser automation service logic | Automated | `cd jarvis-browser && python3 -m pytest tests -q` — 328 tests |
 | Orchestrator API and exec gate, including adversarial cases | Automated | `cd jarvis-orchestrator && python3 -m pytest tests -q` — 17 tests |
 | Desktop agent against a **real** desktop session | **Unproven** | Needs a logged-in machine with the agent installed. |
-| Browser service driving a **real** browser | **Unproven** | Needs the container running with a real chromium. |
+| The browser service's container starts, refuses to run unauthenticated, and answers `/healthz` | Containerised | `compose-smoke.yml`; the image is built from source in the job, and the service exits at startup unless both secrets are set |
+| Browser service driving a **real** browser | **Unproven** | The CI job never fetches a page. Needs the container running with a real chromium. |
 | Sandbox network isolation as deployed | Manual | `./scripts/egress-audit.sh` against the live stack |
 | Firewall rules as deployed | Manual | `DRY_RUN=1 ./scripts/apply-firewall.sh` to preview, then run it |
 
