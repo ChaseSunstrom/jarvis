@@ -175,6 +175,49 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      - name: Workflow files are valid (no duplicate keys)
+        run: |
+          python - <<'PY'
+          import sys, pathlib, yaml
+
+          # A duplicate mapping key is legal YAML (last wins) but makes GitHub
+          # reject a workflow outright — it then runs ZERO jobs and names the
+          # run after the file, which looks like a mysterious failure. A plain
+          # yaml.safe_load cannot catch it, so fail loudly on duplicates here.
+          class StrictLoader(yaml.SafeLoader):
+              pass
+
+          def no_duplicates(loader, node, deep=False):
+              mapping = {}
+              for key_node, value_node in node.value:
+                  key = loader.construct_object(key_node, deep=deep)
+                  if key in mapping:
+                      raise yaml.constructor.ConstructorError(
+                          None, None, f"duplicate key {key!r}", key_node.start_mark
+                      )
+                  mapping[key] = loader.construct_object(value_node, deep=deep)
+              return mapping
+
+          StrictLoader.add_constructor(
+              yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_duplicates
+          )
+
+          bad = []
+          for p in sorted(pathlib.Path(".github/workflows").glob("*.y*ml")):
+              try:
+                  doc = yaml.load(p.read_text(), Loader=StrictLoader)
+              except Exception as e:
+                  bad.append(f"{p}: {e}")
+                  continue
+              if not doc or "jobs" not in doc:
+                  bad.append(f"{p}: no jobs block")
+              # `on` parses as the boolean True in YAML 1.1
+              if True not in doc and "on" not in doc:
+                  bad.append(f"{p}: no trigger block")
+          print("\n".join(bad) if bad else "workflow files OK")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Compose files are valid
         run: |
           set -eu

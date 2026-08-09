@@ -17,16 +17,20 @@ on:
         default: "debug"
         type: choice
         options: ["debug", "release"]
-  push:
-    tags: ["v*"]
   # Build (and publish an installable artifact) whenever the app changes, so
   # there is always a current APK to download without dispatching by hand.
+  # NOTE: exactly ONE `push:` key — a duplicate is silently deduped by most
+  # YAML parsers but makes GitHub reject the whole workflow (it then runs zero
+  # jobs and names the run after the file). `paths` cannot be applied per-ref,
+  # so releases come in via the `release` event below, which has no path filter.
   push:
     branches: ["**"]
     paths: ["android-app/**", ".github/workflows/android-apk.yml"]
+  release:
+    types: [published]
 
 permissions:
-  contents: write # attach the APK to a Release on tag
+  contents: write # attach the APK to a Release
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -40,7 +44,9 @@ jobs:
       run:
         working-directory: android-app
     env:
-      BUILD_TYPE: ${{ github.event_name == 'push' && 'release' || (github.event.inputs.build_type || 'debug') }}
+      # A published release gets a signed build; everything else defaults to
+      # debug (installable, needs no secrets).
+      BUILD_TYPE: ${{ github.event_name == 'release' && 'release' || (github.event.inputs.build_type || 'debug') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -147,7 +153,7 @@ jobs:
           retention-days: 30
 
       - name: Attach to Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: .
