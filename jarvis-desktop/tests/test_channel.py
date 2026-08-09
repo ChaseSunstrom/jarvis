@@ -664,3 +664,106 @@ async def test_an_oversized_frame_closes_the_session(config, make_registry):
     transport.push("x" * (600 * 1024))
     with pytest.raises(TransportClosed):
         await channel.run_session(transport)
+
+
+# --- host pinning survives a redirect ---------------------------------------
+#
+# Found by adversarial review. `check_host` runs *before* the connection, but
+# the websocket client follows HTTP 3xx during the handshake, cross-origin
+# included. "We connected" was therefore not the same as "we connected to the
+# host we asked for" — and the very next thing the agent does is hand over its
+# token.
+
+
+@pytest.mark.parametrize(
+    ("authority", "expected"),
+    [
+        ("jarvis.lan", ("jarvis.lan", 80)),
+        ("jarvis.lan:8080", ("jarvis.lan", 8080)),
+        ("JARVIS.LAN:8080", ("jarvis.lan", 8080)),
+        ("[::1]:8080", ("::1", 8080)),
+        ("[fd00::1]", ("fd00::1", 80)),
+        ("192.168.1.5:80", ("192.168.1.5", 80)),
+    ],
+)
+async def test_split_authority(authority, expected):
+    from jarvis_desktop.channel import split_authority
+
+    assert split_authority(authority, 80) == expected
+
+
+class _FakeConnection:
+    """Just enough of a websockets client connection to read the Host header."""
+
+    def __init__(self, host: str | None):
+        import types
+
+        self.closed = False
+        self.request = types.SimpleNamespace(headers={"Host": host} if host else {})
+
+    async def close(self):
+        self.closed = True
+
+
+async def test_handshake_authority_reads_where_the_handshake_landed():
+    from jarvis_desktop.channel import handshake_authority
+
+    assert handshake_authority(_FakeConnection("evil.example:8080"), 80) == ("evil.example", 8080)
+    assert handshake_authority(_FakeConnection(None), 80) is None
+    assert handshake_authority(object(), 80) is None
+
+
+async def test_the_transport_refuses_a_handshake_that_was_redirected(monkeypatch):
+    """The token has not been sent yet at this point, so a redirect caught here
+    costs nothing. Caught later it costs the token."""
+    import websockets
+
+    from jarvis_desktop.channel import WebsocketTransport
+
+    connection = _FakeConnection("evil.example:8080")
+
+    async def fake_connect(url, **kwargs):
+        return connection
+
+    monkeypatch.setattr(websockets, "connect", fake_connect)
+
+    with pytest.raises(TransportClosed) as excinfo:
+        await WebsocketTransport.connect("ws://jarvis.lan:8080/api/websocket")
+
+    assert "evil.example" in str(excinfo.value)
+    assert connection.closed, "the redirected socket was left open"
+
+
+async def test_a_redirect_to_another_port_on_the_same_host_is_refused_too(monkeypatch):
+    """Same host, different port is still not where we aimed."""
+    import websockets
+
+    from jarvis_desktop.channel import WebsocketTransport
+
+    connection = _FakeConnection("jarvis.lan:9999")
+
+    async def fake_connect(url, **kwargs):
+        return connection
+
+    monkeypatch.setattr(websockets, "connect", fake_connect)
+
+    with pytest.raises(TransportClosed):
+        await WebsocketTransport.connect("ws://jarvis.lan:8080/api/websocket")
+
+
+async def test_the_transport_accepts_a_handshake_with_the_host_we_asked_for(monkeypatch):
+    import websockets
+
+    from jarvis_desktop.channel import WebsocketTransport
+
+    connection = _FakeConnection("jarvis.lan:8080")
+
+    async def fake_connect(url, **kwargs):
+        return connection
+
+    monkeypatch.setattr(websockets, "connect", fake_connect)
+
+    transport = await WebsocketTransport.connect("ws://jarvis.lan:8080/api/websocket")
+
+    assert transport is not None
+    assert connection.closed is False

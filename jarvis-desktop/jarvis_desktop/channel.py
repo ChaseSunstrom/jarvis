@@ -50,8 +50,8 @@ __all__ = [
     "WebsocketTransport",
     "DeviceChannel",
     "PLATFORM",
-    "handshake_host",
-    "host_of_authority",
+    "handshake_authority",
+    "split_authority",
 ]
 
 PLATFORM = "desktop"
@@ -83,29 +83,35 @@ class TransportClosed(Exception):
     """The socket went away. The caller reconnects with backoff."""
 
 
-def host_of_authority(value: str) -> str:
-    """Hostname out of a ``Host`` header or an ``authority``, lowercased.
+def split_authority(value: str, default_port: int) -> tuple[str, int]:
+    """``(host, port)`` from a ``Host`` header or a URL authority, lowercased.
 
-    ``jarvis.lan:8080`` -> ``jarvis.lan``; ``[::1]:8080`` -> ``::1``. Pure
-    string work, so the redirect check below is testable without a socket.
+    ``jarvis.lan:8080`` -> ``("jarvis.lan", 8080)``; ``[::1]:8080`` ->
+    ``("::1", 8080)``; a bare host takes ``default_port``, because a ``Host``
+    header omits the port when it is the scheme's default. Pure string work, so
+    the redirect check below is testable without a socket.
     """
     text = value.strip()
     if text.startswith("["):
         end = text.find("]")
-        return text[1:end].lower() if end > 0 else text.lower()
+        if end > 0:
+            rest = text[end + 1 :]
+            port = int(rest[1:]) if rest.startswith(":") and rest[1:].isdigit() else default_port
+            return text[1:end].lower(), port
+        return text.lower(), default_port
     head, sep, tail = text.rpartition(":")
     if sep and head and tail.isdigit():
-        return head.lower()
-    return text.lower()
+        return head.lower(), int(tail)
+    return text.lower(), default_port
 
 
-def handshake_host(connection: Any) -> str | None:
-    """The host the WebSocket handshake actually reached, or None if unknown.
+def handshake_authority(connection: Any, default_port: int) -> tuple[str, int] | None:
+    """Where the WebSocket handshake actually landed, or None if unknown.
 
     Read from the ``Host`` header of the request that was sent, which the client
     library rewrites when it follows a redirect. Returns None rather than
     guessing if the library ever stops exposing it — the caller then falls back
-    to the pre-connect host check alone and logs nothing false.
+    to the pre-connect host check alone rather than reporting something false.
     """
     headers = None
     request = getattr(connection, "request", None)
@@ -121,7 +127,7 @@ def handshake_host(connection: Any) -> str | None:
         return None
     if not isinstance(value, str) or not value.strip():
         return None
-    return host_of_authority(value)
+    return split_authority(value, default_port)
 
 
 class Transport(ABC):
@@ -181,16 +187,19 @@ class WebsocketTransport(Transport):
         # same as "we connected to the host we asked for". Nothing has been sent
         # yet — the token goes out later, in reply to auth_required — so this is
         # the last moment where a redirect can be caught for free.
-        expected = (urlparse(url).hostname or "").lower()
-        actual = handshake_host(connection)
-        if expected and actual and actual != expected:
+        parsed = urlparse(url)
+        default_port = 443 if (parsed.scheme or "").lower() == "wss" else 80
+        expected = ((parsed.hostname or "").lower(), parsed.port or default_port)
+        actual = handshake_authority(connection, default_port)
+        if expected[0] and actual is not None and actual != expected:
             try:
                 await connection.close()
             except Exception:  # noqa: BLE001
                 pass
             raise TransportClosed(
-                f"refusing this session: the handshake ended at {actual!r}, not "
-                f"{expected!r} — the server redirected us somewhere else"
+                f"refusing this session: the handshake ended at "
+                f"{actual[0]}:{actual[1]}, not {expected[0]}:{expected[1]} — "
+                "the server redirected us somewhere else"
             )
         return WebsocketTransport(connection)
 

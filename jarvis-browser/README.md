@@ -407,7 +407,7 @@ installed.
 cd jarvis-browser && python3 -m pytest tests -q
 ```
 
-**227 passing**, no network, no Playwright, no hardware. The suite asserts it
+**289 passing**, no network, no Playwright, no hardware. The suite asserts it
 makes no outbound HTTP call (`httpx.AsyncClient` is replaced with a raiser)
 and never touches the real DNS resolver.
 
@@ -417,6 +417,7 @@ and never touches the real DNS resolver.
 | `test_api.py` | 80 tests: every route 401s without/with a bad/malformed token, SSRF refusal per endpoint with "the browser was never touched" assertions, fencing, session lifecycle and dir wipe, `act` allowlist, the gate returning `approval_required` with **zero** recorded interactions, approve-executes-once, replay 409, wrong/missing/empty secret 403, denial, expiry, and approval not bypassing policy |
 | `test_crawl.py` | 23 tests: max_pages, max_depth, same-origin, include/exclude, loops, byte cap, wall-clock budget (fake clock), robots allow/disallow/missing/once-per-origin, `url_ok` blocking inward links, rate limiter |
 | `test_extract.py` | 20 tests: scripts/styles/comments/chrome stripped, caps, entities, headings, links resolved/deduped/credential-stripped, `base href`, metadata, malformed HTML |
+| `test_regressions.py` | 62 tests: one block per defect found in adversarial review — URL-parser divergence, guarded-URL write-back, key chords, robots redirect chains, redirects leaving the read policy, hostile links crashing the crawler, the executor consulting the gate, approval/session reaping, mid-batch drift off the act allowlist, approval page binding |
 
 The controls are mutation-checked — each one was neutered in turn to confirm
 the suite actually catches it. Tests that stay green whatever you break are
@@ -430,6 +431,19 @@ not tests.
 | `fence` (no wrapping) | 5 |
 | `_guard_act` (act_allowlist ignored) | 4 |
 | `require_approval_secret` (second secret ignored) | 3 |
+| backslash-authority rejection | 3 |
+| guarded-URL write-back into the step | 2 |
+| key-chord splitting (`Control+Enter`) | 2 |
+| robots redirect re-check | 2 |
+| redirect re-guard on the read path | 2 |
+| invalid-port tolerance | 3 |
+| `gate.is_executable` in the executor | 1 |
+| `purge_expired` actually deleting | 3 |
+| the janitor loop | 1 |
+| post-step act-allowlist drift check | 1 |
+| approval page binding | 1 |
+| fence-notice tripwire | 1 |
+| link-length cap | 1 |
 
 ## Deliberate limits
 
@@ -441,3 +455,11 @@ not tests.
   fails safe (they become unknown → 404).
 * Rate limiting is per-domain and per-process; two concurrent crawls of the
   same host are not coordinated.
+* **Sensitivity is a keyword/selector heuristic, and heuristics miss.** A
+  `click` on `#b1` that happens to be the Pay button is not gated, because
+  nothing in the step says so. The containment that does not depend on
+  guessing is `act_allowlist`: keep it to domains where an unlabelled click is
+  survivable, and gate the rest by leaving them off it entirely.
+* `/screenshot` returns bytes with no `final_url`, so a redirect off the read
+  allowlist is caught by chromium's route filter (private addresses) but not
+  by the domain policy the way `/fetch` and `/crawl` are.

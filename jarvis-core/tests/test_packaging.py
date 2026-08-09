@@ -524,10 +524,19 @@ async def test_announce_records_the_message_even_with_tts_down(config_copy: Path
 async def test_good_morning_completes_with_tts_down(config_copy: Path) -> None:
     jarvis = await _boot(config_copy)
     try:
+        # `away`, not `night`: selecting `night` fires automation.house_mode_night,
+        # which starts script.goodnight in the background and races this test to
+        # the same entities.
         await jarvis.services.async_call("input_select", "select_option",
-            {"entity_id": "input_select.house_mode", "option": "night"}, blocking=True)
+            {"entity_id": "input_select.house_mode", "option": "away"}, blocking=True)
         await jarvis.services.async_call("cover", "close_cover",
             {"entity_id": "cover.living_room_window"}, blocking=True)
+        await jarvis.services.async_call("light", "turn_off",
+            {"entity_id": "light.kitchen_lights"}, blocking=True)
+        await jarvis.services.async_call("switch", "turn_off",
+            {"entity_id": "switch.coffee_machine"}, blocking=True)
+        await asyncio.sleep(0.05)
+
         await jarvis.services.async_call(
             "script", "good_morning", {}, blocking=True, return_response=True
         )
@@ -1041,6 +1050,43 @@ def test_dockerignore_excludes_every_relative_bind_mount() -> None:
         if not any(part in ignored for part in (path, path.split("/")[0]))
     )
     assert not missing, f".dockerignore does not exclude bind-mounted host paths: {missing}"
+
+
+def test_dockerignore_does_not_exclude_anything_the_image_needs() -> None:
+    """Directory patterns and module names collide easily.
+
+    `wyoming/` is a bind-mount directory at the context root; `wyoming.py` is
+    the Wyoming protocol client inside the package. Docker matches a pattern
+    against the whole relative path, so the first does not eat the second — but
+    a pattern written as `wyoming` or `**/wyoming*` would, and the image would
+    then start and fail on the first TTS call. Replays the matcher over every
+    file the Dockerfile actually COPYs.
+    """
+    from fnmatch import fnmatch
+
+    patterns = [
+        line.strip().rstrip("/")
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+    def excluded(relative: str) -> bool:
+        parts = relative.split("/")
+        for pattern in patterns:
+            prefix = "/".join(parts[: pattern.count("/") + 1])
+            if fnmatch(relative, pattern) or fnmatch(prefix, pattern):
+                return True
+        return False
+
+    copied = [
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "jarvis").rglob("*.py")
+        if "__pycache__" not in path.parts
+    ] + ["requirements.txt"]
+    assert copied
+
+    lost = sorted(path for path in copied if excluded(path))
+    assert not lost, f".dockerignore would keep these out of the image: {lost}"
 
 
 def test_dockerfile_apt_is_best_effort_and_ipv4() -> None:

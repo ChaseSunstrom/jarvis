@@ -401,3 +401,60 @@ def test_the_default_consent_gateway_denies(ctx, policy, audit):
 
     registry = ActionRegistry(ctx, policy, audit)
     assert isinstance(registry.consent, DenyAllGateway)
+
+
+# --- an action must not outlive the dispatcher's cap ------------------------
+#
+# Found by adversarial review. `asyncio.wait_for` around `asyncio.to_thread`
+# cancels the *wrapper*; the worker thread runs on regardless. So an action
+# whose own deadline sits above `timeout_s` gets reported to the server as a
+# timeout while it is still doing the thing — and the command slot has already
+# been freed for a second copy of it.
+
+
+def test_every_action_deadline_sits_below_the_dispatchers_cap():
+    """The rule `shell.py` states and three other actions used to break: the
+    subprocess deadline must be under the action's own timeout."""
+    from jarvis_desktop.actions.apps import ListWindows
+    from jarvis_desktop.actions.system import Notify, SetVolume
+
+    # (action, the longest deadline it hands to a subprocess)
+    for action, longest_child_deadline in (
+        (SetVolume(), 20.0),  # the Windows mixer nudge
+        (Notify(), 15.0),  # the PowerShell toast
+        (ListWindows(), 20.0),  # the PowerShell window list
+    ):
+        assert action.timeout_s > longest_child_deadline, action.id
+
+
+def test_type_text_finishes_inside_its_budget(ctx, monkeypatch):
+    """4000 characters at the maximum interval would be over an hour of typing
+    under a 120s cap: the keystrokes would carry on long after the server had
+    been told the action timed out."""
+    from jarvis_desktop.actions import inputauto
+
+    typed: dict[str, float] = {}
+
+    class FakeGui:
+        FAILSAFE = False
+        PAUSE = 0.0
+
+        def write(self, text, interval):
+            typed["chars"] = len(text)
+            typed["interval"] = interval
+
+        def press(self, key):
+            pass
+
+    import dataclasses
+
+    from jarvis_desktop.config import InputConfig
+
+    monkeypatch.setattr(inputauto, "_pyautogui", lambda: FakeGui())
+    ctx.config = dataclasses.replace(ctx.config, input_automation=InputConfig(enabled=True))
+
+    action = inputauto.TypeText()
+    result = action.run(ctx, {"text": "x" * 4000, "interval_s": 1.0})
+
+    assert result.ok
+    assert typed["chars"] * typed["interval"] < action.timeout_s

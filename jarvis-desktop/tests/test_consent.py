@@ -286,3 +286,48 @@ def test_a_chain_is_unattended_only_when_every_usable_backend_refuses():
 
     assert ChainGateway(DenyAllGateway()).unattended is True
     assert ChainGateway(Usable(), DenyAllGateway()).unattended is False
+
+
+# --- one reader, one stdin --------------------------------------------------
+#
+# Found by adversarial review. `input()` cannot be interrupted, so a prompt that
+# times out leaves its reader thread blocked in readline() for the life of the
+# process. Starting a second reader for the next prompt meant two threads racing
+# for the same keystroke — a "y" typed for one action could be swallowed by the
+# prompt for another — and a stream of timed-out prompts leaked one stuck thread
+# each.
+
+
+async def test_a_second_prompt_is_refused_while_the_first_still_owns_stdin():
+    import threading
+
+    released = threading.Event()
+
+    class StuckTty(io.StringIO):
+        reads = 0
+
+        def isatty(self):
+            return True
+
+        def readline(self):
+            type(self).reads += 1
+            released.wait(10)
+            return "y\n"
+
+    gateway = TerminalConsentGateway(stream=StuckTty(), out=io.StringIO())
+    try:
+        first = await asyncio.wait_for(gateway.request(request(timeout_s=0.2)), timeout=5)
+        second = await asyncio.wait_for(gateway.request(request(timeout_s=0.2)), timeout=5)
+
+        assert first == ApprovalVerdict.TIMEOUT
+        assert second == ApprovalVerdict.TIMEOUT
+        assert StuckTty.reads == 1, "a second reader was started for the same stdin"
+    finally:
+        released.set()
+
+
+async def test_stdin_is_handed_back_after_a_normal_answer():
+    """The lock must not turn one answered prompt into a permanently jammed one."""
+    gateway = TerminalConsentGateway(stream=FakeTty("y\ny\n"), out=io.StringIO())
+    assert await gateway.request(request(timeout_s=5)) == ApprovalVerdict.APPROVED
+    assert await gateway.request(request(timeout_s=5)) == ApprovalVerdict.APPROVED
