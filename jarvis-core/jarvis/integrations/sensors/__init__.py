@@ -175,6 +175,7 @@ class IngestedSensor(Entity):
         self._attr_name = spec.name or humanize(sensor_id)
         self._attr_device_class = spec.device_class
         self._attr_unit_of_measurement = spec.unit
+        self._attr_icon = spec.icon
         # Deliberately not `spec.state`: a sensor is born knowing nothing, and
         # its first reading is then a real transition. Writing the reading as
         # the entity's *initial* state would make it look like a startup write,
@@ -271,6 +272,11 @@ class SensorManager:
         self.sensors: dict[str, SensorRecord] = {}
         self._platforms: dict[str, EntityPlatform] = {}
         self._expire_task: Any = None
+        # Creating an entity awaits (registry writes, area assignment), and
+        # HTTP posts arrive concurrently, so without this two posts for the
+        # same unknown id both see "not registered" and both create one — and
+        # `max_sensors` stops being a cap at all. Held only across creation.
+        self._register_lock = asyncio.Lock()
 
     # --- helpers ----------------------------------------------------------
     def _platform(self, domain: str) -> EntityPlatform:
@@ -408,17 +414,25 @@ class SensorManager:
         if record is None:
             if not self.allow_auto_register:
                 return _error(404, "unknown_sensor", f"no sensor called {clean!r}")
-            if len(self.sensors) >= self.max_sensors:
-                return _error(
-                    429, "too_many_sensors",
-                    f"the auto-registration cap of {self.max_sensors} sensors is full",
-                )
-            # The raw id, not the cleaned one: `binary_sensor.x` carries a
-            # domain hint that the cleaned form has already thrown away.
-            spec = infer(sensor_id, parsed, None, self.area_index())
-            record = await self._async_create(spec, declared=False, source=source)
-            record.expire_after = self.default_expire_after
-            created = True
+            async with self._register_lock:
+                # Re-read under the lock: another post may have registered this
+                # id while we were waiting for it.
+                record = self.sensors.get(clean)
+                if record is None:
+                    if len(self.sensors) >= self.max_sensors:
+                        return _error(
+                            429, "too_many_sensors",
+                            f"the auto-registration cap of {self.max_sensors} "
+                            "sensors is full",
+                        )
+                    # The raw id, not the cleaned one: `binary_sensor.x` carries
+                    # a domain hint the cleaned form has already thrown away.
+                    spec = infer(sensor_id, parsed, None, self.area_index())
+                    record = await self._async_create(
+                        spec, declared=False, source=source
+                    )
+                    record.expire_after = self.default_expire_after
+                    created = True
 
         state = record.entity.apply(parsed.value, parsed.attributes)
         record.last_seen = self.clock()
