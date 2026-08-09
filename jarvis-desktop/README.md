@@ -587,7 +587,7 @@ cd jarvis-desktop
 # once: the harness boots the real jarvis-core, so its dependencies are needed
 pip install -r ../jarvis-core/requirements.txt -r ../testing/requirements.txt
 
-python3 -m pytest tests_e2e -q          # ~12s, 20 tests
+python3 -m pytest tests_e2e -q          # ~12s, 32 tests
 python3 -m pytest tests_e2e -v          # names, if you want to watch it work
 ```
 
@@ -615,21 +615,57 @@ What it proves that `tests/` cannot:
 | **presence** | `device_event`/`presence` frames are actually emitted, applied to `DevicePresence`, and are what makes routing pick this machine when it is the only one connected |
 | **Tier 1** | `get_system_state` returns real measurements of the machine it ran on, with nobody prompted |
 | **Tier 3, refused** | the file is still on disk afterwards. `denied` proves the agent *said* no; the file proves `DeleteFile.run` was never called |
-| **Tier 3, approved** | it runs exactly once and the next identical command prompts again — including when the prompt answers *always*, which Tier 3 never offers and the store refuses to keep. Checked against the prompt log and against a policy file that was never written |
+| **Tier 3, approved** | it runs exactly once and the next identical command prompts again — including when the prompt answers *always*, which Tier 3 never offers and the store refuses to keep. Checked against the prompt log and against a policy file that stays absent |
 | **tier raising** | a `delete_file` tagged `tier: 1` still prompts at CONFIRM. And the case only the device can catch: `http_request` is NOTIFY in the manifest, so a POST arrives tagged **2** and is enforced at **3**, because `tier_for()` lives here and the server cannot see it |
+| **the policy store** | a Tier-2 *always* really is written to `state/policy.json` and really does stop the next prompt — which is what makes "Tier 3 never wrote one" a statement about Tier 3 rather than about a file nobody ever writes. Then `never` and `panic`, edited into that file from outside, are picked up by the **running** agent: a kill switch that needs a restart is not a kill switch |
 | **`companion.ask`** | the full cross-device round trip — service → `jarvis_message` → this desk → `jarvis_message_result` → the waiting service call resolves with the answer |
 | **path escape / SSRF** | refused against a real filesystem (including a symlink out of the workspace) and a real resolver — *with approval already granted*, so it is the guard doing the refusing and not the policy engine |
 | **reconnect** | the socket is cut mid-session by a TCP relay the test owns; the agent backs off, reconnects, re-registers on a new connection and re-reports presence, and the server's device list shows the gap in between |
 
+Two habits keep those from passing for the wrong reason, and both are worth
+copying if you add a test here:
+
+* **Match the guard's own words, not a word the failure also contains.** Every
+  refusal is asserted against the specific reason and the specific status the
+  guard produces. `assert "refused" in error` looks fine until you notice that
+  `[Errno 111] Connection refused` contains it — at which point a *deleted*
+  SSRF guard passes on any machine where the target simply declines the
+  connection.
+* **Prove the reader works before trusting an empty one.** "Nothing was
+  remembered" is read out of a file that does not exist on a green run, so on
+  its own it is indistinguishable from reading the wrong path. One test makes
+  the store exist on purpose; the rest lean on it.
+
+`tests_e2e/test_support.py` covers the suite's own plumbing — the prompt-log
+reader against a half-written line, `reset()` against the leftovers of an
+earlier run, the policy file round-tripped through the shipping `PolicyStore`,
+the TCP relay's cut and block, and the waits' failure messages. A bug in any of
+those is invisible from inside the end-to-end tests, because a broken reader
+and "nothing happened" look identical. Those tests need no server, but they
+skip with the rest of the suite: CI treats an all-skipped run as a failure,
+which is how a missing harness gets caught, and a handful of always-green tests
+would quietly defeat it.
+
 Artifacts: point `JARVIS_DESKTOP_E2E_WORK_DIR` (or `JARVIS_HARNESS_WORK_DIR`,
 which CI sets) at a directory and everything is kept there —
-`agent/agent.log`, the agent's `state/audit.jsonl` (and `state/policy.json`, on
-the day something is ever remembered), every prompt it showed in
-`control/prompts.jsonl`, every question in `control/asks.jsonl`, and the
-harness's own `logs/jarvis-core.log`. Both process logs are also attached to
+`agent/agent.log`, the agent's `state/audit.jsonl` (and `state/policy.json`,
+which only the policy-store test creates and removes again), every prompt it
+showed in `control/prompts.jsonl`, every question in `control/asks.jsonl`, and
+the harness's own `logs/jarvis-core.log`. Nothing in there carries the token.
+The directory is not assumed to be empty: the agent clears its own state before
+it starts, so re-running into the same one does not leave the closing sweep
+reading the previous run's audit log. Both process logs are also attached to
 any failure report, so a job that loses its artifacts is still diagnosable from
 the console.
 
 No test in the suite sleeps. Every wait is a poll for a condition with a
 deadline, or a wait on an event the server fired, and every one of them names
 what it was waiting for when it gives up.
+
+What this suite still does **not** prove: that a real human sees a real dialog
+(both are stubbed, by necessity); that the tiers behave the same on Windows or
+macOS (it runs on the CI runner's Linux, and `screen_on` is reported from a
+`DISPLAY` the fixture sets rather than from a real session); that the agent
+survives a *server* restart as opposed to a socket cut; or anything about
+`run_command`, the clipboard, input automation or screenshots, none of which
+are available on a headless runner.

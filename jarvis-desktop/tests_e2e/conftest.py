@@ -25,7 +25,12 @@ import pytest
 HERE = Path(__file__).resolve().parent
 AGENT_DIR = HERE.parent
 REPO_ROOT = AGENT_DIR.parent
-for entry in (str(REPO_ROOT), str(HERE)):
+# ``AGENT_DIR`` matters when pytest was invoked from the repo root and
+# jarvis-desktop is not pip-installed: ``testing.harness`` comes from
+# REPO_ROOT, ``support`` from HERE, and ``jarvis_desktop`` itself from here.
+# CI installs the package, so without this the suite works there and fails on a
+# developer's machine for a reason that has nothing to do with the agent.
+for entry in (str(REPO_ROOT), str(AGENT_DIR), str(HERE)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
@@ -93,6 +98,51 @@ def _work_root() -> tuple[Path, bool]:
     return Path(tempfile.mkdtemp(prefix="jarvis-desktop-e2e-")), True
 
 
+#: The loopback spellings the harness and the proxy actually bind and dial.
+#: ``[::1]`` is deliberately absent: httpx turns every ``no_proxy`` entry into
+#: a URL pattern and rejects the bracketed form with ``InvalidURL: Invalid
+#: port: ':1]'``, which would break every REST call instead of protecting it.
+#: A bare ``::1`` parses, but nothing here binds v6, so neither is needed.
+_LOOPBACK = ("localhost", "127.0.0.1")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def loopback_never_goes_through_a_proxy():
+    """Make sure nothing in this process tries to proxy 127.0.0.1.
+
+    Everything here talks to a server on this machine, but three separate
+    libraries decide that for themselves from the environment: ``httpx``
+    (``trust_env`` is on by default) for the REST calls, ``websockets`` — which
+    resolves a proxy for a ``ws://`` URI from the ``https_proxy`` entry and
+    consults only ``urllib.request.proxy_bypass`` to opt out — and ``urllib``
+    itself. On a runner behind a proxy whose ``no_proxy`` does not name
+    loopback, every one of them would hand a connection meant for 127.0.0.1 to
+    a proxy that cannot route it, and the symptom would be "the agent never
+    registered" ninety seconds later rather than the cause.
+
+    Only the loopback names are added, and only for this process; an existing
+    ``no_proxy`` is preserved. The agent subprocess sets its own — see
+    :meth:`DesktopAgent.start`.
+    """
+    previous = {name: os.environ.get(name) for name in ("no_proxy", "NO_PROXY")}
+    existing = [
+        part.strip()
+        for part in (previous["no_proxy"] or previous["NO_PROXY"] or "").split(",")
+        if part.strip()
+    ]
+    merged = ",".join(existing + [h for h in _LOOPBACK if h not in existing])
+    os.environ["no_proxy"] = merged
+    os.environ["NO_PROXY"] = merged
+    try:
+        yield merged
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 @pytest.fixture(scope="session")
 def work_root():
     root, temporary = _work_root()
@@ -102,7 +152,7 @@ def work_root():
 
 
 @pytest.fixture(scope="session")
-def harness(work_root):
+def harness(work_root, loopback_never_goes_through_a_proxy):
     """The real jarvis-core, against the fake model and voice backends."""
     if Harness is None:
         pytest.skip(

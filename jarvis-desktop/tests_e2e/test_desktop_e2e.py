@@ -24,8 +24,17 @@ The security invariants this suite is here to prove, in the order they appear
 below: an AUTO action runs without asking; a CONFIRM action that is refused
 does not run *at all* (checked against the filesystem, not against a status
 string); an approved CONFIRM action asks again the very next time; the server
-cannot talk the device into a lower tier; and neither a path escape nor an
-SSRF target survives a dispatch, even with a human's approval behind it.
+cannot talk the device into a lower tier; a NOTIFY answer *can* be remembered
+and the user's own ``never``/``panic`` switches beat everything, both read from
+disk by the running process; and neither a path escape nor an SSRF target
+survives a dispatch, even with a human's approval behind it.
+
+Two habits keep those from passing for the wrong reason. Every refusal is
+matched against the *specific* reason the guard gives, never a list of words
+that a network error would also satisfy. And every "nothing was remembered"
+claim leans on ``test_the_policy_store_is_real_...``, which makes the store
+exist on purpose — otherwise an empty policy file and a policy file the suite
+is not looking at are the same observation.
 """
 
 from __future__ import annotations
@@ -271,11 +280,14 @@ async def test_an_approved_tier_three_action_runs_once_and_asks_again(client, li
     assert prompts[-1]["command_id"], "the prompt did not carry the server's command id"
 
     # Nothing was written to the policy store, so there is nothing that could
-    # auto-approve the next one.
-    remembered = live.policy().get("policies", {})
-    assert "delete_file" not in remembered, (
-        f"a Tier-3 answer was persisted: {remembered}"
+    # auto-approve the next one. `test_the_policy_store_is_real_...` is what
+    # stops this being a statement about an empty file the suite cannot see:
+    # it proves this exact path is the one the agent writes when an answer IS
+    # allowed to be remembered.
+    assert "delete_file" not in live.remembered(), (
+        f"a Tier-3 answer was persisted: {live.policy()}"
     )
+    assert not live.policy_path.exists(), live.policy()
 
     # And the adversarial version: a prompt that answers "always" anyway. The
     # Tier-3 prompt never offers it (`rememberable` is false above), so this is
@@ -285,9 +297,10 @@ async def test_an_approved_tier_three_action_runs_once_and_asks_again(client, li
     target = live.workspace_file("approve-me.txt", "and again\n")
     assert (await dispatch(client, "delete_file", {"path": "approve-me.txt"}))["status"] == "ok"
     assert not target.exists()
-    assert live.policy().get("policies", {}) == {}, (
+    assert live.remembered() == {}, (
         f"an 'always' answer to a Tier-3 prompt was stored: {live.policy()}"
     )
+    assert not live.policy_path.exists(), live.policy()
 
     prompts_before = len(live.control.prompts())
     target = live.workspace_file("approve-me.txt", "one more time\n")
@@ -727,10 +740,52 @@ async def test_nothing_ran_that_was_not_asked_for(live):
     action nobody asked for turning up here would mean something in the agent
     executed on its own — which is exactly the failure the tier system is
     supposed to make impossible.
-    """
-    expected = {"get_system_state", "read_file", "delete_file", "http_request"}
-    seen = {entry["action"] for entry in live.audit()}
-    assert seen <= expected, f"the agent ran something nobody dispatched: {seen - expected}"
 
-    # And nothing at all was persisted as an always-allow.
-    assert live.policy().get("policies", {}) == {}, live.policy()
+    The audit log is this run's: :meth:`DesktopAgent.reset` clears it before
+    the agent starts, so a second run into the same work directory is not
+    reading the first one's entries.
+    """
+    expected = {
+        "get_system_state",
+        "read_file",
+        "write_file",
+        "delete_file",
+        "http_request",
+    }
+    entries = live.audit()
+    seen = {entry["action"] for entry in entries}
+    assert not (seen - expected), (
+        f"the agent ran something nobody dispatched: {sorted(seen - expected)}"
+    )
+    # The other direction, which is what stops the sweep passing on an empty
+    # log — the case when this test is selected on its own, and the case when
+    # the audit log is not where this suite thinks it is. An empty set is a
+    # subset of everything, so `seen <= expected` alone says nothing at all.
+    assert not (expected - seen), (
+        f"the audit log is missing {sorted(expected - seen)} ({live.audit_path}, "
+        f"{len(entries)} entries). This sweep reads the whole session and has to "
+        "run after the rest of the file."
+    )
+
+    # The invariant behind all of it, stated once over the whole session: no
+    # CONFIRM action ever executed without a prompt of its own. Matching on the
+    # command id makes "it prompted" mean "it prompted for *this* command" —
+    # one approval cannot cover two deletions.
+    prompted = {p["command_id"] for p in live.control.prompts() if p["command_id"]}
+    ran_at_confirm = [
+        e
+        for e in entries
+        if e.get("tier") == "CONFIRM" and e.get("ok") is True
+    ]
+    assert ran_at_confirm, "no Tier-3 action ever ran, so this proves nothing"
+    for entry in ran_at_confirm:
+        assert entry.get("command_id"), entry
+        assert entry["command_id"] in prompted, (
+            f"a CONFIRM action executed with no prompt carrying its command id: {entry}"
+        )
+
+    # And nothing at all is persisted as an always-allow. The path is the one
+    # test_the_policy_store_is_real... proved the agent actually writes to.
+    assert not live.policy_path.exists(), (
+        f"the agent remembered something: {live.policy()}"
+    )
