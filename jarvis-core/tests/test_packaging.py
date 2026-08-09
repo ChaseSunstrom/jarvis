@@ -1388,11 +1388,18 @@ def _compose_default(name: str) -> str:
 
 
 def test_compose_timezone_default_matches_the_configured_time_zone() -> None:
-    """A TZ that disagrees with `jarvis: time_zone:` moves every time trigger.
+    """TZ and `jarvis: time_zone:` still have to agree, for a smaller reason.
 
-    Nothing errors: `time: at: "04:00:00"` simply fires at 04:00 in the other
-    zone, so "guest mode expires overnight" runs at 05:00 in British Summer
-    Time and nobody notices until the clocks change.
+    This used to be the difference between an automation running at 04:00 and
+    running at 05:00: `time_zone:` was decorative and the container's TZ timed
+    everything. `time_zone:` now drives the automation clock and `{{ now() }}`
+    (see `configured_clock` in jarvis/automation/util.py), so a disagreement no
+    longer moves a trigger.
+
+    It is still checked, because TZ is what stamps this container's logs and
+    every other container's in the stack — none of which read Jarvis's config.
+    Reading a log line at 04:00 about an automation that ran at 23:00 is its own
+    kind of wrong.
     """
     configured = load_config(CONFIG)["jarvis"]["time_zone"]
     assert _compose_default("TZ") == configured, (

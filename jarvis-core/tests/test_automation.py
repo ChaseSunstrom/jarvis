@@ -20,6 +20,8 @@ from jarvis.automation.conditions import async_check  # noqa: E402
 from jarvis.automation.engine import AutomationManager  # noqa: E402
 from jarvis.automation.triggers import async_attach_trigger  # noqa: E402
 from jarvis.automation.util import (  # noqa: E402
+    get_clock,
+    next_time_of_day,
     next_time_pattern,
     parse_duration,
     parse_time,
@@ -456,6 +458,54 @@ async def test_time_trigger_uses_the_injected_clock(jarvis):
 
     assert fired and fired[0]["platform"] == "time"
     assert clock.slept[0] == pytest.approx(1.0)
+
+
+def test_the_clock_runs_in_the_configured_time_zone(jarvis):
+    """`jarvis: time_zone:` decides when `at: "07:00:00"` means seven o'clock.
+
+    It used to decide nothing. The key was echoed back by `/api/config` and read
+    by nobody, so what actually timed every automation was the container's TZ —
+    which is why docker-compose.yml carries a note that the two must agree "or
+    every time trigger fires at the wrong hour, silently", and why a packaging
+    test exists to check the defaults have not drifted.
+
+    Two zones, chosen because neither is ever the runner's: Kathmandu is
+    +05:45 and has no DST, so its offset is unmistakable and stable.
+    """
+    jarvis.config = {"jarvis": {"time_zone": "Asia/Kathmandu"}}
+    now = get_clock(jarvis).now()
+    assert now.utcoffset() == timedelta(hours=5, minutes=45)
+
+    # And the trigger maths inherits it: `at:` is read in the configured zone,
+    # not the process's, because next_time_of_day builds on `now`.
+    nxt = next_time_of_day(now, parse_time("07:00:00"))
+    assert nxt.hour == 7 and nxt.utcoffset() == timedelta(hours=5, minutes=45)
+
+    jarvis.config = {"jarvis": {"time_zone": "Pacific/Chatham"}}
+    assert get_clock(jarvis).now().utcoffset() in (
+        timedelta(hours=12, minutes=45),
+        timedelta(hours=13, minutes=45),  # daylight saving
+    )
+
+
+def test_an_unknown_time_zone_falls_back_instead_of_failing(jarvis, caplog):
+    """A typo in the config must not stop the house working."""
+    jarvis.config = {"jarvis": {"time_zone": "Mars/Olympus_Mons"}}
+    now = get_clock(jarvis).now()
+    assert now.tzinfo is not None  # still aware, just the system's zone
+    assert "Mars/Olympus_Mons" in caplog.text
+
+    # No zone configured at all is the same story, without the complaint.
+    jarvis.config = {"jarvis": {}}
+    assert get_clock(jarvis).now().tzinfo is not None
+
+
+def test_an_injected_clock_still_beats_the_configured_zone(jarvis):
+    """Tests that froze time must not find a real zone underneath them."""
+    jarvis.config = {"jarvis": {"time_zone": "Asia/Kathmandu"}}
+    frozen = FakeClock(datetime(2024, 1, 1, 6, 59, 59))
+    jarvis.data["automation_clock"] = frozen
+    assert get_clock(jarvis) is frozen
 
 
 async def test_time_pattern_trigger_uses_the_injected_clock(jarvis):

@@ -97,6 +97,33 @@ async def test_template_filters_and_functions(tmp_path):
     assert tpl.render(jarvis, "{{ '{\"a\": 1}' | from_json | to_json }}") == '{"a": 1}'
 
 
+async def test_template_now_uses_the_configured_time_zone(tmp_path):
+    """`{{ now() }}` and `at: "07:00:00"` must mean the same clock.
+
+    A condition like `{{ now().hour >= 22 }}` guarding an automation that a
+    time trigger fires is the common shape, and the two reading different zones
+    is worse than either being wrong on its own: the automation fires and the
+    condition then refuses it, for six months of the year.
+
+    The template environment is module-global and cannot know which Jarvis is
+    rendering, so `now` is rebound per render. Kathmandu is +05:45 with no DST,
+    which no CI runner is ever set to.
+    """
+    jarvis = await make_jarvis(tmp_path)
+    jarvis.config = {"jarvis": {"time_zone": "Asia/Kathmandu"}}
+
+    offset = tpl.render(jarvis, "{{ now().utcoffset().total_seconds() }}")
+    assert float(offset) == 5 * 3600 + 45 * 60
+
+    # utcnow is untouched: it is UTC by definition, not by configuration.
+    assert tpl.render(jarvis, "{{ utcnow().utcoffset().total_seconds() }}") == "0.0"
+
+    # And the same clock the triggers use, not a second one that agrees today.
+    from jarvis.automation.util import get_clock  # noqa: PLC0415
+
+    assert tpl.render(jarvis, "{{ now().tzinfo }}") == str(get_clock(jarvis).now().tzinfo)
+
+
 async def test_template_value_and_value_json(tmp_path):
     jarvis = await make_jarvis(tmp_path)
     payload = json.dumps({"main": {"temp": 7.5}, "name": "Home"})

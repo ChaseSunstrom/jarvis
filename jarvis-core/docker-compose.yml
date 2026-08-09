@@ -39,10 +39,18 @@
 # config/configuration.yaml, and tests/test_packaging.py fails the build if
 # they drift:
 #
-#   TZ           == jarvis: time_zone:   (or every time trigger fires at the
-#                                         wrong hour, silently)
+#   TZ           == jarvis: time_zone:   (see below)
 #   PIPER_VOICE  == voice: tts: voice:   (or the default pipeline asks Piper
 #                                         for a voice it was never given)
+#
+# TZ used to be the load-bearing one: `time_zone:` was echoed back by
+# /api/config and read by nothing, so the container's TZ decided when
+# `at: "07:00:00"` fired and a disagreement moved every time trigger silently.
+# `time_zone:` now drives the automation clock and `{{ now() }}` directly, so
+# it is the setting that counts and the console can offer it honestly. TZ is
+# kept in step anyway: it still sets the zone in this container's log
+# timestamps and in every other container here, none of which read Jarvis's
+# configuration.
 #
 # Every bind mount here is a relative path, so its host side lands inside the
 # Docker build context. Anything added must also be listed in .dockerignore.

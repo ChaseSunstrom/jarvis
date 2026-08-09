@@ -714,6 +714,13 @@ def _render_variables(jarvis: "Jarvis", variables: dict[str, Any] | None) -> dic
 
     namespace: dict[str, Any] = {
         "_jarvis": jarvis,
+        # `now` is in env.globals too, but that environment is module-global and
+        # so cannot know which Jarvis is rendering. A per-render binding can, and
+        # a variable shadows a global in Jinja — so `{{ now().hour }}` in a
+        # condition reads the hour in `jarvis: time_zone:`, the same zone
+        # `at: "07:00:00"` fires in. Two clocks disagreeing inside one automation
+        # is worse than either being wrong.
+        "now": _zoned_now(jarvis),
         "states": AllStates(jarvis) if jarvis is not None else None,
         "is_state": lambda entity_id, value: _is_state(jarvis, entity_id, value),
         "is_state_attr": lambda entity_id, attr, value: (
@@ -724,6 +731,22 @@ def _render_variables(jarvis: "Jarvis", variables: dict[str, Any] | None) -> dic
     }
     namespace.update(variables)
     return namespace
+
+
+def _zoned_now(jarvis: "Jarvis") -> Any:
+    """`now` bound to this instance's clock, falling back to the plain one.
+
+    Imported lazily: `jarvis.automation.util` imports helpers of its own, and a
+    module-level import here closes the loop.
+    """
+    if jarvis is None:
+        return now
+    try:
+        from ..automation.util import get_clock  # noqa: PLC0415 - cycle
+    except ImportError:  # pragma: no cover - defensive
+        return now
+    clock = get_clock(jarvis)
+    return clock.now
 
 
 def _is_state(jarvis: "Jarvis", entity_id: Any, value: Any) -> bool:

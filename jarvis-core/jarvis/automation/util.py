@@ -14,8 +14,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, time as dt_time, timedelta
+from datetime import datetime, time as dt_time, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..core import Jarvis
@@ -220,10 +221,19 @@ DATA_CLOCK = "automation_clock"
 
 
 class Clock:
-    """Wall clock + sleep. Swap it out via ``jarvis.data["automation_clock"]``."""
+    """Wall clock + sleep. Swap it out via ``jarvis.data["automation_clock"]``.
+
+    A zone may be pinned, in which case :meth:`now` reports it instead of
+    whatever the process happens to be set to. Time triggers build their next
+    firing with ``now.replace(hour=...)``, so the zone on this datetime is the
+    zone ``at: "07:00:00"`` means.
+    """
+
+    def __init__(self, tz: tzinfo | None = None) -> None:
+        self.tz = tz
 
     def now(self) -> datetime:
-        return datetime.now().astimezone()
+        return datetime.now(self.tz) if self.tz is not None else datetime.now().astimezone()
 
     async def sleep(self, seconds: float) -> None:
         await asyncio.sleep(max(0.0, float(seconds)))
@@ -231,12 +241,63 @@ class Clock:
 
 _DEFAULT_CLOCK = Clock()
 
+#: One Clock per zone name. `now()` runs in a tight loop in the time triggers,
+#: and building a ZoneInfo re-reads the tz database.
+_ZONED_CLOCKS: dict[str, Clock] = {}
+#: Zone names already complained about, so a bad one is one log line, not one
+#: per trigger per firing.
+_BAD_ZONES: set[str] = set()
+
+
+def configured_clock(jarvis: "Jarvis") -> Clock:
+    """The clock implied by ``jarvis: time_zone:``, or the process's own.
+
+    `time_zone` used to be decorative: it was echoed back by ``/api/config`` and
+    read by nothing else, so what actually decided when ``at: "07:00:00"`` fired
+    was the container's TZ. The two had to be kept in agreement by hand — see
+    the note at the top of docker-compose.yml, and the packaging test that fails
+    if the defaults drift — and when they disagreed nothing errored: the
+    automation simply ran at seven o'clock somewhere else.
+
+    Now the configured zone is the one that counts, which is also what makes it
+    honest to offer a timezone field in the console: setting it there changes
+    when automations run, rather than changing a string an API hands out.
+    """
+    options = (getattr(jarvis, "config", None) or {}).get("jarvis") or {}
+    name = str(options.get("time_zone") or "").strip()
+    if not name:
+        return _DEFAULT_CLOCK
+
+    cached = _ZONED_CLOCKS.get(name)
+    if cached is not None:
+        return cached
+
+    try:
+        clock = Clock(ZoneInfo(name))
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        # A typo must not stop the house working; it falls back to the process
+        # zone, which is exactly the old behaviour.
+        if name not in _BAD_ZONES:
+            _BAD_ZONES.add(name)
+            _LOGGER.warning(
+                "time_zone %r is not a zone this system knows; using the system "
+                "zone instead. Time triggers will fire in %s.",
+                name,
+                datetime.now().astimezone().tzname(),
+            )
+        return _DEFAULT_CLOCK
+
+    _ZONED_CLOCKS[name] = clock
+    return clock
+
 
 def get_clock(jarvis: "Jarvis") -> Clock:
     """The clock this Jarvis instance should use (injectable for tests)."""
     data = getattr(jarvis, "data", None)
     clock = data.get(DATA_CLOCK) if isinstance(data, dict) else None
-    return clock if clock is not None else _DEFAULT_CLOCK
+    # An injected clock always wins: a test that froze time must not find the
+    # configured zone underneath it.
+    return clock if clock is not None else configured_clock(jarvis)
 
 
 # --- time-pattern maths -----------------------------------------------------
