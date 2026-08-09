@@ -272,6 +272,38 @@ services:
   # settings.yml enables the `json` format, which is OFF by default upstream
   # and REQUIRED for API use — without it every Jarvis search is a bare 403.
   # See searxng/README.md.
+  # --- MQTT broker (optional) ----------------------------------------------
+  # `configuration.yaml` points the mqtt integration at 127.0.0.1:1883, but
+  # nothing in this stack used to listen there — Jarvis is an MQTT *client*, and
+  # it retries forever with a warning if no broker answers. That is fine if you
+  # already run one; this profile is for when you do not.
+  #
+  #     docker compose --profile mqtt up -d
+  #
+  # Loopback-only and anonymous, which are the same decision: see the header of
+  # mosquitto/mosquitto.conf before widening either.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    profiles: [mqtt]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      # Publishing to its own broker proves it is accepting connections, which
+      # a port check does not.
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-t", "jarvis/healthz", "-m", "ok", "-q", "0"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
@@ -396,3 +428,6 @@ services:
   #     - /tmp:size=256m,mode=1777
   #   volumes:
   #     - ../jarvis-workspace:/workspace   # the only writable crossover
+
+volumes:
+  mosquitto-data:

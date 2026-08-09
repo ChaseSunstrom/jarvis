@@ -17,6 +17,7 @@ photon/
 wyoming/
 ollama/
 searxng/
+mosquitto/
 tests/
 docs/
 *.md

@@ -1197,6 +1197,7 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "photon",
         "jarvis-browser",
         "searxng",
+        "mosquitto",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1260,12 +1261,28 @@ def test_compose_keeps_searxng_behind_the_search_profile(compose: dict[str, Any]
     `docker compose --profile search up -d` starts one here as well.
     """
     assert compose["services"]["searxng"]["profiles"] == ["search"]
-    # ...and nothing else may be profile-gated, or `up -d` stops being the
-    # whole stack.
+
+
+def test_compose_keeps_the_broker_behind_the_mqtt_profile(compose: dict[str, Any]) -> None:
+    """Same argument as SearXNG: most houses already have a broker.
+
+    `configuration.yaml` points the client at 127.0.0.1:1883 either way, and the
+    integration retries with a warning rather than failing when nothing answers,
+    so an unwanted broker is the worse default of the two.
+    """
+    assert compose["services"]["mosquitto"]["profiles"] == ["mqtt"]
+
+
+def test_only_optional_extras_are_profile_gated(compose: dict[str, Any]) -> None:
+    """Everything NOT gated is what `up -d` starts, so the set is the contract.
+
+    A service that quietly grows a profile stops being part of the stack a
+    plain `up -d` brings up, and nothing else would notice.
+    """
     gated = {
         name for name, service in compose["services"].items() if service.get("profiles")
     }
-    assert gated == {"searxng"}
+    assert gated == {"searxng", "mosquitto"}
 
 
 def test_compose_ships_no_secrets(compose: dict[str, Any]) -> None:
