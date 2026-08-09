@@ -334,6 +334,19 @@ returns a controller that replays once the window is attached;
 **The lesson is that "it compiles", "it packages" and "it starts" are three
 claims, and only the first two were ever being checked.**
 
+The next run of the same suite went 35/36, and the one failure was the harness
+blaming the app. `NavigationTest` asserts that Settings' AUTOMATIONS button
+toasts rather than crashing, and reported "No toast was posted at all" — while
+logcat from the same second showed `JarvisScreens` catching the missing class
+and `NotificationService` retiring the toast it had shown. `UiAutomation` has a
+single accessibility-event queue, and `executeAndWaitForEvent` clears it and
+lowers `mWaitingForEventDelivery` on the way out *even when it is the inner of
+two nested calls* — so the scroll inside the tap unsubscribed the toast wait
+wrapping it. The identical assertion on the home screen passed, because that
+button needs no scroll. Fixed by resolving the control before the toast window
+opens; `instrumentation_contract_test.py` now fails on a toast action that waits
+for anything.
+
 ## Known failures, as of 2026-08-09
 
 Two, both in `ci.yml` and both about paths rather than about behaviour. Neither

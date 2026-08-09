@@ -193,7 +193,10 @@ class NavigationTest {
         // happen is that the button says which one it was: a token that
         // half-arrives with no feedback sends the user off debugging a
         // connection instead of a paste.
-        Toasts.expectAnyOf("Clipboard is empty", "Pasted") { tap("PASTE") }
+        //
+        // Scrolled into view BEFORE the toast window opens — see `locate`.
+        val paste = locate("PASTE")
+        Toasts.expectAnyOf("Clipboard is empty", "Pasted") { paste.click() }
 
         Screenshots.take("NavigationTest-settings-paste")
     }
@@ -220,12 +223,44 @@ class NavigationTest {
      * helper then works across an activity boundary.
      */
     private fun tap(label: String) {
+        locate(label).click()
+    }
+
+    /**
+     * Find a button by its label, scrolling it into view, WITHOUT clicking it.
+     *
+     * Split out from [tap] because of a trap that costs an emulator run to
+     * diagnose. `UiAutomation` has exactly one event queue, and
+     * `executeAndWaitForEvent` — which both `Toasts` and UiAutomator's own
+     * scrolling are built on — takes it over for the duration of the command it
+     * is given, then on the way out sets `mWaitingForEventDelivery = false` and
+     * clears the queue. So a scroll *inside* the action passed to
+     * [Toasts.expect] silently unsubscribes the toast wait that is wrapping it:
+     * the click lands, the app toasts, and the outer filter is no longer
+     * listening. It then fails with "No toast was posted at all", which points
+     * at the app rather than at the harness.
+     *
+     * That is what run 31309094331 hit. The app was entirely correct — logcat
+     * from the same second shows the guard running and the toast being shown:
+     *
+     *     W/JarvisScreens: ai.jarvis.app.automation.ui.AutomationsActivity is
+     *                      not present in this build
+     *     W/NotificationService: Toast already killed. pkg=ai.jarvis.app
+     *
+     * The home-screen version of the same assertion passed, because that button
+     * is on screen and needs no scroll — which is exactly how a nested-wait bug
+     * disguises itself as a difference between two screens.
+     *
+     * So: scroll here, click inside the toast window, and keep the action passed
+     * to `Toasts` down to a single interaction that waits for nothing.
+     */
+    private fun locate(label: String): UiObject2 {
         val button = findButton(label)
         assertNotNull(
             "No button labelled \"$label\" on screen.\n${Device.windowDump()}",
             button,
         )
-        button!!.click()
+        return button!!
     }
 
     /** The settings screen is a long ScrollView; most of its buttons start off it. */
@@ -257,7 +292,10 @@ class NavigationTest {
             Device.ui.pressBack()
             return
         }
-        Toasts.expect("not available in this build") { tap(label) }
+        // Scrolled into view BEFORE the toast window opens — see `locate`. The
+        // assertion is unchanged: a toast, not merely the absence of a crash.
+        val button = locate(label)
+        Toasts.expect("not available in this build") { button.click() }
         Screenshots.take(screenshot)
     }
 

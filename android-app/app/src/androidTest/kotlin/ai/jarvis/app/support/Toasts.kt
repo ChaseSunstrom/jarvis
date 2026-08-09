@@ -39,6 +39,33 @@ import java.util.concurrent.TimeoutException
  * evidence that `JarvisScreens.isPresent` caught it first. Asserting the toast
  * rather than merely "did not crash" is what makes the test able to tell the
  * fixed behaviour from a version where the crash simply happens a moment later.
+ *
+ * ## The one rule for the action you pass
+ *
+ * **It must be a single interaction that waits for nothing.** Click, type, press
+ * — not `tap()` (which scrolls), not a `Waits.until`, not another
+ * `executeAndWaitForEvent`.
+ *
+ * `UiAutomation` has exactly one event queue and one `mWaitingForEventDelivery`
+ * flag. `executeAndWaitForEvent` claims both for the duration of the command it
+ * runs, and on the way out clears the queue and lowers the flag — including when
+ * it is the INNER of two nested calls. UiAutomator's scrolling is built on that
+ * same method, so a scroll inside the action unsubscribes the toast wait
+ * wrapping it. The click still lands, the app still toasts, and this class
+ * reports "No toast was posted at all" — which reads as an app defect and is
+ * not one.
+ *
+ * Run 31309094331 is the worked example: `NavigationTest` failed on Settings'
+ * AUTOMATIONS button while passing on the home screen's, the only difference
+ * being that the Settings one had to be scrolled to. Logcat from the same second
+ * shows the app doing exactly the right thing —
+ *
+ *     W/JarvisScreens: …AutomationsActivity is not present in this build
+ *     W/NotificationService: Toast already killed. pkg=ai.jarvis.app
+ *
+ * Find the control first, then pass only the click.
+ * `android-app/tools/instrumentation_contract_test.py` fails the fast lane if an
+ * action here ever grows a wait again.
  */
 object Toasts {
 

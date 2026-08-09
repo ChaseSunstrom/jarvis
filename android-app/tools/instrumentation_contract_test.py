@@ -113,6 +113,11 @@ ONSCREEN_CALLS = {
     "assertOnScreen": "contains",
     "findByText": "exact",
     "tap": "exact",
+    # `locate` is `tap` without the click — the split that keeps a scroll out of
+    # a toast wait (see check 6). Its first argument is still a button label the
+    # app has to render, so it belongs here too; without it the extractor
+    # silently stopped covering "PASTE".
+    "locate": "exact",
     "findButton": "exact",
     "textIgnoringCase": "exact",
     "containingIgnoringCase": "contains",
@@ -639,6 +644,108 @@ def test_no_instrumented_test_sleeps_where_a_wait_would_do():
     ), (
         "a fixed sleep outside BootAnimationTest is a flake waiting for a slow "
         f"emulator; use Waits.until / Waits.untilPresent. Found: {offenders}"
+    )
+
+
+# --- 6. the action handed to Toasts must not wait for anything --------------
+
+TOAST_CALLS = ("Toasts.expect", "Toasts.expectAnyOf", "Toasts.observe")
+
+# Helpers that scroll, poll, or otherwise call `executeAndWaitForEvent`
+# themselves. Any of them inside a toast action re-enters UiAutomation's single
+# event queue and unsubscribes the toast wait that wraps it.
+NESTED_WAITS = {
+    "tap(": "scrolls the control into view",
+    "locate(": "scrolls the control into view",
+    "findScrolling": "scrolls",
+    "clickableTextsScrolling": "scrolls",
+    "Waits.": "polls",
+    "Activities.expect": "waits for an activity",
+    "Activities.launch": "waits for an activity",
+    "waitForIdle": "waits on the accessibility queue",
+    "executeAndWaitForEvent": "is the nested wait itself",
+}
+
+
+def _trailing_lambda(src: str, call_end: int) -> str:
+    """The `{ … }` block that follows the arguments of a call.
+
+    [call_end] is the index of the `(` that opens the argument list. Returns the
+    text between the braces of the trailing lambda, or "" if there is none.
+    """
+    depth = 0
+    i = call_end
+    while i < len(src):
+        if src[i] == "(":
+            depth += 1
+        elif src[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    brace = src.find("{", i)
+    if brace == -1 or not src[i + 1 : brace].strip() == "":
+        return ""
+    depth = 0
+    for j in range(brace, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[brace + 1 : j]
+    return ""
+
+
+def test_no_toast_assertion_wraps_a_nested_wait():
+    """REGRESSION GUARD for run 31309094331.
+
+    `Toasts` waits for a toast with `UiAutomation.executeAndWaitForEvent`. That
+    method claims UiAutomation's single event queue, and on the way out — even
+    as the INNER of two nested calls — clears the queue and lowers
+    `mWaitingForEventDelivery`. UiAutomator's scrolling uses the same method, so
+    a `tap()` inside a toast action unsubscribes the wait wrapping it. The
+    button is clicked, the app toasts, and the assertion fails with "No toast
+    was posted at all" — pointing at the app, which was correct all along.
+
+    `NavigationTest` failed on Settings' AUTOMATIONS button and PASSED on the
+    home screen's identical one, the only difference being that Settings had to
+    scroll. So: find the control first, pass only the click.
+    """
+    offenders = []
+    for path in ANDROID_TEST.rglob("*.kt"):
+        src = read(path)
+        code = code_only(src)
+        for call in TOAST_CALLS:
+            for m in re.finditer(rf"(?<![A-Za-z0-9_]){re.escape(call)}\s*\(", code):
+                body = _trailing_lambda(code, m.end() - 1)
+                for token, why in NESTED_WAITS.items():
+                    if token in body:
+                        offenders.append(
+                            f"{path.name}: {call} {{ … }} contains {token!r}, which {why}"
+                        )
+    assert not offenders, (
+        "a toast assertion wraps an action that waits. UiAutomation has one "
+        "event queue, and the inner wait unsubscribes the outer one — the "
+        "assertion then fails with 'No toast was posted at all' against an app "
+        "that toasted correctly. Resolve the control BEFORE the toast window "
+        "opens and pass only the interaction:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_toast_lambda_extractor_still_finds_the_call_sites():
+    """Guards the check above against silently scanning nothing."""
+    found = 0
+    for path in ANDROID_TEST.rglob("*.kt"):
+        code = code_only(read(path))
+        for call in TOAST_CALLS:
+            for m in re.finditer(rf"(?<![A-Za-z0-9_]){re.escape(call)}\s*\(", code):
+                if _trailing_lambda(code, m.end() - 1).strip():
+                    found += 1
+    assert found >= 2, (
+        f"the extractor found {found} Toasts.* call sites with a trailing "
+        "lambda; it has stopped matching how the suite is written, so the "
+        "nested-wait check above is passing vacuously"
     )
 
 
