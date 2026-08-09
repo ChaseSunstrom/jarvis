@@ -377,13 +377,20 @@ one uncovered a third that had been invisible.
   nothing in the repo revealed the dependency. The spec now lives at
   `jarvis-web/e2e/e2e.spec.ts`, inside the package that owns Playwright.
 
-  **What that uncovered:** with the suite running again, 19 of 20 pass and one
-  fails — `push-to-talk round trip renders transcript and response`, which times
-  out waiting for the transcript to render. That is a real behavioural failure
-  in the HUD's full round trip (PTT -> fake mic -> /ws proxy -> mock pipeline ->
-  DOM), not a path problem, and it was masked by the suite not running at all.
-  The 20 browser tests recorded as green elsewhere in this document were last
-  green before that; treat 19/20 as the current truth.
+  **What that uncovered, and the second bug under it:** with the specs
+  discoverable again, all 20 launched — and all but two then failed with
+  `Failed to launch chromium because executable doesn't exist at
+  /opt/pw-browsers/chromium`. `playwright.config.ts` pinned `launchOptions
+  .executablePath` to a developer container's layout, a path that exists on no
+  CI runner. That was invisible for the same reason: a suite reporting "No
+  tests found" never launches a browser. Removed — Playwright finds its own
+  browser from the default cache on CI and from `PLAYWRIGHT_BROWSERS_PATH` in a
+  container. **20 of 20 pass.**
+
+  The pinned path was also the cause of the one apparently-behavioural failure
+  (`push-to-talk round trip renders transcript and response`): it launched a
+  different chromium build than the one Playwright provisions, and the fake
+  media device behaved differently. Nothing was wrong with the HUD.
 
 The lesson is the one this document keeps relearning, alongside the mutation
 stub and the four-commit APK breakage: a suite that does not run is

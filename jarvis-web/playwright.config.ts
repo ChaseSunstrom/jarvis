@@ -12,7 +12,15 @@ export default defineConfig({
 		browserName: 'chromium',
 		headless: true,
 		launchOptions: {
-			executablePath: '/opt/pw-browsers/chromium',
+			// No `executablePath`. Pinning one to a developer container's layout
+			// is why this suite launched nothing on CI: `/opt/pw-browsers/chromium`
+			// exists in that container and nowhere else, so every test failed with
+			// "executable doesn't exist" the moment the specs became discoverable.
+			//
+			// Playwright finds its own browser: on CI from the default cache that
+			// `npx playwright install --with-deps chromium` populates, and in a
+			// container from PLAYWRIGHT_BROWSERS_PATH, which is the supported way
+			// to point it at a preinstalled one.
 			args: [
 				'--no-sandbox',
 				'--use-fake-device-for-media-stream',
