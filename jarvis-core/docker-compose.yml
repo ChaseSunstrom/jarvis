@@ -52,6 +52,10 @@ services:
   # The whole platform: state machine, service registry, automations, scripts,
   # scenes, MQTT discovery, recorder, the voice pipeline and the LLM agent.
   jarvis-core:
+    # Built here, never published: without this compose tries a registry
+    # pull first and prints a scary "access denied" warning before falling
+    # back to building anyway.
+    pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile
@@ -209,6 +213,10 @@ services:
   # Keep them DIFFERENT. The model holds the API token; holding it must not be
   # enough to click "Pay". See ../jarvis-browser/README.md.
   jarvis-browser:
+    # Built here, never published: without this compose tries a registry
+    # pull first and prints a scary "access denied" warning before falling
+    # back to building anyway.
+    pull_policy: build
     build: ../jarvis-browser
     image: jarvis-browser:local
     container_name: jarvis-browser

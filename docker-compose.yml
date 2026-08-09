@@ -47,6 +47,10 @@ services:
   # Reuses the sandbox image (no extra pull); runs as root only to fix perms,
   # then exits. network: none — it needs nothing but the volume.
   jarvis-init:
+    # Built here, never published: without this compose tries a registry
+    # pull first and prints a scary "access denied" warning before falling
+    # back to building anyway.
+    pull_policy: build
     build:
       context: ./jarvis-sandbox
     container_name: jarvis-init
@@ -69,6 +73,10 @@ services:
     restart: "no"
 
   jarvis-web:
+    # Built here, never published: without this compose tries a registry
+    # pull first and prints a scary "access denied" warning before falling
+    # back to building anyway.
+    pull_policy: build
     build: ./jarvis-web
     container_name: jarvis-web
     restart: unless-stopped
@@ -89,6 +97,10 @@ services:
       retries: 3
 
   jarvis-orchestrator:
+    # Built here, never published: without this compose tries a registry
+    # pull first and prints a scary "access denied" warning before falling
+    # back to building anyway.
+    pull_policy: build
     build: ./jarvis-orchestrator
     container_name: jarvis-orchestrator
     profiles: [agents]
@@ -119,6 +131,10 @@ services:
       retries: 3
 
   jarvis-sandbox:
+    # Built here, never published: without this compose tries a registry
+    # pull first and prints a scary "access denied" warning before falling
+    # back to building anyway.
+    pull_policy: build
     build:
       context: ./jarvis-sandbox
       args:

@@ -1581,3 +1581,23 @@ async def test_documented_services_exist(config_copy: Path) -> None:
         assert not missing, f"docs name services that do not exist: {missing}"
     finally:
         await jarvis.async_stop()
+
+
+def test_locally_built_services_declare_pull_policy_build(compose: dict[str, Any]) -> None:
+    """A service built here must not be looked for in a registry first.
+
+    `jarvis-core:local` and `jarvis-browser:local` are built from this repo and
+    published nowhere, but declaring both `image:` and `build:` makes compose
+    try a pull before it builds — so a first `up -d` prints
+
+        ! Image jarvis-core:local  pull access denied for jarvis-core,
+          repository does not exist or may require 'docker login'
+
+    twice, before quietly building the images anyway. It is a warning, not an
+    error, and it reads exactly like the install has failed on step one.
+    """
+    for name, service in compose["services"].items():
+        if "build" in service:
+            assert service.get("pull_policy") == "build", (
+                f"{name} is built locally but would be pulled first"
+            )
