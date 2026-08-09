@@ -76,6 +76,53 @@ jobs:
             gradle :app:assembleDebug --no-daemon --stacktrace
           fi
 
+      # `assemble` never touches src/test, so those sources could rot
+      # indefinitely without anyone noticing. Compile them too.
+      - name: Compile unit test sources
+        run: gradle :app:compileDebugUnitTestKotlin --no-daemon --stacktrace
+
+      # Wrong Build.VERSION.SDK_INT guards are invisible to the compiler and
+      # only bite on a real device (minSdk is 29). Lint is the only thing that
+      # can see them, so run it and surface the report. Non-blocking for now —
+      # it is reported, not enforced, until the existing findings are triaged.
+      - name: Lint (reported, not enforced)
+        continue-on-error: true
+        run: gradle :app:lintDebug --no-daemon || true
+
+      - name: Summarise lint findings
+        continue-on-error: true
+        run: |
+          set -u
+          REPORT="app/build/reports/lint-results-debug.xml"
+          [ -f "$REPORT" ] || { echo "no lint report produced"; exit 0; }
+          python3 - "$REPORT" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import collections, sys, xml.etree.ElementTree as ET
+          issues = collections.Counter()
+          newapi = []
+          for issue in ET.parse(sys.argv[1]).getroot().iter("issue"):
+              sev, ident = issue.get("severity"), issue.get("id")
+              issues[(sev, ident)] += 1
+              if ident in ("NewApi", "InlinedApi", "UnsafeNewApiCall"):
+                  loc = issue.find("location")
+                  newapi.append(f"- `{loc.get('file','?').split('/')[-1]}:"
+                                f"{loc.get('line','?')}` {issue.get('message','')}")
+          print("### Android lint")
+          print(f"\n{sum(issues.values())} findings\n")
+          for (sev, ident), n in issues.most_common(15):
+              print(f"- {sev} **{ident}** x{n}")
+          if newapi:
+              print(f"\n#### API-level findings (minSdk 29) — {len(newapi)}\n")
+              print("\n".join(newapi[:40]))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-lint-report
+          path: android-app/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Package + sign
         id: apk
         env:
