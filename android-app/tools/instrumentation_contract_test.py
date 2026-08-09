@@ -450,14 +450,79 @@ def test_the_hooks_cannot_answer_or_weaken_a_consent_prompt():
     )
 
 
+def test_the_microphone_seam_is_read_only_behind_a_compile_time_constant():
+    """`MicStreamer.debugPcmSource` — the one seam in shipping code.
+
+    `assertNoTestHooksInRelease` cannot cover this: the seam lives in
+    `ai.jarvis.app.assist`, not in `ai.jarvis.app.testing`, so it is in the
+    release APK by construction. What makes it safe is narrower and worth
+    pinning down, because both halves are one careless edit away from being
+    untrue:
+
+      1. It is read exactly once, inside `if (BuildConfig.DEBUG)`. `DEBUG` is a
+         `static final boolean`, so in a release build kotlinc constant-folds
+         the branch away and no release code path reads the field at all —
+         verified against the bytecode: release `start()` is `aconst_null;
+         astore_1` where the read would be. (R8 is OFF for release in this
+         build, so the *members* do ship; what makes them harmless is that
+         nothing reads them, not that they were stripped.)
+      2. It is written only from `src/debug`. A second writer in `src/main`
+         would be a live, reachable audio-injection point in the shipping app.
+    """
+    mic = MAIN_KOTLIN / "ai" / "jarvis" / "app" / "assist" / "MicStreamer.kt"
+    code = code_only(read(mic))
+    reads = [
+        line.strip()
+        for line in code.splitlines()
+        if "debugPcmSource" in line and "var debugPcmSource" not in line
+    ]
+    assert len(reads) == 1, (
+        f"MicStreamer reads/writes debugPcmSource on {len(reads)} lines; there "
+        f"must be exactly one, guarded read. Lines: {reads}"
+    )
+    assert "BuildConfig.DEBUG" in reads[0], (
+        "the debugPcmSource read is no longer guarded by BuildConfig.DEBUG, so "
+        f"a release build can take audio from it: {reads[0]!r}"
+    )
+    assert re.search(r"if\s*\(\s*BuildConfig\.DEBUG\s*\)", reads[0]), (
+        f"the guard is not a plain `if (BuildConfig.DEBUG)`, so kotlinc may not "
+        f"constant-fold it out of a release build: {reads[0]!r}"
+    )
+
+    # Only src/debug may write it.
+    writers = []
+    for root in (MAIN_KOTLIN, APP / "src" / "androidTest" / "kotlin"):
+        for path in kotlin_files(root):
+            for n, line in enumerate(code_only(read(path)).splitlines(), 1):
+                if re.search(r"debugPcmSource\s*=", line):
+                    writers.append(f"{path.relative_to(APP)}:{n}")
+    assert not writers, (
+        "debugPcmSource is written outside src/debug — a reachable "
+        f"audio-injection point in the shipping app: {writers}"
+    )
+
+
 def test_the_release_leak_guard_is_wired_and_looks_in_the_right_places():
     """The build must fail if the hooks ever reach a release artefact."""
     gradle = read(BUILD_GRADLE)
     assert "assertNoTestHooksInRelease" in gradle, "the release-leak guard is gone"
+
+    # Against the WIRING, not against the file: `bundleRelease` also appears in
+    # the task's own KDoc, and a check that merely greps the file would call the
+    # guard wired after somebody removed it from the predicate.
+    wiring = re.search(
+        r"tasks\.matching\s*\{(?P<predicate>.*?)\}\s*\.configureEach\s*\{(?P<body>.*?)\}",
+        gradle,
+        re.S,
+    )
+    assert wiring, "assertNoTestHooksInRelease is no longer wired with tasks.matching { … }"
+    assert "finalizedBy(assertNoTestHooksInRelease)" in wiring.group("body"), (
+        "the guard is defined but the matched tasks do not run it"
+    )
     for task in ("assembleRelease", "bundleRelease"):
-        assert task in gradle, (
-            f"the release-leak guard is not wired to {task}; an APK-only check "
-            "misses an app bundle entirely"
+        assert task in wiring.group("predicate"), (
+            f"the release-leak guard does not match {task}; an APK-only check "
+            f"misses an app bundle entirely. Predicate: {wiring.group('predicate').strip()}"
         )
     assert "Charsets.UTF_16LE" in gradle, (
         "the guard searches UTF-8 only. A binary AndroidManifest.xml stores "
