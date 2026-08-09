@@ -1652,3 +1652,30 @@ def test_the_whisper_model_is_one_faster_whisper_accepts(compose: dict[str, Any]
     }
     valid = sizes | {f"{s}.en" for s in ("tiny", "base", "small", "medium")}
     assert default in valid, f"{default!r} is not a faster-whisper model size"
+
+
+def test_images_that_drop_privileges_keep_the_caps_to_do_it(
+    compose: dict[str, Any]
+) -> None:
+    """`cap_drop: [ALL]` on an image that de-escalates itself is a crash loop.
+
+    searxng and mosquitto both start as root, chown their data directory and
+    then setgid/setuid down to their own unprivileged user. Dropping every
+    capability takes away the three that step needs:
+
+        chown: /mosquitto/data: Operation not permitted
+        Error setting groups whilst dropping privileges: Operation not permitted
+
+    These are the capabilities required to STOP being root. They are not a way
+    to stay root — `no-new-privileges` forecloses that separately, and this
+    asserts both together so neither can be dropped on its own.
+    """
+    needed = {"CHOWN", "SETGID", "SETUID"}
+    for name in ("searxng", "mosquitto"):
+        service = compose["services"][name]
+        assert service["cap_drop"] == ["ALL"]
+        assert needed <= set(service.get("cap_add") or []), (
+            f"{name} drops all capabilities but its entrypoint de-escalates; "
+            f"it needs {sorted(needed)}"
+        )
+        assert "no-new-privileges:true" in service["security_opt"]

@@ -335,6 +335,17 @@ services:
       - mosquitto-data:/mosquitto/data
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+    # The entrypoint runs as root, chowns /mosquitto/data, then drops to the
+    # `mosquitto` user. `cap_drop: [ALL]` alone takes away the three
+    # capabilities it needs to do that, and the container crash-loops on
+    #
+    #     chown: /mosquitto/data: Operation not permitted
+    #     Error setting groups whilst dropping privileges
+    #
+    # Exactly what searxng below needs, and for exactly the same reason. These
+    # three are what it takes to STOP being root; they are not a way to stay
+    # root, which `no-new-privileges` above forecloses anyway.
+    cap_add: [CHOWN, SETGID, SETUID]
     healthcheck:
       # Publishing to its own broker proves it is accepting connections, which
       # a port check does not.
