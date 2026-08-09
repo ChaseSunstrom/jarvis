@@ -11,7 +11,9 @@ import ai.jarvis.app.automation.policy.Decision
 import ai.jarvis.app.automation.policy.TrustLevel
 import ai.jarvis.app.automation.triggers.TriggerEvent
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
@@ -40,8 +42,19 @@ import java.util.UUID
  *
  *  * an untrusted TRIGGER makes the whole run untrusted — every action
  *    dispatches with [TrustLevel.UNTRUSTED], no exceptions;
+ *  * an untrusted trigger PAYLOAD (a manual run whose data the server supplied)
+ *    taints the variables it fills without degrading the whole run;
  *  * an `ask_jarvis` reply taints the variable it is stored in, and any later
- *    step whose parameters mention that variable dispatches untrusted too.
+ *    step whose parameters mention that variable dispatches untrusted too;
+ *  * an ACTION RESULT taints its `store_as` variable whenever the action
+ *    declares [ActionRegistry.producesUntrustedOutput] — `http_request`,
+ *    `read_clipboard`, `read_file`, `read_calendar`, `read_screen`,
+ *    `run_shell`, contact lookups. Those results are text somebody else wrote,
+ *    and without this a task could launder a web page into a Tier-1 action's
+ *    parameters simply by parking it in a variable first;
+ *  * a CONDITION that reads a tainted variable degrades the rest of the run,
+ *    because `if {{reply}} contains "yes" then <action>` lets injected text
+ *    choose what happens even when the action's own parameters are constants.
  *
  * [ai.jarvis.app.automation.policy.PolicyEngine] turns any ALLOW into an ASK
  * for an untrusted request, so the strongest thing injected text can achieve is
@@ -78,7 +91,11 @@ class TaskRunner(
         trigger?.let { event ->
             state.variables["trigger"] = event.data + mapOf("_event" to event.triggerId)
             for ((key, value) in event.data) state.variables.putIfAbsent(key, value)
-            if (event.untrusted) {
+            // `dataTainted` is the weaker half of `untrusted`: a manual run whose
+            // payload the SERVER supplied carries model-authored text, but the
+            // trigger itself (a human tap, or an authenticated frame) is not a
+            // reason to degrade a run that never interpolates that text.
+            if (event.dataTainted) {
                 state.tainted.add("trigger")
                 state.tainted.addAll(event.data.keys)
             }
@@ -88,7 +105,16 @@ class TaskRunner(
         val outcome = try {
             executeAll(task.steps, state, depth = 0)
         } catch (t: CancellationException) {
-            recordRun(state, TaskStatus.CANCELLED, startedAt, "cancelled")
+            // NonCancellable, or nothing is written at all: `AuditLog.record`
+            // suspends on Dispatchers.IO, and a suspend in an already-cancelled
+            // coroutine throws before it does any work. Without this, a RESTART
+            // that cancels a run in flight silently discards the audit lines for
+            // every step that had already executed — and "every executed action
+            // is written to the audit log" would be false exactly when it
+            // matters most.
+            withContext(NonCancellable) {
+                recordRun(state, TaskStatus.CANCELLED, startedAt, "cancelled")
+            }
             return state.result(TaskStatus.CANCELLED, startedAt, now(), "cancelled")
         } catch (t: Throwable) {
             Log.w(TAG, "task ${task.id} crashed", t)
@@ -129,6 +155,7 @@ class TaskRunner(
         // wrapping half a task in an `if`.
         step.condition?.let { guard ->
             if (step.type != StepType.IF && step.type != StepType.REPEAT) {
+                state.noteConditionTaint(guard)
                 val outcome = ConditionEvaluator.evaluate(guard, state.context())
                 if (!outcome.passed) {
                     state.record(StepOutcome(index, step.type, TaskStatus.OK, skipped = true, note = outcome.reason))
@@ -221,7 +248,17 @@ class TaskRunner(
 
         val durationMs = SystemClock.elapsedRealtime() - startedUptime
         step.storeAs?.let { name ->
-            state.setVariable(name, resultToVariable(result), tainted = trust == TrustLevel.UNTRUSTED)
+            // Two independent reasons to taint the result. The second is the one
+            // that is easy to forget and expensive to get wrong: `read_calendar`,
+            // `http_request`, `read_clipboard`, `read_file` and `read_screen` all
+            // return text written by somebody else, so parking one in a variable
+            // and interpolating it into the NEXT step's parameters would
+            // otherwise launder untrusted content into a TRUSTED dispatch — and
+            // a Tier-1 action would then run on it with no prompt at all.
+            // `producesUntrustedOutput` answers true for an unknown id too.
+            val resultTainted = trust == TrustLevel.UNTRUSTED ||
+                registry.producesUntrustedOutput(actionId)
+            state.setVariable(name, resultToVariable(result), tainted = resultTainted)
         }
 
         state.record(
@@ -319,6 +356,7 @@ class TaskRunner(
         val outcome = if (condition == null) {
             ConditionOutcome(false, "if step has no condition")
         } else {
+            state.noteConditionTaint(condition)
             ConditionEvaluator.evaluate(condition, state.context())
         }
         state.record(StepOutcome(index, step.type, TaskStatus.OK, note = outcome.reason))
@@ -345,6 +383,7 @@ class TaskRunner(
             } else {
                 val condition = step.condition
                     ?: return StepFlow(TaskStatus.ERROR, "repeat needs either count or a condition")
+                state.noteConditionTaint(condition)
                 if (!ConditionEvaluator.evaluate(condition, state.context()).passed) break
             }
             if (iterations >= TaskLimits.MAX_REPEAT_ITERATIONS) {
@@ -524,6 +563,31 @@ class TaskRunner(
             if (key.isEmpty()) return
             variables[key] = value
             if (tainted) this.tainted.add(key) else this.tainted.remove(key)
+        }
+
+        /**
+         * Control flow is a channel too.
+         *
+         * `{"type":"if","condition":{"type":"variable","name":"reply",
+         * "op":"contains","value":"yes"},"then":[{"type":"action", …}]}` lets an
+         * `ask_jarvis` reply — or a notification body parked in a variable —
+         * decide WHICH action runs, while that action's own parameters are
+         * constants and would otherwise dispatch TRUSTED. Taint has to follow
+         * the branch, not only the interpolation, so a condition that reads a
+         * tainted variable degrades the rest of the run.
+         *
+         * Degrading the whole run rather than one branch is deliberate: the
+         * decision has already been made by the time the branch is chosen, and
+         * anything after the `if` is downstream of it.
+         */
+        fun noteConditionTaint(spec: ConditionSpec) {
+            if (runTrust == TrustLevel.UNTRUSTED) return
+            if (tainted.isEmpty()) return
+            val roots = ConditionEvaluator.variableRoots(spec)
+            if (roots.any { it in tainted }) {
+                runTrust = TrustLevel.UNTRUSTED
+                Log.i(TAG, "run $runId degraded to UNTRUSTED: a condition read a tainted variable")
+            }
         }
 
         fun context(): ConditionContext = probe.sample().withVariables(variables)

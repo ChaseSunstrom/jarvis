@@ -15,12 +15,13 @@ Code: `app/src/main/kotlin/ai/jarvis/app/automation/accessibility/`
 | `PackageDenylist.kt` | apps this will not touch | **no — pure** |
 | `UntrustedScreenContent.kt` | fencing screen text as data | **no — pure** |
 | `UiActionTiers.kt` | this module's own tier table | **no — pure** |
+| `ForegroundGuard.kt` | which app this call is really about | **no — pure** |
 
-The four pure files are mirrored by `tools/screen_prune_test.py`, which runs
+The five pure files are mirrored by `tools/screen_prune_test.py`, which runs
 without an Android SDK:
 
 ```bash
-python3 android-app/tools/screen_prune_test.py     # 22 checks
+python3 android-app/tools/screen_prune_test.py     # 36 checks
 ```
 
 ---
@@ -105,14 +106,14 @@ implements it.
 | id | params | notes |
 |---|---|---|
 | `ui_read_screen` | `include_invisible`, `max_nodes` | compact JSON + fenced text. **Untrusted.** |
-| `ui_wait_for` | `text` \| `view_id`, `timeout_ms` | polls at 4 Hz, ≤ 60 s |
+| `ui_wait_for` | `text` \| `view_id`, `timeout_ms` | polls at 4 Hz, ≤ 60 s; stops if the app leaves the foreground |
 | `take_screenshot` | `save`, `max_dimension`, `max_bytes` | `AccessibilityService.takeScreenshot`, API 30+ |
 | `ui_click` | `handle` \| `view_id` \| `content_description` \| `text`, `index`, `long_press` | `ACTION_CLICK`, then a real tap gesture if the view refuses |
 | `ui_type` | `text`, `handle` \| `view_id`, `clear` | `ACTION_SET_TEXT` on the resolved or focused field |
 | `ui_scroll` | `direction` (up/down/left/right), `amount`, `handle` | directional action, then `SCROLL_FORWARD/BACKWARD`, then a swipe |
-| `ui_swipe` | `x1`,`y1`,`x2`,`y2`,`duration_ms` | `dispatchGesture`, coordinates clamped to the display |
+| `ui_swipe` | `x1`,`y1`,`x2`,`y2`,`duration_ms` | `dispatchGesture`, coordinates clamped to the display. Not in the dispatcher's table, so not reachable from the server today |
 | `ui_back` `ui_home` `ui_open_recents` | — | `performGlobalAction` |
-| `ui_global_action` | `action` | the raw escape hatch, see below |
+| `ui_global_action` | `action` | the raw escape hatch, see below. Also not registered with the dispatcher |
 
 `ui_global_action` accepts `back`, `home`, `recents`, `notifications`,
 `quick_settings`, `power_dialog`, `toggle_split_screen`, `lock_screen`,
@@ -273,7 +274,11 @@ would have run something with no human in the loop:
   prompt that is guaranteed to be killed mid-question is worse than a clear no.
 * dispatcher has **no entry** (`ui_swipe`, `ui_global_action`) — this module
   raises the prompt itself, through the same `ApprovalGateway` the dispatcher
-  uses. There is no second consent path.
+  uses. There is no second consent path. Note that these two are **not
+  reachable today**: `ActionRegistry` only dispatches ids in its own table, so
+  a `device_command` naming `ui_swipe` comes back `unsupported`. The
+  implementation and its gate exist so that registering them later is a
+  one-line change that does not also have to invent a consent path.
 
 Tier 3 answers are never remembered, here or anywhere: `rememberable = false` on
 every request this module raises, `PolicyEngine.canRemember()` returns false for
