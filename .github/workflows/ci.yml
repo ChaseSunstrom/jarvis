@@ -38,13 +38,20 @@ jobs:
         run: |
           set -eu
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-asyncio
+          python -m pip install pytest pytest-asyncio pytest-timeout
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           if [ -f pyproject.toml ]; then python -m pip install -e . || python -m pip install .; fi
 
+      # --timeout is not belt-and-braces, it is the difference between a red
+      # build and a silent one. Two tests in jarvis-core's voice suite parked
+      # forever on 3.12 (`Server.wait_closed()` waits for accepted connections
+      # there, not just the listener), and the job hit its 20-minute limit and
+      # was reported as `cancelled` — which reads like someone pushed over it,
+      # not like a failure. 1253 tests quietly stopped being checked. With this,
+      # a hang is one named failing test and the rest of the suite still runs.
       - name: Run tests
         working-directory: ${{ matrix.suite.dir }}
-        run: python -m pytest ${{ matrix.suite.paths }} -q
+        run: python -m pytest ${{ matrix.suite.paths }} -q --timeout=120 --timeout-method=signal
 
   legacy-suites:
     name: python · tools/orchestrator/sandbox/evals
@@ -56,11 +63,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install --upgrade pip && python -m pip install pytest pytest-asyncio fastapi httpx pyyaml
-      - run: python -m pytest jarvis-orchestrator/tests jarvis-sandbox/tests -q
+      - run: python -m pip install --upgrade pip && python -m pip install pytest pytest-asyncio pytest-timeout fastapi httpx pyyaml
+      - run: python -m pytest jarvis-orchestrator/tests jarvis-sandbox/tests -q --timeout=120 --timeout-method=signal
       - name: Routing eval (runs from its own dir for imports)
         working-directory: evals
-        run: python -m pytest test_routing.py -q
+        run: python -m pytest test_routing.py -q --timeout=120 --timeout-method=signal
 
   android-specs:
     name: android · executable specs

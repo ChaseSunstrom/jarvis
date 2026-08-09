@@ -506,10 +506,45 @@ one uncovered a third that had been invisible.
   the suite passes here with and without the fix at normal speed — but it is a
   defect that produces that failure and nothing else found does.
 
+- **jarvis-core's 1253 tests had not completed on CI at all.** Found while
+  reading the run for `04bb677`: the `python · jarvis-core` job reached 80 % of
+  the dots and then sat there until the job's 20-minute limit, and the result
+  was reported as `cancelled` — which looks like somebody pushed over it, not
+  like a failure. The same thing had happened on the previous commit, and the
+  run's *other* six jobs were green, so the workflow read as passing.
+
+  Two tests in `tests/test_voice.py` parked forever. Python 3.12 changed
+  `asyncio.Server.wait_closed()` to wait for every connection the server
+  accepted rather than only for the listening socket, so a fake Wyoming handler
+  that returned with its writer still open never let the shutdown finish. On
+  3.11 — which this repo is usually developed on, and which is why the suite is
+  green in 50 s locally — `wait_closed()` returned the moment the listener was
+  shut and the missing close was invisible. CI and the Docker image are both
+  3.12.
+
+  Proved by rebuilding CI's environment locally (`python3.12 -m venv`,
+  `requirements.txt`, `pytest pytest-asyncio`), where the suite hangs the same
+  way, and reduced to a four-case table: on 3.12, closing the *client* never
+  releases the server, only closing the handler's own writer does. Fixed with
+  one `one_shot_server` helper that wraps every handler, plus a bounded
+  regression test that fails in ten seconds with a name instead of parking the
+  run. The same environment then showed `test_packaging` spending 10.5 s per
+  test inside a hardcoded ten-second wait for an absent MQTT broker; that wait
+  is now `mqtt.ready_timeout`, default 2 s, and the suite went 239 s → 88 s.
+
+  The CI-side fix is `--timeout=120 --timeout-method=signal` on every Python
+  job. A hang is now one named failing test with the rest of the suite still
+  running, instead of twenty minutes of silence labelled `cancelled`.
+
+  Local development on 3.11 while CI and the image run 3.12 is what hid it. If
+  you are changing anything that touches asyncio lifecycles, run the suite under
+  3.12 before believing it.
+
 The lesson is the one this document keeps relearning, alongside the mutation
 stub and the four-commit APK breakage: a suite that does not run is
 indistinguishable from a suite that passes, and this file is the place that
-difference has to be written down.
+difference has to be written down. Its newest form is that a *timed-out* suite
+is worse than a failing one, because CI does not colour it red.
 
 Everything else listed in this document passed on the date given.
 

@@ -33,6 +33,22 @@ DEFAULT_PORT = 1883
 DEFAULT_KEEPALIVE = 60
 DEFAULT_QOS = 0
 
+#: How long `async_connect` waits for the first successful connection before
+#: returning and letting the background runner keep retrying.
+#:
+#: This is a courtesy, not a requirement: publishes before the link is up are
+#: already handled (they log and are dropped), the runner reconnects with
+#: backoff forever, and discovery re-subscribes on every reconnect. All the wait
+#: buys is that a broker which *is* up — a loopback mosquitto answers in
+#: single-digit milliseconds — is connected before setup returns, so the first
+#: status publish lands.
+#:
+#: It used to be a hardcoded ten seconds, which is ten seconds added to every
+#: start where the broker is not up yet: a compose stack where mosquitto is
+#: still starting, a Pi where the broker unit orders after this one, and every
+#: single test that boots the shipped configuration.yaml.
+DEFAULT_READY_TIMEOUT = 2.0
+
 
 @dataclass(slots=True)
 class MqttMessage:
@@ -112,6 +128,7 @@ class MqttClientBase:
         keepalive: int = DEFAULT_KEEPALIVE,
         will: dict[str, Any] | None = None,
         tls: bool = False,
+        ready_timeout: float = DEFAULT_READY_TIMEOUT,
     ) -> None:
         self.broker = broker
         self.port = int(port)
@@ -121,6 +138,9 @@ class MqttClientBase:
         self.keepalive = int(keepalive)
         self.will = will
         self.tls = bool(tls)
+        # Clamped at zero: a negative wait would make asyncio.wait_for raise
+        # immediately, which is the same as not waiting, but by accident.
+        self.ready_timeout = max(0.0, float(ready_timeout))
 
         self.connected = False
         self.publish_count = 0
@@ -392,10 +412,17 @@ class AiomqttClient(MqttClientBase):
     async def _backend_connect(self) -> bool:
         self._closing = False
         self._task = asyncio.get_running_loop().create_task(self._runner())
-        try:
-            await asyncio.wait_for(self._ready.wait(), timeout=10)
-        except asyncio.TimeoutError:
-            _LOGGER.warning("MQTT connection to %s:%s not ready yet", self.broker, self.port)
+        if self.ready_timeout:
+            try:
+                await asyncio.wait_for(self._ready.wait(), timeout=self.ready_timeout)
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "MQTT connection to %s:%s not ready after %.1fs; continuing, "
+                    "the connection keeps retrying in the background",
+                    self.broker,
+                    self.port,
+                    self.ready_timeout,
+                )
         return True
 
     def _build_client(self) -> Any:
@@ -626,6 +653,7 @@ def create_client(config: dict[str, Any]) -> MqttClientBase:
         "keepalive": config.get("keepalive", DEFAULT_KEEPALIVE),
         "will": will,
         "tls": config.get("tls", False),
+        "ready_timeout": config.get("ready_timeout", DEFAULT_READY_TIMEOUT),
     }
 
     backend = str(config.get("backend", "auto")).lower()

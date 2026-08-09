@@ -5,12 +5,14 @@ real framing stands in for whisper/piper/openWakeWord.
 """
 
 import asyncio
+import contextlib
 import io
 import json
 import math
 import sys
 import wave
 from array import array
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -267,6 +269,66 @@ def test_encode_event_inlines_only_small_data():
     assert json.loads(rest[: header["data_length"]]) == {"text": long_text}
 
 
+@asynccontextmanager
+async def one_shot_server(handle):
+    """Run `handle` as a Wyoming server on a free port, and shut it down after.
+
+    The handler is wrapped so that its writer is *always* closed, which is not
+    a tidiness point: Python 3.12 changed `asyncio.Server.wait_closed()` to wait
+    for every connection the server accepted rather than only for the listening
+    socket. A handler that returns with its writer still open therefore makes
+    the shutdown below block forever — and no amount of closing on the client
+    side releases it, because it is the server's own transport that is still
+    attached.
+
+    On 3.11, which is what this repo is usually developed on, `wait_closed()`
+    returned the moment the listener was shut and the missing close was
+    invisible. On CI's 3.12 two tests in this file hung the entire jarvis-core
+    suite until the job's 20-minute timeout, reported as `cancelled` rather than
+    as a failure, so 1253 tests silently stopped being checked.
+    """
+
+    async def wrapped(reader, writer):
+        try:
+            await handle(reader, writer)
+        finally:
+            writer.close()
+            with contextlib.suppress(ConnectionError, OSError):
+                await writer.wait_closed()
+
+    server = await asyncio.start_server(wrapped, "127.0.0.1", 0)
+    try:
+        yield server.sockets[0].getsockname()[1]
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_the_fake_server_shuts_down_even_when_a_client_walks_away():
+    """Guard for [one_shot_server]: shutdown must not depend on the client.
+
+    Deliberately leaves the client connection open at the end of the block, the
+    exact shape that hung two tests in this file on Python 3.12. Bounded by
+    `wait_for` so a regression *fails* here in ten seconds with a name attached,
+    instead of parking the whole suite until CI's job timeout kills it.
+    """
+
+    async def handle(reader, writer):
+        await reader.readline()
+        writer.write(frame("info", {"ok": True}))
+        await writer.drain()
+
+    async def body():
+        async with one_shot_server(handle) as port:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(encode_event(WyomingEvent("describe")))
+            await writer.drain()
+            assert await reader.readline()
+            # and now walk away without closing `writer`.
+
+    await asyncio.wait_for(body(), 10)
+
+
 async def test_read_event_wraps_oversized_header_as_wyoming_error():
     """A header past the reader's limit is a protocol failure, not a ValueError."""
     from jarvis.voice.wyoming import async_read_event
@@ -278,18 +340,13 @@ async def test_read_event_wraps_oversized_header_as_wyoming_error():
         writer.write(big)
         await writer.drain()
 
-    server = await asyncio.start_server(handle, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
+    async with one_shot_server(handle) as port:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)  # default 64 KiB
         writer.write(encode_event(WyomingEvent("describe")))
         await writer.drain()
         with pytest.raises(WyomingError):
             await async_read_event(reader, 5.0)
         writer.close()
-    finally:
-        server.close()
-        await server.wait_closed()
 
 
 async def test_info_with_huge_inline_data_is_readable():
@@ -303,13 +360,8 @@ async def test_info_with_huge_inline_data_is_readable():
         writer.write(line)
         await writer.drain()
 
-    server = await asyncio.start_server(handle, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
+    async with one_shot_server(handle) as port:
         assert await wyoming_info("127.0.0.1", port, timeout=5.0) == payload
-    finally:
-        server.close()
-        await server.wait_closed()
 
 
 async def test_read_event_skips_blank_keepalive_lines():
@@ -320,18 +372,13 @@ async def test_read_event_skips_blank_keepalive_lines():
         writer.write(b"\n\n" + frame("info", {"ok": True}))
         await writer.drain()
 
-    server = await asyncio.start_server(handle, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
+    async with one_shot_server(handle) as port:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(encode_event(WyomingEvent("describe")))
         await writer.drain()
         event = await async_read_event(reader, 5.0)
         assert event is not None and event.type == "info" and event.data == {"ok": True}
         writer.close()
-    finally:
-        server.close()
-        await server.wait_closed()
 
 
 # ---------------------------------------------------------------------------
@@ -453,27 +500,19 @@ async def test_wake_detect_deadline_covers_the_whole_stream():
                     await reader.readexactly(int(header["payload_length"]))
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
-        finally:
-            writer.close()
-
-    server = await asyncio.start_server(handle, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
 
     async def endless_microphone():
         while True:
             yield silence_pcm(20)
             await asyncio.sleep(0.001)
 
-    try:
+    async with one_shot_server(handle) as port:
         client = WyomingWakeClient("127.0.0.1", port, timeout=0.4)
         started = asyncio.get_running_loop().time()
         # WyomingError first: WyomingTimeoutError also subclasses TimeoutError.
         with pytest.raises(WyomingError):
             await asyncio.wait_for(client.detect(endless_microphone()), 5.0)
         assert asyncio.get_running_loop().time() - started < 3.0
-    finally:
-        server.close()
-        await server.wait_closed()
 
 
 # ---------------------------------------------------------------------------

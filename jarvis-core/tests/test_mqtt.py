@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from jarvis.core import Jarvis  # noqa: E402
 from jarvis.integrations import mqtt as mqtt_integration  # noqa: E402
 from jarvis.integrations.mqtt.client import (  # noqa: E402
+    DEFAULT_READY_TIMEOUT,
     FakeMqttClient,
     MqttClientBase,
     NullClient,
@@ -83,6 +84,29 @@ def test_create_client_falls_back_without_a_backend():
     assert isinstance(client, MqttClientBase)
     assert client.broker == "10.0.0.1" and client.port == 8883
     assert isinstance(create_client({"backend": "null"}), NullClient)
+
+
+def test_the_wait_for_a_first_connection_is_short_and_configurable():
+    """Setup must not sit on a broker that is not up yet.
+
+    This was ten hardcoded seconds, added to every start where the broker lags
+    behind — a compose stack still bringing mosquitto up, a Pi whose broker unit
+    orders after this one, and every test that boots the shipped
+    configuration.yaml, which is where it cost jarvis-core's suite 150 seconds.
+
+    Nothing depends on the wait: publishes before the link is up are dropped
+    with a log line, and the runner reconnects with backoff regardless. It is
+    only there so a broker that *is* up — milliseconds, on loopback — is
+    connected before setup returns.
+    """
+    assert create_client({}).ready_timeout == DEFAULT_READY_TIMEOUT
+    assert DEFAULT_READY_TIMEOUT <= 3.0, "back to blocking startup on an absent broker"
+    assert create_client({"ready_timeout": 0.25}).ready_timeout == 0.25
+    # 0 means "do not wait at all", and must not become "wait forever".
+    assert create_client({"ready_timeout": 0}).ready_timeout == 0
+    # A negative value would make wait_for raise instantly, i.e. not wait, but
+    # only by accident. Clamped, so it means what it looks like it means.
+    assert create_client({"ready_timeout": -5}).ready_timeout == 0
 
 
 # --- value templates --------------------------------------------------------

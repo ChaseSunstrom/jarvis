@@ -9,6 +9,8 @@
       discovery_prefix: homeassistant
       birth_topic: jarvis/status
       will_topic: jarvis/status
+      ready_timeout: 2.0   # seconds setup waits for the first connection
+
       switch:
         - name: Desk lamp
           state_topic: stat/desk/POWER
