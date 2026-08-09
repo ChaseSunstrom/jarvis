@@ -35,6 +35,7 @@ jarvis:
   # Metres from the coordinates above that still counts as "home".
   radius: 100
   # Must match TZ in docker-compose.yml, or time triggers fire at odd hours.
+  # tests/test_packaging.py compares the two and fails if they drift.
   time_zone: Europe/London
   unit_system: metric
   currency: GBP
@@ -117,7 +118,10 @@ voice:
   tts:
     host: 127.0.0.1
     port: 10200
-    voice: en_US-lessac-medium
+    # Must equal PIPER_VOICE in docker-compose.yml — that is the voice the
+    # container actually loads. Naming a different one here makes every
+    # utterance depend on Piper being able to download it.
+    voice: en_GB-alan-medium
   wake:
     host: 127.0.0.1
     port: 10400
@@ -130,6 +134,10 @@ voice:
       voice: en_GB-alan-medium   # the voice the persona is written for
       wake_word: hey_jarvis
       language: en
+    # A second pipeline naming a voice Piper was not started with: the
+    # container downloads it on first use, so the first Guest reply is slow —
+    # and fails if the box has no internet. Change PIPER_VOICE instead if this
+    # is the one you actually want loaded.
     - name: Guest
       voice: en_US-lessac-medium
       wake_word: ok_nabu
@@ -154,7 +162,7 @@ llm:
   # What the model can see and touch. Everything not exposed is invisible to
   # every tool, read-only ones included — this is the blast radius, so keep it
   # deliberate. Locks are exposed but still gated: `lock` is in GATED_DOMAINS,
-  # so unlocking always needs a human approval outside the conversation.
+  # so `lock_control` always needs a human approval outside the conversation.
   expose:
     domains:
       - light
@@ -172,9 +180,27 @@ llm:
       - binary_sensor.front_door
       - person.chris
     exclude_entities:
-      # A model with a plausible-sounding reason should still not be able to
-      # touch this one.
-      - switch.coffee_machine
+      # A model with a plausible-sounding reason must not be able to open the
+      # garage. Exclusion is checked inside the tool registry, so this holds
+      # against every tool including the read-only ones — `get_state` on it
+      # comes back "no exposed entity", and `list_entities` never mentions it.
+      #
+      # READ THIS BEFORE ADDING TO THIS LIST. Exclusion covers tools that
+      # resolve a target: turn_on, set_cover_position, get_state and friends.
+      # It does NOT cover `run_script` and `activate_scene`, which resolve the
+      # *script or scene* entity and then execute whatever is inside it. So an
+      # entity is only really excluded while no model-runnable script or scene
+      # touches it. Nothing in scripts.yaml or scenes.yaml names the garage
+      # door as a target — only as a template read inside `script.house_status`,
+      # which is a curated report and not control. `test_excluded_entities_are_
+      # not_reachable_through_a_script_or_scene` in tests/test_packaging.py
+      # enforces that for the whole shipped configuration.
+      #
+      # `switch.coffee_machine` is deliberately NOT here, even though it is the
+      # obvious candidate: `script.good_morning` turns it on and `scene.away`
+      # turns it off, and both are model-runnable, so listing it would state a
+      # guarantee this configuration does not keep.
+      - cover.garage_door
 
   # How Jarvis decides whether to speak, text, or stay quiet. These entity ids
   # feed the `get_user_context` tool; leave out the ones you do not have.

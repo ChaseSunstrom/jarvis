@@ -31,9 +31,15 @@ tts  ──── wyoming-piper        :10200   text → 22.05 kHz WAV
 voice:
   language: en
   stt:  {host: 127.0.0.1, port: 10300}
-  tts:  {host: 127.0.0.1, port: 10200, voice: en_US-lessac-medium}
+  tts:  {host: 127.0.0.1, port: 10200, voice: en_GB-alan-medium}
   wake: {host: 127.0.0.1, port: 10400, model: hey_jarvis}
 ```
+
+`tts: voice:` has to match `PIPER_VOICE` in `docker-compose.yml` — that is the
+voice `wyoming-piper` is started with and therefore the one it has loaded.
+Naming a different one is not an error, but every utterance then depends on
+Piper fetching it, which is slow the first time and impossible offline.
+`tests/test_packaging.py` compares the two and fails if they drift.
 
 The Wyoming client is written from scratch over asyncio TCP — newline-delimited
 JSON headers with an optional binary payload — so there is no `wyoming` package
@@ -69,9 +75,12 @@ Per-pipeline keys: `name`, `id`, `language`, `voice` (alias for `tts_voice`),
 `wake_word`, `stt_engine`, `tts_engine`, `conversation_engine`. Anything else
 is kept in `extra` and passed through.
 
-`en_GB-alan-medium` is the voice the persona is written for. Piper downloads
-voices on first use into `./wyoming/piper`; the full list is in the Piper
-samples page, and the naming is `<lang>-<speaker>-<quality>`.
+`en_GB-alan-medium` is the voice the persona is written for, and the one the
+shipped compose file loads. A second pipeline naming another voice — `Guest`
+above — makes Piper download it on first use into `./wyoming/piper`: slow once,
+and a hard failure on a box with no internet. If a different voice is the one
+you actually want, change `PIPER_VOICE` rather than adding a pipeline. The full
+list is in the Piper samples page; the naming is `<lang>-<speaker>-<quality>`.
 
 ## Running a pipeline
 

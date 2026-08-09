@@ -8,6 +8,7 @@ end, right down to the binary audio frames.
 """
 
 import asyncio
+import contextlib
 import json
 import sys
 import time
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect, WebSocketState
+from starlette.websockets import WebSocketState
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -1028,8 +1029,22 @@ def test_concurrent_runs_get_distinct_handler_ids(client, jarvis, token):
             if len(handler_ids) == 2:
                 break
 
+        # End both runs rather than abandoning them mid-flight: leaving live
+        # runs for the teardown to cancel races `TestClient`, which cancels the
+        # whole app task the instant the block exits.
+        for handler_id in handler_ids.values():
+            ws.send_bytes(bytes([handler_id]))
+        ended = set()
+        for _ in range(40):
+            message = ws.receive_json()
+            if message.get("type") == "event" and message["event"]["type"] == "run-end":
+                ended.add(message["id"])
+            if ended == set(handler_ids):
+                break
+
     assert set(handler_ids) == {1, 2}
     assert len(set(handler_ids.values())) == 2  # one audio channel each
+    assert ended == {1, 2}  # and both ran to completion, independently
 
 
 def test_pipeline_run_without_a_voice_stack_uses_the_real_runner(client, token):
@@ -1377,6 +1392,8 @@ def test_ws_pipeline_run_with_a_reused_id_is_refused(client, jarvis, token):
         handshake(ws, token)
         ws.send_json({"id": 1, "type": "assist_pipeline/run", "start_stage": "stt"})
         assert ws.receive_json()["success"] is True
+        run_start = ws.receive_json()
+        handler_id = run_start["event"]["data"]["runner_data"]["stt_binary_handler_id"]
 
         ws.send_json({"id": 1, "type": "assist_pipeline/run", "start_stage": "stt"})
         for _ in range(10):
@@ -1385,6 +1402,10 @@ def test_ws_pipeline_run_with_a_reused_id_is_refused(client, jarvis, token):
                 break
         else:  # pragma: no cover - only on a regression
             raise AssertionError("no result for the second run")
+
+        # End the first run rather than leaving it for teardown to cancel.
+        ws.send_bytes(bytes([handler_id]))
+        read_until(ws, "run-end")
 
     assert message["success"] is False
     assert message["error"]["code"] == "id_reuse"
@@ -1423,7 +1444,10 @@ def test_ws_audio_is_not_starved_by_a_slow_command(client, jarvis, token):
     voice.stt.transcribe = transcribe
 
     async def blocks_until_audio_lands(call):
-        await asyncio.wait_for(audio_arrived.wait(), 10)
+        # The cap only bounds the failure case; when audio flows this returns
+        # the moment the run has consumed it.
+        with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+            await asyncio.wait_for(audio_arrived.wait(), 4)
         return None
 
     jarvis.services.register("demo", "slow", blocks_until_audio_lands)
@@ -1431,7 +1455,11 @@ def test_ws_audio_is_not_starved_by_a_slow_command(client, jarvis, token):
     pcm = b"\x11\x22" * 320
     with client.websocket_connect("/api/websocket") as ws:
         handshake(ws, token)
-        ws.send_json({"id": 1, "type": "assist_pipeline/run", "start_stage": "stt"})
+        # A short deadline on the run, so starvation shows up as a failed run
+        # rather than merely a slow one.
+        ws.send_json(
+            {"id": 1, "type": "assist_pipeline/run", "start_stage": "stt", "timeout": 1.5}
+        )
         assert ws.receive_json()["success"] is True
         run_start = ws.receive_json()
         handler_id = run_start["event"]["data"]["runner_data"]["stt_binary_handler_id"]
@@ -1489,8 +1517,13 @@ class FakeWebSocket:
     not — so the graceful-drain path can only be exercised from here.
     """
 
-    def __init__(self, incoming):
+    def __init__(self, incoming, settle=0):
         self._incoming = list(incoming)
+        # Seconds to yield between frames. At 0 every frame is delivered
+        # before the command worker gets a turn, which is the interesting case
+        # for "queued but not started"; a small value instead lets each
+        # command actually begin before the next frame lands.
+        self._settle = settle
         self.sent = []
         self.closed = None
         self.client_state = WebSocketState.CONNECTING
@@ -1501,6 +1534,8 @@ class FakeWebSocket:
         self.application_state = WebSocketState.CONNECTED
 
     async def receive(self):
+        if self._settle:
+            await asyncio.sleep(self._settle)
         if self._incoming:
             return self._incoming.pop(0)
         return {"type": "websocket.disconnect", "code": 1000}
@@ -1566,6 +1601,46 @@ async def test_ws_commands_finish_when_the_client_disconnects(jarvis, auth):
     assert finished == ["started", "queued"]
 
 
+async def test_ws_a_command_already_running_is_not_cut_off_by_the_disconnect(jarvis, auth):
+    """The in-flight case, with nothing left queued behind it.
+
+    Teardown skips the drain when the worker is idle and the queue is empty —
+    that is the ordinary disconnect and it must stay cheap. The check has to
+    notice a command that is *running*, though, or the shortcut cancels it.
+    """
+    _info, secret = await auth.create_token("inflight")
+    finished = []
+
+    async def slow(call):
+        await asyncio.sleep(0.3)
+        finished.append(call.get("marker"))
+
+    jarvis.services.register("demo", "slow", slow)
+
+    socket = FakeWebSocket(
+        [
+            text_frame({"type": "auth", "access_token": secret}),
+            text_frame(
+                {
+                    "id": 1,
+                    "type": "call_service",
+                    "domain": "demo",
+                    "service": "slow",
+                    "service_data": {"marker": "ran"},
+                }
+            ),
+            {"type": "websocket.disconnect", "code": 1000},
+        ],
+        # Long enough for the worker to pick the command up, short enough that
+        # the disconnect lands while it is still running.
+        settle=0.05,
+    )
+
+    await WebSocketHandler(jarvis, socket).run()
+
+    assert finished == ["ran"]
+
+
 async def test_ws_a_wedged_command_does_not_hang_the_disconnect(jarvis, auth, monkeypatch):
     """The drain is bounded: a service that never returns is cut loose."""
     from jarvis.api import websocket as ws_module
@@ -1587,6 +1662,42 @@ async def test_ws_a_wedged_command_does_not_hang_the_disconnect(jarvis, auth, mo
     )
 
     await asyncio.wait_for(WebSocketHandler(jarvis, socket).run(), 5)
+
+
+async def test_ws_cleanup_finishes_even_when_the_task_is_cancelled(jarvis, auth):
+    """A hard cancel — what a shutting-down server does — must still release.
+
+    Cleanup releases the bus listeners synchronously, before it awaits
+    anything, precisely so a cancellation landing during the drain cannot
+    strand them on the bus for the life of the process.
+    """
+    _info, secret = await auth.create_token("cancelled")
+
+    async def wedged(call):
+        await asyncio.sleep(30)
+
+    jarvis.services.register("demo", "wedged", wedged)
+
+    socket = FakeWebSocket(
+        [
+            text_frame({"type": "auth", "access_token": secret}),
+            text_frame({"id": 1, "type": "subscribe_events", "event_type": "doorbell"}),
+            text_frame({"id": 2, "type": "call_service", "domain": "demo", "service": "wedged"}),
+            {"type": "websocket.disconnect", "code": 1000},
+        ]
+    )
+    task = asyncio.create_task(WebSocketHandler(jarvis, socket).run())
+    # Let it reach the drain, where it is stuck behind the wedged command.
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if jarvis.bus._listeners.get("doorbell"):
+            break
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert not jarvis.bus._listeners.get("doorbell")
 
 
 async def test_ws_handler_cleans_up_after_itself(jarvis, auth):
@@ -1612,20 +1723,39 @@ async def test_ws_handler_cleans_up_after_itself(jarvis, auth):
     assert not jarvis.bus._listeners.get("doorbell")
 
 
-def test_ws_an_unauthenticated_socket_is_hung_up_on(client, monkeypatch):
-    """A peer that never authenticates must not hold the connection forever."""
+async def test_ws_an_unauthenticated_socket_is_hung_up_on(jarvis, auth, monkeypatch):
+    """A peer that never authenticates must not hold the connection forever.
+
+    Binary frames before auth were skipped and waited on again, so anyone who
+    completed the HTTP upgrade could hold a connection and a task open
+    indefinitely, having proved nothing. Driven off `TestClient` because a
+    regression here is a hang, and the deadline has to be the test's.
+    """
     from jarvis.api import websocket as ws_module
 
-    monkeypatch.setattr(ws_module, "AUTH_TIMEOUT", 0.2)
+    monkeypatch.setattr(ws_module, "AUTH_TIMEOUT", 0.1)
 
-    with client.websocket_connect("/api/websocket") as ws:
-        assert ws.receive_json()["type"] == "auth_required"
-        # Binary frames before auth used to keep the loop spinning indefinitely.
-        ws.send_bytes(b"\x01not audio")
-        message = ws.receive_json()
-        assert message["type"] == "auth_invalid"
-        with pytest.raises(WebSocketDisconnect):
-            ws.receive_json()
+    class ChattyButNeverAuthenticates(FakeWebSocket):
+        async def receive(self):
+            await asyncio.sleep(0.01)  # yields, so a deadline can fire
+            return {"type": "websocket.receive", "bytes": b"\x01not audio"}
+
+    socket = ChattyButNeverAuthenticates([])
+
+    await asyncio.wait_for(WebSocketHandler(jarvis, socket).run(), 5)
+
+    assert socket.sent[-1]["type"] == "auth_invalid"
+    assert socket.closed == 1008
+
+
+async def test_ws_a_valid_token_is_not_rushed_by_the_auth_deadline(jarvis, auth):
+    """The deadline must not be so eager that a normal client trips on it."""
+    _info, secret = await auth.create_token("prompt")
+    socket = FakeWebSocket([text_frame({"type": "auth", "access_token": secret})])
+
+    await asyncio.wait_for(WebSocketHandler(jarvis, socket).run(), 5)
+
+    assert [frame["type"] for frame in socket.sent] == ["auth_required", "auth_ok"]
 
 
 def test_post_state_rejects_attributes_that_are_not_an_object(client, token):

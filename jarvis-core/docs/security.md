@@ -101,6 +101,10 @@ inheriting the default.
 Exposure is enforced inside the tool registry, not in the prompt, so no amount
 of persuasion in a conversation changes it.
 
+One caveat, and it is easy to miss: an exclusion covers the tools that resolve
+a target, not a script or scene that already names the entity. Read "The hole
+this leaves" below before you rely on one.
+
 ## 4. The approval gate
 
 Some actions never run from a model turn. Not "run with a warning", not "run
@@ -114,9 +118,39 @@ if the user seems to have consented earlier" — never.
 
 A tool is tier 3 if it says so, **or** if its resolved targets land in
 `GATED_DOMAINS` — currently `lock` and `notify`. That second half is what stops
-a clever detour: a generic "turn on" call aimed at a lock is still a lock call,
-and it is caught after target resolution rather than by inspecting the tool's
-name.
+the obvious detour: a generic "turn on" call aimed at a lock is still a lock
+call, and it is caught after target resolution rather than by inspecting the
+tool's name.
+
+### The hole this leaves: scripts and scenes
+
+`run_script` and `activate_scene` resolve a `script.*` / `scene.*` entity and
+then execute whatever is inside it. The domain that gets checked is `script` or
+`scene`, not the domains the sequence goes on to call, so **a script that calls
+`lock.unlock` runs unattended if the model can reach the script.** The same
+applies to `exclude_entities`: excluding `switch.x` stops `turn_on` naming it
+and stops `get_state` reading it, but not a script or scene that already has it
+as a target.
+
+`Script.domains` and `Scene.domains` exist precisely to close this — they
+report every domain a sequence could call, without running it — but the two
+tools do not consult them. Until they do, the boundary is configuration:
+
+```yaml
+llm:
+  expose:
+    exclude_entities:
+      - script.unlock_for_the_cleaner   # calls lock.unlock
+      - script.text_everyone            # calls notify.*
+```
+
+The rule is: **if a script or scene reaches a gated domain in the dangerous
+direction, or touches an entity you have excluded, exclude the script or scene
+as well.** `tests/test_packaging.py` walks every shipped script and scene with
+`collect_domains` and fails if the shipped configuration breaks it. The one
+deliberate exception is `script.goodnight`, whose only gated call is
+`lock.lock` — locking a door you own is the fail-safe direction, and the test
+asserts it never unlocks.
 
 What happens:
 
@@ -134,9 +168,11 @@ What happens:
    whether or not anyone looked at it.
 
 The model never sees the approval path. It cannot call the approve endpoint —
-that is not one of its tools — and it cannot construct a request that skips the
-check, because the check happens after argument resolution in code the model
-does not participate in.
+that is not one of its tools — and for the tools that resolve targets it cannot
+construct a request that skips the check, because the check happens after
+argument resolution in code the model does not participate in. What it *can* do
+is reach a gated action indirectly, through a script or scene that already
+contains one; see the hole described above, and keep those out of `expose`.
 
 `llm.pending_requests` lists what is waiting.
 

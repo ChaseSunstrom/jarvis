@@ -205,7 +205,24 @@ are then subtracted.
 
 Exposing `lock` does not make unlocking free. `lock` and `notify` are in
 `GATED_DOMAINS`, so a model turn targeting them always returns
-`approval_required` and waits for a human. See [security.md](security.md).
+`approval_required` and waits for a human.
+
+Both of those rules are checked when a tool *resolves a target*, which
+`run_script` and `activate_scene` do not do for the contents of the macro they
+run — they resolve the `script.*`/`scene.*` entity and then execute it. So a
+script that unlocks a door, or that names an entity you excluded, is reachable
+unless you exclude the script itself:
+
+```yaml
+exclude_entities:
+  - switch.coffee_machine
+  - script.good_morning      # ...because it turns the coffee machine on
+  - scene.away               # ...and this turns it off
+```
+
+Read [security.md](security.md#the-hole-this-leaves-scripts-and-scenes) before
+relying on an exclusion. The shipped `config/configuration.yaml` excludes
+`cover.garage_door` precisely because no shipped macro touches it.
 
 ### `user_context:` — how Jarvis decides to reach you
 

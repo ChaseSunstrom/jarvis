@@ -105,6 +105,15 @@ class TypeText(Action):
                 f"text is {len(text)} characters; the limit is {MAX_TYPE_CHARS}"
             )
         interval = max(0.0, min(self.float_param(params, "interval_s", 0.01), 1.0))
+        # The dispatcher's timeout cancels the *wrapper*, not the worker thread:
+        # a run that outlives its budget carries on typing into whatever is
+        # focused long after the server has been told the action timed out, and
+        # after the command slot has been freed for a second type_text. So the
+        # keystroke interval is squeezed to whatever finishes inside the budget
+        # rather than trusted from the parameters (4000 characters at the
+        # maximum interval would be an hour of typing under a 120s cap).
+        budget = max(1.0, self.timeout_s - 5.0)
+        interval = min(interval, budget / max(1, len(text)))
         try:
             gui.write(text, interval=interval)
             if self.bool_param(params, "press_enter"):

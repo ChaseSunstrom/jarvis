@@ -54,7 +54,8 @@ data class TriggerEvent(
  *
  * Supported filters, all optional:
  *
- *  * `packages`: `["com.example", "*"]` — matches `data["package"]`.
+ *  * `packages`: `["com.example", "*"]` — matches `data["package"]`. REQUIRED,
+ *    and required to be non-empty, for `notification_posted`; see [matches].
  *  * `id`: `"home"` — matches `data["id"]` (geofences, manual triggers).
  *  * `equals`: `{"state": "connected"}` — every pair must match, compared as
  *    trimmed lower-case strings so `1` and `"1"` agree.
@@ -70,6 +71,22 @@ object TriggerMatch {
 
     fun matches(specType: String, specParams: Map<String, Any?>, event: TriggerEvent): Boolean {
         if (specType.trim() != event.triggerId) return false
+
+        // `notification_posted` is the one trigger where "no filter" cannot mean
+        // "everything". The listener's allow-list is built from the packages
+        // tasks NAME, so a task that names none contributes nothing to it — but
+        // it would still match every notification some OTHER task's package let
+        // through, read its title and body into its own variables, and (with
+        // trigger reporting on) push them to the server. A task must not be able
+        // to read a bank alert it never asked for by leaving a field blank.
+        // An empty list is refused for the same reason a missing key is: it
+        // names nobody. `["*"]` is honoured, because opting into the firehose
+        // is a thing the user is allowed to do and `docs/automations.md` calls
+        // it out as exactly that.
+        if (event.triggerId == TriggerIds.NOTIFICATION_POSTED) {
+            val named = (specParams["packages"] ?: specParams["package"]).asStringList()
+            if (named.isEmpty()) return false
+        }
 
         for ((key, value) in specParams) {
             if (key !in KNOWN_FILTERS) {

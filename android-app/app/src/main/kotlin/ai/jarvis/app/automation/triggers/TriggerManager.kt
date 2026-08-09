@@ -2,6 +2,7 @@ package ai.jarvis.app.automation.triggers
 
 import android.content.Context
 import android.util.Log
+import ai.jarvis.app.automation.notify.NotificationBus
 import ai.jarvis.app.automation.policy.TrustLevel
 import ai.jarvis.app.automation.tasks.TaskDefinition
 import ai.jarvis.app.automation.tasks.TaskJson
@@ -103,6 +104,15 @@ class TriggerManager(
         IntervalRouter.clear()
         ManualTriggers.clear()
         ForegroundAppEvents.clear()
+        // The notification listener is bound by the SYSTEM, not by us, so it
+        // outlives this service. Emptying its allow-list is the only way
+        // "stopped" means stopped for the most invasive grant in the app —
+        // otherwise it carries on reading every allow-listed message's extras
+        // and fencing them for a bus nobody is listening to.
+        //
+        // This is why `JarvisAutomationService.rebuild` refills the list AFTER
+        // starting the triggers rather than before: `start` calls `stop` first.
+        NotificationBus.updateAllowedPackages(emptySet())
         unavailable = emptyMap()
     }
 

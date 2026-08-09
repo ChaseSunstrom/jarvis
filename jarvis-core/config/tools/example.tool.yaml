@@ -19,8 +19,13 @@
 #                  a request id, and waits for a human to approve it out of
 #                  band. Use for anything that spends money, sends a message,
 #                  opens a door, or cannot be undone.
-#   A tool whose targets land in a gated domain (lock, notify) is treated as
-#   tier 3 regardless of what you write here.
+#   The automatic "targets land in a gated domain (lock, notify) => tier 3"
+#   rule belongs to the built-in entity tools, which resolve entity ids before
+#   they act. A YAML tool has no targets to resolve — it makes an HTTP request
+#   — so nothing here is upgraded for you. If the endpoint opens a door or
+#   sends a message, say so yourself: set `tier: 3`, or add a top-level
+#   `domain: lock` / `domain: notify`, either of which makes the registry hold
+#   the call for a human.
 #
 # CREDENTIALS
 #   Manifests in this directory are read with a plain YAML parser, so !secret
@@ -40,7 +45,11 @@ service:
   method: GET
   # photon, from docker-compose.yml. Entirely offline: the geocoding index is
   # on this machine, so a location lookup never leaves the house.
-  url: "http://127.0.0.1:2322/api?q={{ query }}&limit={{ limit }}&lang=en"
+  # `| default(5)` matters: an optional field the model leaves out is absent
+  # from the render context, so a bare {{ limit }} becomes the empty string and
+  # the request goes out as `&limit=&lang=en`. Give every optional field a
+  # default in the template, not only an `example:`.
+  url: "http://127.0.0.1:2322/api?q={{ query }}&limit={{ limit | default(5) }}&lang=en"
   timeout: 10
   fields:
     query:
@@ -48,7 +57,7 @@ service:
       example: Kings Cross station
       required: true
     limit:
-      description: How many candidates to return, 1 to 10.
+      description: How many candidates to return, 1 to 10. Defaults to 5.
       type: integer
       example: 5
 

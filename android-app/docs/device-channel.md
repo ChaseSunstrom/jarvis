@@ -26,10 +26,12 @@ Implementation: `app/src/main/kotlin/ai/jarvis/app/channel/`.
 | `CommandGate.kt` | dedupe, per-action lock, concurrency cap | **no — pure** |
 | `Redact.kt` | keeps the token out of logs | **no — pure** |
 
-The four pure rules that matter are mirrored in Python and actually executed:
+The rules that matter — the cleartext classifier, the tier raise, the rate
+limit, the handshake, the derived socket URL — are mirrored in Python and
+actually executed:
 
 ```bash
-python3 android-app/tools/channel_protocol_test.py     # 22 checks
+python3 android-app/tools/channel_protocol_test.py     # 33 checks
 ```
 
 ---
@@ -122,6 +124,24 @@ backs off.
 {"id": 1, "type": "result", "success": false,
  "error": {"code": "unknown_command", "message": "unknown command 'jarvis/device/register'"}}
 ```
+
+**What counts as an acknowledgement.** All four of these must hold before the
+session is marked registered, and they are checked in this order:
+
+1. the frame carries an `id` that is a JSON **integer** — not absent, not
+   `null`, not the string `"1"`;
+2. the socket has seen `auth_ok`;
+3. this session actually sent a register frame (it has an allocated id);
+4. the frame's `id` equals that one.
+
+None of that is pedantry. Reading the id with a "-1 if missing" default made the
+bare frame `{"type":"result","success":true}` — which costs nothing to send and
+needs no token — match a fresh session's unset register id, and the channel went
+straight to READY and started accepting `device_command`. On a LAN, where the
+transport rule permits cleartext `ws://`, anything that can answer for the
+configured host (mDNS spoofing a `.local` name, ARP, a recycled DHCP lease)
+could have driven the phone without ever holding the bearer token.
+`tools/channel_protocol_test.py` mirrors the state machine and asserts it.
 
 ### 1.3 Commands
 
@@ -503,8 +523,29 @@ that can be made to disagree with the resolver is a bypass waiting to happen.
 `1::` is not loopback despite reducing to `1`. `fec0::/10` (deprecated
 site-local) is not private space.
 
+A dotted quad on the end of an IPv6 address is read as an IPv4 address **only**
+under the two prefixes where it is one: `::a.b.c.d` and `::ffff:a.b.c.d`, in the
+compressed or the long-hand `0:0:0:0:0:ffff:` spelling. Anywhere else those are
+simply the low 32 bits of an ordinary address, and classifying by them was a
+cleartext bypass: `2001:4860:4860::10.0.0.1` is globally routable, but its tail
+reads `10.0.0.1`, so `http://[2001:4860:4860::10.0.0.1]:8123` classified as
+RFC1918 and the bearer token would have gone out in the clear.
+`fd00::192.168.1.1` is still a ULA and still private, because the *address* is,
+not because the tail says so.
+
+IPv6 literals also survive the trip to the socket URL now. `java.net.URI`
+reports an IPv6 host with its brackets and `ServerUrl.websocketUrl` brackets
+anything containing a colon, so `http://[fd00::1]:8123` used to derive
+`ws://[[fd00::1]]:8123/api/websocket` — unparseable, refused by the transport
+check, and the channel sat in BLOCKED forever. `ChannelConfig` collapses the
+duplicate brackets in the authority before the URL is used.
+
 The one escape hatch is a per-host acknowledgement the **user** types on the
-device. Nothing on the network can add to that list.
+device — the `channel_cleartext_ack` key in the `jarvis_config` prefs, read by
+`ChannelConfig.from`. Nothing on the network can add to that list, and nothing
+in the app writes it yet: no settings screen exposes it, so today the list is
+always empty and the rule above has no exception at all. If a settings screen
+ever grows the field, it is the only thing that may write that key.
 
 There is a second, independent layer: `res/xml/network_security_config.xml`
 denies cleartext by default and permits it only for hosts listed there. Both
@@ -519,8 +560,12 @@ never dispatched; they are answered with `error` and a retry hint and logged as
 a warning. (Answered rather than silently dropped, so the server does not hang
 waiting for a `device_result` that will never come.)
 
-The per-action lock and the global cap of 4 bound it further: no more than one
-`ui_type` at a time, no more than four consent prompts alive at once.
+The per-action lock and the global cap bound it further: no more than one
+`ui_type` at a time, no more than four consent prompts alive at once. The cap is
+`ChannelConfig.maxConcurrentCommands` (4), pushed into the gate on every
+reconnect — the gate outlives a socket, because that is what keeps a redelivered
+`sms_send` from being sent twice, so the cap is set on it rather than baked in
+at construction.
 
 ### 5.6 It cannot make the phone act on text it fetched
 
@@ -662,18 +707,24 @@ channel.describe()      // "ready · 192.168.2.10 · 47 actions"
 ## 7. Tests
 
 ```bash
-python3 android-app/tools/channel_protocol_test.py          # 22 checks, no network
+python3 android-app/tools/channel_protocol_test.py          # 33 checks, no network
 python3 -m pytest android-app/tools/channel_protocol_test.py -q
 ```
 
-It mirrors and executes three of the pure rules — `isLanHost` and the cleartext
-policy (55 host cases, 19 URL cases), the tier-raise-only rule (exhaustive over
-every action × every claimed tier, including malformed ones), and the token
-bucket (burst, sustained rate, fractional refill, a backwards clock) — and then
-greps the Kotlin to catch one copy being edited without the other: the IP ranges
-in `LanHost.kt`, the absence of a `min` in `TierGuard.kt`, and the presence in
-`JarvisChannel.kt` of `followRedirects(false)`, the per-command host pin, the
-tier raise, the admission gate and the hard timeout.
+It mirrors and executes the pure rules — `isLanHost` and the cleartext policy
+(63 host cases, 22 URL cases), the tier-raise-only rule (exhaustive over every
+action × every claimed tier, including malformed ones), the token bucket (burst,
+sustained rate, fractional refill, a backwards clock), the handshake state
+machine that decides when a session may accept a `device_command`, and the IPv6
+authority repair — and then greps the Kotlin to catch one copy being edited
+without the other: the IP ranges and the `::ffff:` marker in `LanHost.kt`, the
+absence of a `min` in `TierGuard.kt`, and the presence in `JarvisChannel.kt` of
+`followRedirects(false)`, the per-command host pin, the tier raise, the
+admission gate, the configured concurrency cap, the hard timeout, the
+`authed && registered` command gate and the whole-backlog event flush.
+
+The greps are mutation-checked: breaking each invariant in a scratch copy of the
+Kotlin makes the corresponding assertion fail.
 
 Not covered here, and worth instrumented tests when a device is available:
 the reconnect state machine under real socket loss, and the interaction between

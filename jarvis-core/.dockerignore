@@ -1,8 +1,21 @@
 # Keep the build context to what the Dockerfile actually COPYs: requirements
-# and the jarvis package. The main reason is not image size (nothing else is
-# copied in anyway) but that ./config holds secrets.yaml and the recorder
-# database, and there is no reason to hand those to the build daemon.
+# and the jarvis package.
+#
+# Two reasons, and the second one is the load-bearing one.
+#
+# 1. ./config holds secrets.yaml and the recorder database. There is no reason
+#    to hand those to the build daemon.
+# 2. Every bind mount in docker-compose.yml is a *relative* path, so its host
+#    side lives inside this build context and fills up as the stack runs:
+#    ./photon is a geocoding index (tens of GB for the planet extract),
+#    ./wyoming/whisper and ./wyoming/piper are downloaded models, ./ollama is
+#    model weights. Without the entries below, `docker compose build` after the
+#    first run uploads all of that to the daemon before it reads the Dockerfile.
+#    Add a matching line here whenever you add a relative bind mount.
 config/
+photon/
+wyoming/
+ollama/
 tests/
 docs/
 *.md

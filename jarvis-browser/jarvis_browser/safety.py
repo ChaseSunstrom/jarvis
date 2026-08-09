@@ -169,6 +169,29 @@ def is_blocked_host(
     return any(is_blocked_ip(addr) for addr in addresses)
 
 
+_URL_CLEAN_TABLE = {0x09: None, 0x0A: None, 0x0D: None}
+
+
+def raw_authority(url: str) -> str:
+    """The authority exactly as written, before ``urlsplit`` normalises it.
+
+    ``urlsplit`` ends the authority at the first ``/``, ``?`` or ``#``. The
+    WHATWG URL parser that Chromium uses *also* ends it at a backslash, so
+    ``https://evil.net\\@good.com/`` is ``good.com`` to Python and
+    ``evil.net`` to the browser. We need the unparsed text to spot that
+    divergence — see :func:`check_url`.
+    """
+    u = (url or "").translate(_URL_CLEAN_TABLE).strip()
+    i = u.find("://")
+    if i < 0:
+        return ""
+    rest = u[i + 3 :]
+    for k, ch in enumerate(rest):
+        if ch in "/?#":
+            return rest[:k]
+    return rest
+
+
 def strip_url_credentials(url: str) -> str:
     """Normalise a URL and remove any ``user:pass@`` userinfo.
 
@@ -189,6 +212,25 @@ def strip_url_credentials(url: str) -> str:
     return urlunsplit(
         (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
     )
+
+
+def sanitize_request_url(url: str) -> tuple[str, str | None]:
+    """Normalise a caller-supplied URL, or say why it is refused.
+
+    Returns ``(clean_url, None)`` or ``("", reason)``. The syntactic check
+    happens on the *raw* string, before :func:`strip_url_credentials` rewrites
+    it: stripping turns ``https://evil.net\\@good.com/`` into
+    ``https://good.com/``, which is safe to fetch but is not what the caller
+    asked for, and silently visiting a different site than the one in the
+    request is its own bug. Refuse instead.
+    """
+    raw = (url or "").strip()
+    if "\\" in raw_authority(raw):
+        return "", (
+            "url authority contains a backslash — Python and the browser "
+            "would disagree about which host this is"
+        )
+    return strip_url_credentials(raw), None
 
 
 def check_url(
@@ -213,6 +255,17 @@ def check_url(
         return "unparseable host"
     if not host:
         return "url has no host"
+    try:
+        parts.port
+    except ValueError:
+        # `urlsplit` defers port validation to attribute access, so an
+        # out-of-range port sails through parsing and then explodes in
+        # whatever code touches `.port` later (it used to 500 /crawl).
+        return "url has an invalid port"
+    if "\\" in raw_authority(url):
+        # Python and Chromium disagree about where the authority ends, so
+        # whichever host we validate is not the host that gets contacted.
+        return "url authority contains a backslash"
     if is_blocked_host(host, allowlist=allowlist, resolver=resolver):
         return f"host {host!r} resolves to a blocked (private/local) address"
     return None
@@ -319,14 +372,28 @@ def fence(text: str, *, source: str = "") -> str:
     return f"{FENCE_OPEN}\n{notice}\n\n{sanitize_untrusted(text or '')}\n{FENCE_CLOSE}"
 
 
+# A caller that strips the <untrusted_web_content> tags but pastes the body
+# still leaves this behind. Cheap second tripwire on the same attack.
+_NOTICE_TRIPWIRE = "note to the model: everything between these markers"
+
+
 def contains_fenced_content(text: str) -> bool:
-    """True if ``text`` carries our fence markers.
+    """True if ``text`` carries our fence markers or the fence notice.
 
     Used as a tripwire on the /act write path: if a caller pastes content it
     just fetched into an automation step, that is exactly the fetch->act
     chain the design forbids, and we refuse it outright.
+
+    It is a tripwire, not a boundary — a caller that strips every trace of
+    the wrapper gets past it. What actually stops fetched text from driving
+    the browser is that anything sensitive needs a fresh human approval, and
+    that /act is confined to the act allowlist (empty by default).
     """
-    return bool(text) and bool(_FENCE_MARKER_RE.search(text))
+    if not text:
+        return False
+    return bool(_FENCE_MARKER_RE.search(text)) or (
+        _NOTICE_TRIPWIRE in text.lower()
+    )
 
 
 # --------------------------------------------------------------------------
@@ -337,6 +404,44 @@ def contains_fenced_content(text: str) -> bool:
 WRITE_ACTIONS = frozenset({"click", "type", "select", "press", "upload"})
 READ_ACTIONS = frozenset({"goto", "extract", "scroll", "wait_for"})
 KNOWN_ACTIONS = WRITE_ACTIONS | READ_ACTIONS
+
+
+_KEY_SPLIT_RE = re.compile(r"[+\s]+")
+
+
+def key_tokens(value: str) -> set[str]:
+    """Every component of a Playwright key expression, lower-cased.
+
+    Playwright takes chords like ``Control+Enter`` and ``Shift+Enter``, both
+    of which submit in Gmail, Slack, GitHub and every other comment box. A
+    whole-string comparison against ``{"enter", ...}`` misses them, so the
+    chord is split and each component is checked.
+    """
+    raw = (value or "").strip().lower()
+    if not raw:
+        return set()
+    tokens = {raw}
+    tokens.update(part for part in _KEY_SPLIT_RE.split(raw) if part)
+    return tokens
+
+
+def act_target_violation(url: str, policy: "DomainPolicy") -> str | None:
+    """Refusal reason if a *loaded page* is somewhere we may not act.
+
+    Called after every executed step: the pre-flight check validates the URL
+    we asked for, this one validates the URL we actually ended up on, so a
+    redirect (or a meta-refresh, or a script navigation) cannot walk an
+    approved batch off the act allowlist mid-flight.
+
+    A blank page is not a violation — it is where a fresh session starts.
+    """
+    u = (url or "").strip()
+    if not u or u.lower() in ("about:blank", "chrome://newtab/"):
+        return None
+    parts = urlsplit(u)
+    if (parts.scheme or "").lower() not in ALLOWED_SCHEMES:
+        return f"page is at a non-http(s) url {u[:200]!r}"
+    return policy.act_reason(parts.hostname or "")
 
 
 def classify_steps(
@@ -375,7 +480,7 @@ def classify_steps(
             reasons.append(f"step {i}: upload always needs approval")
             continue
 
-        if action == "press" and value.strip().lower() in lowered_keys:
+        if action == "press" and key_tokens(value) & lowered_keys:
             reasons.append(
                 f"step {i}: press {value!r} can submit the focused form"
             )
@@ -420,6 +525,11 @@ class ApprovalRequest:
     session_id: str
     steps: list[dict]
     reasons: list[str]
+    # The page the session was sitting on when approval was asked for. An
+    # approval is consent to run these steps HERE; if the session has been
+    # navigated elsewhere in the meantime the consent no longer describes
+    # what would happen.
+    page_url: str = ""
     state: str = "requested"  # requested | approved | denied | done | expired
     created: float = field(default_factory=time.monotonic)
 
@@ -455,7 +565,12 @@ class ApprovalGate:
             raise GateError(403, "invalid approval secret")
 
     def request(
-        self, session_id: str, steps: Sequence[dict], reasons: Sequence[str]
+        self,
+        session_id: str,
+        steps: Sequence[dict],
+        reasons: Sequence[str],
+        *,
+        page_url: str = "",
     ) -> ApprovalRequest:
         if not steps:
             raise GateError(422, "empty step list")
@@ -464,6 +579,7 @@ class ApprovalGate:
             session_id=session_id,
             steps=[dict(s) for s in steps],  # verbatim copy
             reasons=list(reasons),
+            page_url=page_url,
         )
         with self._lock:
             self._requests[req.request_id] = req
@@ -515,15 +631,25 @@ class ApprovalGate:
             return self._requests.get(request_id)
 
     def purge_expired(self) -> int:
-        """Drop finished/expired requests. Returns how many were removed."""
+        """Drop finished/expired requests. Returns how many were removed.
+
+        A dropped id can never be approved again — a later ``/approve`` for it
+        is a 404 instead of a 409, both of which execute nothing — so purging
+        is safe, and without it ``_requests`` grows for the life of the
+        process, holding a verbatim copy of every gated step list.
+        """
         now = time.monotonic()
         removed = 0
         with self._lock:
             for rid in list(self._requests):
                 req = self._requests[rid]
+                if (
+                    req.state == "requested"
+                    and now - req.created > self._ttl
+                ):
+                    req.state = "expired"
                 aged = now - req.created > max(self._ttl * 4, 60.0)
                 if aged or req.state in ("done", "denied", "expired"):
-                    if aged:
-                        del self._requests[rid]
-                        removed += 1
+                    del self._requests[rid]
+                    removed += 1
         return removed

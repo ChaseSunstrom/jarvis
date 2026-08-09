@@ -21,11 +21,13 @@ this service exists to prevent).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hmac
 import logging
 from contextlib import asynccontextmanager
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -44,6 +46,7 @@ from .safety import (
     classify_steps,
     contains_fenced_content,
     fence,
+    sanitize_request_url,
     sanitize_untrusted,
     strip_url_credentials,
 )
@@ -179,9 +182,18 @@ def create_app(
             app.state.searcher = SearxngSearcher(s.searxng_url)
         if app.state.robots_fetch is None:
             app.state.robots_fetch = _make_robots_fetch(s)
+        # Nothing else ever reaps: SessionManager.reap ran only inside
+        # create(), so an expired session kept its browser context and its
+        # profile dir alive until someone happened to open a new one, and the
+        # gate's request table grew for the life of the process.
+        janitor = asyncio.create_task(_janitor(app, s.janitor_interval))
+        app.state.janitor = janitor
         try:
             yield
         finally:
+            janitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await janitor
             # Every session dir is wiped on the way out — no cookies survive
             # a restart.
             await app.state.sessions.close_all()
@@ -208,22 +220,70 @@ def create_app(
     return app
 
 
+async def _janitor(app: FastAPI, interval: float) -> None:
+    """Close expired sessions and drop finished approvals, forever."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            closed = await app.state.sessions.reap()
+            purged = app.state.gate.purge_expired()
+            if closed or purged:
+                log.info("janitor: %d sessions, %d approvals", closed, purged)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - defensive
+            log.exception("janitor pass failed")
+
+
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+MAX_ROBOTS_REDIRECTS = 3
+
+
+async def get_with_checked_redirects(
+    client, url: str, *, allowlist=(), max_redirects: int = MAX_ROBOTS_REDIRECTS
+):
+    """GET ``url``, re-running the SSRF check on every redirect hop.
+
+    ``follow_redirects=True`` would hand the whole chain to httpx, which
+    checks nothing: ``http://public.example/robots.txt`` -> 302 ->
+    ``http://127.0.0.1:8123/`` is a blind SSRF straight at Home Assistant on
+    the same host. Each hop is therefore validated before it is requested.
+
+    Returns the final 2xx response, or ``None`` if any hop is refused, the
+    chain is too long, or the status is not 200.
+    """
+    for _ in range(max_redirects + 1):
+        reason = check_url(url, allowlist=allowlist)
+        if reason:
+            log.warning("refused robots hop %s: %s", url, reason)
+            return None
+        resp = await client.get(url)
+        if resp.status_code in REDIRECT_STATUSES:
+            location = resp.headers.get("location")
+            if not location:
+                return None
+            url = urljoin(url, location)
+            continue
+        return resp if resp.status_code == 200 else None
+    return None
+
+
 def _make_robots_fetch(s: Settings):
     """Fetch robots.txt over plain HTTP — no browser, no JS, SSRF-checked."""
 
     async def _fetch(url: str) -> str | None:
-        if check_url(url, allowlist=s.lan_allowlist):
-            return None
         try:
             async with httpx.AsyncClient(
                 timeout=10.0,
-                follow_redirects=True,
+                follow_redirects=False,   # every hop is re-checked by hand
                 headers={"User-Agent": s.user_agent},
             ) as client:
-                resp = await client.get(url)
+                resp = await get_with_checked_redirects(
+                    client, url, allowlist=s.lan_allowlist
+                )
         except httpx.HTTPError:
             return None
-        if resp.status_code != 200:
+        if resp is None:
             return None
         return resp.text[:512_000]
 
@@ -255,7 +315,10 @@ def _register_handlers(app: FastAPI) -> None:
 def _guard_read(app: FastAPI, url: str) -> str:
     """SSRF + read-policy check. Returns the credential-stripped URL."""
     s: Settings = app.state.settings
-    url = strip_url_credentials(url.strip())
+    url, reason = sanitize_request_url(url)
+    if reason:
+        audit.warning("blocked read reason=%s", reason)
+        raise HTTPException(403, f"refused: {reason}")
     reason = check_url(url, allowlist=s.lan_allowlist)
     if reason:
         audit.warning("blocked read url=%s reason=%s", url, reason)
@@ -271,7 +334,10 @@ def _guard_read(app: FastAPI, url: str) -> str:
 def _guard_act(app: FastAPI, url: str) -> str:
     """SSRF + the stricter act policy. Approval can never bypass this."""
     s: Settings = app.state.settings
-    url = strip_url_credentials(url.strip())
+    url, reason = sanitize_request_url(url)
+    if reason:
+        audit.warning("blocked act reason=%s", reason)
+        raise HTTPException(403, f"refused: {reason}")
     reason = check_url(url, allowlist=s.lan_allowlist)
     if reason:
         audit.warning("blocked act url=%s reason=%s", url, reason)
@@ -281,6 +347,33 @@ def _guard_act(app: FastAPI, url: str) -> str:
         audit.warning("blocked act url=%s reason=%s", url, reason)
         raise HTTPException(403, f"refused: {reason}")
     return url
+
+
+def _guard_final_url(app: FastAPI, requested: str, final_url: str) -> str:
+    """Re-apply the read policy to where a redirect actually landed.
+
+    The initial URL is checked before we navigate, but a 302 is chosen by the
+    site, not by us. Chromium's route filter still blocks private addresses,
+    so this closes the other half: an allowlisted host must not be able to
+    bounce us onto a host the operator never allowed.
+    """
+    s: Settings = app.state.settings
+    final = strip_url_credentials((final_url or "").strip())
+    if not final:
+        return requested
+    if _host_of(final) == _host_of(requested):
+        return final
+    reason = check_url(final, allowlist=s.lan_allowlist) or (
+        app.state.policy.read_reason(_host_of(final))
+    )
+    if reason:
+        audit.warning(
+            "blocked redirect %s -> %s reason=%s", requested, final, reason
+        )
+        raise HTTPException(
+            403, f"refused: redirect to {final[:200]!r} — {reason}"
+        )
+    return final
 
 
 def _host_of(url: str) -> str:
@@ -340,8 +433,9 @@ def _register_routes(app: FastAPI) -> None:
         result = await app.state.backend.fetch(
             url, render=body.render, javascript=s.javascript_enabled
         )
-        audit.info("fetch url=%s status=%s", url, result.status)
-        payload = _page_payload(result.html, result.final_url or url, s)
+        final = _guard_final_url(app, url, result.final_url or url)
+        audit.info("fetch url=%s final=%s status=%s", url, final, result.status)
+        payload = _page_payload(result.html, final, s)
         payload["status"] = result.status
         payload["requested_url"] = url
         return payload
@@ -492,10 +586,12 @@ def _register_routes(app: FastAPI) -> None:
         )
         if reasons:
             # NOTHING runs. Not the sensitive step, not the steps before it.
-            req = app.state.gate.request(session_id, steps, reasons)
+            req = app.state.gate.request(
+                session_id, steps, reasons, page_url=session.current_url
+            )
             audit.warning(
-                "act gated session=%s request_id=%s reasons=%s",
-                session_id, req.request_id, reasons,
+                "act gated session=%s request_id=%s page=%s reasons=%s",
+                session_id, req.request_id, req.page_url, reasons,
             )
             return {
                 "status": "approval_required",
@@ -504,6 +600,7 @@ def _register_routes(app: FastAPI) -> None:
                 "reasons": reasons,
                 # Verbatim, so the consent prompt shows the truth.
                 "steps": req.steps,
+                "page_url": req.page_url,
                 "expires_in": s.approval_ttl,
                 "executed": False,
             }
@@ -529,6 +626,24 @@ def _register_routes(app: FastAPI) -> None:
             # Re-validate: an approval is permission to run THESE steps, not
             # permission to skip the domain policy.
             session = app.state.sessions.get(req.session_id)
+            # ...and it is permission to run them on the page the human was
+            # shown. If an ungated /act navigated the session elsewhere in
+            # the meantime, the consent no longer describes what would
+            # happen, so it is void rather than retargeted.
+            starts_with_goto = (
+                bool(req.steps) and req.steps[0].get("action") == "goto"
+            )
+            if not starts_with_goto and session.current_url != req.page_url:
+                audit.error(
+                    "act APPROVAL VOID request_id=%s page moved %s -> %s",
+                    req.request_id, req.page_url, session.current_url,
+                )
+                raise HTTPException(
+                    409,
+                    "the session has navigated since approval was requested "
+                    f"({req.page_url!r} -> {session.current_url!r}); "
+                    "re-request approval",
+                )
             _guard_act_targets(app, session, req.steps)
             audit.warning(
                 "act APPROVED request_id=%s session=%s steps=%s",
@@ -563,14 +678,18 @@ def _reject_fenced(steps: list[dict]) -> None:
 
 
 def _guard_act_targets(app: FastAPI, session, steps: list[dict]) -> None:
-    """Every page these steps could touch must be on the act_allowlist."""
-    navigations = [
-        str(step.get("url", ""))
-        for step in steps
-        if step.get("action") == "goto"
-    ]
-    for url in navigations:
-        _guard_act(app, url)
+    """Every page these steps could touch must be on the act_allowlist.
+
+    The guarded URL is written BACK into the step. The browser must navigate
+    the exact string the policy approved, never the raw one: Python reads
+    ``https://evil.net\\@allowed.com/`` as ``allowed.com`` while Chromium
+    reads it as ``evil.net``, and userinfo we strip for the check would
+    otherwise still be sent to the site. Doing this before the steps are
+    classified and stored means the consent prompt shows what will run.
+    """
+    for step in steps:
+        if step.get("action") == "goto":
+            step["url"] = _guard_act(app, str(step.get("url") or ""))
 
     interacts_with_current = any(
         step.get("action") != "goto" for step in steps
@@ -595,6 +714,11 @@ async def _execute(
 ) -> dict:
     """The ONLY path that hands steps to a browser."""
     s: Settings = app.state.settings
+    if request_id is not None and not app.state.gate.is_executable(request_id):
+        # Belt and braces: the gate — not the caller, and not the fact that
+        # we got here — decides whether stored steps may run.
+        audit.error("refused to execute non-approved request %s", request_id)
+        raise HTTPException(409, "approval is not in an executable state")
     session = app.state.sessions.get(session_id)
     outcomes, page = await app.state.backend.act(session_id, steps)
 

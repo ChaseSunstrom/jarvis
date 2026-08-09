@@ -14,6 +14,7 @@ whole reason this is not left to ``urllib``'s own redirect handler.
 from __future__ import annotations
 
 import json as jsonlib
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +34,34 @@ METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
 #: Headers the caller may not set: they either authenticate as someone else or
 #: rewrite the request's identity in a way the guard cannot see.
 _BLOCKED_HEADERS = {"host", "content-length", "connection", "transfer-encoding", "cookie"}
+
+#: Header names that carry a credential. They are allowed on the *first* hop —
+#: talking to an authenticated API is the point — but they are dropped the
+#: moment a redirect crosses to another origin, because an open redirect on a
+#: site you hold a token for should not hand that token to whoever the redirect
+#: names. urllib's own redirect handler does not do this, which is one more
+#: reason redirects are followed by hand here.
+_CREDENTIAL_HEADER = re.compile(
+    r"(authorization|authentication|token|secret|api[-_]?key|password|"
+    r"credential|cookie|session|bearer)",
+    re.IGNORECASE,
+)
+
+
+def _origin(url: str) -> tuple[str, str, int]:
+    """``(scheme, host, port)`` — what "same origin" means for header stripping."""
+    parts = urllib.parse.urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    try:
+        port = parts.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        port = -1
+    return scheme, host, port
+
+
+def _drop_credentials(headers: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if not _CREDENTIAL_HEADER.search(k)}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -122,9 +151,13 @@ class HttpRequest(Action):
                 except Exception:  # noqa: BLE001
                     raw = b""
                 if status in (301, 302, 303, 307, 308) and resp_headers.get("location"):
-                    current = urllib.parse.urljoin(current, resp_headers["location"])
+                    target = urllib.parse.urljoin(current, resp_headers["location"])
                     # Redirect targets get the full guard again, which is the
-                    # point: an open redirect must not become an SSRF.
+                    # point: an open redirect must not become an SSRF. And a
+                    # credential for one origin is not a credential for another.
+                    if _origin(target) != _origin(current):
+                        headers = _drop_credentials(headers)
+                    current = target
                     if method == "POST" and status in (301, 302, 303):
                         method, body = "GET", None
                     continue
@@ -135,7 +168,10 @@ class HttpRequest(Action):
                 return ActionResult.failed(f"request failed: {exc}")
 
             if status in (301, 302, 303, 307, 308) and resp_headers.get("location"):
-                current = urllib.parse.urljoin(current, resp_headers["location"])
+                target = urllib.parse.urljoin(current, resp_headers["location"])
+                if _origin(target) != _origin(current):
+                    headers = _drop_credentials(headers)
+                current = target
                 if method == "POST" and status in (301, 302, 303):
                     method, body = "GET", None
                 continue

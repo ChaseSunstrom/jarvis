@@ -61,7 +61,8 @@ data class ChannelConfig(
 ) {
 
     /** `ws(s)://host[:port]/api/websocket`, or null when [serverUrl] is unusable. */
-    val websocketUrl: String? get() = ServerUrl.websocketUrl(serverUrl, WEBSOCKET_PATH)
+    val websocketUrl: String? get() =
+        ServerUrl.websocketUrl(serverUrl, WEBSOCKET_PATH)?.let { collapseIpv6Brackets(it) }
 
     /**
      * The host every socket is pinned to. Taken from the *configured* URL, not
@@ -76,6 +77,31 @@ data class ChannelConfig(
     /** Transport verdict for the derived WebSocket URL. */
     fun transportVerdict(): LanHost.Verdict =
         LanHost.checkUrl(websocketUrl ?: serverUrl, acknowledgedCleartextHosts)
+
+    /**
+     * Undo the double bracketing an IPv6 literal picks up on its way here.
+     *
+     * `java.net.URI.getHost()` reports an IPv6 host WITH its square brackets
+     * (`[fd00::1]`), and `ServerUrl.websocketUrl` wraps anything containing a
+     * colon in brackets again — so `http://[fd00::1]:8123` came out as
+     * `ws://[[fd00::1]]:8123/api/websocket`, which `URI.create` rejects as a
+     * malformed IPv6 address. The transport check then said "server URL does not
+     * parse" and the channel sat in BLOCKED forever: every IPv6-literal server
+     * URL was unusable, which is not what `docs/device-channel.md` promises.
+     *
+     * Only the authority is touched — the part between `://` and the first `/` —
+     * so a path prefix that somehow contains brackets is left alone.
+     */
+    private fun collapseIpv6Brackets(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd < 0) return url
+        val authorityStart = schemeEnd + 3
+        val pathStart = url.indexOf('/', authorityStart).takeIf { it >= 0 } ?: url.length
+        val authority = url.substring(authorityStart, pathStart)
+        if (!authority.contains("[[")) return url
+        val fixed = authority.replace("[[", "[").replace("]]", "]")
+        return url.substring(0, authorityStart) + fixed + url.substring(pathStart)
+    }
 
     /** Safe for a log line: no token, no query string. */
     override fun toString(): String =

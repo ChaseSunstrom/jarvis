@@ -263,6 +263,11 @@ class JarvisChannel(
                 continue
             }
             config = cfg
+            // The concurrency cap is configuration, so it has to be READ from
+            // the configuration. It used to be whatever CommandGate's default
+            // was, which made ChannelConfig.maxConcurrentCommands a field that
+            // documented a limit nothing enforced.
+            gate.maxConcurrent = cfg.maxConcurrentCommands
 
             if (!cfg.isUsable) {
                 blocked("no server URL or token configured yet")
@@ -348,6 +353,12 @@ class JarvisChannel(
     // --- registration -------------------------------------------------------
 
     private fun sendRegister(current: Session) {
+        // Registration is only ever sent on an authenticated socket, so the id
+        // it allocates cannot be matched by a `result` that arrived first.
+        if (!current.authed) {
+            Log.w(TAG, "not registering: the socket has not authenticated")
+            return
+        }
         val dispatcher = dispatcherProvider()
         val manifest: JSONArray? = if (dispatcher == null) null else try {
             dispatcher.manifest()
@@ -387,6 +398,13 @@ class JarvisChannel(
     }
 
     private fun onRegistered(current: Session) {
+        // Belt and braces. `registered` is the single bit that opens the command
+        // path, so the only assignment to it insists on an authenticated socket.
+        if (!current.authed) {
+            Log.e(TAG, "refusing to mark an unauthenticated socket as registered")
+            current.finish("the server acknowledged a registration we never sent", penalise = true)
+            return
+        }
         current.registered = true
         backoff.reset()
         inbound.reset(clock())
@@ -417,7 +435,7 @@ class JarvisChannel(
         payload: JSONObject = JSONObject(),
         timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS
     ): JSONObject? {
-        val current = session?.takeIf { it.registered } ?: return null
+        val current = session?.takeIf { it.authed && it.registered } ?: return null
         val id = nextRequestId.getAndIncrement()
         val frame = JSONObject().put("id", id).put("type", type)
         try {
@@ -539,14 +557,43 @@ class JarvisChannel(
     }
 
     private fun onResult(current: Session, msg: JSONObject) {
-        val id = msg.optInt("id", -1)
+        // A `result` with no usable `id` is not a reply to anything this device
+        // sent, and must not be treated as one.
+        //
+        // This is load-bearing, not tidiness. `optInt("id", -1)` also answers -1
+        // for an ABSENT id, and a freshly built Session has `registerId == -1`,
+        // so the bare frame `{"type":"result","success":true}` — which costs
+        // nothing to send and needs no token — used to satisfy
+        // `id == current.registerId` and drive the session straight to READY.
+        // From there `device_command` was accepted, having never authenticated
+        // and never registered. On a LAN where cleartext `ws://` is permitted,
+        // anything that can answer for the configured host (mDNS spoofing a
+        // `.local` name, ARP, a DHCP-recycled address) could then drive the
+        // phone without holding the bearer token at all.
+        //
+        // Matched on the JSON type rather than through `optInt`, which happily
+        // coerces the string `"1"` into the integer 1. Ids are allocated by this
+        // device as integers; a frame that spells one differently is not one of
+        // ours, and the mirror in `tools/channel_protocol_test.py` says so too.
+        val id = when (val raw = msg.opt("id")) {
+            is Int -> raw
+            is Long -> if (raw in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) raw.toInt() else NO_ID
+            else -> NO_ID
+        }
+        if (id < 0) {
+            Log.w(TAG, "ignoring a result frame with no usable id")
+            return
+        }
         // A reply to something this device asked for. Only ids we allocated are
         // in the map, so an unsolicited `result` finds nothing and is ignored.
         pending.remove(id)?.let {
             it.complete(msg)
             return
         }
-        if (id != current.registerId) {
+        // Registration is acknowledged only when we actually asked for it:
+        // authenticated, a register frame sent, and the id matching the one this
+        // session allocated for that frame.
+        if (!current.authed || current.registerId < 0 || id != current.registerId) {
             if (!ChannelFrames.isSuccess(msg)) {
                 Log.d(TAG, "server refused request $id: ${ChannelFrames.errorOf(msg)}")
             }
@@ -564,9 +611,11 @@ class JarvisChannel(
     private fun onDeviceCommand(current: Session, msg: JSONObject) {
         // Commands are accepted ONLY on a socket that authenticated and
         // registered. Anything earlier is either a server bug or somebody
-        // talking to us before we know who they are.
-        if (!current.registered) {
-            Log.w(TAG, "device_command before registration; ignoring")
+        // talking to us before we know who they are. Both flags are checked:
+        // `registered` alone would trust a single bit that a malformed `result`
+        // frame could once flip on its own.
+        if (!current.authed || !current.registered) {
+            Log.w(TAG, "device_command before the handshake finished; ignoring")
             return
         }
         // The pin, re-checked per command rather than once at open: it costs a
@@ -780,8 +829,13 @@ class JarvisChannel(
         if (current != null && current.registered && current.sendRaw(frame.toString())) return true
 
         synchronized(eventQueue) {
+            // coerceAtLeast(1): a config of 0 (or a negative) would make
+            // `size >= cap` true on an empty deque and removeFirst() would throw
+            // NoSuchElementException on the caller's thread — which for a
+            // trigger is a broadcast receiver.
+            val cap = config.offlineEventQueue.coerceAtLeast(1)
             var dropped = 0
-            while (eventQueue.size >= config.offlineEventQueue) {
+            while (eventQueue.size >= cap) {
                 eventQueue.removeFirst()
                 dropped++
             }
@@ -792,19 +846,28 @@ class JarvisChannel(
     }
 
     private fun flushEvents(current: Session) {
-        val pending = synchronized(eventQueue) {
+        val queued = synchronized(eventQueue) {
             if (eventQueue.isEmpty()) return
             val copy = eventQueue.toList()
             eventQueue.clear()
             copy
         }
-        Log.i(TAG, "flushing ${pending.size} queued events")
-        for (frame in pending) {
-            if (!current.sendRaw(frame.toString())) {
-                // Socket died mid-flush: keep what is left rather than losing it.
-                synchronized(eventQueue) { eventQueue.addLast(frame) }
-                break
+        Log.i(TAG, "flushing ${queued.size} queued events")
+        for ((index, frame) in queued.withIndex()) {
+            if (current.sendRaw(frame.toString())) continue
+            // Socket died mid-flush. Put back the frame that failed AND
+            // everything after it — the previous version re-queued only the
+            // failing frame and silently dropped the rest of the batch — and put
+            // them at the FRONT, because anything sendEvent() enqueued while
+            // this loop was running is newer than they are.
+            val unsent = queued.subList(index, queued.size)
+            synchronized(eventQueue) {
+                for (f in unsent.asReversed()) eventQueue.addFirst(f)
+                val cap = config.offlineEventQueue.coerceAtLeast(1)
+                while (eventQueue.size > cap) eventQueue.removeFirst()
             }
+            Log.w(TAG, "socket died mid-flush; kept ${unsent.size} event(s) for the next connection")
+            return
         }
     }
 
@@ -970,5 +1033,13 @@ class JarvisChannel(
 
         /** Default ceiling for a phone-initiated request. */
         const val DEFAULT_REQUEST_TIMEOUT_MS = 30_000L
+
+        /**
+         * "This frame carries no request id." Deliberately negative and
+         * deliberately distinct from any id [nextRequestId] hands out (it starts
+         * at 1), so an absent id can never collide with an outstanding request
+         * or with an unset [Session.registerId].
+         */
+        private const val NO_ID = -1
     }
 }

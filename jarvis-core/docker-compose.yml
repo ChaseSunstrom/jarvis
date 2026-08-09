@@ -24,6 +24,18 @@
 #   WHISPER_MODEL=... PIPER_VOICE=... WAKE_WORD=... docker compose up -d
 #
 # or put them in a .env next to this file.
+#
+# Two defaults below are not free choices — they must agree with
+# config/configuration.yaml, and tests/test_packaging.py fails the build if
+# they drift:
+#
+#   TZ           == jarvis: time_zone:   (or every time trigger fires at the
+#                                         wrong hour, silently)
+#   PIPER_VOICE  == voice: tts: voice:   (or the default pipeline asks Piper
+#                                         for a voice it was never given)
+#
+# Every bind mount here is a relative path, so its host side lands inside the
+# Docker build context. Anything added must also be listed in .dockerignore.
 
 services:
   # --- Jarvis Core --------------------------------------------------------
@@ -44,7 +56,7 @@ services:
     environment:
       # Named zone for time-of-day triggers and the sun integration. Keep this
       # in step with `jarvis: time_zone:` in config/configuration.yaml.
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Europe/London}
       # Optional. Unset (the normal case) means Jarvis mints a token on first
       # run and prints it in a banner — see the README quickstart. Set it to
       # pin a known token instead, e.g. when rebuilding from scratch often.
@@ -86,7 +98,7 @@ services:
     volumes:
       - ./wyoming/openwakeword:/custom
     environment:
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Europe/London}
 
   # --- Wyoming: speech to text -------------------------------------------
   # The streaming sherpa model your host already runs. If you are on
@@ -107,12 +119,16 @@ services:
     volumes:
       - ./wyoming/whisper:/data
     environment:
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Europe/London}
 
   # --- Wyoming: text to speech -------------------------------------------
-  # Piper. en_US-lessac-medium is the stack default; en_GB-alan-medium is the
-  # voice the Jarvis persona is written for, if you would rather he sounded the
-  # part. Downloaded on first use into ./wyoming/piper.
+  # Piper. `--voice` is the voice this container LOADS, and it is the one the
+  # default pipeline asks for, so it has to equal `voice: tts: voice:` in
+  # config/configuration.yaml — en_GB-alan-medium, the voice the Jarvis persona
+  # is written for and the one the parent repo's .env.example already sets.
+  # A pipeline naming a second voice (the Guest pipeline uses
+  # en_US-lessac-medium) makes Piper fetch it on first use into ./wyoming/piper;
+  # that request is slow the first time and fails outright with no internet.
   wyoming-piper:
     image: rhasspy/wyoming-piper:latest
     container_name: wyoming-piper
@@ -120,13 +136,13 @@ services:
     network_mode: host
     command: >
       --uri tcp://0.0.0.0:10200
-      --voice ${PIPER_VOICE:-en_US-lessac-medium}
+      --voice ${PIPER_VOICE:-en_GB-alan-medium}
       --data-dir /data
       --download-dir /data
     volumes:
       - ./wyoming/piper:/data
     environment:
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Europe/London}
 
   # --- Offline geocoder ---------------------------------------------------
   # Place lookups ("how long to the hardware shop?") without calling Google.
@@ -138,7 +154,7 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Europe/London}
       # Country extract instead of the full planet index. Unset = planet.
       - REGION=${PHOTON_REGION:-}
       - UPDATE_STRATEGY=${PHOTON_UPDATE_STRATEGY:-PARALLEL}
@@ -158,7 +174,7 @@ services:
   #   volumes:
   #     - ./ollama:/root/.ollama
   #   environment:
-  #     - TZ=${TZ:-UTC}
+  #     - TZ=${TZ:-Europe/London}
   #     - OLLAMA_HOST=127.0.0.1:11434   # never 0.0.0.0 — Ollama has no auth
   #     - OLLAMA_KEEP_ALIVE=30m
   #   deploy:

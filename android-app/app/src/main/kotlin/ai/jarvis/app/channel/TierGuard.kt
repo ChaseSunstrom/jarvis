@@ -1,5 +1,7 @@
 package ai.jarvis.app.channel
 
+import java.util.Locale
+
 /**
  * PURE LOGIC — no Android imports, no org.json. Mirrored by
  * `android-app/tools/channel_protocol_test.py`.
@@ -63,7 +65,10 @@ object TierGuard {
         else -> null
     }
 
-    fun fromName(name: String?): WireTier? = when (name?.trim()?.uppercase()) {
+    // Locale.ROOT: the device locale must not decide what a tier name means. In
+    // a Turkish locale the default uppercase() maps 'i' to 'İ', so a server
+    // sending "confirm" would parse to null and lose its RAISE.
+    fun fromName(name: String?): WireTier? = when (name?.trim()?.uppercase(Locale.ROOT)) {
         "AUTO", "TIER1" -> WireTier.AUTO
         "NOTIFY", "TIER2" -> WireTier.NOTIFY
         "CONFIRM", "TIER3" -> WireTier.CONFIRM

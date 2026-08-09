@@ -2,6 +2,7 @@ package ai.jarvis.app.channel
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * Every frame this device sends or accepts, in one file, so the wire format can
@@ -96,7 +97,10 @@ object ChannelFrames {
      * wire vocabulary, and a garbled answer must never read as success.
      */
     fun deviceResult(commandId: String, body: JSONObject): JSONObject {
-        val status = body.optString("status").lowercase().takeIf { it in VALID_STATUSES }
+        // Locale.ROOT so a Turkish-locale phone cannot fold "DENIED" into
+        // "denıed" and report a refusal to the server as a generic error.
+        val status = body.optString("status").trim().lowercase(Locale.ROOT)
+            .takeIf { it in VALID_STATUSES }
         val out = JSONObject()
             .put("type", TYPE_DEVICE_RESULT)
             .put("command_id", commandId)

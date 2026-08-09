@@ -43,6 +43,7 @@ KOTLIN_LANHOST = KOTLIN_DIR / "LanHost.kt"
 KOTLIN_TIERGUARD = KOTLIN_DIR / "TierGuard.kt"
 KOTLIN_BUCKET = KOTLIN_DIR / "TokenBucket.kt"
 KOTLIN_CHANNEL = KOTLIN_DIR / "JarvisChannel.kt"
+KOTLIN_CONFIG = KOTLIN_DIR / "ChannelConfig.kt"
 
 
 # ===========================================================================
@@ -120,6 +121,36 @@ def classify_ipv4(h: str) -> str | None:
     return "PUBLIC"
 
 
+def is_v4_embedding_prefix(prefix: str) -> bool:
+    """True only for `::` and `::ffff:` (compressed or long-hand).
+
+    Those are the two prefixes whose trailing dotted quad really is an IPv4
+    address. Any other prefix means an ordinary IPv6 address that merely happens
+    to be written with a dotted tail, and reading the tail there is a cleartext
+    bypass — `2001:4860:4860::10.0.0.1` is globally routable.
+    """
+    if not prefix.endswith(":"):
+        return False
+    compressed = prefix.startswith("::")
+    groups = [g for g in prefix.split(":") if g]
+    if compressed and len(groups) > 1:
+        return False
+    if not compressed and len(groups) != 6:
+        return False
+    for i, group in enumerate(groups):
+        if len(group) > 4:
+            return False
+        try:
+            value = int(group, 16)
+        except ValueError:
+            return False
+        if value == 0:
+            continue
+        if value != 0xFFFF or i != len(groups) - 1:
+            return False
+    return True
+
+
 def classify_ipv6(h: str) -> str | None:
     if ":" not in h:
         return None
@@ -135,7 +166,10 @@ def classify_ipv6(h: str) -> str | None:
 
     tail = h.rsplit(":", 1)[-1]
     if "." in tail:                # ::ffff:192.168.1.10
-        return classify_ipv4(tail) or "INVALID"
+        prefix = h[: len(h) - len(tail)]
+        if is_v4_embedding_prefix(prefix):
+            return classify_ipv4(tail) or "INVALID"
+        # else fall through and classify it as the IPv6 address it actually is
 
     first = h.split(":", 1)[0]
     if not first:                  # starts with "::"
@@ -244,6 +278,17 @@ HOST_TABLE = [
     ("fe80::1%wlan0", "LINK_LOCAL_V6"),
     ("::ffff:192.168.1.10", "PRIVATE_V4"),
     ("::ffff:8.8.8.8", "PUBLIC"),
+    ("0:0:0:0:0:ffff:192.168.1.10", "PRIVATE_V4"),   # long-hand v4-mapped
+    ("::192.168.1.10", "PRIVATE_V4"),                # deprecated v4-compatible
+    # …and the regression: a dotted tail on a NON-v4-mapped prefix is just the
+    # low 32 bits of an ordinary IPv6 address. Reading it as IPv4 called a
+    # globally routable host "RFC1918" and permitted cleartext to it.
+    ("2001:db8::192.168.1.1", "PUBLIC"),
+    ("2001:4860:4860::10.0.0.1", "PUBLIC"),
+    ("64:ff9b::192.168.1.1", "PUBLIC"),              # NAT64 well-known prefix
+    ("fec0::10.0.0.1", "PUBLIC"),                    # site-local is not private
+    ("::abcd:10.0.0.1", "PUBLIC"),                   # ::ffff: is the only marker
+    ("fd00::192.168.1.1", "UNIQUE_LOCAL_V6"),        # a ULA really is private
     ("1::", "PUBLIC"),              # NOT loopback, despite reducing to "1"
     ("::", "INVALID"),
     # names
@@ -288,6 +333,10 @@ URL_TABLE = [
     ("http://8.8.8.8", False),
     ("http://0177.0.0.1:8123", False),
     ("http://192.168.1.256:8123", False),
+    # A public IPv6 address wearing an RFC1918 tail.
+    ("http://[2001:4860:4860::10.0.0.1]:8123", False),
+    ("ws://[2001:db8::192.168.1.1]:8123/api/websocket", False),
+    ("https://[2001:4860:4860::10.0.0.1]:8123", True),   # TLS is fine anywhere
     # not a transport we speak
     ("file:///etc/passwd", False),
     ("ftp://192.168.2.10", False),
@@ -323,6 +372,34 @@ def test_cleartext_to_a_public_host_needs_an_explicit_acknowledgement():
     assert not check_url(url, frozenset({"other.example.com"}))
     # An acknowledgement never widens TLS-only rules to a different scheme.
     assert not check_url("ftp://jarvis.example.com", frozenset({"jarvis.example.com"}))
+
+
+def test_a_dotted_tail_only_means_ipv4_for_the_v4_mapped_prefixes():
+    """Regression: `2001:4860:4860::10.0.0.1` is public, not RFC1918.
+
+    classifyIpv6 used to hand any address with a dotted quad straight to the
+    IPv4 classifier. That reads the low 32 bits of a perfectly ordinary global
+    IPv6 address as if they were the whole address, so a public host classified
+    as LAN and `ws://` to it — bearer token and all — was permitted.
+    """
+    assert is_v4_embedding_prefix("::")
+    assert is_v4_embedding_prefix("::ffff:")
+    assert is_v4_embedding_prefix("0:0:0:0:0:ffff:")
+    assert is_v4_embedding_prefix("0:0:0:0:0:0:")
+    for prefix in ["2001:db8::", "64:ff9b::", "fd00::", "::abcd:", "ffff::", "0:0:ffff:", "x"]:
+        assert not is_v4_embedding_prefix(prefix), prefix
+
+    for host in ["2001:db8::192.168.1.1", "2001:4860:4860::10.0.0.1",
+                 "64:ff9b::10.0.0.1", "fec0::192.168.1.1", "::abcd:10.0.0.1"]:
+        assert not is_lan_host(host), host
+        assert not check_url(f"http://[{host}]:8123"), host
+        assert check_url(f"https://[{host}]:8123"), host
+
+    # The genuinely v4-mapped forms still work, and a ULA is still a ULA.
+    for host in ["::ffff:192.168.1.10", "0:0:0:0:0:ffff:192.168.1.10", "::192.168.1.10"]:
+        assert is_lan_host(host), host
+    assert is_lan_host("fd00::192.168.1.1")
+    assert not is_lan_host("::ffff:8.8.8.8")
 
 
 def test_tls_is_allowed_everywhere_and_cleartext_never_leaves_private_space():
@@ -562,6 +639,195 @@ def test_reset_refills_but_only_on_a_fresh_socket():
 
 
 # ===========================================================================
+# (d) the handshake — mirrored from JarvisChannel.onText/onResult/onDeviceCommand
+# ===========================================================================
+#
+# Commands are accepted on exactly one condition: the socket authenticated AND
+# the registration WE sent came back acknowledged. The interesting failure is
+# what counts as "came back acknowledged" — see the bare-result case below.
+
+
+class Handshake:
+    """The bits of JarvisChannel's session state that gate `device_command`."""
+
+    NO_ID = -1
+
+    def __init__(self):
+        self.authed = False
+        self.registered = False
+        self.register_id = self.NO_ID     # Session.registerId, unset
+        self.next_request_id = 1
+        self.sent = []
+        self.executed = []
+
+    # --- outbound ---
+    def _send_register(self):
+        # Registration is only ever sent on an authenticated socket, so the id
+        # it allocates cannot be matched by a result that arrived first.
+        if not self.authed:
+            return
+        self.register_id = self.next_request_id
+        self.next_request_id += 1
+        self.sent.append(("register", self.register_id))
+
+    # --- inbound ---
+    def on_frame(self, frame: dict):
+        kind = frame.get("type")
+        if kind == "auth_required":
+            self.sent.append(("auth", None))
+        elif kind == "auth_ok":
+            self.authed = True
+            self._send_register()
+        elif kind == "auth_invalid":
+            self.authed = False
+            self.registered = False
+        elif kind == "result":
+            self._on_result(frame)
+        elif kind == "device_command":
+            self._on_device_command(frame)
+
+    def _on_result(self, frame: dict):
+        # An absent / null / non-integer id is NOT a reply to anything we sent.
+        raw = frame.get("id", None)
+        rid = raw if isinstance(raw, int) and not isinstance(raw, bool) else self.NO_ID
+        if rid < 0:
+            return
+        if not self.authed or self.register_id < 0 or rid != self.register_id:
+            return
+        if frame.get("success") is True:
+            self.registered = True
+
+    def _on_device_command(self, frame: dict):
+        if not self.authed or not self.registered:
+            return
+        self.executed.append(frame.get("command_id"))
+
+
+def test_the_happy_path_reaches_ready():
+    h = Handshake()
+    h.on_frame({"type": "auth_required"})
+    assert h.sent == [("auth", None)]
+    h.on_frame({"type": "auth_ok"})
+    assert h.sent[-1] == ("register", 1)
+    h.on_frame({"type": "result", "id": 1, "success": True, "result": {"ok": True}})
+    assert h.registered
+    h.on_frame({"type": "device_command", "command_id": "c-1", "action": "get_battery"})
+    assert h.executed == ["c-1"]
+
+
+def test_a_bare_result_frame_cannot_register_the_device():
+    """The regression this section exists for.
+
+    `optInt("id", -1)` answers -1 for an ABSENT id, and a fresh session's
+    registerId is also -1, so `{"type":"result","success":true}` — a frame that
+    costs nothing to send and needs no token — used to satisfy
+    `id == registerId` and drive the channel to READY. `device_command` was
+    then accepted having never authenticated and never registered.
+    """
+    for bogus in [
+        {"type": "result", "success": True},
+        {"type": "result", "id": None, "success": True},
+        {"type": "result", "id": "1", "success": True},
+        {"type": "result", "id": -1, "success": True},
+        {"type": "result", "id": True, "success": True},
+    ]:
+        h = Handshake()
+        h.on_frame(bogus)
+        assert not h.registered, bogus
+        h.on_frame({"type": "device_command", "command_id": "c-1", "action": "sms_send"})
+        assert h.executed == [], bogus
+
+
+def test_a_result_before_auth_cannot_register_the_device():
+    """Even a well-formed id=1 result is not an acknowledgement of nothing."""
+    h = Handshake()
+    h.on_frame({"type": "result", "id": 1, "success": True})
+    assert not h.registered
+    # …and it does not poison the real handshake that follows either.
+    h.on_frame({"type": "auth_ok"})
+    assert h.sent[-1] == ("register", 1)
+    h.on_frame({"type": "result", "id": 1, "success": True})
+    assert h.registered
+
+
+def test_commands_before_registration_are_ignored():
+    h = Handshake()
+    h.on_frame({"type": "auth_required"})
+    h.on_frame({"type": "device_command", "command_id": "c-0", "action": "sms_send"})
+    h.on_frame({"type": "auth_ok"})
+    h.on_frame({"type": "device_command", "command_id": "c-1", "action": "sms_send"})
+    assert h.executed == []
+    h.on_frame({"type": "result", "id": 1, "success": True})
+    h.on_frame({"type": "device_command", "command_id": "c-2", "action": "sms_send"})
+    assert h.executed == ["c-2"]
+
+
+def test_a_refused_registration_never_reaches_ready():
+    h = Handshake()
+    h.on_frame({"type": "auth_ok"})
+    h.on_frame({"type": "result", "id": 1, "success": False,
+                "error": {"code": "unknown_command", "message": "no"}})
+    assert not h.registered
+    h.on_frame({"type": "device_command", "command_id": "c-1", "action": "get_battery"})
+    assert h.executed == []
+
+
+# ===========================================================================
+# (e) the derived WebSocket URL — mirrored from ChannelConfig.collapseIpv6Brackets
+# ===========================================================================
+#
+# `java.net.URI.getHost()` returns an IPv6 host WITH its brackets, and
+# `ServerUrl.websocketUrl` brackets anything containing a colon — so an IPv6
+# literal came out double-bracketed and unparseable, and the channel sat in
+# BLOCKED forever for every IPv6 server URL.
+
+
+def collapse_ipv6_brackets(url: str) -> str:
+    scheme_end = url.find("://")
+    if scheme_end < 0:
+        return url
+    start = scheme_end + 3
+    slash = url.find("/", start)
+    path_start = slash if slash >= 0 else len(url)
+    authority = url[start:path_start]
+    if "[[" not in authority:
+        return url
+    fixed = authority.replace("[[", "[").replace("]]", "]")
+    return url[:start] + fixed + url[path_start:]
+
+
+def test_a_double_bracketed_ipv6_authority_is_repaired():
+    cases = [
+        ("ws://[[fd00::1]]:8123/api/websocket", "ws://[fd00::1]:8123/api/websocket"),
+        ("wss://[[fd00::1]]/api/websocket", "wss://[fd00::1]/api/websocket"),
+        # untouched
+        ("ws://192.168.2.10:8123/api/websocket", "ws://192.168.2.10:8123/api/websocket"),
+        ("ws://jarvis.local:8123/proxy/api/websocket", "ws://jarvis.local:8123/proxy/api/websocket"),
+        ("ws://[fd00::1]:8123/api/websocket", "ws://[fd00::1]:8123/api/websocket"),
+        ("not a url", "not a url"),
+    ]
+    for raw, expected in cases:
+        assert collapse_ipv6_brackets(raw) == expected, raw
+
+    # …and the repaired URL is one the transport check accepts, which the
+    # double-bracketed one never was.
+    broken = "ws://[[fd00::1]]:8123/api/websocket"
+    assert not check_url(broken), "the double-bracketed form must not be dialable"
+    try:
+        urlsplit(broken)
+        raise AssertionError("expected the double-bracketed authority to be unparseable")
+    except ValueError:
+        pass
+    assert check_url(collapse_ipv6_brackets(broken)), "the repaired form must be dialable"
+
+
+def test_kotlin_config_repairs_the_ipv6_authority():
+    src = _read(KOTLIN_CONFIG)
+    assert "collapseIpv6Brackets" in src, "ChannelConfig stopped repairing the IPv6 authority"
+    assert 'replace("[[", "[")' in src and 'replace("]]", "]")' in src
+
+
+# ===========================================================================
 # Structural checks — one copy edited without the other
 # ===========================================================================
 
@@ -611,6 +877,51 @@ def test_kotlin_channel_enforces_the_pin_and_the_limits():
     assert "inbound.tryAcquire" in src, "the inbound rate limit is gone"
     assert "gate.admit" in src, "admission control is gone"
     assert "withTimeoutOrNull(cfg.commandTimeoutMs)" in src, "the hard command timeout is gone"
+    assert "gate.maxConcurrent = cfg.maxConcurrentCommands" in src, \
+        "the concurrency cap stopped following the configuration"
+
+
+def test_kotlin_channel_only_registers_an_authenticated_socket():
+    """Mirrors the Handshake class above; see test_a_bare_result_frame_…."""
+    src = _read(KOTLIN_CHANNEL)
+    code = "\n".join(
+        line for line in src.splitlines()
+        if not line.lstrip().startswith(("*", "//", "/*"))
+    )
+    # A result frame with no usable id must be rejected before anything else,
+    # and the id must be an actual JSON integer — optInt() would coerce "1".
+    assert 'msg.opt("id")' in code, "onResult stopped type-checking the id"
+    assert 'msg.optInt("id"' not in code, \
+        "onResult is back on optInt(), which coerces the string \"1\" into an id"
+    assert re.search(r"if\s*\(\s*id\s*<\s*0\s*\)", code), \
+        "onResult no longer refuses a result frame with no usable id"
+    assert "current.registerId < 0" in code, \
+        "onResult no longer requires that a register frame was actually sent"
+    # Both bits gate the command path, and `registered` is only ever set on an
+    # authenticated socket.
+    assert "!current.authed || !current.registered" in code, \
+        "device_command is no longer gated on BOTH authed and registered"
+    assert re.search(r"if\s*\(\s*!current\.authed\s*\)", code), \
+        "onRegistered/sendRegister no longer refuse an unauthenticated socket"
+    assert code.count("registered = true") == 1, \
+        "there is now more than one place that marks a session registered"
+
+
+def test_kotlin_channel_keeps_the_whole_event_backlog():
+    src = _read(KOTLIN_CHANNEL)
+    assert "queued.subList(index, queued.size)" in src, \
+        "flushEvents is back to re-queueing only the frame that failed"
+    assert "addFirst" in src, "a re-queued event must go back to the FRONT of the queue"
+    assert "coerceAtLeast(1)" in src, \
+        "an offlineEventQueue of 0 makes removeFirst() throw on an empty deque"
+
+
+def test_kotlin_lanhost_only_reads_a_dotted_tail_for_v4_mapped_prefixes():
+    src = _read(KOTLIN_LANHOST)
+    assert "if (isV4EmbeddingPrefix(prefix)) return classifyIpv4(" in src, \
+        "LanHost is back to classifying every dotted tail as IPv4"
+    assert "0xffff" in src, "the ::ffff: marker is gone"
+    assert "Locale.ROOT" in src, "host normalisation is back on the device locale"
 
 
 def test_kotlin_bucket_defaults_match_this_mirror():

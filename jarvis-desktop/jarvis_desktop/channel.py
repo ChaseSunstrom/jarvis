@@ -50,6 +50,8 @@ __all__ = [
     "WebsocketTransport",
     "DeviceChannel",
     "PLATFORM",
+    "handshake_host",
+    "host_of_authority",
 ]
 
 PLATFORM = "desktop"
@@ -79,6 +81,47 @@ MAX_FRAME_BYTES = 512 * 1024
 
 class TransportClosed(Exception):
     """The socket went away. The caller reconnects with backoff."""
+
+
+def host_of_authority(value: str) -> str:
+    """Hostname out of a ``Host`` header or an ``authority``, lowercased.
+
+    ``jarvis.lan:8080`` -> ``jarvis.lan``; ``[::1]:8080`` -> ``::1``. Pure
+    string work, so the redirect check below is testable without a socket.
+    """
+    text = value.strip()
+    if text.startswith("["):
+        end = text.find("]")
+        return text[1:end].lower() if end > 0 else text.lower()
+    head, sep, tail = text.rpartition(":")
+    if sep and head and tail.isdigit():
+        return head.lower()
+    return text.lower()
+
+
+def handshake_host(connection: Any) -> str | None:
+    """The host the WebSocket handshake actually reached, or None if unknown.
+
+    Read from the ``Host`` header of the request that was sent, which the client
+    library rewrites when it follows a redirect. Returns None rather than
+    guessing if the library ever stops exposing it — the caller then falls back
+    to the pre-connect host check alone and logs nothing false.
+    """
+    headers = None
+    request = getattr(connection, "request", None)
+    if request is not None:
+        headers = getattr(request, "headers", None)
+    if headers is None:
+        headers = getattr(connection, "request_headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Host")
+    except Exception:  # noqa: BLE001 - a Headers-like object we do not know
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return host_of_authority(value)
 
 
 class Transport(ABC):
@@ -133,6 +176,22 @@ class WebsocketTransport(Transport):
             ping_interval=20,
             ping_timeout=20,
         )
+        # The `websockets` client follows HTTP 3xx redirects during the
+        # handshake, cross-origin ones included, so "we connected" is not the
+        # same as "we connected to the host we asked for". Nothing has been sent
+        # yet — the token goes out later, in reply to auth_required — so this is
+        # the last moment where a redirect can be caught for free.
+        expected = (urlparse(url).hostname or "").lower()
+        actual = handshake_host(connection)
+        if expected and actual and actual != expected:
+            try:
+                await connection.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise TransportClosed(
+                f"refusing this session: the handshake ended at {actual!r}, not "
+                f"{expected!r} — the server redirected us somewhere else"
+            )
         return WebsocketTransport(connection)
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 import re
 import shutil
 from pathlib import Path
@@ -22,9 +23,11 @@ from typing import Any, Iterator
 import pytest
 import yaml
 
+from jarvis.automation.util import as_list
 from jarvis.config import load_config
 from jarvis.core import Jarvis
 from jarvis.entity import Entity, EntityPlatform
+from jarvis.state import slugify
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
@@ -243,6 +246,54 @@ def test_packages_are_merged_into_the_top_level(config_copy: Path) -> None:
     assert {"laundry_finished", "laundry_nag"} <= ids          # list concat
 
 
+#: Blocks whose keys are user data (entity names, helper ids, automation
+#: bodies), not integration options — nothing to look up in the source.
+_USER_DATA_BLOCKS = frozenset({
+    "automation", "script", "scene", "template", "rest", "command_line",
+    "person", "packages",
+    "input_boolean", "input_number", "input_select", "input_text", "input_datetime",
+})
+
+#: Option keys that are deliberately never read by name: forwarded verbatim.
+_PASSTHROUGH_KEYS = frozenset({"num_ctx", "temperature"})
+
+
+def test_no_shipped_option_is_silently_ignored() -> None:
+    """An option the code never reads looks configured and does nothing.
+
+    That is the worst kind of default: `purge_keep_days: 10` in a file the user
+    edits, quietly discarded because the key is actually spelled something
+    else. Every option name in the shipped configuration has to appear as a
+    string literal somewhere in the package that reads it.
+    """
+    source = "".join(
+        path.read_text(encoding="utf-8") for path in sorted((ROOT / "jarvis").rglob("*.py"))
+    )
+
+    def option_keys(node: Any, depth: int = 0, path: str = "") -> Iterator[tuple[str, str]]:
+        if depth > 3:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                yield f"{path}/{key}", str(key)
+                yield from option_keys(value, depth + 1, f"{path}/{key}")
+        elif isinstance(node, list):
+            for item in node:
+                yield from option_keys(item, depth + 1, path)
+
+    unread: list[str] = []
+    for block, body in load_config(CONFIG).items():
+        if block in _USER_DATA_BLOCKS:
+            continue
+        for where, key in option_keys(body, 0, block):
+            if key in _PASSTHROUGH_KEYS or not re.fullmatch(r"[a-z][a-z0-9_]*", key):
+                continue
+            if f'"{key}"' not in source and f"'{key}'" not in source:
+                unread.append(where)
+
+    assert not unread, f"configuration.yaml sets options nothing reads: {sorted(set(unread))}"
+
+
 def test_persona_prompt_is_where_the_llm_looks() -> None:
     """`persona_file:` and the agent's own default must agree on one path."""
     prompt = CONFIG / "prompts" / "jarvis.txt"
@@ -418,6 +469,495 @@ async def test_scripts_that_carry_metadata_become_llm_tools(config_copy: Path) -
 
 
 # ===========================================================================
+# config/ — the shipped scripts and automations must survive a cold house
+# ===========================================================================
+# Booting is not the same as working. Nothing below fakes a service: the whole
+# point is that Wyoming, Ollama and the broker are all *down*, which is the
+# state of a machine two seconds after `docker compose up -d`, and every one of
+# these ran a shipped sequence to completion under exactly that.
+
+
+def _voice_say_steps(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every `service: voice.say` step anywhere in the shipped config."""
+    return [
+        node
+        for node in _walk(config)
+        if isinstance(node, dict) and node.get("service", node.get("action")) == "voice.say"
+    ]
+
+
+def test_every_voice_say_step_tolerates_a_dead_tts() -> None:
+    """`voice.say` raises when Piper is unreachable, which aborts the sequence.
+
+    A cold start, a restarted container or a voice still downloading is enough.
+    Speaking is the least important thing any of these sequences does, so it
+    must never cancel the steps after it — that is what silently lost
+    `input_text.last_announcement` in `script.announce`.
+    """
+    config = load_config(CONFIG)
+    steps = _voice_say_steps(config)
+    assert steps, "the shipped config no longer calls voice.say — fix this test"
+    missing = [s for s in steps if not s.get("continue_on_error")]
+    assert not missing, (
+        f"{len(missing)} voice.say step(s) lack continue_on_error: true; an "
+        f"unreachable TTS will abort the rest of the sequence: {missing}"
+    )
+
+
+async def test_announce_records_the_message_even_with_tts_down(config_copy: Path) -> None:
+    """The regression: TTS raised, so the announcement was never recorded."""
+    jarvis = await _boot(config_copy)
+    try:
+        await jarvis.services.async_call(
+            "script", "announce", {"message": "the washing machine has finished"},
+            blocking=True, return_response=True,
+        )
+        recorded = jarvis.states.get("input_text.last_announcement")
+        assert recorded is not None
+        assert recorded.state == "the washing machine has finished", (
+            "voice.say failed and took the rest of script.announce with it"
+        )
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_good_morning_completes_with_tts_down(config_copy: Path) -> None:
+    jarvis = await _boot(config_copy)
+    try:
+        await jarvis.services.async_call("input_select", "select_option",
+            {"entity_id": "input_select.house_mode", "option": "night"}, blocking=True)
+        await jarvis.services.async_call("cover", "close_cover",
+            {"entity_id": "cover.living_room_window"}, blocking=True)
+        await jarvis.services.async_call(
+            "script", "good_morning", {}, blocking=True, return_response=True
+        )
+        assert jarvis.states.get("input_select.house_mode").state == "home"
+        assert jarvis.states.get("light.kitchen_lights").state == "on"
+        assert jarvis.states.get("switch.coffee_machine").state == "on"
+        assert jarvis.states.get("cover.living_room_window").state in ("open", "opening")
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_goodnight_runs_end_to_end(config_copy: Path) -> None:
+    """A templated `delay:`, `parallel:`, a gated lock call and a select, in one go."""
+    jarvis = await _boot(config_copy)
+    try:
+        await jarvis.services.async_call(
+            "lock", "unlock", {"entity_id": "lock.front_door_lock"}, blocking=True
+        )
+        await jarvis.services.async_call(
+            "script", "goodnight", {"delay_minutes": 0}, blocking=True, return_response=True
+        )
+        assert jarvis.states.get("lock.front_door_lock").state == "locked"
+        assert jarvis.states.get("input_select.house_mode").state == "night"
+        assert jarvis.states.get("light.kitchen_lights").state == "off"
+        assert jarvis.states.get("cover.living_room_window").state in ("closed", "closing")
+        speaker = jarvis.states.get("media_player.living_room_speaker")
+        assert speaker.attributes.get("volume_level") == pytest.approx(0.3)
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_house_status_returns_structured_data(config_copy: Path) -> None:
+    """`stop:` + `response_variable:` is the whole "scripts as LLM tools" story."""
+    jarvis = await _boot(config_copy)
+    try:
+        result = await jarvis.services.async_call(
+            "script", "house_status", {}, blocking=True, return_response=True
+        )
+        assert isinstance(result, dict), f"house_status returned {result!r}"
+        assert set(result) == {
+            "anyone_home", "house_mode", "outside_temperature", "power_watts",
+            "front_door_locked", "garage_open", "lights_on",
+        }
+        float(result["outside_temperature"])
+        assert isinstance(result["lights_on"], list)
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_every_shipped_scene_applies(config_copy: Path) -> None:
+    """A scene naming an entity it cannot actuate fails silently at runtime."""
+    config = load_config(config_copy)
+    jarvis = await _boot(config_copy)
+    try:
+        for scene in config["scene"]:
+            entity_id = f"scene.{slugify(scene['name'])}"
+            assert jarvis.states.get(entity_id) is not None, f"{entity_id} missing"
+            await jarvis.services.async_call(
+                "scene", "turn_on", {"entity_id": entity_id}, blocking=True
+            )
+            await asyncio.sleep(0.05)
+            # `state: on` is YAML-1.1 boolean True; the scene layer has to map
+            # it back to a state word or every unquoted on/off silently no-ops.
+            for target, spec in scene["entities"].items():
+                wanted = spec.get("state") if isinstance(spec, dict) else spec
+                if wanted is None:
+                    continue
+                word = str(wanted).strip().lower()
+                word = {"true": "on", "false": "off"}.get(word, word)
+                actual = jarvis.states.get(target).state
+                if word in ("open", "closed"):  # covers move, they do not teleport
+                    assert actual in (word, f"{word[:4]}ing", "opening", "closing"), (
+                        f"{entity_id}: {target} is {actual!r}, wanted {word!r}"
+                    )
+                else:
+                    assert actual == word, (
+                        f"{entity_id}: {target} is {actual!r}, wanted {word!r}"
+                    )
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_the_security_automation_logs_before_it_speaks(
+    config_copy: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Front door opens, nobody home: the whole automation must survive dead TTS.
+
+    Ordering saves the logbook entry (it is step one), but the run itself still
+    has to finish — an automation that ends in a traceback drops everything
+    after the failing step, so the next line anyone adds to it silently never
+    runs.
+    """
+    caplog.set_level("ERROR", logger="jarvis.automation.engine")
+    jarvis = await _boot(config_copy)
+    try:
+        jarvis.states.set("person.chris", "not_home")
+        await jarvis.services.async_call(
+            "input_boolean", "turn_off", {"entity_id": "input_boolean.guest_mode"},
+            blocking=True,
+        )
+        await asyncio.sleep(0.1)
+        assert jarvis.states.get("binary_sensor.anyone_home").state == "off"
+
+        jarvis.states.set("binary_sensor.front_door", "on")
+        await asyncio.sleep(0.5)
+
+        automation = jarvis.states.get("automation.front_door_opened_while_away")
+        assert automation.attributes.get("last_triggered"), "the automation never ran"
+
+        entries = await jarvis.services.async_call(
+            "logbook", "get", {}, blocking=True, return_response=True
+        )
+        messages = [e.get("message") for e in (entries or {}).get("entries", [])]
+        assert "Front door opened with nobody home" in messages
+
+        blew_up = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "jarvis.automation.engine"
+            and "Front door opened while away" in record.getMessage()
+        ]
+        assert not blew_up, (
+            f"the automation ended in an error rather than completing: {blew_up}"
+        )
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_a_webhook_without_coordinates_cannot_degrade_the_tracker(
+    config_copy: Path,
+) -> None:
+    """The webhook id is the only credential, so a junk POST must be a no-op.
+
+    Before the `condition:`, an empty body rendered both gps templates to "",
+    which device_tracker.see rejected — and then applied the rest anyway,
+    resetting source_type to `router`, gps_accuracy to 50 and battery to 0 on
+    top of a perfectly good fix.
+    """
+    from fastapi.testclient import TestClient
+
+    from jarvis.api.server import create_app
+    from jarvis.auth import async_setup_auth
+
+    webhook_id = next(
+        trigger["webhook_id"]
+        for automation in load_config(config_copy)["automation"]
+        for trigger in as_list(automation.get("trigger"))
+        if isinstance(trigger, dict) and trigger.get("platform") == "webhook"
+    )
+
+    jarvis = await _boot(config_copy)
+    try:
+        await async_setup_auth(jarvis)
+        with TestClient(create_app(jarvis)) as client:
+            good = client.post(
+                f"/api/webhook/{webhook_id}",
+                json={"latitude": 51.5, "longitude": -0.12, "accuracy": 12, "battery": 88},
+            )
+            assert good.status_code == 200
+            await asyncio.sleep(0.3)
+            before = dict(jarvis.states.get("device_tracker.chris_phone").attributes)
+            assert before["gps_accuracy"] == 12 and before["battery_level"] == 88
+
+            for junk in ({}, {"latitude": 51.5}, {"latitude": None, "longitude": None}):
+                assert client.post(f"/api/webhook/{webhook_id}", json=junk).status_code == 200
+            await asyncio.sleep(0.4)
+
+            after = dict(jarvis.states.get("device_tracker.chris_phone").attributes)
+            for key in ("latitude", "longitude", "gps_accuracy", "battery_level", "source_type"):
+                assert after[key] == before[key], (
+                    f"a webhook POST with no coordinates changed {key}: "
+                    f"{before[key]!r} -> {after[key]!r}"
+                )
+    finally:
+        await jarvis.async_stop()
+
+
+# ===========================================================================
+# config/ — the LLM blast radius the configuration claims to have
+# ===========================================================================
+# `run_script` and `activate_scene` resolve the script/scene entity and then
+# execute whatever is inside, without re-checking the domains that sequence
+# calls or the entities it names. So exposure is only as strong as the shipped
+# macros: these are the tests that keep the shipped config honest about it.
+
+#: `script.goodnight` is allowed to reach `lock`, and only ever to *lock*.
+#: Locking a door you own is the fail-safe direction; see scripts.yaml.
+GATED_SCRIPT_EXCEPTIONS = {"goodnight": {"lock.lock"}}
+
+
+def _exposure(config: dict[str, Any]) -> Any:
+    from jarvis.llm.tools import Exposure
+
+    return Exposure.from_config((config.get("llm") or {}).get("expose"))
+
+
+def _sequence_services(sequence: Any) -> set[str]:
+    """Every `domain.service` string a sequence could call, without running it."""
+    found: set[str] = set()
+    for node in _walk(sequence):
+        if isinstance(node, dict):
+            value = node.get("service", node.get("action"))
+            if isinstance(value, str) and "." in value and " " not in value:
+                found.add(value)
+    return found
+
+
+def _sequence_targets(sequence: Any) -> set[str]:
+    """entity_ids a sequence *actuates*.
+
+    Deliberately not `_referenced_entity_ids`: an id inside a Jinja template is
+    a read, and a curated read is the whole point of `script.house_status`
+    reporting `garage_open` for a garage the model may not move. Only an
+    `entity_id:` key — in a `target:`, in `data:`, or on the step itself — is a
+    thing the sequence acts on.
+    """
+    found: set[str] = set()
+    for node in _walk(sequence):
+        if not isinstance(node, dict):
+            continue
+        value = node.get("entity_id")
+        for candidate in [value] if isinstance(value, str) else (value or []):
+            if isinstance(candidate, str) and ENTITY_ID_RE.match(candidate.strip().lower()):
+                found.add(candidate.strip().lower())
+        # `- scene: scene.movie` shorthand and `scene.turn_on` both actuate one.
+        shorthand = node.get("scene")
+        if isinstance(shorthand, str) and ENTITY_ID_RE.match(shorthand.strip().lower()):
+            found.add(shorthand.strip().lower())
+    return found
+
+
+def _macro_closure(config: dict[str, Any], sequence: Any) -> tuple[set[str], set[str]]:
+    """(targets, service calls) for a sequence *and* every macro it invokes.
+
+    A script that calls `script.x` or activates `scene.y` can do everything
+    those can, so a rule applied only to the outer sequence is trivially
+    sidestepped by one level of indirection.
+    """
+    scripts = config.get("script") or {}
+    scenes = {f"scene.{slugify(s['name'])}": s for s in (config.get("scene") or [])}
+
+    targets: set[str] = set()
+    services: set[str] = set()
+    pending: list[Any] = [sequence]
+    visited: set[str] = set()
+
+    while pending:
+        current = pending.pop()
+        step_targets = _sequence_targets(current)
+        step_services = _sequence_services(current)
+        targets |= step_targets
+        services |= step_services
+
+        for entity_id in step_targets:
+            if entity_id in visited:
+                continue
+            visited.add(entity_id)
+            domain, _, object_id = entity_id.partition(".")
+            if domain == "script" and object_id in scripts:
+                pending.append(scripts[object_id].get("sequence"))
+            elif domain == "scene" and entity_id in scenes:
+                targets |= {
+                    str(t).lower() for t in (scenes[entity_id].get("entities") or {})
+                }
+        # `service: script.goodnight` is a call, not a target.
+        for call in step_services:
+            domain, _, object_id = call.partition(".")
+            if domain == "script" and object_id in scripts and call not in visited:
+                visited.add(call)
+                pending.append(scripts[object_id].get("sequence"))
+
+    return targets, services
+
+
+async def test_run_script_is_not_gated_by_the_domains_it_calls(config_copy: Path) -> None:
+    """Pins the platform behaviour these config rules exist to work around.
+
+    This is not an endorsement. `run_script` resolves `script.*`, whose domain
+    is `script`, so the GATED_DOMAINS check never sees the `lock.lock` inside.
+    If this test ever starts failing because the tool grew a gate, delete the
+    exclusions in configuration.yaml along with it.
+    """
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    jarvis = await _boot(config_copy)
+    try:
+        llm_config = load_config(config_copy).get("llm") or {}
+        registry = ToolRegistry(jarvis, exposure=_exposure({"llm": llm_config}))
+        register_builtin_tools(registry, llm_config.get("user_context"))
+
+        await jarvis.services.async_call(
+            "lock", "unlock", {"entity_id": "lock.front_door_lock"}, blocking=True
+        )
+        result = await registry.call("run_script", {"entity_id": "script.goodnight"})
+        await asyncio.sleep(0.5)
+        assert result.get("status") != "approval_required", (
+            "run_script now gates on the script's domains — good; drop the "
+            "exclude_entities workaround in configuration.yaml"
+        )
+        assert jarvis.states.get("lock.front_door_lock").state == "locked"
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_excluded_entities_are_not_reachable_through_a_script_or_scene(
+    config_copy: Path,
+) -> None:
+    """An exclusion the model can route around is not an exclusion.
+
+    `switch.coffee_machine` used to be the shipped example while
+    `script.good_morning` turned it on and `scene.away` turned it off — both
+    model-runnable, so the stated guarantee was false. This walks every script
+    and scene the model can reach and asserts none of them names an excluded
+    entity as a target.
+    """
+    config = load_config(config_copy)
+    exposure = _exposure(config)
+    assert exposure.exclude_entities, "the shipped config excludes nothing to test"
+
+    jarvis = await _boot(config_copy)
+    try:
+        offenders: list[str] = []
+
+        for name, script in (config.get("script") or {}).items():
+            entity_id = f"script.{name}"
+            if not exposure.is_exposed(jarvis, entity_id):
+                continue
+            targets, _ = _macro_closure(config, script.get("sequence"))
+            for target in sorted(targets & exposure.exclude_entities):
+                offenders.append(f"{entity_id} targets excluded {target}")
+
+        for scene in config.get("scene") or []:
+            entity_id = f"scene.{slugify(scene['name'])}"
+            if not exposure.is_exposed(jarvis, entity_id):
+                continue
+            for target in scene.get("entities") or {}:
+                if str(target).lower() in exposure.exclude_entities:
+                    offenders.append(f"{entity_id} targets excluded {target}")
+
+        assert not offenders, (
+            "run_script/activate_scene bypass exclude_entities. Either drop the "
+            "target from the macro or exclude the macro too: " + "; ".join(offenders)
+        )
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_no_model_runnable_macro_reaches_a_gated_domain(config_copy: Path) -> None:
+    """Nothing the model can run may unlock a door or send a notification.
+
+    Checked over the macro's transitive closure, so one level of indirection
+    (`script.a` calling `script.b`) does not launder a gated call.
+    """
+    from jarvis.const import GATED_DOMAINS
+
+    config = load_config(config_copy)
+    exposure = _exposure(config)
+    jarvis = await _boot(config_copy)
+    try:
+        offenders: list[str] = []
+
+        for name, script in (config.get("script") or {}).items():
+            entity_id = f"script.{name}"
+            if not exposure.is_exposed(jarvis, entity_id):
+                continue
+            targets, services = _macro_closure(config, script.get("sequence"))
+            calls = {c for c in services if c.split(".")[0] in GATED_DOMAINS}
+            gated_targets = {t for t in targets if t.split(".")[0] in GATED_DOMAINS}
+            if not calls and not gated_targets:
+                continue
+            allowed = GATED_SCRIPT_EXCEPTIONS.get(name)
+            if allowed is None or not calls <= allowed:
+                offenders.append(
+                    f"{entity_id} calls {sorted(calls)} on {sorted(gated_targets)}"
+                )
+
+        for scene in config.get("scene") or []:
+            entity_id = f"scene.{slugify(scene['name'])}"
+            if not exposure.is_exposed(jarvis, entity_id):
+                continue
+            gated = {
+                str(t).split(".")[0]
+                for t in (scene.get("entities") or {})
+                if str(t).split(".")[0] in GATED_DOMAINS
+            }
+            if gated:
+                offenders.append(f"{entity_id} sets {sorted(gated)} entities")
+
+        assert not offenders, (
+            "a model-runnable macro reaches a gated domain with no approval; "
+            "exclude it under llm: expose: exclude_entities: " + "; ".join(offenders)
+        )
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_the_excluded_entity_really_is_invisible(config_copy: Path) -> None:
+    """End to end: the model cannot read it, list it, or actuate it."""
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    config = load_config(config_copy)
+    exposure = _exposure(config)
+    jarvis = await _boot(config_copy)
+    try:
+        registry = ToolRegistry(jarvis, exposure=exposure)
+        register_builtin_tools(registry, (config.get("llm") or {}).get("user_context"))
+
+        for entity_id in sorted(exposure.exclude_entities):
+            assert jarvis.states.get(entity_id) is not None, (
+                f"{entity_id} is excluded but does not exist — a typo excludes nothing"
+            )
+            before = jarvis.states.get(entity_id).state
+            for tool, args in (
+                ("get_state", {"entity_id": entity_id}),
+                ("turn_on", {"entity_id": entity_id}),
+                ("turn_off", {"entity_id": entity_id}),
+                ("set_cover_position", {"entity_id": entity_id, "position": 100}),
+            ):
+                result = await registry.call(tool, dict(args))
+                assert result.get("status") == "error", f"{tool} reached {entity_id}"
+            await asyncio.sleep(0.1)
+            assert jarvis.states.get(entity_id).state == before
+
+            listed = await registry.call("list_entities", {})
+            assert entity_id not in json.dumps(listed), f"list_entities leaked {entity_id}"
+    finally:
+        await jarvis.async_stop()
+
+
+# ===========================================================================
 # Dockerfile
 # ===========================================================================
 def test_dockerfile_shape() -> None:
@@ -468,6 +1008,39 @@ def test_dockerignore_keeps_config_out_of_the_build_context() -> None:
     assert "config/" in entries
     # ...and it must not exclude anything the Dockerfile copies.
     assert "jarvis/" not in entries and "requirements.txt" not in entries
+
+
+def test_dockerignore_excludes_every_relative_bind_mount() -> None:
+    """The build context must not swallow the stack's own data directories.
+
+    Every bind mount in docker-compose.yml is a relative path, so its host side
+    sits inside `context: .`. ./photon is a geocoding index (tens of GB for the
+    planet extract), ./wyoming/* are downloaded speech models, ./ollama is
+    model weights. Miss one and `docker compose build` on a machine that has
+    been running for a week ships all of it to the daemon before it reads the
+    first line of the Dockerfile.
+    """
+    ignored = {
+        line.strip().rstrip("/")
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+
+    mounts: set[str] = set()
+    # Commented-out services mount things too, and uncommenting one is a
+    # two-character edit — take the host side of every `- ./x:/y` line.
+    for line in COMPOSE.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"\s*#?\s*-\s+\./([^:\s]+):", line)
+        if match:
+            mounts.add(match.group(1))
+
+    assert mounts, "no relative bind mounts found — fix this test, not the compose file"
+    missing = sorted(
+        path
+        for path in mounts
+        if not any(part in ignored for part in (path, path.split("/")[0]))
+    )
+    assert not missing, f".dockerignore does not exclude bind-mounted host paths: {missing}"
 
 
 def test_dockerfile_apt_is_best_effort_and_ipv4() -> None:
@@ -553,6 +1126,48 @@ def test_compose_ports_match_the_voice_config() -> None:
     for section, port in (("stt", 10300), ("tts", 10200), ("wake", 10400)):
         assert voice[section]["port"] == port
         assert f"tcp://0.0.0.0:{port}" in text
+
+
+def _compose_default(name: str) -> str:
+    """The `${NAME:-default}` fallback compose uses when the env is empty."""
+    match = re.search(rf"\$\{{{name}:-([^}}]*)\}}", COMPOSE.read_text(encoding="utf-8"))
+    assert match, f"docker-compose.yml has no ${{{name}:-...}} default"
+    return match.group(1)
+
+
+def test_compose_timezone_default_matches_the_configured_time_zone() -> None:
+    """A TZ that disagrees with `jarvis: time_zone:` moves every time trigger.
+
+    Nothing errors: `time: at: "04:00:00"` simply fires at 04:00 in the other
+    zone, so "guest mode expires overnight" runs at 05:00 in British Summer
+    Time and nobody notices until the clocks change.
+    """
+    configured = load_config(CONFIG)["jarvis"]["time_zone"]
+    assert _compose_default("TZ") == configured, (
+        f"compose defaults TZ to {_compose_default('TZ')!r} but configuration.yaml "
+        f"sets time_zone: {configured!r}"
+    )
+
+
+def test_compose_piper_voice_matches_the_default_pipeline() -> None:
+    """Piper loads exactly the voice `--voice` names.
+
+    Asking it for another one means a download on first use, so a config whose
+    default pipeline names a voice compose never loaded is mute on a box with
+    no internet — the one place this stack is supposed to keep working.
+    """
+    voice = load_config(CONFIG)["voice"]
+    loaded = _compose_default("PIPER_VOICE")
+    assert voice["tts"]["voice"] == loaded
+    assert voice["pipelines"][0]["voice"] == loaded, (
+        f"the default pipeline asks for {voice['pipelines'][0]['voice']!r}, "
+        f"but wyoming-piper is started with {loaded!r}"
+    )
+
+
+def test_compose_wake_word_matches_the_voice_config() -> None:
+    config_wake = load_config(CONFIG)["voice"]["wake"]["model"]
+    assert _compose_default("WAKE_WORD") == config_wake
 
 
 # ===========================================================================

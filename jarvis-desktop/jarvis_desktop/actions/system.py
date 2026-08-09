@@ -226,7 +226,10 @@ class SetVolume(Action):
         "mute": "bool (optional): mute or unmute instead of setting a level",
     }
     capability = "system"
-    timeout_s = 12.0
+    # Above the longest per-OS deadline below (the Windows mixer nudge waits up
+    # to 20s). An action whose own subprocess outlives the dispatcher's cap gets
+    # reported as a timeout while the work carries on in an orphaned thread.
+    timeout_s = 25.0
 
     def available(self, ctx: ActionContext) -> bool:
         system = ctx.system
@@ -309,7 +312,8 @@ class Notify(Action):
         "urgency": "string (optional): low | normal | critical",
     }
     capability = "notify"
-    timeout_s = 12.0
+    #: Above the 15s PowerShell toast deadline, for the same reason as SetVolume.
+    timeout_s = 20.0
 
     def available(self, ctx: ActionContext) -> bool:
         # Always available: the last resort is a log line, which is honest and
@@ -364,6 +368,25 @@ def _applescript_str(text: str) -> str:
     return f'"{escaped}"'
 
 
+def _ps_single_quote(text: str) -> str:
+    """Body of a PowerShell **single-quoted** string literal.
+
+    Inside `'...'` PowerShell treats every character literally except `'`
+    itself, which is escaped by doubling it. So doubling quotes is the whole
+    escape — provided nothing else is interpolated into the script.
+
+    This matters more than it looks: the callers build a ``-Command`` string
+    from parameters the *server* chose, and ``notify`` is Tier 1. Without this,
+    a title of ``x'); <anything>; ('`` would close the literal and run arbitrary
+    PowerShell with no consent prompt anywhere in the path.
+
+    Control characters are dropped as well: they cannot escape the literal, but
+    they can hide the rest of a payload from anyone reading the audit log.
+    """
+    cleaned = "".join(" " if ch in "\r\n\t" else ch for ch in text if ord(ch) >= 0x20 or ch in "\r\n\t")
+    return cleaned.replace("'", "''")
+
+
 def _windows_toast(title: str, message: str) -> str | None:
     try:
         from win10toast import ToastNotifier  # type: ignore
@@ -380,8 +403,10 @@ def _windows_toast(title: str, message: str) -> str | None:
             "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications,"
             " ContentType = WindowsRuntime] > $null;"
             "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(2);"
-            f"$t.GetElementsByTagName('text')[0].AppendChild($t.CreateTextNode('{title}')) > $null;"
-            f"$t.GetElementsByTagName('text')[1].AppendChild($t.CreateTextNode('{message}')) > $null;"
+            f"$t.GetElementsByTagName('text')[0].AppendChild("
+            f"$t.CreateTextNode('{_ps_single_quote(title)}')) > $null;"
+            f"$t.GetElementsByTagName('text')[1].AppendChild("
+            f"$t.CreateTextNode('{_ps_single_quote(message)}')) > $null;"
             "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Jarvis')"
             ".Show([Windows.UI.Notifications.ToastNotification]::new($t))",
         ],

@@ -26,13 +26,27 @@ package ai.jarvis.app.channel
  * and released from whatever coroutine dispatcher ran the action.
  */
 class CommandGate(
-    /** How many actions may run at once, across all action ids. */
-    val maxConcurrent: Int = DEFAULT_MAX_CONCURRENT,
+    initialMaxConcurrent: Int = DEFAULT_MAX_CONCURRENT,
     /** How many finished `command_id`s to remember for replay. */
     val historySize: Int = DEFAULT_HISTORY,
     /** Replies larger than this are remembered by status only. */
     val maxCachedReplyChars: Int = DEFAULT_MAX_CACHED_REPLY_CHARS
 ) {
+
+    /**
+     * How many actions may run at once, across all action ids.
+     *
+     * Settable so the channel can apply `ChannelConfig.maxConcurrentCommands` at
+     * each reconnect without throwing away the dedupe history — the gate has to
+     * outlive a socket, which is the whole reason a redelivered `sms.send` is
+     * not sent twice. Clamped to at least 1: a zero would refuse every command
+     * and a negative would be a silently bricked device.
+     */
+    @Volatile
+    var maxConcurrent: Int = initialMaxConcurrent.coerceAtLeast(1)
+        set(value) {
+            field = value.coerceAtLeast(1)
+        }
 
     /** What the gate decided. Every branch has a defined reply on the wire. */
     sealed class Admission {

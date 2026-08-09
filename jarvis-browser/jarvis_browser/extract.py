@@ -45,6 +45,11 @@ _VOID_TAGS = frozenset({
     "meta", "param", "source", "track", "wbr",
 })
 
+# Longest href we will hand back. `check_url` refuses anything past this, and
+# the crawler runs caller-supplied regexes over every link it collects — an
+# unbounded URL from a hostile page is free CPU for a catastrophic pattern.
+MAX_LINK_URL_CHARS = 4096
+
 _KEEP_META = frozenset({
     "description", "author", "keywords", "og:title", "og:description",
     "og:site_name", "article:published_time",
@@ -308,6 +313,8 @@ def extract_links(
         href = href.strip()
         if not href or href.startswith("#"):
             continue
+        if len(href) > MAX_LINK_URL_CHARS:
+            continue
         try:
             resolved = urljoin(base_url, href) if base_url else href
         except ValueError:
@@ -319,6 +326,8 @@ def extract_links(
         if scheme not in ("http", "https"):
             continue
         resolved = strip_url_credentials(resolved)
+        if len(resolved) > MAX_LINK_URL_CHARS:
+            continue
         key = resolved.split("#", 1)[0]
         if key in seen:
             continue

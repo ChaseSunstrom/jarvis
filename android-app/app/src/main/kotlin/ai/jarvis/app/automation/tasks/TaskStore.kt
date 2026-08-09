@@ -158,10 +158,15 @@ class TaskStore(
      * automation the user wrote by hand, including the ones they had to enable
      * by hand because they contain a CONFIRM step. A local replace-all is a
      * deliberate act by someone holding the phone, and prunes everything.
+     *
+     * Nothing arriving here counts as locally authored, whichever way
+     * `fromServer` reads. Replacing the whole set is a bulk operation — a sync,
+     * a restore, a shared file — never a human typing one task into the editor,
+     * so every task in it is screened.
      */
     suspend fun replaceAll(tasks: List<TaskDefinition>, fromServer: Boolean): List<TaskUpsertResult> {
         val results = ArrayList<TaskUpsertResult>(tasks.size)
-        for (task in tasks) results.add(upsert(task, fromServer))
+        for (task in tasks) results.add(upsert(task, fromServer, authoredLocally = false))
         val keep = tasks.map { it.id }.toSet()
         write { list ->
             list.filter { it.id in keep || (fromServer && it.source != TaskSource.SERVER) }

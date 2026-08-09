@@ -1,6 +1,7 @@
 package ai.jarvis.app.channel
 
 import java.net.URI
+import java.util.Locale
 
 /**
  * PURE LOGIC — no Android imports, no org.json, no I/O.
@@ -85,7 +86,11 @@ object LanHost {
 
     /** Lower-case, strip IPv6 brackets and any `%zone`, reject empty/garbage. */
     fun normalize(host: String?): String? {
-        var h = host?.trim()?.lowercase() ?: return null
+        // Locale.ROOT, not the device locale. In a Turkish locale the default
+        // `lowercase()` maps 'I' to 'ı', so "JARVIS.LOCAL" and OkHttp's own
+        // (Locale.US) "jarvis.local" would stop comparing equal and the
+        // per-command host pin would refuse a perfectly legitimate server.
+        var h = host?.trim()?.lowercase(Locale.ROOT) ?: return null
         if (h.isEmpty()) return null
         if (h.startsWith("[") && h.endsWith("]")) h = h.substring(1, h.length - 1)
         h = h.substringBefore('%')
@@ -149,10 +154,20 @@ object LanHost {
         if (bare.all { it == '0' }) return HostClass.INVALID
         if (h.endsWith(":1") && bare.trimStart('0') == "1") return HostClass.LOOPBACK
 
-        // IPv4-mapped/compatible: ::ffff:192.168.1.10 — the v4 tail decides.
+        // A dotted tail decides ONLY for the v4-mapped/compatible prefixes,
+        // `::a.b.c.d` and `::ffff:a.b.c.d`, where those last 32 bits really are
+        // an IPv4 address.
+        //
+        // Any other prefix is an ordinary IPv6 address that merely happens to be
+        // written with a dotted tail, and reading the tail there is a cleartext
+        // bypass: `2001:4860:4860::10.0.0.1` is globally routable, but the tail
+        // `10.0.0.1` says "RFC1918", so `http://[2001:4860:4860::10.0.0.1]:8123`
+        // used to classify as LAN and carry the bearer token in the clear.
         val tail = h.substringAfterLast(':')
         if (tail.contains('.')) {
-            return classifyIpv4(tail) ?: HostClass.INVALID
+            val prefix = h.substring(0, h.length - tail.length)
+            if (isV4EmbeddingPrefix(prefix)) return classifyIpv4(tail) ?: HostClass.INVALID
+            // else fall through: classify it as the IPv6 address it actually is.
         }
 
         val first = h.substringBefore(':')
@@ -164,6 +179,31 @@ object LanHost {
             in 0xfe80..0xfebf -> HostClass.LINK_LOCAL_V6       // fe80::/10
             else -> HostClass.PUBLIC
         }
+    }
+
+    /**
+     * True for the two prefixes whose trailing dotted quad is an IPv4 address:
+     * `::` (IPv4-compatible, deprecated) and `::ffff:` (IPv4-mapped), in either
+     * the compressed or the long-hand `0:0:0:0:0:ffff:` spelling.
+     *
+     * [prefix] is everything up to and including the colon before the quad.
+     */
+    private fun isV4EmbeddingPrefix(prefix: String): Boolean {
+        if (!prefix.endsWith(":")) return false
+        val compressed = prefix.startsWith("::")
+        val groups = prefix.split(':').filter { it.isNotEmpty() }
+        // Compressed: "::" (no groups) or "::ffff:" (one). Long-hand: exactly the
+        // five zero groups plus the ffff marker.
+        if (compressed && groups.size > 1) return false
+        if (!compressed && groups.size != 6) return false
+        for ((i, group) in groups.withIndex()) {
+            if (group.length > 4) return false
+            val value = group.toIntOrNull(16) ?: return false
+            if (value == 0) continue
+            // The only non-zero group allowed is a trailing ffff.
+            if (value != 0xffff || i != groups.size - 1) return false
+        }
+        return true
     }
 
     // --- transport policy ---------------------------------------------------
@@ -199,7 +239,7 @@ object LanHost {
         } catch (e: IllegalArgumentException) {
             return Verdict(false, "server URL does not parse", null, HostClass.INVALID, false)
         }
-        val scheme = uri.scheme?.lowercase()
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
             ?: return Verdict(false, "server URL has no scheme", null, HostClass.INVALID, false)
         val host = normalize(uri.host)
             ?: return Verdict(false, "server URL has no usable host", null, HostClass.INVALID, false)

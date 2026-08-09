@@ -7,9 +7,6 @@ import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
 
-// `SystemEventBus.DYNAMIC_ACTIONS` and `ACCEPTED_BROADCASTS` are declared at the
-// bottom of this file; `SystemEventReceiver.onReceive` reads the second of them.
-
 /**
  * The single `BroadcastReceiver` behind every system-event trigger.
  *
@@ -229,7 +226,7 @@ object SystemEventBus {
     /**
      * Everything [SystemEventReceiver] will accept off a real broadcast.
      *
-     * [DYNAMIC_ACTIONS] plus the two the manifest declares that the dynamic
+     * [DYNAMIC_ACTIONS] plus the one the manifest declares that the dynamic
      * registration does not need. Every entry is a PROTECTED broadcast, which
      * means the platform itself refuses to deliver one sent by an ordinary app —
      * so an allow-list drawn from this set is also an "only the system may
@@ -242,7 +239,8 @@ object SystemEventBus {
      */
     val ACCEPTED_BROADCASTS: Set<String> = buildSet {
         addAll(DYNAMIC_ACTIONS)
-        add(Intent.ACTION_BOOT_COMPLETED)
+        // Declared by the manifest copy only; the live registration uses a
+        // NetworkCallback instead, which reports far more.
         add("android.net.conn.CONNECTIVITY_CHANGE")
     }
 }

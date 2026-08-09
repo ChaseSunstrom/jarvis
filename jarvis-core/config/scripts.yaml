@@ -43,8 +43,16 @@ goodnight:
         - service: switch.turn_off
           target:
             entity_id: switch.decorative_lights
-    # Locking is a gated action when the LLM asks for it, but a script the
-    # user ran deliberately is the user acting, not the model — so this runs.
+    # `lock` is a GATED_DOMAIN, so `lock_control` needs a human approval. That
+    # gate does NOT extend to here: `run_script` resolves `script.goodnight`,
+    # whose domain is `script`, and then runs the sequence — the model can
+    # reach this line unattended. It is shipped anyway because the only gated
+    # call is `lock.lock`: locking a door you own is the fail-safe direction.
+    #
+    # A script that UNLOCKS anything, or that sends a notification, must be
+    # kept away from the model with `llm: expose: exclude_entities:
+    # [script.<name>]`. tests/test_packaging.py enforces that rule over every
+    # shipped script and scene.
     - service: lock.lock
       target:
         entity_id: lock.front_door_lock
@@ -81,7 +89,13 @@ good_morning:
     - service: switch.turn_on
       target:
         entity_id: switch.coffee_machine
+    # `voice.say` RAISES when Piper is unreachable — a cold `docker compose
+    # up`, a voice still downloading, a restarted container. Without
+    # continue_on_error that exception aborts the sequence, so every step after
+    # a failed announcement is silently skipped. Speaking is the least
+    # important thing any of these scripts do; never let it cancel the rest.
     - service: voice.say
+      continue_on_error: true
       data:
         text: >-
           Good morning, Sir. It is {{ states('sensor.outside_temperature') }} degrees outside,
@@ -112,7 +126,12 @@ announce:
       example: The washing machine has finished.
       required: true
   sequence:
+    # continue_on_error, because a dead TTS must not stop the announcement from
+    # being *recorded*. Without it an unreachable Piper raises here and
+    # input_text.last_announcement is never written, so the HUD and the LLM
+    # both believe nothing was announced.
     - service: voice.say
+      continue_on_error: true
       data:
         text: "{{ message }}"
     - service: input_text.set_value

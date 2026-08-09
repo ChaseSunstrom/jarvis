@@ -107,12 +107,18 @@
       entity_id: input_boolean.guest_mode
       state: "off"
   action:
+    # Record first, speak second, and never let the speaking fail the
+    # recording: `voice.say` raises outright when Piper is unreachable, so
+    # without continue_on_error a security event would end in a traceback
+    # instead of an entry. Ordering alone is not enough — anything added after
+    # this point would be skipped.
     - service: logbook.log
       data:
         name: Security
         message: Front door opened with nobody home
         entity_id: binary_sensor.front_door
     - service: voice.say
+      continue_on_error: true
       data:
         text: "Sir, the front door has just opened and the house is empty."
 
@@ -177,13 +183,24 @@
   trigger:
     - platform: webhook
       webhook_id: chris_phone_a7f3d91c4e2b5086
+  # The webhook is open by design (the id is the credential), so this is the
+  # only thing standing between a malformed or hostile POST and the tracker.
+  # Without it a body with no coordinates renders both templates to "" —
+  # device_tracker.see logs "bad gps payload", drops the fix, and still applies
+  # the rest, which resets source_type to `router`, gps_accuracy to 50 and
+  # battery to 0. One empty POST degrades a good location report.
+  condition:
+    - condition: template
+      value_template: >-
+        {{ trigger.json.latitude is defined and trigger.json.longitude is defined
+           and trigger.json.latitude is not none and trigger.json.longitude is not none }}
   action:
     - service: device_tracker.see
       data:
         dev_id: chris_phone
         gps:
-          - "{{ trigger.json.latitude }}"
-          - "{{ trigger.json.longitude }}"
+          - "{{ trigger.json.latitude | float }}"
+          - "{{ trigger.json.longitude | float }}"
         gps_accuracy: "{{ trigger.json.accuracy | default(50) }}"
         battery: "{{ trigger.json.battery | default(0) }}"
 

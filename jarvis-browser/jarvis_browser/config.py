@@ -148,6 +148,9 @@ class Settings:
     max_sessions: int = 8
     max_act_steps: int = 25
     session_root: str = ""
+    # How often the background janitor closes expired sessions and drops
+    # finished approval requests.
+    janitor_interval: float = 30.0
 
     def with_overrides(self, **kw) -> "Settings":
         return replace(self, **kw)
@@ -198,4 +201,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         max_sessions=e.int("BROWSER_MAX_SESSIONS", 8),
         max_act_steps=e.int("BROWSER_MAX_ACT_STEPS", 25),
         session_root=e.str("BROWSER_SESSION_ROOT"),
+        janitor_interval=e.float("BROWSER_JANITOR_INTERVAL", 30.0),
     )

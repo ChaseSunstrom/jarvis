@@ -47,6 +47,24 @@ The same check also runs *inside* the browser, as a Playwright route handler
 on `**/*`, so a redirect or a subresource cannot reach somewhere the initial
 URL check would have refused.
 
+Two things that check has to survive:
+
+**Parser divergence.** `urllib.parse.urlsplit` ends the authority at `/`,
+`?` or `#`. The WHATWG parser chromium uses *also* ends it at a backslash, so
+`https://evil.net\@good.com/` is `good.com` to Python and `evil.net` to the
+browser — validate one, contact the other. Any URL whose raw authority
+contains a backslash is refused outright rather than normalised, because
+quietly visiting a different site than the caller asked for is its own bug.
+An out-of-range port is refused too: `urlsplit` defers port validation to
+attribute access, so `https://host:99999/` parses fine and then raises the
+first time anything reads `.port`.
+
+**Redirect chains we follow ourselves.** The `robots.txt` fetch is plain
+httpx, not the browser, so it gets no route handler. It follows redirects by
+hand, one hop at a time, re-running the SSRF check before each — with
+`follow_redirects=True` a public `robots.txt` could 302 the service straight
+at `http://127.0.0.1:8123/`, and Home Assistant is on that host.
+
 ### 2. Domain policy — reading is not clicking
 
 | list | meaning | empty means |
@@ -59,6 +77,18 @@ URL check would have refused.
 set, `/act` refuses every domain — reading a page is one thing, driving a
 mouse and keyboard across it is another. Matching is exact-host-or-subdomain:
 `example.com` covers `shop.example.com` and never `example.com.evil.net`.
+
+The policy is applied to where we *land*, not only to where we asked to go,
+because the redirect is the site's choice and not ours:
+
+* `/fetch` re-checks `final_url` against the read policy when the host
+  changed, and 403s rather than returning an off-policy page's content.
+* `/crawl` does the same per page, counting it under `skipped.blocked_redirect`.
+* On the write path, the guarded URL is written **back into the step**, so
+  chromium navigates the exact string the policy approved. After every
+  executed step the real backend re-checks `page.url` against the
+  `act_allowlist` and aborts the rest of the batch if a redirect, meta-refresh
+  or script navigation moved the page off it.
 
 ### 3. Fenced content — page text is data, forever
 
@@ -82,10 +112,16 @@ metadata and search snippets get the same treatment.
 And the structural half, which is the part that actually holds: **there is no
 code path from fetched content to an action.** `/fetch` returns text to the
 caller and nothing else. `/act` executes a caller-authored step list. As a
-tripwire, any `/act` step whose text carries the fence markers is refused
-with a 422 — if fenced content shows up in a step, something upstream piped a
-page into an automation, which is exactly the chain this service exists to
-prevent.
+tripwire, any `/act` step whose text carries the fence markers — or the
+notice line, for a caller that strips the tags and pastes the rest — is
+refused with a 422. If fenced content shows up in a step, something upstream
+piped a page into an automation, which is exactly the chain this service
+exists to prevent.
+
+Be clear about what that tripwire is: a smoke alarm, not a wall. A caller
+that launders page text through a paraphrase gets past it. What actually
+holds is that anything sensitive needs a fresh human approval, and that
+`/act` is confined to the `act_allowlist`, which is empty by default.
 
 ### 4. The approval gate — mirrors the orchestrator's
 

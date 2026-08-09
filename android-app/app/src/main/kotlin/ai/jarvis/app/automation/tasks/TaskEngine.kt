@@ -155,8 +155,16 @@ class TaskEngine(
      */
     private val startLocks = ConcurrentHashMap<String, Mutex>()
 
+    /**
+     * `computeIfAbsent`, not `getOrPut`: the latter is a read-then-write on a
+     * `Map` and is not atomic on a `ConcurrentHashMap`, so two racing callers
+     * would each build a Mutex, each lock their own, and the lock would guard
+     * nothing — in exactly the race it exists to close.
+     */
+    private fun lockFor(taskId: String): Mutex = startLocks.computeIfAbsent(taskId) { Mutex() }
+
     private suspend fun start(task: TaskDefinition, event: TriggerEvent?) =
-        startLocks.getOrPut(task.id) { Mutex() }.withLock { startLocked(task, event) }
+        lockFor(task.id).withLock { startLocked(task, event) }
 
     private suspend fun startLocked(task: TaskDefinition, event: TriggerEvent?) {
         when (task.mode) {
@@ -214,12 +222,16 @@ class TaskEngine(
         if (task.mode != TaskMode.QUEUED) return
         // Same lock as `start`, and taken before `queueLock` in both places, so
         // draining the queue cannot race a fresh trigger into a second run.
-        startLocks.getOrPut(task.id) { Mutex() }.withLock {
+        lockFor(task.id).withLock {
             val next = queueLock.withLock { queues[task.id]?.removeFirstOrNull() } ?: return
             // Re-read the task: it may have been disabled or edited while we ran.
             val fresh = store.get(task.id) ?: return
             if (!fresh.isRunnable() || !accepting) return
-            if (running[task.id]?.isActive == true) return
+            // No "is it already running?" check here on purpose: this runs
+            // inside the finishing job's own body, so `running[task.id]` still
+            // points at that job and is still active. The lock is what makes
+            // this safe — a concurrent trigger is either queued before we drain
+            // or blocked until after we have launched.
             launchRun(fresh, next)
         }
     }

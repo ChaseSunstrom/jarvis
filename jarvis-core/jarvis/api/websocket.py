@@ -120,6 +120,8 @@ class WebSocketHandler:
         self._runs: dict[Any, asyncio.Task] = {}
         self._binary_handlers: dict[int, asyncio.Queue] = {}
         self._closed = False
+        #: True only while the worker is inside a command handler.
+        self._busy = False
 
     # --- lifecycle --------------------------------------------------------
     async def run(self) -> None:
@@ -139,35 +141,62 @@ class WebSocketHandler:
         finally:
             await self._cleanup()
 
-    async def _cleanup(self) -> None:
-        self._closed = True
-        await self._drain_worker()
+    def _release(self) -> list[asyncio.Task]:
+        """Give up everything this connection holds. Synchronous, idempotent.
+
+        Returns the tasks it asked to stop, for the caller to await.
+        """
         for unsub in list(self._subscriptions.values()):
             with contextlib.suppress(Exception):
                 unsub()
         self._subscriptions.clear()
-        for task in list(self._runs.values()):
-            task.cancel()
-        if self._runs:
-            await asyncio.gather(*list(self._runs.values()), return_exceptions=True)
-        self._runs.clear()
         self._binary_handlers.clear()
+        stale = list(self._runs.values())
+        self._runs.clear()
         if self._writer is not None:
-            self._writer.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._writer
+            stale.append(self._writer)
             self._writer = None
+        for task in stale:
+            task.cancel()
+        return stale
 
-    async def _drain_worker(self) -> None:
-        """Let the command in flight finish, then stop the worker.
+    async def _cleanup(self) -> None:
+        """Stop the worker, then release everything this connection holds."""
+        self._closed = True
+        stale: list[asyncio.Task] = []
+        try:
+            stale += await self._stop_worker()
+        finally:
+            # In a `finally` because stopping the worker is the one
+            # interruptible step here: `run()` can be cancelled outright — a
+            # server shutting down does exactly that — and a release that got
+            # skipped would leave bus listeners registered for the life of the
+            # process, still serialising events into a socket that is long
+            # gone. Releasing afterwards also catches anything a command run
+            # on the way out registered for itself.
+            stale += self._release()
+        if stale:
+            await asyncio.gather(*stale, return_exceptions=True)
+
+    async def _stop_worker(self) -> list[asyncio.Task]:
+        """Stop the command worker, letting any command in flight finish.
 
         Cancelling outright would abort a half-executed ``call_service`` just
         because the client's socket went away mid-call — the sequential loop
         this replaced always ran a command to completion, and so does this.
+
+        With nothing running and nothing queued there is no drain to wait for,
+        and the worker is handed back to be cancelled alongside everything
+        else. That is the ordinary case, and keeping it free of extra awaits
+        keeps teardown to a single pass.
         """
         worker, self._worker = self._worker, None
         if worker is None:
-            return
+            return []
+        if not self._busy and self._work.empty():
+            worker.cancel()
+            return [worker]
+
         self._work.put_nowait(_STOP)
         try:
             await asyncio.wait_for(worker, DRAIN_TIMEOUT)
@@ -177,6 +206,7 @@ class WebSocketHandler:
             raise
         except Exception:  # pragma: no cover - the worker swallows its own errors
             _LOGGER.debug("Websocket worker ended badly", exc_info=True)
+        return []
 
     # --- transport --------------------------------------------------------
     async def _send_now(self, payload: dict[str, Any]) -> None:
@@ -223,7 +253,7 @@ class WebSocketHandler:
     async def _authenticate_with_timeout(self) -> bool:
         """Authenticate, or hang up. An idle peer must not hold the slot."""
         try:
-            return await self._authenticate()
+            return await asyncio.wait_for(self._authenticate(), AUTH_TIMEOUT)
         except (asyncio.TimeoutError, TimeoutError):
             _LOGGER.debug("Websocket did not authenticate within %ss", AUTH_TIMEOUT)
             with contextlib.suppress(Exception):
@@ -307,7 +337,11 @@ class WebSocketHandler:
             if not isinstance(msg, dict):
                 self.error(None, ERR_INVALID_FORMAT, "message must be an object")
                 continue
-            await self._dispatch(msg)
+            self._busy = True
+            try:
+                await self._dispatch(msg)
+            finally:
+                self._busy = False
 
     async def _dispatch(self, msg: dict[str, Any]) -> None:
         msg_id = msg.get("id")

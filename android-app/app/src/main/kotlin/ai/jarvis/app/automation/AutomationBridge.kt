@@ -194,11 +194,15 @@ object AutomationBridge {
         /**
          * Queue a `device_event` for the server.
          *
-         * Returns false when it was dropped — no socket and the offline queue
-         * is full, or the outbound rate limit is spent. Events are lossy by
-         * design: a trigger that fired while the phone was in a tunnel is
-         * stale by the time the tunnel ends, and a caller that cannot lose an
-         * event should be a task, not an event.
+         * Returns false when this event was refused outright — a blank event
+         * name, or the outbound rate limit is spent. It returns true when the
+         * event went onto the socket **or** onto the offline queue; a full
+         * offline queue drops the OLDEST entry to make room, so a true here is
+         * "this one was accepted", not "nothing was lost".
+         *
+         * Events are lossy by design: a trigger that fired while the phone was
+         * in a tunnel is stale by the time the tunnel ends, and a caller that
+         * cannot lose an event should be a task, not an event.
          */
         fun sendEvent(event: String, data: JSONObject, untrusted: Boolean = false): Boolean
 

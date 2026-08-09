@@ -110,12 +110,22 @@ def normalise_url(url: str) -> str:
 
 
 def same_origin(a: str, b: str) -> bool:
-    pa, pb = urlsplit(a), urlsplit(b)
-    return (
-        pa.scheme.lower() == pb.scheme.lower()
-        and (pa.hostname or "").lower() == (pb.hostname or "").lower()
-        and pa.port == pb.port
-    )
+    """True if both URLs share scheme, host and port.
+
+    Unparseable is *not* same-origin. ``urlsplit`` defers port validation to
+    attribute access, so a single ``<a href="https://x:99999/">`` on a
+    crawled page used to raise ValueError out of here and turn /crawl into a
+    500 — page content picking the response code is content acting on us.
+    """
+    try:
+        pa, pb = urlsplit(a), urlsplit(b)
+        return (
+            pa.scheme.lower() == pb.scheme.lower()
+            and (pa.hostname or "").lower() == (pb.hostname or "").lower()
+            and pa.port == pb.port
+        )
+    except ValueError:
+        return False
 
 
 def robots_url_for(url: str) -> str:
@@ -220,8 +230,13 @@ async def crawl(
         limits.per_domain_interval, clock=clock, sleep=sleep
     )
 
-    queue: deque[tuple[str, int]] = deque([(normalise_url(start_url), 0)])
-    seen: set[str] = {normalise_url(start_url)}
+    try:
+        start_norm = normalise_url(start_url)
+    except ValueError as exc:
+        raise CrawlConfigError(f"unparseable start_url: {exc}") from exc
+
+    queue: deque[tuple[str, int]] = deque([(start_norm, 0)])
+    seen: set[str] = {start_norm}
 
     while queue:
         if len(result.pages) >= limits.max_pages:
@@ -255,13 +270,25 @@ async def crawl(
             result.note_skip("fetch_error")
             continue
 
+        final_url = page.final_url or url
+        # A redirect is chosen by the site, not by us: re-check where we
+        # actually landed before the body counts as fetched content.
+        if url_ok is not None and final_url != url:
+            try:
+                redirect_blocked = url_ok(normalise_url(final_url))
+            except ValueError:
+                redirect_blocked = "unparseable redirect target"
+            if redirect_blocked:
+                result.note_skip("blocked_redirect")
+                continue
+
         result.fetched += 1
         nbytes = page.nbytes or len(page.html.encode("utf-8", "replace"))
         result.total_bytes += nbytes
 
         parsed: PageExtract = extract(
             page.html,
-            base_url=page.final_url or url,
+            base_url=final_url,
             max_chars=limits.max_chars_per_page,
             max_links=limits.max_links_per_page,
         )
@@ -283,7 +310,13 @@ async def crawl(
             continue
 
         for child in child_urls:
-            norm = normalise_url(child)
+            try:
+                norm = normalise_url(child)
+            except ValueError:
+                # e.g. `http://[::1` — a malformed href must not be able to
+                # end the crawl with a traceback.
+                result.note_skip("unparseable_link")
+                continue
             if norm in seen:
                 continue
             if limits.same_origin_only and not same_origin(norm, start_url):

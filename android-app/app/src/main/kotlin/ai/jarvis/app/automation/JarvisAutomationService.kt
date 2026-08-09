@@ -201,8 +201,12 @@ class JarvisAutomationService : Service() {
     private suspend fun rebuild(runtime: AutomationRuntime.Runtime, tasks: List<TaskDefinition>) {
         rebuildLock.withLock {
             if (!policy.automationEnabled || policy.panic) return
-            runtime.engine.onTasksChanged()
+            // Order matters: `TriggerManager.start` stops everything first, and
+            // stopping empties the notification listener's allow-list. Refilling
+            // it before the rebuild would refill it and then immediately clear
+            // it, leaving a phone with notification triggers that never fire.
             runtime.triggers.start(tasks)
+            runtime.engine.onTasksChanged()
             live = true
         }
         updateNotification()

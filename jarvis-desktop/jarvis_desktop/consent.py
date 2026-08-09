@@ -339,6 +339,12 @@ class TerminalConsentGateway(ConsentGateway):
     def __init__(self, stream: Any = None, out: Any = None) -> None:
         self._in = stream
         self._out = out
+        # Held by the reader thread for as long as it owns stdin. A prompt that
+        # times out leaves its reader blocked in readline() forever — there is
+        # no portable way to interrupt it — so the lock is what stops a stream
+        # of timed-out prompts from piling up one stuck thread each and having
+        # several of them race for the same keystroke.
+        self._stdin_lock = threading.Lock()
 
     def _stdin(self) -> Any:
         return self._in if self._in is not None else sys.stdin
@@ -356,6 +362,17 @@ class TerminalConsentGateway(ConsentGateway):
     async def request(self, request: ApprovalRequest) -> ApprovalVerdict:
         answer: list[str] = []
         done = threading.Event()
+
+        if not self._stdin_lock.acquire(blocking=False):
+            # An earlier prompt timed out and its reader still owns stdin.
+            # Refusing is the only honest answer: a second reader would compete
+            # for the same keystrokes, so a "y" meant for one action could be
+            # consumed by the prompt for another.
+            _LOGGER.warning(
+                "a previous terminal prompt is still waiting for input; denying %s",
+                request.action_id,
+            )
+            return ApprovalVerdict.TIMEOUT
 
         def ask() -> None:
             out = self._stdout()
@@ -376,9 +393,14 @@ class TerminalConsentGateway(ConsentGateway):
                 answer.append("")
             finally:
                 done.set()
+                self._stdin_lock.release()
 
         thread = threading.Thread(target=ask, name="jarvis-consent", daemon=True)
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:  # cannot start a thread: fail closed, free the lock
+            self._stdin_lock.release()
+            return ApprovalVerdict.TIMEOUT
         try:
             await asyncio.wait_for(
                 asyncio.to_thread(done.wait, request.timeout_s + 1.0),

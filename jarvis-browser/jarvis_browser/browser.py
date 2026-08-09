@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from .config import Settings
-from .safety import check_url
+from .safety import DomainPolicy, act_target_violation, check_url
 
 log = logging.getLogger("jarvis.browser.backend")
 
@@ -201,6 +201,11 @@ class PlaywrightBackend:
 
     def __init__(self, settings: Settings):
         self.s = settings
+        self._act_policy = DomainPolicy(
+            allowlist=settings.allowlist,
+            denylist=settings.denylist,
+            act_allowlist=settings.act_allowlist,
+        )
         self._pw = None
         self._browser = None
         self._contexts: dict[str, Any] = {}
@@ -429,6 +434,22 @@ class PlaywrightBackend:
                     )
                 )
                 break  # a failed step invalidates everything after it
+            # Where we asked to go was checked before the batch ran; where we
+            # ended up is the site's choice. A redirect, meta-refresh or
+            # script navigation must not carry the remaining steps onto a
+            # domain the act allowlist never covered.
+            drift = act_target_violation(
+                getattr(page, "url", ""), self._act_policy
+            )
+            if drift:
+                log.warning("act batch left the act allowlist: %s", drift)
+                outcomes.append(
+                    StepOutcome(
+                        i, action, "error",
+                        f"navigation left the act allowlist: {drift}"[:300],
+                    )
+                )
+                break
         html = ""
         try:
             html = await page.content()
