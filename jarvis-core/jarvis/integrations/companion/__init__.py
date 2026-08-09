@@ -51,6 +51,12 @@ DEFAULT_ASK_TIMEOUT = 120.0
 DEFAULT_NOTIFY_TIMEOUT = 30.0
 MAX_QUEUE = 50
 
+#: The three things a proactive message can be. Anything else is a `notify`:
+#: `kind` chooses the presence need, the wire `kind`, and whether `send()`
+#: blocks, so an unrecognised one must land on the quietest, non-blocking
+#: option rather than being passed through to the devices verbatim.
+VALID_KINDS = ("say", "ask", "notify")
+
 # transport(device_id, payload) -> awaitable[bool delivered]
 Transport = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
@@ -105,6 +111,21 @@ class CompanionManager:
         message = self._pending.get(message_id)
         if message is None:
             return False
+        if status == "answered" and not str(answer or "").strip():
+            # A question is answered by a person choosing something. An
+            # `answered` carrying nothing is a device acknowledging *delivery*
+            # — every device reports that for a plain notification — and
+            # reading it as an answer would be the worst of both worlds: the
+            # waiting `companion.ask` resolves with a reply nobody gave, and
+            # escalation stops, so the question never reaches the human at all.
+            # Downgrade to `dismissed`, which is what "not dealt with here"
+            # means everywhere else in this protocol.
+            _LOGGER.warning(
+                "companion: %s reported 'answered' with no answer; treating it "
+                "as dismissed so the question still reaches a human",
+                message_id,
+            )
+            status = "dismissed"
         if status == "answered" and message.future and not message.future.done():
             message.future.set_result(answer)
             self._pending.pop(message_id, None)
@@ -130,6 +151,7 @@ class CompanionManager:
         conversation_id: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
+        kind = kind if kind in VALID_KINDS else "notify"
         need = (
             NEEDS_ANSWER if kind == "ask"
             else NEEDS_SPEECH if kind == "say"
@@ -238,6 +260,23 @@ class CompanionManager:
         """Deliver anything that piled up while no device was reachable."""
         pending, self._queue = list(self._queue), []
         for message in pending:
+            if message.kind == "ask" and (
+                message.future is None or message.future.done()
+            ):
+                # A question that was queued never got a future — `send()`
+                # returned `queued` and the automation moved on. Putting it on
+                # a screen now asks the user something whose answer has nowhere
+                # to go: they choose, and nothing happens. Drop it and say so.
+                _LOGGER.info(
+                    "companion: dropping queued question %s; nobody is waiting "
+                    "for the answer any more",
+                    message.message_id,
+                )
+                self.jarvis.bus.fire(
+                    EVENT_MESSAGE_EXPIRED,
+                    {"message_id": message.message_id, "reason": "nobody waiting"},
+                )
+                continue
             need = NEEDS_ANSWER if message.kind == "ask" else NEEDS_VISUAL
             delivery = self.presence.route(need, message.importance)
             if delivery.device_id is None or self._transport is None:
@@ -256,9 +295,14 @@ async def async_setup(jarvis: Any, config: Any) -> bool:
     jarvis.data["companion"] = manager
 
     async def notify(call: Any) -> dict[str, Any]:
+        # `notify` is the fire-and-forget door. `kind: ask` through here would
+        # make it block for the whole ask timeout and return an answer the
+        # caller never asked for — `companion.ask` is the service for that, and
+        # it is the one that creates a future to receive the reply.
+        kind = call.get("kind", "notify")
         return await manager.send(
             text=call.get("message", ""),
-            kind=call.get("kind", "notify"),
+            kind=kind if kind in ("say", "notify") else "notify",
             importance=call.get("importance", "normal"),
             device_id=call.get("device_id"),
             conversation_id=call.get("conversation_id"),

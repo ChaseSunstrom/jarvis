@@ -125,6 +125,24 @@ Note what refusal is *not*: it does not skip back to an older, safer entry.
 "Undo that" means the last thing. If the last thing was unlocking the front
 door, the answer is a refusal and an explanation, not a light being turned off.
 
+An action that moves no entity state at all — sending a notification is the
+obvious one — is still recorded when it is irreversible, precisely so the
+answer is "a message that has been delivered cannot be unsent" rather than
+"nothing to undo".
+
+### Scenes
+
+A scene fans out into other service calls under its own context. Those inner
+calls are not recorded separately, so one scene is one undo entry and
+reversing it puts back everything the scene touched — not just the last light
+it happened to reach.
+
+Restoring always goes back through the ordinary service layer
+(`light.turn_on`, `cover.set_cover_position`, `climate.set_hvac_mode` + `…
+set_temperature`, and so on), never by writing states directly. A state
+written directly would make the house *look* restored while the actual device
+stayed where the undone action left it.
+
 ### Staleness and the state of the house
 
 * Entries **expire** after `ttl` (default 10 minutes). An hour later, "undo

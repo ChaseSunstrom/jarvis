@@ -86,7 +86,7 @@ IGNORED_DOMAINS = frozenset(
     {
         DOMAIN, "memory", "trace", "briefing", "logbook", "recorder", "history",
         "persistent_notification", "system_log", "homeassistant_compat",
-        "conversation", "llm", "voice", "companion", "template", "web",
+        "conversation", "llm", "voice", "template", "web",
     }
 )
 
@@ -230,7 +230,7 @@ def _snapshot(state: "State | None") -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # restoring
 # ---------------------------------------------------------------------------
-ON_LIKE = frozenset({"on", "open", "playing", "home", "cleaning", "heat", "cool", "auto"})
+ON_LIKE = frozenset({"on", "open", "home"})
 
 
 def restore_plan(
@@ -259,10 +259,22 @@ def restore_plan(
         else:
             calls.append((domain, "turn_off", {"entity_id": entity_id}))
 
-    elif domain in ("switch", "input_boolean", "humidifier", "media_player"):
-        service = "turn_on" if state in ON_LIKE else "turn_off"
-        calls.append((domain, service, {"entity_id": entity_id}))
-        if domain == "media_player" and attributes.get("volume_level") is not None:
+    elif domain in ("switch", "input_boolean", "humidifier"):
+        calls.append(
+            (domain, "turn_on" if state in ON_LIKE else "turn_off", {"entity_id": entity_id})
+        )
+
+    elif domain == "media_player":
+        # "It was playing" is put back by playing, not by turning the thing on.
+        if state == "playing":
+            calls.append((domain, "media_play", {"entity_id": entity_id}))
+        elif state == "paused":
+            calls.append((domain, "media_pause", {"entity_id": entity_id}))
+        elif state in ("off", "standby"):
+            calls.append((domain, "turn_off", {"entity_id": entity_id}))
+        else:
+            calls.append((domain, "media_stop", {"entity_id": entity_id}))
+        if attributes.get("volume_level") is not None:
             calls.append(
                 (domain, "volume_set",
                  {"entity_id": entity_id, "volume_level": attributes["volume_level"]})
@@ -446,9 +458,19 @@ class UndoRecorder:
         return removed
 
     def recent(self, limit: int | None = None) -> list[UndoEntry]:
-        """Newest first: calls that actually moved something and are not spent."""
+        """Newest first: what "undo that" could plausibly be referring to.
+
+        A reversible call that moved nothing is not an action anybody means.
+        An *irreversible* one is kept even when it moved no entity state — a
+        sent message is exactly the thing whose refusal has to be explained
+        rather than answered with "nothing to undo".
+        """
         self.purge()
-        entries = [e for e in reversed(self.entries) if e.previous and not e.undone]
+        entries = [
+            e
+            for e in reversed(self.entries)
+            if (e.previous or not e.reversible) and not e.undone
+        ]
         if limit:
             entries = entries[: int(limit)]
         return entries

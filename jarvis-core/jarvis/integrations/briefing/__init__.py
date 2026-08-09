@@ -60,7 +60,10 @@ if TYPE_CHECKING:  # pragma: no cover
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "briefing"
-DEPENDENCIES = ["llm"]
+#: `companion` is how a briefing reaches you at all — a digest that can only
+#: be fetched on request is not a briefing. It still degrades gracefully when
+#: set up by hand without one.
+DEPENDENCIES = ["llm", "companion"]
 
 EVENT_BRIEFING_READY = "briefing_ready"
 
@@ -73,7 +76,7 @@ DEFAULT_EVENING = "22:00"
 #: How far back "overnight" reaches for the morning briefing.
 OVERNIGHT_HOURS = 10.0
 
-OPENING_STATES = frozenset({"open", STATE_ON})
+#: binary_sensor device classes that mean "a way into the house".
 DOOR_CLASSES = frozenset({"door", "garage_door", "window", "opening"})
 
 

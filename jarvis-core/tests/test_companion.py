@@ -282,3 +282,145 @@ async def test_transport_failure_requeues(companion):
     await asyncio.sleep(0)  # let the drain task run
     result = await manager.send("still here?", kind="notify")
     assert result["status"] == "queued"
+
+
+# --- a question may never be answered by a device on the user's behalf -------
+#
+# The bug these cover: `route()` hard-coded mode "notify" for the
+# critical/nothing-reachable branch, whatever the message needed. A device told
+# "just notify" posts the notification and reports `answered` — that is how
+# every device acknowledges delivery of a plain message. The manager then
+# resolved the waiting `companion.ask` with an empty answer and stopped
+# escalating, so an automation branched on a reply nobody gave and the human
+# was never asked at all.
+
+
+def test_critical_question_stays_a_question_when_nothing_is_reachable():
+    reg = make_registry()
+    for d in reg.devices.values():
+        d.connected = False
+    delivery = reg.route(NEEDS_ANSWER, importance="critical", now=NOW)
+    assert delivery.device_id is not None
+    assert delivery.mode == "ask", "a question routed as 'notify' gets auto-acknowledged"
+
+
+def test_critical_speech_still_downgrades_on_a_muted_device():
+    # The same branch must keep honouring what the device can actually do.
+    reg = make_registry()
+    for d in reg.devices.values():
+        d.connected = False
+        d.muted = True
+    assert reg.route(NEEDS_SPEECH, importance="critical", now=NOW).mode == "notify"
+
+
+async def test_blank_answered_does_not_resolve_a_question(companion):
+    jarvis, manager, reg, sent = companion
+    reg.touch_interaction("phone")
+    task = asyncio.create_task(
+        manager.send("Upload the photos?", kind="ask", options=["yes", "no"], timeout=0.4)
+    )
+    await asyncio.sleep(0.05)
+    message_id = sent[0][1]["message_id"]
+
+    # The delivery acknowledgement a device sends for a notification.
+    assert manager.on_device_answer(message_id, "", "answered") is True
+
+    result = await task
+    assert result["status"] == "timeout"
+    assert result["answer"] is None
+
+
+async def test_blank_answered_escalates_to_the_next_device(companion):
+    jarvis, manager, reg, sent = companion
+    reg.touch_interaction("phone")
+    task = asyncio.create_task(
+        manager.send("Deploy?", kind="ask", options=["yes", "no"], timeout=0.5)
+    )
+    await asyncio.sleep(0.05)
+    message_id = sent[0][1]["message_id"]
+    manager.on_device_answer(message_id, None, "answered")
+    await asyncio.sleep(0.05)
+
+    # It moved on to the other device rather than being swallowed.
+    assert [d for d, _ in sent] == ["phone", "desk"]
+    manager.on_device_answer(message_id, "yes", "answered")
+    result = await task
+    assert result["status"] == "answered" and result["answer"] == "yes"
+
+
+async def test_real_answers_are_untouched(companion):
+    jarvis, manager, reg, sent = companion
+    reg.touch_interaction("phone")
+    task = asyncio.create_task(manager.send("Deploy?", kind="ask", timeout=1.0))
+    await asyncio.sleep(0.05)
+    manager.on_device_answer(sent[0][1]["message_id"], "  no  ", "answered")
+    result = await task
+    assert result["status"] == "answered" and result["answer"] == "  no  "
+
+
+async def test_notify_service_cannot_be_turned_into_a_blocking_ask(companion):
+    jarvis, manager, reg, sent = companion
+    reg.touch_interaction("desk")
+    out = await asyncio.wait_for(
+        jarvis.services.async_call(
+            "companion", "notify",
+            {"message": "Deploy?", "kind": "ask"},
+            blocking=True, return_response=True,
+        ),
+        timeout=2.0,
+    )
+    assert out["status"] == "delivered"
+    assert sent[0][1]["kind"] == "notify"
+
+
+async def test_unknown_kind_becomes_a_quiet_notify(companion):
+    jarvis, manager, reg, sent = companion
+    reg.touch_interaction("desk")
+    result = await manager.send("something", kind="shout")
+    assert result["status"] == "delivered"
+    assert sent[0][1]["kind"] == "notify"
+
+
+async def test_a_queued_question_is_not_asked_after_nobody_is_waiting(companion):
+    jarvis, manager, reg, sent = companion
+    for d in reg.devices.values():
+        d.connected = False
+
+    result = await manager.send("Upload the photos?", kind="ask", timeout=0.5)
+    assert result["status"] == "queued"
+    assert manager.queued == 1
+
+    expired: list[dict] = []
+    jarvis.bus.listen("companion_message_expired", lambda e: expired.append(e.data))
+
+    reg.register("phone", "Pixel", "android", ["ask"])
+    reg.devices["phone"].screen_on = True
+    reg.devices["phone"].locked = False
+
+    async def transport(device_id, payload):
+        sent.append((device_id, payload))
+        return True
+
+    manager.set_transport(transport)
+    await asyncio.sleep(0.05)
+    assert not sent, "a question whose asker has gone must not be put on a screen"
+    assert expired and expired[0]["reason"] == "nobody waiting"
+
+
+async def test_a_queued_notification_still_drains(companion):
+    jarvis, manager, reg, sent = companion
+    for d in reg.devices.values():
+        d.connected = False
+    assert (await manager.send("Washing machine done.", kind="notify"))["status"] == "queued"
+
+    reg.register("phone", "Pixel", "android", ["ask"])
+    reg.devices["phone"].screen_on = True
+    reg.devices["phone"].locked = False
+
+    async def transport(device_id, payload):
+        sent.append((device_id, payload))
+        return True
+
+    manager.set_transport(transport)
+    await asyncio.sleep(0.05)
+    assert sent and sent[0][1]["text"] == "Washing machine done."

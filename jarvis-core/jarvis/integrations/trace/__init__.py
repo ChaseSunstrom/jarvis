@@ -510,7 +510,13 @@ def _install_instrumentation() -> None:
     ) -> Any:
         recorder = _recorder_for(self.jarvis)
         if recorder is None:
-            return await original_trigger(self, variables, context, skip_condition, wait)
+            # Blank the slot: an untraced instance's conditions must not land
+            # in a traced one's run just because a task ancestry connects them.
+            token = _CONDITION_LOG.set(None)
+            try:
+                return await original_trigger(self, variables, context, skip_condition, wait)
+            finally:
+                _CONDITION_LOG.reset(token)
 
         token = _CONDITION_LOG.set([])
         try:

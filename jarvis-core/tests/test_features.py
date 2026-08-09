@@ -536,6 +536,57 @@ async def test_undo_restores_a_thermostat(tmp_path):
     assert jarvis.states.get("climate.lounge").attributes["temperature"] == 18.0
 
 
+async def test_undo_reverses_a_whole_scene(tmp_path):
+    """A scene fans out under one context; undoing it puts all of it back."""
+    from jarvis.integrations import scene as scene_integration
+
+    jarvis = make_jarvis(tmp_path)
+    await domains_integration.async_setup(jarvis, None)
+    await scene_integration.async_setup(
+        jarvis,
+        [{"name": "Movie Night", "entities": {"light.hall": "off", "light.lamp": "on"}}],
+    )
+    await undo_integration.async_setup(jarvis, None)
+    jarvis.states.set("light.hall", "on", {"friendly_name": "Hall Light"})
+    jarvis.states.set("light.lamp", "off", {"friendly_name": "Lamp"})
+
+    await jarvis.services.async_call("scene", "turn_on", {"entity_id": "scene.movie_night"})
+    assert jarvis.states.get("light.hall").state == "off"
+    assert jarvis.states.get("light.lamp").state == "on"
+
+    listed = await call(jarvis, "undo", "list")
+    # One entry for the scene, not one per light it happened to touch.
+    assert listed["count"] == 1
+    assert listed["entries"][0]["domain"] == "scene"
+    assert sorted(listed["entries"][0]["entity_ids"]) == ["light.hall", "light.lamp"]
+
+    result = await call(jarvis, "undo", "last")
+
+    assert result["status"] == "ok"
+    assert sorted(result["restored"]) == ["light.hall", "light.lamp"]
+    assert jarvis.states.get("light.hall").state == "on"
+    assert jarvis.states.get("light.lamp").state == "off"
+
+
+async def test_undo_restores_what_a_speaker_was_doing(tmp_path):
+    jarvis = await setup_undo(tmp_path)
+    jarvis.states.set(
+        "media_player.kitchen", "playing",
+        {"friendly_name": "Kitchen Speaker", "volume_level": 0.3},
+    )
+
+    await jarvis.services.async_call(
+        "media_player", "volume_set",
+        {"entity_id": "media_player.kitchen", "volume_level": 0.9},
+    )
+    result = await call(jarvis, "undo", "last")
+
+    assert result["status"] == "ok"
+    speaker = jarvis.states.get("media_player.kitchen")
+    assert speaker.state == "playing"  # put back by playing, not by turn_on
+    assert speaker.attributes["volume_level"] == 0.3
+
+
 async def test_undo_is_not_itself_recorded(tmp_path):
     """Otherwise "undo, undo, undo" oscillates the house forever."""
     jarvis = await setup_undo(tmp_path)
@@ -598,6 +649,18 @@ async def test_undo_specific_entry_by_id(tmp_path):
     assert result["status"] == "ok"
     assert jarvis.states.get("light.hall").state == "off"
     assert jarvis.states.get("light.study").state == "on"
+
+
+async def test_undo_refuses_an_unsendable_message(tmp_path):
+    """A notification moves no entity state, so it has to be refused by name."""
+    jarvis = await setup_undo(tmp_path)
+    await setup_companion(jarvis)
+
+    await call(jarvis, "companion", "notify", message="The washing is done, Sir.")
+    result = await call(jarvis, "undo", "last")
+
+    assert result["status"] == "refused"
+    assert "cannot be unsent" in result["reason"]
 
 
 async def test_undo_is_bounded(tmp_path):

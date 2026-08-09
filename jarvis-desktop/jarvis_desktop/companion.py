@@ -122,8 +122,10 @@ MODE_ASK = "ask"
 MODE_NOTIFY = "notify"
 VALID_MODES = (MODE_SPEAK, MODE_ASK, MODE_NOTIFY)
 
+KIND_ASK = "ask"
+
 #: kind -> the mode we use when the server did not send a usable one.
-_KIND_TO_MODE = {"say": MODE_SPEAK, "ask": MODE_ASK, "notify": MODE_NOTIFY}
+_KIND_TO_MODE = {"say": MODE_SPEAK, KIND_ASK: MODE_ASK, "notify": MODE_NOTIFY}
 
 VALID_IMPORTANCE = ("low", "normal", "high", "critical")
 
@@ -204,6 +206,19 @@ class CompanionMessage:
             # The server's routing decision is the authority; when it is
             # missing or garbled, fall back to what the message *is*.
             mode = _KIND_TO_MODE.get(kind, "")
+        if kind == KIND_ASK and mode != MODE_ASK:
+            # The server picks the *presentation*; it does not get to turn a
+            # question into something this machine acknowledges on the user's
+            # behalf. `notify` and `speak` both end in `answered` — that is how
+            # a device says "delivered" — and for a question that reads as a
+            # reply nobody gave, which resolves the waiting `companion.ask` and
+            # stops it escalating to a device the user is actually at.
+            _LOGGER.warning(
+                "a kind=ask message arrived with mode=%r; treating it as a "
+                "question, because only a human answers a question",
+                mode or "(none)",
+            )
+            mode = MODE_ASK
 
         importance = str(frame.get("importance") or "").strip().lower()
         if importance not in VALID_IMPORTANCE:
@@ -919,7 +934,18 @@ class CompanionHandler:
         except Exception:  # noqa: BLE001
             _LOGGER.debug("notifier failed", exc_info=True)
             shown = False
-        return AskOutcome.answered("") if shown else AskOutcome.undeliverable()
+        if not shown:
+            return AskOutcome.undeliverable()
+        if message.wants_answer:
+            # Belt and braces behind the parse-time rule. A toast has no
+            # buttons, so posting one is not an answer however the frame was
+            # worded — say `undeliverable` and let the server put the question
+            # somewhere it can actually be answered.
+            return AskOutcome.undeliverable()
+        # `answered` with an empty string is this protocol's "delivered": there
+        # is no fifth status, and every other one makes the server escalate a
+        # message the user has already seen.
+        return AskOutcome.answered("")
 
     # --- outbound ---------------------------------------------------------
 

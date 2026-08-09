@@ -67,6 +67,9 @@ TYPE_DEVICE_RESULT = "device_result"
 TYPE_DEVICE_EVENT = "device_event"
 TYPE_PING = "ping"
 TYPE_PONG = "pong"
+#: Server -> device proactive message. Handled by :mod:`jarvis_desktop.companion`,
+#: which has no way to run anything — see its module docstring.
+TYPE_MESSAGE = "jarvis_message"
 
 STATUS_OK = "ok"
 STATUS_DENIED = "denied"
@@ -232,6 +235,15 @@ class DeviceChannel:
         self._send_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._next_id = 1
+
+        #: Handles inbound ``jarvis_message`` frames — set by ``cmd_run``.
+        #: Deliberately a plain attribute holding an object that has no
+        #: registry, no dispatcher and no policy store: the wiring is what
+        #: makes "a proactive message cannot run anything" structural.
+        self.companion: Any | None = None
+        #: Called on every (re)registration, so presence reports the whole
+        #: snapshot to a server that just built a fresh DevicePresence.
+        self.on_registered: Callable[[], None] | None = None
         self.registered = False
         #: Set once a session has authenticated and registered; the trigger
         #: layer waits on it before emitting anything.
@@ -328,6 +340,15 @@ class DeviceChannel:
                     len(self.registry),
                     ", ".join(self.registry.capabilities()),
                 )
+                if self.on_registered is not None:
+                    # A fresh session means a fresh DevicePresence on the
+                    # server; without a full report it stays on defaults —
+                    # screen off, locked — which reads as BACKGROUND, and a
+                    # BACKGROUND device is never sent a question.
+                    try:
+                        self.on_registered()
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.debug("the registration hook failed", exc_info=True)
                 return
             await self._handle_frame(frame)
         raise TransportClosed("server never answered the registration")
@@ -361,6 +382,15 @@ class DeviceChannel:
             await self.on_device_command(frame)
         elif kind == TYPE_PING:
             await self._send({"id": frame.get("id"), "type": TYPE_PONG})
+        elif kind == TYPE_MESSAGE:
+            # Jarvis reaching the user, not the user's machine. Off the read
+            # loop: a question can sit on screen for two minutes, and a blocked
+            # read loop cannot even receive a cancellation.
+            companion = self.companion
+            if companion is None:
+                _LOGGER.debug("no companion handler wired; ignoring a jarvis_message")
+                return
+            companion.handle_background(frame)
         elif kind in (TYPE_RESULT, TYPE_PONG, "event", None, ""):
             return
         else:
@@ -495,6 +525,23 @@ class DeviceChannel:
         await self._send(frame)
 
     # --- outbound events ----------------------------------------------------
+
+    async def send_frame(self, frame: Mapping[str, Any]) -> bool:
+        """Put one raw frame on the socket. False when it could not go out.
+
+        For ``jarvis_message_result``, which is a *reply* to something the
+        server sent — so it is not wrapped in a ``device_event`` and not
+        rate-limited, for the same reason ``device_result`` is not: dropping a
+        reply strands whatever is waiting on the other end. The companion
+        handler keeps the frame and replays it on redelivery either way.
+        """
+        if not self.registered:
+            return False
+        try:
+            await self._send(frame)
+        except TransportClosed:
+            return False
+        return True
 
     async def emit_event(
         self, event: str, data: Mapping[str, Any] | None = None, untrusted: bool = False

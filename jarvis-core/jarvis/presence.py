@@ -227,8 +227,21 @@ class PresenceRegistry:
         if not ranked:
             if importance == "critical" and self.devices:
                 # Nothing is reachable; leave it on the most recently seen device.
+                #
+                # The mode still comes from _mode_for(): this branch decides
+                # WHERE a critical message waits, never WHAT it is. Hard-coding
+                # "notify" here used to turn a question into a notification, and
+                # a device that is told "just notify" acknowledges delivery —
+                # which the manager reads as an answer, resolves the waiting
+                # `companion.ask` with nothing, and stops escalating. A question
+                # stays a question wherever it lands.
                 best = max(self.devices.values(), key=lambda d: d.last_seen)
-                return Delivery(best.device_id, "notify", "critical, no device reachable", [])
+                return Delivery(
+                    best.device_id,
+                    _mode_for(need, best),
+                    "critical, no device reachable",
+                    [],
+                )
             return Delivery(None, "queue", "no reachable device", [])
 
         chosen = ranked[0]
