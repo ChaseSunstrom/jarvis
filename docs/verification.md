@@ -360,24 +360,35 @@ either.**
 
 ## Known failures, as of 2026-08-09
 
-Two, both in `ci.yml` and both about paths rather than about behaviour. Neither
-is a claim in the matrix above, and neither is in `e2e.yml`:
+Both `ci.yml` path failures recorded here are now fixed, and fixing the second
+one uncovered a third that had been invisible.
 
-* `python · tools/orchestrator/sandbox/evals` — `ERROR: file or directory not
-  found: jarvis_tools/tests`. There is no `jarvis_tools/` in the tree at all, so
-  the whole job exits 4 before running anything. Whatever that suite used to
-  prove, it has been proving nothing since the directory moved.
-* `web · build + unit + e2e` — Playwright reports `Error: No tests found` and an
-  import failure on `tests/web/e2e.spec.ts:1` (`import { test, expect } from
-  '@playwright/test'`). `playwright.config.ts` points `testDir` at
-  `../tests/web`, which is outside `jarvis-web` and resolves its own
-  `node_modules`. The 20 browser tests recorded as green below were last green
-  before that; they are currently not running.
+* `python · tools/orchestrator/sandbox/evals` — referenced `jarvis_tools/tests`,
+  which has not existed since the HA-era cleanup, so the job exited 4 before
+  running anything. The stale path is gone from the pytest line and from the
+  `compileall` line in `static checks`; the orchestrator, sandbox and routing
+  suites it was supposed to run now actually run.
+* `web · build + unit + e2e` — Playwright reported `No tests found` plus an
+  import failure on `@playwright/test`. `testDir` pointed at `../tests/web`,
+  outside the `jarvis-web` package, and Node resolves a module from the
+  importing **file's** directory: `tests/web/` has no `node_modules` in a fresh
+  checkout. It passed locally only because that directory happens to exist on
+  developer machines from an earlier `npm install` — and it is gitignored, so
+  nothing in the repo revealed the dependency. The spec now lives at
+  `jarvis-web/e2e/e2e.spec.ts`, inside the package that owns Playwright.
 
-The Playwright *behavioural* failure previously recorded here
-(`tests/web/e2e.spec.ts` — "automations page shows last_triggered, toggles and
-runs now", which could not find `automation.night_mode` in the mock backend) had
-been fixed before the suite stopped running.
+  **What that uncovered:** with the suite running again, 19 of 20 pass and one
+  fails — `push-to-talk round trip renders transcript and response`, which times
+  out waiting for the transcript to render. That is a real behavioural failure
+  in the HUD's full round trip (PTT -> fake mic -> /ws proxy -> mock pipeline ->
+  DOM), not a path problem, and it was masked by the suite not running at all.
+  The 20 browser tests recorded as green elsewhere in this document were last
+  green before that; treat 19/20 as the current truth.
+
+The lesson is the one this document keeps relearning, alongside the mutation
+stub and the four-commit APK breakage: a suite that does not run is
+indistinguishable from a suite that passes, and this file is the place that
+difference has to be written down.
 
 Everything else listed in this document passed on the date given.
 
