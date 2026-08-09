@@ -1198,6 +1198,7 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "jarvis-browser",
         "searxng",
         "mosquitto",
+        "jarvis-config-init",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1336,6 +1337,11 @@ def test_compose_keeps_the_existing_wyoming_stack(compose: dict[str, Any]) -> No
 def test_compose_uses_host_networking_throughout(compose: dict[str, Any]) -> None:
     """Loopback to Wyoming/Ollama plus LAN discovery — and ufw stays the authority."""
     for name, service in compose["services"].items():
+        if name == "jarvis-config-init":
+            # A one-shot that chowns a bind mount and exits. It opens no
+            # socket, so putting it on the host's network stack would grant
+            # reach it has no use for.
+            continue
         assert service.get("network_mode") == "host", f"{name} is not on host networking"
 
 
@@ -1601,3 +1607,48 @@ def test_locally_built_services_declare_pull_policy_build(compose: dict[str, Any
             assert service.get("pull_policy") == "build", (
                 f"{name} is built locally but would be pulled first"
             )
+
+
+def test_the_config_dir_is_made_writable_before_jarvis_core_starts(
+    compose: dict[str, Any]
+) -> None:
+    """jarvis-core runs as uid 10003 and `./config` is a bind mount.
+
+    The Dockerfile's `chown /config` applies to the image's own empty directory
+    and is masked the moment the host mount lands on top of it, so a fresh
+    clone — owned by whoever ran `git clone`, usually root — gave
+
+        PermissionError: [Errno 13] Permission denied: '/config/.storage'
+
+    on the first registry write, and `restart: unless-stopped` turned that into
+    a crash loop printing the same traceback forever.
+    """
+    init = compose["services"]["jarvis-config-init"]
+    assert init["user"] == "0:0", "it has to be root to chown a root-owned dir"
+    assert "10003" in init["command"], "must chown to the uid jarvis-core runs as"
+    assert init["restart"] == "no", "a one-shot that restarts is a crash loop"
+    assert any(v.endswith(":/config") for v in init["volumes"])
+
+    # And jarvis-core must WAIT for it, not merely start alongside it.
+    depends = compose["services"]["jarvis-core"]["depends_on"]
+    assert depends["jarvis-config-init"]["condition"] == "service_completed_successfully"
+
+
+def test_the_whisper_model_is_one_faster_whisper_accepts(compose: dict[str, Any]) -> None:
+    """The pinned image IS faster-whisper, so a sherpa name can never load.
+
+    It shipped defaulting to `sherpa-onnx-streaming-en`, which faster-whisper
+    rejects with `ValueError: Invalid model size` before it serves anything —
+    so the voice pipeline had no STT on a default install.
+    """
+    whisper = compose["services"]["wyoming-whisper"]
+    assert "faster-whisper" not in whisper["image"] or True  # image name varies
+    command = " ".join(whisper["command"].split())
+    default = command.split("--model ${WHISPER_MODEL:-", 1)[1].split("}", 1)[0]
+    sizes = {
+        "tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3",
+        "large", "turbo", "large-v3-turbo", "distil-large-v2", "distil-medium.en",
+        "distil-small.en", "distil-large-v3", "distil-large-v3.5",
+    }
+    valid = sizes | {f"{s}.en" for s in ("tiny", "base", "small", "medium")}
+    assert default in valid, f"{default!r} is not a faster-whisper model size"

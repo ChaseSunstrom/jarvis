@@ -51,6 +51,28 @@ services:
   # --- Jarvis Core --------------------------------------------------------
   # The whole platform: state machine, service registry, automations, scripts,
   # scenes, MQTT discovery, recorder, the voice pipeline and the LLM agent.
+  # --- one-shot: make the bind-mounted config dir writable ------------------
+  # jarvis-core runs as uid 10003 (see Dockerfile) and never as root. `./config`
+  # is a bind mount, so its ownership is the HOST's — whatever the user who
+  # cloned the repo happens to be, usually root. The Dockerfile's `chown /config`
+  # applies to the image's empty directory and is masked the instant the mount
+  # lands on top of it, so without this the very first write fails:
+  #
+  #     PermissionError: [Errno 13] Permission denied: '/config/.storage'
+  #
+  # ...and `restart: unless-stopped` turns that into a crash loop that buries
+  # the cause under identical tracebacks. Runs as root, chowns, exits.
+  jarvis-config-init:
+    image: busybox:1.36
+    container_name: jarvis-config-init
+    user: "0:0"
+    command: >
+      sh -c "mkdir -p /config/.storage && chown -R 10003:10003 /config &&
+             echo 'config dir ready for uid 10003'"
+    volumes:
+      - ./config:/config
+    restart: "no"
+
   jarvis-core:
     # Built here, never published: without this compose tries a registry
     # pull first and prints a scary "access denied" warning before falling
@@ -95,6 +117,9 @@ services:
       # service needs them arriving here too.
       - ORCHESTRATOR_TOKEN=${ORCHESTRATOR_TOKEN:-}
       - APPROVAL_SECRET=${APPROVAL_SECRET:-}
+    depends_on:
+      jarvis-config-init:
+        condition: service_completed_successfully
     volumes:
       # Your entire installation. Config in, and Jarvis writes .storage/
       # (entity/device/area registries, access tokens) plus the recorder
@@ -135,10 +160,17 @@ services:
       - TZ=${TZ:-Europe/London}
 
   # --- Wyoming: speech to text -------------------------------------------
-  # The streaming sherpa model your host already runs. If you are on
-  # faster-whisper instead, set WHISPER_MODEL to one of its names
-  # (tiny-int8, base-int8, small-int8, ...) — jarvis-core does not care which
-  # engine answers on 10300, only that something speaks Wyoming there.
+  # This image IS faster-whisper, so WHISPER_MODEL must be one of ITS names:
+  # tiny/base/small/medium/large-v3/turbo, each also in an `.en` English-only
+  # variant that is more accurate for English and useless for anything else.
+  # `base.en` is the default because it is the smallest that transcribes a
+  # spoken sentence reliably; `small.en` if you have the RAM, `tiny.en` on a Pi.
+  # Set `base` (no suffix) if VOICE_LANGUAGE is not `en`.
+  #
+  # An invalid name is not a warning — faster-whisper raises ValueError and the
+  # container restart-loops. jarvis-core does not care which engine answers on
+  # 10300, only that something speaks Wyoming there, so a different STT server
+  # is fine; its model names are then that server's business, not this list.
   wyoming-whisper:
     image: rhasspy/wyoming-whisper:latest
     container_name: wyoming-whisper
@@ -146,7 +178,7 @@ services:
     network_mode: host
     command: >
       --uri tcp://0.0.0.0:10300
-      --model ${WHISPER_MODEL:-sherpa-onnx-streaming-en}
+      --model ${WHISPER_MODEL:-base.en}
       --language ${VOICE_LANGUAGE:-en}
       --data-dir /data
       --download-dir /data
