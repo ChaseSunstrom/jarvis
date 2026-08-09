@@ -280,9 +280,9 @@ audio, never drives a browser, and never touches a phone. Those are below.
 
 ---
 
-## Two failures that this document would not have caught
+## Three failures that this document would not have caught
 
-Worth recording, because both were failures of *process* rather than of
+Worth recording, because the first two were failures of *process* rather than of
 coverage, and this file is exactly the sort of document that makes them
 possible.
 
@@ -303,14 +303,59 @@ with a script-compilation error, so `assertNoTestHooksInRelease` — the check
 that keeps debug-only hooks out of a release APK — had never executed once.
 "Unproven" and "broken" are different states and this file conflated them.
 
+**The app did not start on Android 11, and nothing in the repository knew.**
+The first time `app/src/androidTest` was ever executed on a device — the
+emulator job of `e2e.yml`, API 30 — `AppLaunchTest` failed on its first test and
+took the whole instrumentation process with it:
+
+```
+java.lang.RuntimeException: Unable to start activity
+  ComponentInfo{ai.jarvis.app/ai.jarvis.app.MainActivity}:
+java.lang.NullPointerException: Attempt to invoke virtual method
+  'android.view.WindowInsetsController
+   com.android.internal.policy.DecorView.getWindowInsetsController()'
+  on a null object reference
+  at com.android.internal.policy.PhoneWindow.getInsetsController(PhoneWindow.java:3880)
+  at ai.jarvis.app.ui.JarvisUi.immersive(JarvisUi.kt:46)
+  at ai.jarvis.app.MainActivity.onCreate(MainActivity.kt:70)
+```
+
+`JarvisUi.immersive` read `Window.insetsController` from `onCreate`, before
+`setContentView`. On API 30 that getter dereferences the decor view with no null
+check, and the decor is not installed yet — so the crash happens *inside the
+getter*, where the Kotlin `?.` cannot help. All three immersive screens (home,
+assist popup, companion prompt) shared the line, so all three were dead on
+Android 11. The APK built, every `src/test` unit test passed, and the release
+scan was clean the entire time: none of them starts an Activity. Fixed by going
+through `window.decorView.windowInsetsController`, which installs the decor and
+returns a controller that replays once the window is attached;
+`android-app/tools/window_insets_test.py` fails on the old form.
+
+**The lesson is that "it compiles", "it packages" and "it starts" are three
+claims, and only the first two were ever being checked.**
+
 ## Known failures, as of 2026-08-09
 
-None. The Playwright failure previously recorded here
-(`tests/web/e2e.spec.ts` — "automations page shows last_triggered, toggles and
-runs now", which could not find `automation.night_mode` in the mock backend)
-now passes; all 20 browser tests are green.
+Two, both in `ci.yml` and both about paths rather than about behaviour. Neither
+is a claim in the matrix above, and neither is in `e2e.yml`:
 
-Everything listed in this document passed on the date given.
+* `python · tools/orchestrator/sandbox/evals` — `ERROR: file or directory not
+  found: jarvis_tools/tests`. There is no `jarvis_tools/` in the tree at all, so
+  the whole job exits 4 before running anything. Whatever that suite used to
+  prove, it has been proving nothing since the directory moved.
+* `web · build + unit + e2e` — Playwright reports `Error: No tests found` and an
+  import failure on `tests/web/e2e.spec.ts:1` (`import { test, expect } from
+  '@playwright/test'`). `playwright.config.ts` points `testDir` at
+  `../tests/web`, which is outside `jarvis-web` and resolves its own
+  `node_modules`. The 20 browser tests recorded as green below were last green
+  before that; they are currently not running.
+
+The Playwright *behavioural* failure previously recorded here
+(`tests/web/e2e.spec.ts` — "automations page shows last_triggered, toggles and
+runs now", which could not find `automation.night_mode` in the mock backend) had
+been fixed before the suite stopped running.
+
+Everything else listed in this document passed on the date given.
 
 These counts were taken while other work on the repository was still in flight,
 and the web suite in particular moved during the measurement (a phone-width

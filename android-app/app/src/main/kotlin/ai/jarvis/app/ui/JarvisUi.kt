@@ -38,12 +38,39 @@ object JarvisUi {
     fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).toInt()
 
-    /** Edge-to-edge, system bars hidden (swipe to reveal). */
+    /**
+     * Edge-to-edge, system bars hidden (swipe to reveal).
+     *
+     * Every caller runs this from `onCreate`, **before** `setContentView` — so
+     * the controller has to be fetched through the decor view and never through
+     * `Window.insetsController`. On API 30 `PhoneWindow.getInsetsController()`
+     * is a bare `return mDecor.getWindowInsetsController();`, and until a
+     * `setContentView` or a `getDecorView()` has installed the decor, `mDecor`
+     * is null. The NPE is thrown *inside the getter*, so the `?.` below cannot
+     * catch it and the Activity dies before its first frame:
+     *
+     *     java.lang.RuntimeException: Unable to start activity
+     *       ComponentInfo{ai.jarvis.app/ai.jarvis.app.MainActivity}:
+     *     java.lang.NullPointerException: Attempt to invoke virtual method
+     *       'android.view.WindowInsetsController
+     *        com.android.internal.policy.DecorView.getWindowInsetsController()'
+     *       on a null object reference
+     *       at com.android.internal.policy.PhoneWindow.getInsetsController(…)
+     *       at ai.jarvis.app.ui.JarvisUi.immersive(JarvisUi.kt:46)
+     *
+     * That is a real crash on Android 11, caught by `AppLaunchTest` the first
+     * time the instrumented suite ever ran on an emulator.
+     *
+     * Asking the window for its decor installs it, and a DecorView that is not
+     * attached yet hands back a *pending* controller which replays these two
+     * calls the moment the window is attached — which is exactly the ordering
+     * this call site wants. `android-app/tools/window_insets_test.py` pins it.
+     */
     fun immersive(activity: Activity) {
         val w = activity.window
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             w.setDecorFitsSystemWindows(false)
-            w.insetsController?.let { c ->
+            w.decorView.windowInsetsController?.let { c ->
                 c.hide(android.view.WindowInsets.Type.systemBars())
                 c.systemBarsBehavior =
                     android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
