@@ -144,12 +144,24 @@ requested ──approve(secret)──► approved ──executed──► done
   execution then fails.
 * Policy is re-checked at approve time. An approval authorises *those steps*;
   it does not widen the `act_allowlist`.
+* An approval is bound to the **page** it was asked about. The gated response
+  carries `page_url`; if the session has been navigated since (an ungated
+  `/act` moved it while the human was deciding), the approval is void with a
+  409 and is consumed. Consent to "click #checkout on this page" is not
+  consent to click it on whatever page turns up later.
+* The executor consults `gate.is_executable(request_id)` itself. Being called
+  is not permission; the gate's state is.
 
 A step batch needs approval if any step matches a sensitive keyword
 (password, login, checkout, pay, buy, transfer, delete, submit, upload …), a
 sensitive selector (`input[type=password]`, `button[type=submit]`, `form` …),
-presses a form-submitting key (Enter), or is an upload. Config only ever
-*extends* those lists — a mistyped env var cannot un-gate `checkout`.
+presses a form-submitting key, or is an upload. Config only ever *extends*
+those lists — a mistyped env var cannot un-gate `checkout`.
+
+Key chords count. Playwright takes `Control+Enter`, which is "send" in Gmail,
+Slack and every GitHub comment box, so the key expression is split on `+` and
+every component is checked — comparing the whole string against `{"enter"}`
+misses the interesting half.
 
 When a batch is gated, **the whole batch is refused**, not just the offending
 step. A benign prefix is usually the setup that makes the payload work.
@@ -168,6 +180,11 @@ extracting the total is reading; clicking `#checkout` is not.
   die with it — there is no persistent on-disk browser profile. Each session
   also owns a private temp directory for any incidental artifact, wiped on
   close, on TTL expiry, and on service shutdown. Nothing survives a restart.
+* A background janitor (`BROWSER_JANITOR_INTERVAL`, 30s) closes expired
+  sessions and drops finished approval requests. Without it neither ever gets
+  collected on an idle service: a browser context and its temp dir outlive
+  their TTL, and the gate's table of verbatim step lists grows for the life of
+  the process.
 * Every route requires the bearer token, `/healthz` included.
 * Executed actions, denials and blocked URLs are written to the
   `jarvis.browser.audit` logger.
@@ -248,11 +265,15 @@ Benign batch → executes, returns `results[]` plus the resulting page extract
 (fenced). Sensitive batch → **nothing executes**:
 ```json
 {"status":"approval_required","request_id":"…","reasons":["step 2: click …"],
- "steps":[…verbatim…],"executed":false,"expires_in":300}
+ "steps":[…verbatim…],"page_url":"https://example.com/cart",
+ "executed":false,"expires_in":300}
 ```
-403 if the domain is not on the `act_allowlist`; 409 if the session has no
-page loaded and the first step is not a `goto`; 422 if a step carries fenced
-web content.
+`goto` URLs in `steps` are the normalised, policy-checked form — what the
+prompt shows is what chromium will be handed.
+
+403 if the domain is not on the `act_allowlist`, or the URL's authority
+carries a backslash; 409 if the session has no page loaded and the first step
+is not a `goto`; 422 if a step carries fenced web content.
 
 ### `POST /approve`
 ```json
@@ -260,7 +281,8 @@ web content.
 ```
 Needs both headers. Executes the **stored** steps exactly once — anything
 else in this body is ignored. `approved:false` denies. 403 wrong/missing
-secret, 404 unknown, 409 replay/denied/expired.
+secret, 404 unknown, 409 replay/denied/expired or the session has navigated
+since the request was raised.
 
 ### `DELETE /session/{id}`
 Closes the context and wipes the profile directory.
@@ -297,6 +319,7 @@ Closes the context and wipes the profile directory.
 | `BROWSER_CHROMIUM_NO_SANDBOX` | `false` | see below |
 | `BROWSER_EXECUTABLE_PATH` | auto | chromium binary |
 | `BROWSER_SESSION_ROOT` | tmp | where session dirs live |
+| `BROWSER_JANITOR_INTERVAL` | `30` | how often expired sessions/approvals are reaped |
 
 Add to the repo `.env`:
 
