@@ -393,10 +393,20 @@ def test_no_job_overrides_the_run_shell():
             if ((job.get("defaults") or {}).get("run") or {}).get("shell"):
                 offenders.append(f"{path.name}:{job_name}: job-level defaults.run.shell")
             for index, step in enumerate(job.get("steps") or []):
-                if "shell" in step:
+                shell = step.get("shell")
+                # `shell: bash` is the one permitted override, and it is
+                # REQUIRED rather than tolerated: a matrix job that includes
+                # windows-latest gets PowerShell by default, where `if [ -d x ]`
+                # and `$(ls ...)` are syntax errors. Bash is a superset of the
+                # sh these checks assume, so a block that is valid under the
+                # default is still valid here — the assumptions this module
+                # makes survive. Anything else (pwsh, cmd, python, sh) changes
+                # the language the block is written in, and then the checks
+                # below stop describing it.
+                if shell is not None and shell != "bash":
                     offenders.append(
                         f"{path.name}:{job_name}: step {index} sets shell: "
-                        f"{step['shell']}"
+                        f"{shell}"
                     )
     assert not offenders, (
         "these override the shell, so the checks in this module no longer "
