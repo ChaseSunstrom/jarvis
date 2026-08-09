@@ -556,7 +556,14 @@ class JarvisClient:
         if event_type:
             payload["event_type"] = event_type
         await self.send_raw(payload)
-        frame = await asyncio.wait_for(future, self.timeout)
+        try:
+            frame = await asyncio.wait_for(future, self.timeout)
+        except (asyncio.TimeoutError, TimeoutError) as err:
+            self._streams.pop(msg_id, None)
+            self._pending.pop(msg_id, None)
+            raise AssertionError(
+                f"subscribe_events was not confirmed within {self.timeout:g}s"
+            ) from err
         if not frame.get("success", False):
             self._streams.pop(msg_id, None)
             error = frame.get("error") or {}
@@ -615,7 +622,12 @@ class JarvisClient:
         feeder: asyncio.Task | None = None
         try:
             await self.send_raw(payload)
-            frame = await asyncio.wait_for(future, self.timeout)
+            try:
+                frame = await asyncio.wait_for(future, self.timeout)
+            except (asyncio.TimeoutError, TimeoutError) as err:
+                raise AssertionError(
+                    f"assist_pipeline/run was not accepted within {self.timeout:g}s"
+                ) from err
             if not frame.get("success", False):
                 error = frame.get("error") or {}
                 raise JarvisApiError(
