@@ -116,6 +116,15 @@ REFUSALS: dict[str, str] = {
     "device_control": "actions on your own devices are approved individually; reverse them the same way",
 }
 
+#: Domains that fan out into other service calls under the *same* context. The
+#: inner calls are not recorded separately, so "undo that" after a scene puts
+#: back everything the scene touched rather than only its last light.
+CONTAINER_DOMAINS = frozenset({"scene"})
+
+#: These entities' own states are bookkeeping (a scene's activation stamp, a
+#: script's on/off). There is nothing in them to restore.
+BOOKKEEPING_DOMAINS = frozenset({"scene", "script", "automation"})
+
 #: Service verbs that destroy or reload something regardless of domain.
 DESTRUCTIVE_SERVICES = frozenset(
     {"reload", "delete", "remove", "purge", "clear", "reset", "restart", "stop", "shutdown"}
@@ -343,6 +352,8 @@ class UndoRecorder:
             context = getattr(event, "context", None)
             if getattr(context, "origin", "") in IGNORED_ORIGINS:
                 return
+            if self._inside_container(getattr(context, "id", "") or ""):
+                return
             reversible, reason = classify(domain, service)
             self._counter += 1
             self.entries.append(
@@ -370,6 +381,8 @@ class UndoRecorder:
             entity_id = event.data.get("entity_id")
             if not entity_id:
                 return
+            if split_entity_id(str(entity_id))[0] in BOOKKEEPING_DOMAINS:
+                return
             entry = self._entry_for_state(str(entity_id), context_id)
             if entry is None:
                 return
@@ -383,6 +396,20 @@ class UndoRecorder:
             }
         except Exception:  # pragma: no cover
             _LOGGER.exception("undo failed recording a state change")
+
+    def _inside_container(self, context_id: str) -> bool:
+        """True when this call is a scene fanning out under its own context."""
+        if not context_id:
+            return False
+        now = time.time()
+        for entry in reversed(self.entries):
+            if entry.context_id != context_id:
+                continue
+            return (
+                entry.domain in CONTAINER_DOMAINS
+                and now - entry.created <= ATTRIBUTION_WINDOW
+            )
+        return False
 
     def _entry_for_state(self, entity_id: str, context_id: str) -> UndoEntry | None:
         """Which recorded call caused this state change, if any.
