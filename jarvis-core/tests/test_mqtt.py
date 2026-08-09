@@ -1265,3 +1265,60 @@ async def test_availability_all_mode_still_needs_every_distinct_topic(tmp_path):
     assert state_of(jarvis, "sensor.s").state != "unavailable"
     await client.feed("a/2", "offline")
     assert state_of(jarvis, "sensor.s").state == "unavailable"
+
+
+# --- TLS must not depend on which backend happens to be installed ----------
+#
+# `tls: true` was honoured by the paho fallback (`client.tls_set()`) and
+# silently ignored by aiomqtt, which is the PREFERRED backend. aiomqtt has no
+# boolean flag — it takes an ssl.SSLContext — so a kwargs dict that never
+# mentions TLS connects in cleartext, carrying the broker username and password
+# with it, while the configuration says it is encrypted.
+
+def _aiomqtt_kwargs(monkeypatch, **overrides):
+    """The kwargs AiomqttClient would hand to aiomqtt.Client."""
+    import sys
+    import types
+
+    from jarvis.integrations.mqtt import client as client_mod
+
+    captured: dict = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class FakeWill:
+        def __init__(self, **kwargs):
+            pass
+
+    fake = types.ModuleType("aiomqtt")
+    fake.Client = FakeClient
+    fake.Will = FakeWill
+    monkeypatch.setitem(sys.modules, "aiomqtt", fake)
+
+    opts = {"broker": "broker.example", "port": 8883, "username": "jarvis",
+            "password": "hunter2"}
+    opts.update(overrides)
+    client_mod.AiomqttClient(**opts)._build_client()
+    return captured
+
+
+def test_tls_true_actually_configures_tls_on_the_aiomqtt_backend(monkeypatch):
+    import ssl
+
+    captured = _aiomqtt_kwargs(monkeypatch, tls=True)
+    assert "tls_context" in captured, (
+        "tls: true was ignored — the connection, and the password in it, "
+        "would go out in cleartext"
+    )
+    ctx = captured["tls_context"]
+    assert isinstance(ctx, ssl.SSLContext)
+    # A context that does not verify is worse than no TLS: it looks encrypted
+    # and authenticates nothing.
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_tls_false_stays_plaintext(monkeypatch):
+    assert "tls_context" not in _aiomqtt_kwargs(monkeypatch, tls=False)

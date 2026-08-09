@@ -400,6 +400,24 @@ class AiomqttClient(MqttClientBase):
             "password": self.password,
             "keepalive": self.keepalive,
         }
+        if self.tls:
+            # WITHOUT THIS, `tls: true` was silently ignored on this backend.
+            # aiomqtt takes an ssl.SSLContext; it has no boolean flag, so a
+            # kwargs dict that never mentions TLS connects in cleartext no
+            # matter what the config says — and the username and password
+            # above go out with it. The paho fallback honoured `tls` via
+            # `tls_set()`, so the same configuration was encrypted or not
+            # depending on which optional dependency happened to be installed,
+            # with nothing in the logs to say which.
+            #
+            # `create_default_context()` is what `tls_set()` defaults to:
+            # system CA store, hostname checking on, certificate verification
+            # required. A broker with a self-signed certificate needs its CA
+            # added rather than verification turned off.
+            import ssl  # noqa: PLC0415 - only needed on the TLS path
+
+            kwargs["tls_context"] = ssl.create_default_context()
+
         if self.will:
             try:
                 kwargs["will"] = aiomqtt.Will(
