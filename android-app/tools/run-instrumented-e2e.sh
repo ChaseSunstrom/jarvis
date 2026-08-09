@@ -114,8 +114,14 @@ adb shell ls -l "$SHOTS" || true
 adb pull "$SHOTS" artifacts/ || true
 if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
   echo "screenshots unreadable as the shell user; retrying with adb root"
-  adb root >/dev/null 2>&1 || true
+  # NOT discarded. Run 31310120431 tried this, then tried the raw path below,
+  # and both said "No such file or directory" — which is what a rooted adbd and
+  # an adbd that silently stayed `shell` look like from here. The one thing that
+  # tells them apart is what `adb root` said and who `adb shell` then is, so say
+  # both out loud rather than debug it again a run later.
+  adb root || true
   adb wait-for-device
+  echo "adb shell runs as: $(adb shell id || true)"
   adb pull "$SHOTS" artifacts/ || true
   # /sdcard is a FUSE view, and from Android 11 that view HIDES Android/data
   # from every uid but the owning app's — root included, because the
@@ -131,8 +137,16 @@ if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
   # a rooted adbd reads it directly. This is why the emulator target is
   # `google_apis` and never `google_apis_playstore` — a Play image cannot be
   # rooted, and this is the pull that needs it.
+  RAW=/data/media/0/Android/data/ai.jarvis.app/files
   if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
-    adb pull "/data/media/0/Android/data/ai.jarvis.app/files/screenshots" artifacts/ || true
+    adb shell ls -l "$RAW" || true
+    adb pull "$RAW/screenshots" artifacts/ || true
+  fi
+  # Root can read the raw path but `adb pull` of a directory it cannot stat is a
+  # dead end, so copy it somewhere the shell user owns and pull that.
+  if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
+    adb shell "rm -rf /data/local/tmp/screenshots && cp -r '$RAW/screenshots' /data/local/tmp/ && chmod -R 777 /data/local/tmp/screenshots" || true
+    adb pull /data/local/tmp/screenshots artifacts/ || true
   fi
   adb unroot >/dev/null 2>&1 || true
   adb wait-for-device || true

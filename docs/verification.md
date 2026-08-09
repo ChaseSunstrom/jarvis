@@ -347,6 +347,17 @@ button needs no scroll. Fixed by resolving the control before the toast window
 opens; `instrumentation_contract_test.py` now fails on a toast action that waits
 for anything.
 
+The run after that went 35/36 again, on a different test and the same kind of
+mistake: `BootAnimationTest` demanded more than ten `onHomeAlpha` callbacks for
+a 1400ms sequence and got nine, because this emulator paints six
+`BlurMaskFilter` glyphs a frame through swiftshader at about 6fps. The
+assertion was reporting the runner's frame rate. "It animated rather than
+collapsing" is a claim about elapsed time, so it is now made as one — the
+callbacks must span at least `HANDOFF_START_MS`, which a collapsed run (two
+callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
+**A test that cannot tell a slow machine from a slow app should not claim
+either.**
+
 ## Known failures, as of 2026-08-09
 
 Two, both in `ci.yml` and both about paths rather than about behaviour. Neither

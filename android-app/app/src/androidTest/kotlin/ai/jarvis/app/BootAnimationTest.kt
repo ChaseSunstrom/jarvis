@@ -9,6 +9,7 @@ import ai.jarvis.app.testing.TestHostActivity
 import ai.jarvis.app.ui.BootTimeline
 import ai.jarvis.app.ui.JarvisBootAnimation
 import android.animation.ValueAnimator
+import android.os.SystemClock
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -24,6 +25,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -90,10 +92,17 @@ class BootAnimationTest {
         val completed = AtomicBoolean(false)
         val frameCount = AtomicInteger(0)
         val lastHomeAlpha = AtomicReference(-1f)
+        // When the first and last callback arrived. See the spread assertion
+        // below for why the timestamps and not just the count.
+        val firstFrameAt = AtomicLong(0L)
+        val lastFrameAt = AtomicLong(0L)
 
         val boot = Activities.onMain {
             attach(host) { animation ->
                 animation.onHomeAlpha = { alpha ->
+                    val now = SystemClock.uptimeMillis()
+                    firstFrameAt.compareAndSet(0L, now)
+                    lastFrameAt.set(now)
                     frameCount.incrementAndGet()
                     lastHomeAlpha.set(alpha)
                     host.homeControls.alpha = alpha
@@ -140,10 +149,24 @@ class BootAnimationTest {
             completed.get()
         }
 
+        // "It animated rather than collapsing" is a claim about ELAPSED TIME,
+        // and this is the assertion that makes it. A collapsed run delivers
+        // both of its callbacks from inside `skip()`, microseconds apart; an
+        // animated one is driven by a ValueAnimator whose clock is wall-clock,
+        // so its callbacks cannot stop arriving before the timeline is over
+        // however slow the machine is. No emulator can fake this and no fast
+        // one is required to pass it.
+        val spreadMs = lastFrameAt.get() - firstFrameAt.get()
         assertTrue(
-            "onHomeAlpha must be driven once a frame; got ${frameCount.get()} callbacks " +
-                "for a ${BootTimeline.TOTAL_MS}ms sequence, which is a collapsed run, " +
-                "not an animated one",
+            "onHomeAlpha must keep being driven for the whole sequence; the " +
+                "${frameCount.get()} callbacks spanned ${spreadMs}ms of a " +
+                "${BootTimeline.TOTAL_MS}ms timeline, which is a collapsed run, not an " +
+                "animated one",
+            spreadMs >= BootTimeline.HANDOFF_START_MS,
+        )
+        assertTrue(
+            "…and an animated run is driven repeatedly, not twice: got " +
+                "${frameCount.get()} callbacks",
             frameCount.get() > MIN_ANIMATED_FRAMES,
         )
         assertEquals(
@@ -337,11 +360,31 @@ class BootAnimationTest {
         const val MIDFLIGHT_MS = 300L
 
         /**
-         * A 1400ms sequence at 60fps produces ~80 onHomeAlpha callbacks; a
-         * collapsed one produces two. Ten is far enough from both to be a real
-         * discriminator without being a frame-rate assertion.
+         * A collapsed run produces exactly two `onHomeAlpha` callbacks — the
+         * `pushFrame()` and the `finish()` inside `JarvisBootAnimation.skip()`.
+         * Anything above that had a clock driving it.
+         *
+         * This was 10, on the reasoning that a 1400ms sequence at 60fps gives
+         * ~80 callbacks so ten sits between the two cases. That is true of a
+         * phone and false of this CI emulator, which paints the sequence — six
+         * `BlurMaskFilter` glyphs a frame — through swiftshader at about 6fps.
+         * Run 31310120431 failed here with
+         *
+         *     onHomeAlpha must be driven once a frame; got 9 callbacks for a
+         *     1400ms sequence, which is a collapsed run, not an animated one
+         *
+         * on a run that was animating perfectly well; the previous run passed
+         * the same assertion, which makes it a threshold that reports the
+         * runner's frame rate as a product defect.
+         *
+         * So the "it did not collapse" claim moved to the spread assertion
+         * above, which is about elapsed time and cannot be satisfied by a
+         * collapsed run at any speed, and this is left as the floor it always
+         * really was. It is deliberately NOT a frame-rate assertion: this suite
+         * has no way to tell a slow CI machine from a slow app, and a test that
+         * cannot tell them apart should not be claiming either.
          */
-        const val MIN_ANIMATED_FRAMES = 10
+        const val MIN_ANIMATED_FRAMES = 3
 
         /**
          * TOTAL_MS is 1400ms; the rest is slack for a cold emulator, where the
