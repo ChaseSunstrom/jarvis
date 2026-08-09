@@ -149,6 +149,44 @@ jobs:
             jarvis-orchestrator/app jarvis-sandbox jarvis_tools evals scripts \
             android-app/tools
 
+      # A mutation stub reached main once: PolicyEngine.effective_tier was
+      # replaced with `requested_tier or local_tier  # MUTANT: ...` and pushed,
+      # which let a server LOWER a device-side tier. The unit tests caught it;
+      # nobody re-ran them before committing. Deliberately weakened code is
+      # marked, so refuse to carry the marker regardless of what the tests say.
+      - name: No mutation-test stubs in the tree
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+
+          MARKER = re.compile(r"\bMUTANT\b|\bDELIBERATELY BROKEN\b", re.I)
+          SKIP_DIRS = {"node_modules", ".git", "build", ".svelte-kit", "__pycache__"}
+          SUFFIXES = {".py", ".kt", ".kts", ".ts", ".js", ".svelte", ".sh", ".yml", ".yaml"}
+
+          hits = []
+          for p in pathlib.Path(".").rglob("*"):
+              if not p.is_file() or p.suffix not in SUFFIXES:
+                  continue
+              if set(p.parts) & SKIP_DIRS:
+                  continue
+              # This workflow names the marker in order to ban it.
+              if p == pathlib.Path(".github/workflows/ci.yml"):
+                  continue
+              try:
+                  text = p.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+              for n, line in enumerate(text.splitlines(), 1):
+                  if MARKER.search(line):
+                      hits.append(f"{p}:{n}: {line.strip()}")
+
+          if hits:
+              print("Mutation-test stubs must never be committed:")
+              print("\n".join(hits))
+              sys.exit(1)
+          print("no mutation markers")
+          PY
+
       - name: YAML parses (custom tags tolerated)
         run: |
           python - <<'PY'
