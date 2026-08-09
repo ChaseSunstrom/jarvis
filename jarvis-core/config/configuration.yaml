@@ -385,7 +385,10 @@ template:
 # local Ollama so you can see at a glance whether the model is warm, which is
 # the difference between a 300 ms reply and a 6 s one.
 rest:
-  - resource: http://127.0.0.1:11434/api/ps
+  # Same OLLAMA_URL as the `llm:` block above — these two pointing at
+  # different places is how you get an assistant that talks to a model while
+  # reporting it offline.
+  - resource: !env_var OLLAMA_URL http://127.0.0.1:11434/api/ps
     scan_interval: 30
     method: GET
     sensor:

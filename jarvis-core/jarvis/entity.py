@@ -140,7 +140,7 @@ class Entity:
             # The distinction is fault. A connection that could not be made is
             # the world being the way it is; anything else is this code being
             # wrong, and still gets its traceback.
-            if isinstance(exc, _EXPECTED_UPDATE_ERRORS):
+            if _is_unreachable(exc):
                 if self._attr_available:  # the transition, not every poll after
                     _LOGGER.warning(
                         "%s is unavailable: %s",
@@ -161,10 +161,40 @@ class Entity:
 
 
 #: Failures meaning "the thing this entity watches is not there", which is
-#: information rather than a malfunction. OSError covers ConnectionError and
-#: socket errors, and httpx's connect failures subclass it, so this catches
-#: them without importing httpx here.
+#: information rather than a malfunction.
 _EXPECTED_UPDATE_ERRORS = (OSError, asyncio.TimeoutError)
+
+#: Type names for the same condition from libraries with their own hierarchies.
+#: httpx is the one that matters here and the one I got wrong: `ConnectError`
+#: goes ConnectError -> NetworkError -> TransportError -> RequestError ->
+#: HTTPError -> Exception. It is NOT an OSError, so an isinstance check against
+#: OSError alone silently missed every "Ollama is not running" and kept printing
+#: the twenty-frame traceback this was written to stop.
+_EXPECTED_ERROR_NAMES = frozenset({
+    "ConnectError", "ConnectTimeout", "ReadTimeout", "WriteTimeout",
+    "PoolTimeout", "NetworkError", "TransportError", "ReadError", "WriteError",
+    "RemoteProtocolError", "ClientConnectorError", "ServerDisconnectedError",
+})
+
+
+def _is_unreachable(exc: BaseException) -> bool:
+    """True if this is the world being absent rather than our code being wrong.
+
+    Walks the ``__cause__``/``__context__`` chain because the informative type
+    is usually not the outermost one: httpx raises ConnectError *from* an
+    httpcore ConnectError *from* the socket's OSError, and only the innermost
+    link is in a hierarchy anyone can rely on.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, _EXPECTED_UPDATE_ERRORS):
+            return True
+        if type(current).__name__ in _EXPECTED_ERROR_NAMES:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _brief(exc: BaseException) -> str:

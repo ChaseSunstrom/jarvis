@@ -418,3 +418,55 @@ async def test_input_helper_keys_do_not_warn_about_a_missing_integration(
     with caplog.at_level(_logging.WARNING, logger="jarvis.integrations"):
         await async_setup_integrations(Jarvis(tmp_path), {"input_bolean": {}})
     assert any("No integration named" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_real_httpx_connect_error_is_not_treated_as_a_bug(tmp_path, caplog):
+    """The regression this file exists for, using the actual exception type.
+
+    `httpx.ConnectError` is NOT an OSError — ConnectError -> NetworkError ->
+    TransportError -> RequestError -> HTTPError -> Exception. An isinstance
+    check against OSError alone missed every "Ollama is not running" and kept
+    printing the traceback. Constructed here from the real class rather than a
+    stand-in, because a stand-in is what let the wrong assumption through.
+    """
+    import logging as _logging
+
+    import httpx
+
+    assert not issubclass(httpx.ConnectError, OSError), (
+        "if httpx ever does subclass OSError this test stops proving anything"
+    )
+    exc = httpx.ConnectError("All connection attempts failed")
+    _entity, records = await _poll(tmp_path, exc, caplog)
+    assert all(r.exc_info is None for r in records), (
+        "httpx.ConnectError still logged a traceback"
+    )
+    assert any(r.levelname == "WARNING" for r in records)
+
+
+async def test_a_wrapped_connect_error_is_found_through_the_cause_chain(
+    tmp_path, caplog
+):
+    """The informative type is often not the outermost one.
+
+    httpx raises ConnectError *from* an httpcore ConnectError *from* the
+    socket's OSError, so only the innermost link is in a hierarchy anyone can
+    rely on. A wrapper whose own class means nothing must not defeat this.
+    """
+    import logging as _logging
+
+    class SomeLibraryError(Exception):
+        pass
+
+    try:
+        try:
+            raise ConnectionRefusedError(111, "Connection refused")
+        except OSError as inner:
+            raise SomeLibraryError("request failed") from inner
+    except SomeLibraryError as exc:
+        wrapped = exc
+
+    _entity, records = await _poll(tmp_path, wrapped, caplog)
+    assert all(r.exc_info is None for r in records), (
+        "an OSError one link down the cause chain was missed"
+    )
