@@ -191,12 +191,24 @@ def _merge(base: dict[str, Any], overlay: Any) -> dict[str, Any]:
 
 
 class _ScriptFile:
-    """A JSON script re-read whenever the file on disk changes."""
+    """A JSON script re-read whenever the file on disk changes.
+
+    ``version`` counts how many times the script has actually changed. It is
+    what lets a role reset its per-run counters: a new script means a new run,
+    so a queue of transcripts starts from its first entry again rather than
+    from wherever the last test happened to leave the cursor.
+    """
 
     def __init__(self, path: str | None, overrides: dict[str, Any] | None = None) -> None:
         self.path = path
         self.overrides = overrides or {}
-        self._mtime: float | None = None
+        #: (st_mtime_ns, st_size, st_ino) of the copy currently loaded.
+        #: mtime alone is not enough: a coarse-granularity filesystem can give
+        #: two rewrites the same stamp, and a same-size edit the same size. The
+        #: harness replaces the file (a new inode every write), so the inode
+        #: settles it either way.
+        self._stamp: tuple[int, int, int] | None = None
+        self.version = 0
         self.data = _merge(DEFAULT_SCRIPT, self.overrides)
         self.reload()
 
@@ -204,20 +216,26 @@ class _ScriptFile:
         if not self.path:
             return self.data
         try:
-            mtime = os.path.getmtime(self.path)
+            info = os.stat(self.path)
         except OSError:
             return self.data
-        if mtime == self._mtime:
+        stamp = (info.st_mtime_ns, info.st_size, info.st_ino)
+        if stamp == self._stamp:
             return self.data
         try:
             with open(self.path, "r", encoding="utf-8") as handle:
                 loaded = json.load(handle)
         except (OSError, json.JSONDecodeError) as err:
+            # A half-written file: leave the stamp alone so the next call
+            # retries rather than pinning the old script forever.
             sys.stderr.write(f"fake-wyoming: ignoring bad script ({err})\n")
             return self.data
-        self._mtime = mtime
+        self._stamp = stamp
         # CLI overrides win over the file: they are the more explicit request.
-        self.data = _merge(_merge(DEFAULT_SCRIPT, loaded), self.overrides)
+        merged = _merge(_merge(DEFAULT_SCRIPT, loaded), self.overrides)
+        if merged != self.data:
+            self.version += 1
+        self.data = merged
         return self.data
 
     def role(self, name: str) -> dict[str, Any]:
@@ -226,7 +244,10 @@ class _ScriptFile:
     def update(self, role: str, **values: Any) -> None:
         """In-process tweak (tests): does not touch the file."""
         self.overrides.setdefault(role, {}).update(values)
-        self.data = _merge(self.data, {role: values})
+        merged = _merge(self.data, {role: values})
+        if merged != self.data:
+            self.version += 1
+        self.data = merged
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +285,10 @@ class FakeWyomingServer:
         self.connections = 0
 
         self._server: asyncio.AbstractServer | None = None
+        #: How many transcripts this role has served since the script last
+        #: changed, and the script version that count belongs to.
         self._served = 0
+        self._served_version = self.script.version
 
     # --- lifecycle --------------------------------------------------------
     async def start(self) -> "FakeWyomingServer":
@@ -430,6 +454,13 @@ class FakeWyomingServer:
 
     def _transcript_for(self, state: dict[str, Any]) -> str:
         options = self.script.role("stt")
+        # A new script is a new run. Without this the cursor into `transcripts`
+        # keeps climbing across tests, so a queue set after any earlier
+        # utterance would serve its LAST entry from the very first run — the
+        # opposite of what "one per run" says, and silent about it.
+        if self.script.version != self._served_version:
+            self._served_version = self.script.version
+            self._served = 0
         if str(options.get("mode") or "script") == "length":
             audio = state["audio"]
             rate = max(int(state["rate"]) * int(state["width"]) * int(state["channels"]), 1)

@@ -4,18 +4,28 @@ import android.os.SystemClock
 import org.junit.Assert.fail
 
 /**
- * Polling waits, and the reason there is not a single bare `Thread.sleep` for
- * correctness anywhere in this suite.
+ * Polling waits, and the reason almost nothing in this suite sleeps for a fixed
+ * duration.
  *
  * A sleep encodes a guess about how long something takes on the machine it was
  * written on. On a CI emulator — cold JIT, shared CPU, no hardware
  * acceleration — that guess is wrong in both directions: too short and the test
- * flakes, too long and a suite of thirty of them takes a quarter of an hour.
- * A wait-for-condition is correct at any speed and returns the instant the
+ * flakes, too long and a suite of thirty of them takes a quarter of an hour. A
+ * wait-for-condition is correct at any speed and returns the instant the
  * condition holds.
  *
- * The failure messages are deliberately long. When one of these fires in CI,
- * the message and an artefact screenshot are all anybody has.
+ * There are exactly two fixed delays in the whole suite, and both are honest
+ * about what they are:
+ *
+ *  * `Screenshots.takeAfterSettling` waits for "the pixels look right", which
+ *    nothing exposes as a condition. It never gates an assertion.
+ *  * `BootAnimationTest` sleeps to reach a moment *inside* a 1400ms animation.
+ *    "Still running 300ms in" is a claim about elapsed time, so elapsed time is
+ *    the right tool — and a `ValueAnimator`'s clock is wall-clock, so the
+ *    assertion cannot go the other way however slow the machine is.
+ *
+ * The failure messages here are deliberately long. When one of these fires in
+ * CI, the message and an artefact screenshot are all anybody has.
  */
 object Waits {
 

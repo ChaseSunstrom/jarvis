@@ -57,10 +57,8 @@ object Toasts {
         val seen = mutableListOf<String>()
         val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val filter = UiAutomation.AccessibilityEventFilter { event ->
-            if (!isToast(event)) return@AccessibilityEventFilter false
-            val text = textOf(event)
-            seen.add(text)
-            text.contains(expectedSubstring, ignoreCase = true)
+            val text = if (isToast(event)) textOf(event).also { seen.add(it) } else null
+            text != null && text.contains(expectedSubstring, ignoreCase = true)
         }
         try {
             uiAutomation.executeAndWaitForEvent(
@@ -83,6 +81,40 @@ object Toasts {
             fail(
                 "Waiting for a toast containing \"$expectedSubstring\" failed with " +
                     "${t.javaClass.simpleName}: ${t.message}"
+            )
+        }
+    }
+
+    /**
+     * Run [action] and assert a toast matching ANY of [alternatives] appears.
+     *
+     * For a control whose correct answer depends on the device rather than on
+     * the code: SettingsActivity's PASTE says "Clipboard is empty" or "Pasted N
+     * characters" depending on what the emulator happens to have on its
+     * clipboard, and both are right. The claim worth testing is that it always
+     * says SOMETHING — a token that half-arrives with no feedback is the worst
+     * outcome, because the user then debugs a connection instead of a paste.
+     */
+    fun expectAnyOf(
+        vararg alternatives: String,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        action: () -> Unit,
+    ) {
+        val seen = mutableListOf<String>()
+        val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val filter = UiAutomation.AccessibilityEventFilter { event ->
+            val text = if (isToast(event)) textOf(event).also { seen.add(it) } else null
+            text != null && alternatives.any { text.contains(it, ignoreCase = true) }
+        }
+        try {
+            uiAutomation.executeAndWaitForEvent({ action() }, filter, timeoutMs)
+        } catch (t: Throwable) {
+            fail(
+                "Expected a toast containing one of " +
+                    alternatives.joinToString(", ") { "\"$it\"" } +
+                    " within ${timeoutMs}ms. " +
+                    if (seen.isEmpty()) "No toast was posted at all."
+                    else "Toasts seen instead: ${seen.joinToString("; ") { "\"$it\"" }}"
             )
         }
     }

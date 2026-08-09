@@ -6,6 +6,11 @@ import android.view.ViewGroup
 import androidx.test.espresso.ViewInteraction
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.matcher.ViewMatchers.withClassName
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
+import androidx.test.uiautomator.UiObject2
 import org.hamcrest.Matchers.equalTo
 import java.util.regex.Pattern
 
@@ -33,8 +38,10 @@ object Views {
      * matcher. MUST be called on the main thread — use inside
      * `ActivityScenario.onActivity {}` or `runOnUiThread`.
      */
-    fun <T : View> firstOfType(activity: Activity, type: Class<T>): T? =
-        firstOfType(activity.window?.decorView ?: return null, type)
+    fun <T : View> firstOfType(activity: Activity, type: Class<T>): T? {
+        val decor = activity.window?.decorView ?: return null
+        return firstOfType(decor, type)
+    }
 
     fun <T : View> firstOfType(root: View, type: Class<T>): T? {
         if (type.isInstance(root)) {
@@ -82,4 +89,57 @@ object Views {
     /** As [textIgnoringCase], but matching anywhere in the node's text. */
     fun containingIgnoringCase(text: String): Pattern =
         Pattern.compile(".*" + Pattern.quote(text) + ".*", Pattern.CASE_INSENSITIVE or Pattern.DOTALL)
+
+    /**
+     * Find a node, scrolling the screen's scrollable container to reach it.
+     *
+     * Every Jarvis screen with more than a few controls puts them in a
+     * `ScrollView`, and how much of one fits depends entirely on the emulator
+     * profile: a consent prompt that fits on a 1080×1920 Pixel image needs
+     * scrolling on a smaller or denser one. A test that assumed everything is on
+     * screen at once would pass on one CI image and fail on the next for no
+     * reason anybody could act on.
+     *
+     * Scrolls to the TOP first, then works down. Without that, a screen already
+     * scrolled by a previous assertion would be searched in one direction only,
+     * and a control above the current position would read as absent.
+     *
+     * Returns the object with its bounds on screen, so a caller can click it —
+     * `UiObject2.click` targets the node's visible centre, which for a node
+     * scrolled off the screen is not where the node is.
+     */
+    fun findScrolling(selector: BySelector, maxScrolls: Int = DEFAULT_MAX_SCROLLS): UiObject2? {
+        val device = Device.ui
+        device.findObject(selector)?.let { return it }
+
+        var steps = 0
+        while (steps < maxScrolls && scrollOnce(Direction.UP, 1f)) steps++
+        device.findObject(selector)?.let { return it }
+
+        steps = 0
+        while (steps < maxScrolls) {
+            if (!scrollOnce(Direction.DOWN, SCROLL_STEP)) break
+            device.findObject(selector)?.let { return it }
+            steps++
+        }
+        return device.findObject(selector)
+    }
+
+    /**
+     * One scroll of whatever scrollable container is on screen. False when there
+     * is none, or it will not move any further.
+     *
+     * The container is re-found on every step on purpose: a `UiObject2` holds an
+     * `AccessibilityNodeInfo` that the scroll itself can invalidate, and a
+     * `StaleObjectException` halfway through a search is not a test failure —
+     * it just means the tree changed, which is what scrolling does.
+     */
+    private fun scrollOnce(direction: Direction, fraction: Float): Boolean = try {
+        Device.ui.findObject(By.scrollable(true))?.scroll(direction, fraction) ?: false
+    } catch (e: StaleObjectException) {
+        false
+    }
+
+    private const val DEFAULT_MAX_SCROLLS = 10
+    private const val SCROLL_STEP = 0.5f
 }

@@ -1,0 +1,7 @@
+# Harness output: generated configs, process logs, received audio, databases.
+# Kept on purpose after a run (CI uploads it), never committed.
+artifacts/
+
+__pycache__/
+.pytest_cache/
+*.pyc

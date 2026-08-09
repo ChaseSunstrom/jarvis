@@ -133,31 +133,25 @@ object Device {
         shell("settings put global $key $value")
     }
 
-    // --- foreground -----------------------------------------------------
+    // --- foreground ---------------------------------------------------------
 
     /**
-     * True when [activityClassName] is the activity on top.
+     * The package whose window is on top.
      *
-     * Read from `dumpsys activity activities` rather than from
-     * `UiDevice.currentPackageName`, because every screen in this suite belongs
-     * to the same package and the question is always *which* of them is showing.
-     * Tolerant of both the `mResumedActivity` and `topResumedActivity` spellings
-     * that different platform versions print.
+     * For the one question the in-process lifecycle registry cannot answer:
+     * "did tapping that button take us out of the app entirely?" Which of OUR
+     * activities is showing is a question for `Activities.isResumed`, which is
+     * exact and needs no output parsing.
      */
-    fun isForeground(activityClassName: String): Boolean {
-        val dump = shell("dumpsys activity activities")
-        val simple = activityClassName.substringAfterLast('.')
-        return dump.lineSequence()
-            .filter { it.contains("ResumedActivity", ignoreCase = true) }
-            .any { it.contains(simple) }
+    fun foregroundPackage(): String? = try {
+        ui.currentPackageName
+    } catch (t: Throwable) {
+        Log.w(TAG, "could not read the foreground package", t)
+        null
     }
 
-    /** Wait until [activityClassName] is the activity on top. */
-    fun awaitForeground(activityClassName: String, timeoutMs: Long = Waits.DEFAULT_TIMEOUT_MS) {
-        Waits.until("$activityClassName to be the foreground activity", timeoutMs) {
-            isForeground(activityClassName)
-        }
-    }
+    /** True while this app owns the foreground window. */
+    fun isJarvisForeground(): Boolean = foregroundPackage() == packageName
 
     /** Best-effort dump of the current window hierarchy, for a failure message. */
     fun windowDump(): String = try {

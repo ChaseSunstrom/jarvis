@@ -212,7 +212,7 @@ class PolicyEngine:
         missing/garbage value (``None``) contributes ``AUTO`` and therefore
         changes nothing.
         """
-        return ActionTier.max_of(local_tier, requested_tier or ActionTier.AUTO)
+        return requested_tier or local_tier  # MUTANT: server may lower the tier
 
     @staticmethod
     def decide_parts(

@@ -201,7 +201,7 @@ val assertNoTestHooksInRelease = tasks.register("assertNoTestHooksInRelease") {
     val apkDir = layout.buildDirectory.dir("outputs/apk/release")
     outputs.upToDateWhen { false }
     doLast {
-        val apks = apkDir.get().asFile.listFiles { f -> f.name.endsWith(".apk") }.orEmpty()
+        val apks = apkDir.get().asFile.listFiles().orEmpty().filter { it.name.endsWith(".apk") }
         if (apks.isEmpty()) {
             logger.lifecycle("assertNoTestHooksInRelease: no release APK to inspect; skipping.")
             return@doLast

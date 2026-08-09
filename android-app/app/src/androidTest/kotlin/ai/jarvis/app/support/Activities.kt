@@ -13,18 +13,17 @@ import org.junit.Assert.fail
  *
  * `ActivityScenario` is the modern, pleasant API and it is the wrong tool for
  * this app. Its documentation states it does not support activities declared
- * with `launchMode="singleTask"` or `"singleInstance"`, and three of the four
- * screens this suite drives are exactly that: `MainActivity` and
- * `JarvisAssistActivity` are `singleTask`, and the assist surface is also
- * `noHistory` with its own `taskAffinity`. Those are not incidental — they are
- * what make the assist popup behave like an assistant instead of an app — so
- * the test has to fit the app rather than the other way round.
+ * with `launchMode="singleTask"` or `"singleInstance"`, and the screens this
+ * suite drives are exactly that: `MainActivity` and `JarvisAssistActivity` are
+ * both `singleTask`, and the assist surface is additionally `noHistory` with its
+ * own `taskAffinity`. Those declarations are not incidental — they are what make
+ * the assist popup behave like an assistant rather than an app — so the test has
+ * to fit the app rather than the other way round.
  *
  * `Instrumentation.ActivityMonitor` has no such restriction: it watches the
  * process for an activity of a given class, whatever task it lands in and
- * whoever started it. That last part matters for
- * `MainActivity → SettingsActivity`, where the thing under test is the button,
- * not the launch.
+ * whoever started it. That last part matters for `MainActivity →
+ * SettingsActivity`, where the thing under test is the button, not the launch.
  */
 object Activities {
 
@@ -43,7 +42,7 @@ object Activities {
         context.startActivity(intent)
     }
 
-    /** Launch whatever [intent] resolves to, and wait for [type] to appear. */
+    /** Fire [intent] and wait for [type] to appear. */
     fun <T : Activity> launchIntent(
         type: Class<T>,
         intent: Intent,
@@ -56,11 +55,13 @@ object Activities {
     /**
      * Run [trigger] and return the [type] instance it caused to start.
      *
-     * The monitor is registered BEFORE the trigger runs, which is the whole
-     * point: an activity that starts and finishes inside a few milliseconds —
-     * a consent prompt answered by a countdown, an assist surface that closes
-     * on inactivity — would be gone before any after-the-fact poll could see it.
+     * The monitor is registered BEFORE the trigger runs, which is not optional:
+     * a consent prompt is raised from the WebSocket reader thread the instant
+     * the dispatcher reaches its ASK branch, and an activity that starts and
+     * finishes quickly would be gone before any after-the-fact poll could see
+     * it.
      */
+    @Suppress("UNCHECKED_CAST")
     fun <T : Activity> expect(
         type: Class<T>,
         timeoutMs: Long = Waits.DEFAULT_TIMEOUT_MS,
@@ -70,13 +71,13 @@ object Activities {
         try {
             trigger()
             val activity = monitor.waitForActivityWithTimeout(timeoutMs)
-            if (activity == null) {
-                fail(
-                    "${type.simpleName} did not start within ${timeoutMs}ms.\n" +
-                        "Foreground window dump:\n${Device.windowDump()}"
-                )
-            }
-            @Suppress("UNCHECKED_CAST")
+                ?: run {
+                    fail(
+                        "${type.simpleName} did not start within ${timeoutMs}ms.\n" +
+                            "Foreground window dump:\n${Device.windowDump()}"
+                    )
+                    error("unreachable")
+                }
             return activity as T
         } finally {
             instrumentation.removeMonitor(monitor)
@@ -84,7 +85,7 @@ object Activities {
     }
 
     /**
-     * Assert [type] does NOT start while [window] passes, and return control.
+     * Assert [type] does NOT start while [window] passes.
      *
      * The proof shape for "the user was not asked a second time". Necessarily a
      * real wait: there is no event for the absence of an activity.
@@ -107,15 +108,15 @@ object Activities {
         }
     }
 
-    /** Activities currently in [stage]. Safe from any thread. */
+    /** Activities currently in [stage]. Safe to call from any thread. */
     fun inStage(stage: Stage): List<Activity> {
-        var result: List<Activity> = emptyList()
+        val collected = ArrayList<Activity>()
         instrumentation.runOnMainSync {
-            result = ActivityLifecycleMonitorRegistry.getInstance()
-                .getActivitiesInStage(stage)
-                .toList()
+            collected.addAll(
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(stage)
+            )
         }
-        return result
+        return collected
     }
 
     fun isResumed(activity: Activity): Boolean = inStage(Stage.RESUMED).contains(activity)
@@ -126,44 +127,92 @@ object Activities {
         }
     }
 
-    fun awaitFinished(activity: Activity, timeoutMs: Long = Waits.DEFAULT_TIMEOUT_MS) {
-        Waits.until("${activity.javaClass.simpleName} to finish", timeoutMs) {
-            activity.isFinishing || activity.isDestroyed || inStage(Stage.DESTROYED).contains(activity)
+    /**
+     * Is an activity of this class the one on screen?
+     *
+     * Asked of the in-process lifecycle registry rather than of `dumpsys
+     * activity`, and that is not a style choice. The instrumented suite runs
+     * inside the app's own process, so the registry knows exactly which of OUR
+     * activities is resumed — no output parsing, no ambiguity, and no false
+     * positive from the system Settings app, several of whose screens are also
+     * called something-`SettingsActivity`. When the user has left the app
+     * entirely, none of ours is resumed, which is precisely the question the
+     * navigation test asks after tapping a settings deep link.
+     */
+    fun isResumed(type: Class<out Activity>): Boolean =
+        inStage(Stage.RESUMED).any { type.isInstance(it) }
+
+    /** As [isResumed], for a class this suite must not reference by type. */
+    fun isResumed(className: String): Boolean =
+        inStage(Stage.RESUMED).any { it.javaClass.name == className }
+
+    fun awaitResumed(type: Class<out Activity>, timeoutMs: Long = Waits.DEFAULT_TIMEOUT_MS) {
+        Waits.until("${type.simpleName} to be the resumed activity", timeoutMs) {
+            isResumed(type)
         }
     }
 
-    /** Read a value off an activity on the main thread. */
+    /** True while any activity of this app is on screen. */
+    fun anyResumed(): Boolean = inStage(Stage.RESUMED).isNotEmpty()
+
+    fun awaitFinished(activity: Activity, timeoutMs: Long = Waits.DEFAULT_TIMEOUT_MS) {
+        Waits.until("${activity.javaClass.simpleName} to finish", timeoutMs) {
+            activity.isFinishing ||
+                activity.isDestroyed ||
+                inStage(Stage.DESTROYED).contains(activity)
+        }
+    }
+
+    /**
+     * Run [block] on the main thread and hand back what it returned.
+     *
+     * Reading a `View` from the instrumentation thread is a data race in
+     * principle and a `CalledFromWrongThreadException` in practice, so every
+     * assertion in this suite that touches the view tree goes through here.
+     */
+    @Suppress("UNCHECKED_CAST")
     fun <T> onMain(block: () -> T): T {
-        var result: T? = null
+        val holder = arrayOfNulls<Any>(1)
         var thrown: Throwable? = null
         instrumentation.runOnMainSync {
             try {
-                result = block()
+                holder[0] = block()
             } catch (t: Throwable) {
                 thrown = t
             }
         }
         thrown?.let { throw it }
-        @Suppress("UNCHECKED_CAST")
-        return result as T
+        return holder[0] as T
     }
 
     /**
      * Finish everything this process has on screen.
      *
-     * Between tests rather than after each one: a leaked activity is a real
-     * defect, but leaving one up would make the NEXT test fail instead, which
-     * hides which test actually leaked it.
+     * Called between tests rather than inside them: a leaked activity is a real
+     * defect, and leaving one up would make the NEXT test fail instead, hiding
+     * which test actually leaked it.
      */
     fun finishAll(timeoutMs: Long = Waits.DEFAULT_TIMEOUT_MS) {
-        val open = (inStage(Stage.RESUMED) + inStage(Stage.PAUSED) + inStage(Stage.STOPPED))
-            .distinct()
+        val open = OPEN_STAGES.flatMap { inStage(it) }.distinct()
         if (open.isEmpty()) return
         instrumentation.runOnMainSync {
             open.forEach { if (!it.isFinishing) it.finish() }
         }
         Waits.until("every activity in this process to finish", timeoutMs) {
-            (inStage(Stage.RESUMED) + inStage(Stage.PAUSED)).isEmpty()
+            OPEN_STAGES.none { stage -> inStage(stage).isNotEmpty() }
         }
     }
+
+    /**
+     * Every stage an activity can sit in while still being on the back stack.
+     * PRE_ON_CREATE and DESTROYED are deliberately absent: one is too early to
+     * finish, the other is already gone.
+     */
+    private val OPEN_STAGES = listOf(
+        Stage.CREATED,
+        Stage.STARTED,
+        Stage.RESUMED,
+        Stage.PAUSED,
+        Stage.STOPPED,
+    )
 }

@@ -50,6 +50,17 @@ object Harness {
     const val ARG_PIPELINE = "jarvisHarnessPipeline"
     const val ARG_REQUIRED = "jarvisRequireHarness"
 
+    /**
+     * Optional exact text the harness's fake STT is known to return.
+     *
+     * Absent by default, because this suite does not own the harness's canned
+     * responses and a test that asserted them would report an unrelated harness
+     * edit as an app regression. Supply it — `-e jarvisExpectedTranscript "turn
+     * on the kitchen light"` — when the two are versioned together and the
+     * tighter assertion is worth having.
+     */
+    const val ARG_EXPECTED_TRANSCRIPT = "jarvisExpectedTranscript"
+
     const val DEFAULT_URL = "http://10.0.2.2:8080"
     const val DEFAULT_TOKEN = "jarvis-test-token"
     const val DEFAULT_PIPELINE = "Jarvis"
@@ -57,6 +68,9 @@ object Harness {
     val baseUrl: String get() = argument(ARG_URL) ?: DEFAULT_URL
     val token: String get() = argument(ARG_TOKEN) ?: DEFAULT_TOKEN
     val pipeline: String get() = argument(ARG_PIPELINE) ?: DEFAULT_PIPELINE
+
+    /** The exact transcript to expect, when the caller supplied one. */
+    fun expectedTranscript(): String? = argument(ARG_EXPECTED_TRANSCRIPT)
 
     /**
      * Whether a missing harness is a failure or a skip. Defaults to FAILURE.

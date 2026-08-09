@@ -1,8 +1,10 @@
 package ai.jarvis.app.support
 
+import ai.jarvis.app.crash.JarvisCrashHandler
 import ai.jarvis.app.testing.TestHooks
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.fail
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 import java.io.File
@@ -47,6 +49,35 @@ class JarvisTestRule(
         Device.wakeAndUnlock()
         if (grantPermissions) Device.grantStandardTestPermissions()
         if (resetState) TestHooks.resetState(context)
+        // So that the crash check in `succeeded` can only see crashes THIS test
+        // caused. `TestHooks.resetState` clears the audit log; the crash log is
+        // a different file and is deliberately not part of a state reset.
+        runCatching { JarvisCrashHandler.clear(context) }
+    }
+
+    /**
+     * A crash on ANY thread fails the test, not just one that killed the run.
+     *
+     * The instrumented suite runs in the app's own process, so a crash on the
+     * main thread takes the whole run down and is impossible to miss. A crash on
+     * a background thread — the WebSocket reader, the mic worker, a coroutine
+     * dispatcher — does not, and would otherwise show up as some unrelated
+     * assertion timing out several tests later.
+     *
+     * `JarvisCrashHandler` records every uncaught throwable to
+     * `filesDir/jarvis/crashes.jsonl` before delegating, so the log is the one
+     * place that knows about all of them. This is the "and nothing crashed" half
+     * of NavigationTest, applied to every test in the suite for free.
+     */
+    override fun succeeded(description: Description) {
+        val crashes = runCatching { JarvisCrashHandler.recent(context) }.getOrDefault(emptyList())
+        if (crashes.isEmpty()) return
+        Screenshots.take("${simpleName(description)}-CRASHED")
+        fail(
+            "${description.methodName} passed its assertions but the app recorded " +
+                "${crashes.size} uncaught exception(s):\n" +
+                crashes.joinToString("\n") { "  [${it.thread}] ${it.headline()}" }
+        )
     }
 
     override fun failed(e: Throwable, description: Description) {

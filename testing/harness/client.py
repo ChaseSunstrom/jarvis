@@ -63,6 +63,10 @@ DEFAULT_TRAILING_SILENCE_MS = 1000
 
 DEFAULT_TIMEOUT = 30.0
 
+#: Pushed into every queue when the reader stops, so a waiter fails with the
+#: reason instead of sitting out its own timeout.
+CLOSED = "__websocket_closed__"
+
 __all__ = [
     "DEFAULT_DEVICE_ACTIONS",
     "FakeDevice",
@@ -266,6 +270,7 @@ class JarvisClient:
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=True)
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
+        self._reader_error: str | None = None
         self._next_id = 0
         self._pending: dict[int, asyncio.Future] = {}
         self._streams: dict[int, asyncio.Queue] = {}
@@ -419,7 +424,15 @@ class JarvisClient:
             ) from err
 
     async def _read_loop(self) -> None:
+        """Drain the socket forever, fanning frames out to futures and queues.
+
+        If this task ever dies, every waiter on this client would otherwise sit
+        there until its own timeout — a mysterious stall instead of a reason.
+        So the reason is recorded and pushed to everything that is waiting, and
+        a test fails immediately saying what actually happened.
+        """
         assert self._ws is not None
+        reason: str | None = None
         try:
             while True:
                 raw = await self._ws.recv()
@@ -433,17 +446,31 @@ class JarvisClient:
                     continue
                 self.frames.append(frame)
                 self._route(frame)
-        except (ConnectionClosed, asyncio.CancelledError):
+        except asyncio.CancelledError:
             raise
-        except Exception:  # pragma: no cover - transport died
-            if not self._closed:
-                raise
+        except ConnectionClosed as err:
+            reason = f"the websocket closed ({err})"
+        except Exception as err:  # pragma: no cover - the transport went strange
+            reason = f"the websocket reader failed: {err!r}"
         finally:
-            for future in self._pending.values():
-                if not future.done():
-                    future.set_exception(
-                        ConnectionError("the websocket closed before the reply arrived")
-                    )
+            self._reader_error = reason
+            self._fail_waiters(reason or "the websocket closed")
+
+    def _fail_waiters(self, reason: str) -> None:
+        for future in list(self._pending.values()):
+            if not future.done():
+                future.set_exception(ConnectionError(reason))
+        self._pending.clear()
+        closed = {"type": CLOSED, "reason": reason}
+        for queue in list(self._streams.values()):
+            queue.put_nowait(closed)
+        for queue in (self.device_commands, self.messages, self.unrouted):
+            queue.put_nowait(closed)
+
+    def _check_closed(self, frame: dict[str, Any], waiting_for: str) -> dict[str, Any]:
+        if frame.get("type") == CLOSED:
+            raise AssertionError(f"{waiting_for}: {frame.get('reason')}")
+        return frame
 
     def _route(self, frame: dict[str, Any]) -> None:
         kind = frame.get("type")
@@ -620,6 +647,8 @@ class JarvisClient:
 
         run = PipelineRun(msg_id=msg_id)
         feeder: asyncio.Task | None = None
+        # Only meaningful for a wake-stage run; see _feed_audio.
+        detected = asyncio.Event()
         try:
             await self.send_raw(payload)
             try:
@@ -649,21 +678,27 @@ class JarvisClient:
                         f"pipeline run stalled after {timeout:g}s; "
                         f"events so far: {run.types}"
                     ) from err
+                self._check_closed(event_frame, f"pipeline run stopped after {run.types}")
                 event = event_frame.get("event") or {}
                 run.events.append(
                     {"type": str(event.get("type") or ""), "data": event.get("data") or {}}
                 )
-                if run.events[-1]["type"] == "run-start" and audio is not None and feeder is None:
+                latest = run.events[-1]["type"]
+                if latest in ("wake_word-end", "error", "run-end"):
+                    detected.set()
+                if latest == "run-start" and audio is not None and feeder is None:
                     handler_id = run.binary_handler_id
                     if handler_id is None:
                         raise AssertionError(
                             f"run-start carried no stt_binary_handler_id: {run.data('run-start')}"
                         )
                     feeder = asyncio.create_task(
-                        self._feed_audio(handler_id, audio, chunk_ms, sample_rate,
-                                         send_end_of_audio)
+                        self._feed_audio(
+                            handler_id, audio, chunk_ms, sample_rate, send_end_of_audio,
+                            detected if start_stage == "wake" else None,
+                        )
                     )
-                if run.events[-1]["type"] == "run-end":
+                if latest == "run-end":
                     break
         finally:
             if feeder is not None:
@@ -682,8 +717,31 @@ class JarvisClient:
         chunk_ms: int,
         rate: int,
         send_end: bool,
+        wake_detected: asyncio.Event | None = None,
+        max_wake_wait: float = 20.0,
     ) -> None:
+        """Stream PCM on the run's binary channel, as a satellite would.
+
+        `wake_detected` is what makes a wake-stage run work. The wake and STT
+        stages read the *same* audio queue one after the other, and the end-of-
+        audio marker ends the whole stream — so a client that pushes a fixed
+        buffer and immediately says "that's all" can have the wake stage drain
+        the marker before detection lands, leaving STT waiting on a queue
+        nothing will ever fill again. A real satellite does not behave that
+        way: it streams continuously until the wake word fires and only then
+        does the utterance follow. This does the same, so the utterance is
+        never spent on the wake stage and the marker is never lost.
+        """
         prefix = bytes([handler_id & 0xFF])
+        if wake_detected is not None:
+            filler = tone_pcm(chunk_ms, rate)
+            deadline = time.monotonic() + max_wake_wait
+            while not wake_detected.is_set() and time.monotonic() < deadline:
+                await self.send_binary(prefix + filler)
+                # Paces the stream at real time *and* returns the instant the
+                # wake word fires — a condition, not a fixed sleep.
+                with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+                    await asyncio.wait_for(wake_detected.wait(), chunk_ms / 1000)
         for chunk in pcm_chunks(audio, chunk_ms, rate):
             await self.send_binary(prefix + chunk)
         if send_end:
@@ -719,23 +777,18 @@ class JarvisClient:
         self, timeout: float = DEFAULT_TIMEOUT, action: str | None = None
     ) -> dict[str, Any]:
         """The next ``device_command``, optionally waiting for a named action."""
+        wanted = f" for {action!r}" if action else ""
+        complaint = f"no device_command{wanted} within {timeout:g}s"
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise AssertionError(
-                    f"no device_command"
-                    + (f" for {action!r}" if action else "")
-                    + f" within {timeout:g}s"
-                )
+                raise AssertionError(complaint)
             try:
                 frame = await asyncio.wait_for(self.device_commands.get(), remaining)
             except (asyncio.TimeoutError, TimeoutError) as err:
-                raise AssertionError(
-                    f"no device_command"
-                    + (f" for {action!r}" if action else "")
-                    + f" within {timeout:g}s"
-                ) from err
+                raise AssertionError(complaint) from err
+            self._check_closed(frame, "waiting for a device_command")
             if action is None or frame.get("action") == action:
                 return frame
 
@@ -769,9 +822,10 @@ class JarvisClient:
 
     async def next_message(self, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
         try:
-            return await asyncio.wait_for(self.messages.get(), timeout)
+            frame = await asyncio.wait_for(self.messages.get(), timeout)
         except (asyncio.TimeoutError, TimeoutError) as err:
             raise AssertionError(f"no jarvis_message within {timeout:g}s") from err
+        return self._check_closed(frame, "waiting for a jarvis_message")
 
     async def answer_message(
         self, message_id: str, status: str = "answered", answer: str | None = None
@@ -800,6 +854,7 @@ class EventStream:
             frame = await asyncio.wait_for(self.queue.get(), timeout)
         except (asyncio.TimeoutError, TimeoutError) as err:
             raise AssertionError(f"no event within {timeout:g}s") from err
+        self.client._check_closed(frame, "waiting for a subscribed event")
         event = frame.get("event") or {}
         self.seen.append(event)
         return event

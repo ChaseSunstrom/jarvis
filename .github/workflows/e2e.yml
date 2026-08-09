@@ -1,0 +1,562 @@
+name: End-to-end
+
+# Layer 3 and layer 4 of docs/testing.md: the REAL jarvis-core, booted against
+# fake model and voice backends, driven by REAL clients.
+#
+#   * harness  — the server itself, proved by testing/e2e (fast, ~1 minute)
+#   * android  — the real APK on a real emulator (slow, tens of minutes)
+#   * desktop  — the real `python -m jarvis_desktop` over the device channel
+#
+# Deliberately NOT part of ci.yml: the emulator job takes tens of minutes and
+# must never be what a push waits on for feedback. ci.yml stays the fast lane.
+#
+# NOTE on YAML hygiene: exactly ONE key of each name per mapping. A duplicate is
+# legal YAML (last wins) but makes GitHub reject the whole workflow — it then
+# runs zero jobs and names the run after the file, which looks like a mysterious
+# failure. ci.yml's "static checks" job fails the build on duplicates; keep it
+# that way.
+
+# Push only, and only for the things this workflow can actually break. No
+# `pull_request:` trigger on purpose: with `branches: ["**"]` a PR inside this
+# repo would boot the emulator twice for one change, and half an hour of runner
+# time is not worth a duplicate result. Dispatch it by hand for a fork PR.
+#
+# `jarvis-core/**` is in the list even though it makes a server change pay for
+# an emulator run: catching a server change that breaks a real client is the
+# entire reason this workflow exists. `run_emulator: false` on a manual dispatch
+# is the escape hatch when you only want the fast two.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "android-app/**"
+      - "testing/**"
+      - "jarvis-core/**"
+      - "jarvis-desktop/**"
+      - ".github/workflows/e2e.yml"
+  workflow_dispatch:
+    inputs:
+      run_emulator:
+        description: "Also boot the Android emulator (adds ~30 minutes)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # One place to change the emulator target. `google_apis`, never
+  # `google_apis_playstore`: this app ships with no Google Play Services and a
+  # Play image is both slower and unrootable (which is how the screenshots come
+  # off the device when the shell user cannot read them).
+  EMULATOR_TARGET: google_apis
+  EMULATOR_ARCH: x86_64
+  # One fixed screen geometry, so the screenshots this job exists to produce are
+  # comparable from run to run. Both emulator steps and the AVD cache key read
+  # this: a snapshot created for one profile must never be reused for another.
+  EMULATOR_PROFILE: pixel_2
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. The harness proves itself: a real server, on a real socket, with the two
+  #    GPU-bound backends replaced at the wire protocol.
+  # ---------------------------------------------------------------------------
+  harness:
+    name: e2e · harness self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # The harness boots the real jarvis-core as a subprocess, so the
+          # server's own runtime dependencies must be present too.
+          python -m pip install -r jarvis-core/requirements.txt
+          python -m pip install -r testing/requirements.txt
+
+      - name: End-to-end (testing/e2e)
+        run: testing/scripts/run-e2e.sh
+
+      # always(), not failure(): the generated config, the three process logs
+      # and the WAVs the fake STT received are the baseline a future failure is
+      # compared against.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-harness-artifacts
+          path: testing/artifacts
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          set -u
+          {
+            echo '### e2e · harness self-test'
+            echo ''
+            echo 'Booted the REAL `jarvis-core` (`python -m jarvis`) against the fake'
+            echo 'Ollama and the fake Wyoming stt/tts/wake stack, then ran'
+            echo '`testing/e2e` against it over a real socket.'
+            echo ''
+            echo 'Artifact **e2e-harness-artifacts**: the generated'
+            echo '`configuration.yaml`, `logs/jarvis-core.log`, both fake logs, and'
+            echo 'every `audio/stt-*.wav` the fake STT was actually sent.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 2. The real APK, on a real emulator, against the real harness.
+  # ---------------------------------------------------------------------------
+  android:
+    name: e2e · android emulator (API ${{ matrix.api-level }})
+    # Skipped only when a human dispatches the workflow and unticks the box.
+    # `inputs` is empty on a push, so the first clause carries that case.
+    if: github.event_name != 'workflow_dispatch' || inputs.run_emulator
+    runs-on: ubuntu-latest
+    # An emulator boot plus a full instrumented suite. Generous on purpose: a
+    # job that is killed at the wrong moment tells you nothing at all.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # minSdk is 29. API 30 is the oldest image with a modern, reliably
+        # bootable x86_64 build, and exercises scoped storage — which is what
+        # the screenshot directory lives under.
+        api-level: [30]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Without this the emulator falls back to software virtualisation and
+      # takes so long to boot that the job times out.
+      - name: Enable KVM
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # Same reasoning as android-apk.yml: the repo ships
+          # gradle-wrapper.properties but not the wrapper JAR, so the action
+          # provides Gradle and we call `gradle` directly rather than ./gradlew.
+          gradle-version: "8.10"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install harness dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r jarvis-core/requirements.txt
+          python -m pip install -r testing/requirements.txt
+
+      # The harness runs on the RUNNER, not in the emulator, and stays up for
+      # the whole instrumented suite. `--wait` keeps it alive; nohup + a log
+      # file keeps it alive across steps.
+      - name: Start the jarvis-core harness
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/testing/artifacts"
+          nohup python3 testing/harness/harness.py \
+            --wait --keep \
+            --host 0.0.0.0 \
+            --work-dir "$GITHUB_WORKSPACE/testing/artifacts/harness" \
+            --json-out "$GITHUB_WORKSPACE/testing/artifacts/harness.json" \
+            > "$GITHUB_WORKSPACE/testing/artifacts/harness-stdout.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/testing/artifacts/harness.pid"
+
+          # Wait for the description file rather than sleeping. harness.py only
+          # writes it after /healthz answered, so this is already a readiness
+          # signal; the explicit /healthz poll below is the belt to its braces.
+          json="$GITHUB_WORKSPACE/testing/artifacts/harness.json"
+          pid="$(cat "$GITHUB_WORKSPACE/testing/artifacts/harness.pid")"
+          for _ in $(seq 1 180); do
+            [ -s "$json" ] && break
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "::error::the harness exited before it was ready"
+              cat "$GITHUB_WORKSPACE/testing/artifacts/harness-stdout.log" || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ ! -s "$json" ]; then
+            echo "::error::the harness never wrote $json"
+            cat "$GITHUB_WORKSPACE/testing/artifacts/harness-stdout.log" || true
+            exit 1
+          fi
+
+          PORT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ports"]["core"])' "$json")"
+          TOKEN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$json")"
+
+          ok=0
+          for _ in $(seq 1 120); do
+            code="$(curl -sS -o /tmp/healthz.json -w '%{http_code}' \
+              "http://127.0.0.1:${PORT}/healthz" || echo 000)"
+            if [ "$code" = "200" ]; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::/healthz never answered 200 on port ${PORT}"
+            tail -n 100 "$GITHUB_WORKSPACE/testing/artifacts/harness/logs/jarvis-core.log" || true
+            exit 1
+          fi
+          echo "harness healthy on port ${PORT}: $(cat /tmp/healthz.json)"
+
+          # The token is jarvis-core's documented JARVIS_TOKEN override for a
+          # throwaway server. It is deterministic and not a secret.
+          {
+            echo "JARVIS_HARNESS_PORT=${PORT}"
+            echo "JARVIS_HARNESS_TOKEN=${TOKEN}"
+            echo "JARVIS_HARNESS_URL=http://127.0.0.1:${PORT}"
+          } >> "$GITHUB_ENV"
+
+      # A cold AVD creation is several minutes every run. The two-phase pattern
+      # below is the one from the emulator-runner README: on a cache miss, boot
+      # once with a script that does nothing so a snapshot is written, then let
+      # the real run start from it.
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ matrix.api-level }}-${{ env.EMULATOR_TARGET }}-${{ env.EMULATOR_ARCH }}-${{ env.EMULATOR_PROFILE }}-v1
+
+      - name: Create AVD and generate a snapshot for caching
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ env.EMULATOR_TARGET }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          profile: ${{ env.EMULATOR_PROFILE }}
+          force-avd-creation: false
+          # No -no-snapshot-save here: writing the snapshot is the entire point.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 1200
+          disable-animations: false
+          script: echo "AVD snapshot generated for API ${{ matrix.api-level }}."
+
+      - name: Instrumented suite on the emulator
+        id: emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ env.EMULATOR_TARGET }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          profile: ${{ env.EMULATOR_PROFILE }}
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 1200
+          disable-animations: true
+          working-directory: android-app
+          # Everything after Gradle runs whatever Gradle did: the screenshots
+          # and the logcat are most valuable precisely when the suite went red,
+          # and the emulator is destroyed the moment this script returns.
+          script: |
+            set -uo pipefail
+            mkdir -p artifacts
+
+            adb wait-for-device
+            adb devices
+
+            # Two ways for the app to reach the harness, and both are permitted
+            # by a network-security config, so take the one that can be verified
+            # before the suite runs and fall back to the other.
+            #
+            #  1. adb reverse -> 127.0.0.1, which the SHIPPING config already
+            #     allows cleartext to, so the app is exercised in its real
+            #     transport posture. Establishing it either works or fails now.
+            #  2. 10.0.2.2, QEMU's alias for the host's loopback, allowed by the
+            #     DEBUG-variant config (src/debug/res/xml/network_security_config.xml).
+            HARNESS_URL="http://127.0.0.1:${JARVIS_HARNESS_PORT}"
+            if adb reverse "tcp:${JARVIS_HARNESS_PORT}" "tcp:${JARVIS_HARNESS_PORT}"; then
+              adb reverse --list || true
+            else
+              echo "::warning::adb reverse tcp:${JARVIS_HARNESS_PORT} failed; falling back to the emulator host alias"
+              HARNESS_URL="http://10.0.2.2:${JARVIS_HARNESS_PORT}"
+            fi
+            echo "harness for the app: ${HARNESS_URL}"
+
+            adb logcat -c || true
+
+            status=0
+            gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace \
+              -Pandroid.testInstrumentationRunnerArguments.jarvisHarnessUrl="${HARNESS_URL}" \
+              -Pandroid.testInstrumentationRunnerArguments.jarvisHarnessToken="${JARVIS_HARNESS_TOKEN}" \
+              -Pandroid.testInstrumentationRunnerArguments.jarvisRequireHarness=true \
+              || status=$?
+            echo "gradle :app:connectedDebugAndroidTest exited ${status}"
+
+            # --- screenshots ------------------------------------------------
+            # ai.jarvis.app.testing.TestHooks.screenshotDir() = the app's
+            # external files dir, which needs no storage permission.
+            SHOTS=/sdcard/Android/data/ai.jarvis.app/files/screenshots
+            adb shell ls -l "$SHOTS" || true
+            adb pull "$SHOTS" artifacts/ || true
+            if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
+              echo "screenshots unreadable as the shell user; retrying with adb root"
+              adb root >/dev/null 2>&1 || true
+              adb wait-for-device
+              adb pull "$SHOTS" artifacts/ || true
+              adb unroot >/dev/null 2>&1 || true
+              adb wait-for-device || true
+            fi
+            # Internal-storage fallback: screenshotDir() lands there on a device
+            # with no external volume.
+            if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
+              adb exec-out run-as ai.jarvis.app tar -cf - files/screenshots 2>/dev/null \
+                | tar -xf - -C artifacts 2>/dev/null || true
+              if [ -d artifacts/files/screenshots ]; then
+                # An earlier partial pull may have left an empty directory in
+                # the way; mv into it would nest rather than replace.
+                rmdir artifacts/screenshots 2>/dev/null || true
+                mv artifacts/files/screenshots artifacts/screenshots || true
+              fi
+            fi
+            shots="$(ls -1 artifacts/screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')"
+            echo "pulled ${shots} screenshot(s)"
+
+            # --- logs --------------------------------------------------------
+            adb logcat -d -v time > artifacts/logcat.txt 2>&1 || true
+            adb logcat -b crash -d -v time > artifacts/logcat-crash.txt 2>&1 || true
+            adb shell dumpsys package ai.jarvis.app > artifacts/dumpsys-package.txt 2>&1 || true
+
+            {
+              echo "### e2e · android emulator (API ${{ matrix.api-level }})"
+              echo ""
+              if [ "${status}" = "0" ]; then
+                echo "The instrumented suite PASSED on a real emulator."
+              else
+                echo "The instrumented suite FAILED (gradle exit ${status})."
+              fi
+              echo ""
+              echo "- Real APK, real activities, real sockets. \`ConversationE2ETest\` drove a full voice turn against the real \`jarvis-core\` harness at \`${HARNESS_URL}\`."
+              echo "- Screenshots pulled: **${shots}** — artifact **android-e2e-screenshots-api${{ matrix.api-level }}**."
+              echo "- HTML/XML reports: artifact **android-e2e-reports-api${{ matrix.api-level }}**."
+              echo "- logcat (incl. the crash buffer): artifact **android-e2e-logs-api${{ matrix.api-level }}**."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            exit "${status}"
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-screenshots-api${{ matrix.api-level }}
+          path: android-app/artifacts/screenshots
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-reports-api${{ matrix.api-level }}
+          path: |
+            android-app/app/build/reports/androidTests/**
+            android-app/app/build/outputs/androidTest-results/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload logcat and harness logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-logs-api${{ matrix.api-level }}
+          path: |
+            android-app/artifacts/logcat.txt
+            android-app/artifacts/logcat-crash.txt
+            android-app/artifacts/dumpsys-package.txt
+            testing/artifacts/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The emulator step writes the real summary itself, because only it knows
+      # how many screenshots came off the device. This covers the case where it
+      # never ran at all — a failed harness boot, a failed SDK install — so the
+      # run never shows an android section with nothing in it.
+      - name: Summary (emulator never ran)
+        if: always() && steps.emulator.outcome == 'skipped'
+        run: |
+          set -u
+          {
+            echo '### e2e · android emulator (API ${{ matrix.api-level }})'
+            echo ''
+            echo 'The instrumented suite never started: a step before it failed.'
+            echo 'Look at the job log for the `::error::` annotation, and at the'
+            echo 'harness logs in artifact'
+            echo '**android-e2e-logs-api${{ matrix.api-level }}**.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Harness log tail (on failure)
+        if: failure()
+        run: |
+          set -u
+          for log in "$GITHUB_WORKSPACE"/testing/artifacts/harness/logs/*.log; do
+            [ -f "$log" ] || continue
+            echo "----- $log (last 80 lines) -----"
+            tail -n 80 "$log"
+          done
+          echo "----- crash buffer -----"
+          tail -n 200 "$GITHUB_WORKSPACE/android-app/artifacts/logcat-crash.txt" 2>/dev/null || true
+
+      - name: Stop the harness
+        if: always()
+        run: |
+          set -u
+          pidfile="$GITHUB_WORKSPACE/testing/artifacts/harness.pid"
+          [ -f "$pidfile" ] || exit 0
+          kill "$(cat "$pidfile")" 2>/dev/null || true
+
+  # ---------------------------------------------------------------------------
+  # 3. The real desktop agent over the real device channel.
+  # ---------------------------------------------------------------------------
+  desktop:
+    name: e2e · desktop agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r jarvis-core/requirements.txt
+          python -m pip install -r testing/requirements.txt
+          # The suite drives the REAL agent, so it has to be importable and
+          # runnable as `python -m jarvis_desktop`.
+          python -m pip install -e "./jarvis-desktop[dev]"
+
+      # Unlike the emulator, this suite owns its server: conftest.py boots a
+      # Harness per session and hands the agent a TCP proxy in front of it, so
+      # a test can cut a live connection. Starting a second, long-lived one here
+      # would compete for nothing. What this step is for is proving the harness
+      # can boot on THIS runner — and failing in eight seconds with the server's
+      # own log if it cannot, rather than inside a fixture twenty minutes later.
+      - name: Prove the harness boots on this runner
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/testing/artifacts"
+          python3 -c 'from testing.harness import Harness, JarvisClient; print("testing.harness imports")'
+          # No --wait: this boots the whole stack, proves /healthz and the token,
+          # prints the description and tears everything down again.
+          python3 testing/harness/harness.py \
+            --host 0.0.0.0 \
+            --work-dir "$GITHUB_WORKSPACE/testing/artifacts/preflight" \
+            --json-out "$GITHUB_WORKSPACE/testing/artifacts/preflight.json"
+          python3 -c 'import json; d=json.load(open("testing/artifacts/preflight.json")); print("harness booted on", d["base_url"], "ports", d["ports"])'
+
+      - name: Desktop end-to-end (jarvis-desktop/tests_e2e)
+        env:
+          # tests_e2e/conftest.py reads this (or JARVIS_HARNESS_WORK_DIR) and
+          # puts the harness, the agent and the workspaces underneath it, which
+          # is what makes a failed job uploadable.
+          JARVIS_DESKTOP_E2E_WORK_DIR: ${{ github.workspace }}/testing/artifacts/desktop-e2e
+          JARVIS_HARNESS_KEEP: "1"
+        run: |
+          set -uo pipefail
+          if [ ! -d jarvis-desktop/tests_e2e ]; then
+            echo "::error::jarvis-desktop/tests_e2e does not exist — the desktop end-to-end suite is missing"
+            exit 1
+          fi
+          junit="$GITHUB_WORKSPACE/testing/artifacts/desktop-e2e-junit.xml"
+          python -m pytest jarvis-desktop/tests_e2e -v --color=yes --junitxml="$junit"
+          status=$?
+
+          if [ "$status" != "0" ]; then
+            while IFS= read -r log; do
+              echo "----- $log (last 60 lines) -----"
+              tail -n 60 "$log"
+            done < <(find "$GITHUB_WORKSPACE/testing/artifacts" -name '*.log' -type f 2>/dev/null | sort)
+            exit "$status"
+          fi
+
+          # A suite that skipped everything exits 0. conftest.py skips the whole
+          # session when testing.harness will not import, which is precisely the
+          # CI misconfiguration this job exists to catch — so a green pytest is
+          # not on its own good enough.
+          python3 - "$junit" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          suites = root.iter("testsuite")
+          total = skipped = 0
+          for suite in suites:
+              total += int(suite.get("tests", 0))
+              skipped += int(suite.get("skipped", 0))
+          print(f"desktop end-to-end: {total} test(s), {skipped} skipped")
+          # ::error:: on stdout, then a plain exit code: workflow commands are
+          # read from the step's stdout, and sys.exit(str) writes to stderr.
+          if total == 0:
+              print("::error::pytest collected no desktop end-to-end tests")
+              sys.exit(1)
+          if total == skipped:
+              print(
+                  "::error::every desktop end-to-end test skipped, so nothing was "
+                  "proved. The usual cause is that testing.harness would not import "
+                  "or the harness could not boot; see the skip reasons above."
+              )
+              sys.exit(1)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-e2e-artifacts
+          path: testing/artifacts
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          set -u
+          {
+            echo '### e2e · desktop agent'
+            echo ''
+            echo 'Ran `jarvis-desktop/tests_e2e`: a real `python -m jarvis_desktop`'
+            echo 'against a real `jarvis-core`, over the real device channel. The'
+            echo 'agent registers, reports presence, takes commands and applies its'
+            echo 'own tier policy — through a TCP proxy the suite can cut to exercise'
+            echo 'the reconnect path.'
+            echo ''
+            echo 'Artifact **desktop-e2e-artifacts**: the generated config, every'
+            echo 'harness and agent log, and `desktop-e2e-junit.xml`.'
+          } >> "$GITHUB_STEP_SUMMARY"

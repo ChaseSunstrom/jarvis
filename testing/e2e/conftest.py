@@ -63,3 +63,22 @@ async def client(harness):
 def anonymous(harness):
     """A client holding a token the server has never heard of."""
     return JarvisClient(harness.base_url, "not-a-real-token")
+
+
+@pytest.fixture
+def spare_work_dir(tmp_path, request):
+    """Where a test that boots its *own* harness should put it.
+
+    CI uploads whatever is under `JARVIS_HARNESS_WORK_DIR`'s parent, so a
+    second harness left in pytest's `tmp_path` would write its config, its
+    logs and its audio somewhere nobody collects — and its failure would be the
+    one thing in the suite you could not read afterwards.
+    """
+    configured = os.environ.get("JARVIS_HARNESS_WORK_DIR")
+    if not configured:
+        return tmp_path
+    name = "".join(char if char.isalnum() or char in "-_" else "-"
+                   for char in request.node.name)[:80]
+    path = Path(configured).parent / "extra" / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path

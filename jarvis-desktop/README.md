@@ -544,12 +544,20 @@ still in this process.
 
 ## Tests
 
+There are two suites and they answer different questions. `tests/` asks "is
+each piece right?" against a fake socket. `tests_e2e/` asks "does the thing
+work?" against a real server on a real socket. A change that breaks the
+contract between them passes the first and fails the second, which is the
+whole reason the second exists.
+
+### Unit — `tests/`
+
 ```bash
 cd jarvis-desktop
 python3 -m pytest tests -q
 ```
 
-630 tests, no network, no display, no hardware. The ones that carry weight:
+722 tests, no network, no display, no hardware. The ones that carry weight:
 
 * `test_policy.py` — the truth table, every combination of tier × requested tier
   × policy × switches × trust. Copied case for case from
@@ -570,3 +578,58 @@ python3 -m pytest tests -q
   Also the escalation paths an adversarial review found: `launch_app` used as a
   shell, a notification title used as PowerShell, an `Authorization` header
   followed across a redirect.
+
+### End to end — `tests_e2e/`
+
+```bash
+cd jarvis-desktop
+
+# once: the harness boots the real jarvis-core, so its dependencies are needed
+pip install -r ../jarvis-core/requirements.txt -r ../testing/requirements.txt
+
+python3 -m pytest tests_e2e -q          # ~12s, 20 tests
+python3 -m pytest tests_e2e -v          # names, if you want to watch it work
+```
+
+This starts a real `python -m jarvis` (via [`testing/harness`](../testing/),
+which fakes only the model and voice backends, at the wire protocol) and a real
+`python -m jarvis_desktop run` as a separate process, and drives the pair
+through the actual `device_control` and `companion` services. If the shared
+harness is not installed the whole suite skips with a sentence saying so,
+rather than failing.
+
+**Everything in it is the shipping code except two things.** CI has no human
+and no screen, so the Tier-2/Tier-3 confirmation dialog and the
+`companion.ask` question dialog are replaced by backends that read their answer
+from a JSON file and record every prompt they were shown
+(`tests_e2e/agent_runner.py`). That recording is the point: it turns "it asked
+the user again" into an assertion. Both stubs fail closed — a missing or
+unreadable control file is a denial — so a test that forgets to grant approval
+cannot accidentally receive one.
+
+What it proves that `tests/` cannot:
+
+| invariant | what only a real run can show |
+|---|---|
+| **registration** | the real handshake — `auth_required` → `auth` → `auth_ok` → `jarvis/device/register` — lands a manifest on the server whose tiers are *this* machine's numbers, and the server's presence registry holds the device |
+| **presence** | `device_event`/`presence` frames are actually emitted, applied to `DevicePresence`, and are what makes routing pick this machine when it is the only one connected |
+| **Tier 1** | `get_system_state` returns real measurements of the machine it ran on, with nobody prompted |
+| **Tier 3, refused** | the file is still on disk afterwards. `denied` proves the agent *said* no; the file proves `DeleteFile.run` was never called |
+| **Tier 3, approved** | it runs exactly once and the next identical command prompts again — including when the prompt answers *always*, which Tier 3 never offers and the store refuses to keep. Checked against the prompt log and against a policy file that was never written |
+| **tier raising** | a `delete_file` tagged `tier: 1` still prompts at CONFIRM. And the case only the device can catch: `http_request` is NOTIFY in the manifest, so a POST arrives tagged **2** and is enforced at **3**, because `tier_for()` lives here and the server cannot see it |
+| **`companion.ask`** | the full cross-device round trip — service → `jarvis_message` → this desk → `jarvis_message_result` → the waiting service call resolves with the answer |
+| **path escape / SSRF** | refused against a real filesystem (including a symlink out of the workspace) and a real resolver — *with approval already granted*, so it is the guard doing the refusing and not the policy engine |
+| **reconnect** | the socket is cut mid-session by a TCP relay the test owns; the agent backs off, reconnects, re-registers on a new connection and re-reports presence, and the server's device list shows the gap in between |
+
+Artifacts: point `JARVIS_DESKTOP_E2E_WORK_DIR` (or `JARVIS_HARNESS_WORK_DIR`,
+which CI sets) at a directory and everything is kept there —
+`agent/agent.log`, the agent's `state/audit.jsonl` (and `state/policy.json`, on
+the day something is ever remembered), every prompt it showed in
+`control/prompts.jsonl`, every question in `control/asks.jsonl`, and the
+harness's own `logs/jarvis-core.log`. Both process logs are also attached to
+any failure report, so a job that loses its artifacts is still diagnosable from
+the console.
+
+No test in the suite sleeps. Every wait is a poll for a condition with a
+deadline, or a wait on an event the server fired, and every one of them names
+what it was waiting for when it gives up.
