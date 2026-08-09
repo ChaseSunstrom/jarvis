@@ -76,6 +76,14 @@ nothing can fall out of sync, nothing leaks past `onDetachedFromWindow`, and
 `skip()` is just "set the clock to `TOTAL_MS`" — it lands on exactly the frame
 the full sequence would have ended on, because it runs the same functions.
 
+Order matters inside `skip()`, and it is easy to get backwards. `Animator
+.cancel()` sends `onAnimationCancel` **and then `onAnimationEnd`**, so
+cancelling re-enters the view's own end listener. The clock is therefore moved
+and the final frame pushed *before* the cancel; otherwise that re-entrant
+`finish()` settles the orb and detaches the overlay while the clock is still
+mid-sequence, and every statement after the cancel runs against a detached view
+whose `orb` and callbacks the detach has already nulled.
+
 **One orb.** The overlay does not draw the reactor. It is transparent, and it
 drives the real `JarvisOrbView` that the home screen already owns via
 `setBootDrive()`. The orb does not jump at the handoff because it never changed
@@ -83,10 +91,18 @@ object — only who was telling it what size to be. The overlay's wordmark lands
 on `JarvisOrbView.wordmarkBaselineY()` at `WORDMARK_SPACING`, the orb's own
 resting metrics, so the two are pixel-identical when they cross-fade.
 
-The third check line uses real data — the device count the last session
-recorded, read from the shared `jarvis_config` preferences under
-`last_device_count`. A missing value, a wrong type, or a locked-storage read
-all mean the line is simply omitted. It never types "0 devices linked".
+The third check line uses real data — how many actions this device registered
+with the server the last time `jarvis/device/register` succeeded, persisted by
+`JarvisConfig.lastActionCount` and written by `JarvisChannel` on `registered`.
+A missing value, a wrong type, or a locked-storage read all mean the line is
+simply omitted; it never types "0 actions ready".
+
+It counts *actions*, not devices, because that is the only number of this shape
+the phone actually learns — the register result answers with the size of the
+manifest the server accepted. There is a spec check (`test_the_third_check_line
+_has_something_writing_its_input`) that fails if the writer ever disappears: a
+boot line whose input nothing writes is a line that never appears, and it looks
+exactly like a working feature in a screenshot.
 
 **Reduced motion is respected.** If `Settings.Global.ANIMATOR_DURATION_SCALE`
 is 0, or `TRANSITION_ANIMATION_SCALE` is 0 (Android has no "prefers reduced
@@ -94,6 +110,12 @@ motion" flag; that is the closest the platform gives a user), the sequence
 collapses to its end state on the first frame and never animates. A slowed
 scale is honoured and capped at `MAX_DURATION_MS`, so a developer-options 10x
 cannot hang the launcher.
+
+On API 31+ the sequence is normally started by the splash-exit listener, but a
+sequence that will not play does not wait for it — `willPlay()` is false and
+`MainActivity` starts (and therefore immediately completes) it inline. Waiting
+would hold the home controls at alpha 0 for the length of a splash exit, which
+is a black screen for the one user who explicitly asked for no animation.
 
 **Cold start only.** The flag lives in the `JarvisApp` Application object
 (`consumeColdStart()`), not in the Activity, so a rotation, a return from
@@ -133,9 +155,11 @@ background-restricted — either one alone still gets the automation service
 killed.
 
 The home screen shows a banner whenever an essential requirement is missing,
-and that banner is the only route to the System Check screen. That is
-deliberate: a diagnostics screen buried in a menu is one nobody finds on the
-day they need it.
+and that banner is the loudest route to the System Check screen. That is
+deliberate: a diagnostics screen that only exists in a menu is one nobody finds
+on the day they need it. It is not the only route, though — Settings → More
+also has SYSTEM CHECK and CRASH LOGS, because "everything is granted, but the
+server still is not answering" is a real state and the banner is silent in it.
 
 ### The Network toggle specifically
 
@@ -148,9 +172,15 @@ sockets fail. So the permission check is a useful signal, not a reliable one,
 and `GrapheneCompat` folds in what actually happened on the wire:
 
 ```kotlin
-GrapheneCompat.noteNetworkFailure(throwable)   // in every network error path
-GrapheneCompat.noteNetworkSuccess()            // on a successful response
+GrapheneCompat.noteNetworkFailure(throwable)   // JarvisChannel.Session.onFailure
+GrapheneCompat.noteNetworkSuccess()            // onOpen, and onFailure with a response
 ```
+
+Those call sites are the feature. Without them the verdict is only ever the
+permission check — the one signal this section just said cannot be relied on —
+and `SUSPECT` is unreachable. `onFailure` with a non-null `response` counts as a
+*success*: we reached the server and it answered, even if what it answered was
+401.
 
 `classify()` reads the cause chain. A `SecurityException` anywhere in it is the
 OS telling us directly, and denies immediately. An `UnknownHostException` is
@@ -159,7 +189,14 @@ what a typo sees — so it takes `SUSPECT_THRESHOLD` (3) consecutive ones before
 the verdict becomes `SUSPECT` and the banner hedges with "if this is
 GrapheneOS". Everything else (connection refused, timeouts, TLS) is a
 server-side story and never accuses the user's settings. One success outranks
-any amount of accumulated suspicion.
+any amount of accumulated *suspicion*.
+
+It does not outrank a `SecurityException`, and that ordering is deliberate. The
+Network toggle is revocable while the app is running, and `noteNetworkSuccess()`
+clears the denial counters — so a non-zero `securityDenials` can only have been
+recorded after the last success. Ranking the stale success higher would pin the
+verdict to `GRANTED` for the rest of the process the moment somebody revoked
+Network mid-session, and the banner explaining the outage would never appear.
 
 The banner text names the path, because "check your network permissions" helps
 nobody:
@@ -193,7 +230,7 @@ never sent anywhere. Rotating: the newest `MAX_RECORDS` (50) lines, and under
 a rename, so a kill halfway through leaves either the old log or the new one.
 
 Each record carries the timestamp, thread, exception class and message, the
-full stack trace (truncated at 12 000 chars), app version and version code,
+full stack trace (truncated at 12 000 chars, then redacted), app version and version code,
 Android release and SDK level, device manufacturer and model, and the build
 fingerprint — which is how you tell a GrapheneOS build from a stock one at a
 glance.
@@ -201,7 +238,17 @@ glance.
 The screen lists headlines, opens one full report, copies to the clipboard, and
 clears. There is no upload button and no crash reporting service.
 
-Three properties of `JarvisCrashHandler`, in order of importance:
+**The message and the stack trace are redacted on the way in**, through
+`channel/Redact.kt` — the same masking the command channel uses to keep the
+bearer token out of logcat. That is not belt-and-braces here. This screen's
+whole purpose is a COPY button, so a crash report is the one diagnostic in the
+app that is *expected* to leave the device, and exceptions out of OkHttp or a
+JSON parser routinely quote the frame or the URL that failed. Redacting on
+write rather than on display matters too: the file is what the button reads.
+The clipboard entry is flagged `EXTRA_IS_SENSITIVE` on Android 13+ so the
+system's copy preview does not render it either.
+
+Four properties of `JarvisCrashHandler`, in order of importance:
 
 1. **It is installed first.** `JarvisCrashHandler.install(this)` is the first
    statement in `JarvisApp.onCreate`, before `super.onCreate()` and before the
@@ -215,6 +262,8 @@ Three properties of `JarvisCrashHandler`, in order of importance:
    which is what actually kills the process and writes the tombstone — is
    called in a `finally`. Swallowing the exception would leave a process alive
    with a dead thread and no window, which is worse than a crash.
+4. **It redacts before it writes.** See above. The redactor is itself wrapped:
+   a regex that somehow blew up would cost the text, never the record.
 
 If the app dies before this is installed (a linker failure, an OOM at zygote
 fork), nothing here will have it. That is what the repo-level

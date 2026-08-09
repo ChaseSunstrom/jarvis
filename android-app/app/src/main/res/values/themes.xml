@@ -7,8 +7,18 @@
 -->
 <resources>
 
-    <!-- Opaque dark theme: MainActivity, SettingsActivity, ManagementActivity. -->
-    <style name="Theme.Jarvis" parent="@android:style/Theme.Material.NoActionBar">
+    <!--
+      Opaque dark theme: MainActivity, SettingsActivity, ManagementActivity.
+
+      Split into a base and a one-line alias on purpose. res/values-v31 has to
+      add the Android 12+ splash attributes, and a same-named style in a
+      qualified folder REPLACES this one outright — resource qualifiers pick a
+      winner, they do not merge. So the shared items live in the base and every
+      variant of Theme.Jarvis parents off it; add an item here and API 31+ picks
+      it up, which is exactly what would silently not happen if values-v31
+      redeclared the whole style.
+    -->
+    <style name="Theme.JarvisBase" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/jarvis_bg</item>
         <item name="android:colorBackground">@color/jarvis_bg</item>
         <item name="android:statusBarColor">@color/jarvis_bg</item>
@@ -18,6 +28,10 @@
         <item name="android:textColorSecondary">@color/jarvis_dim</item>
         <item name="android:colorAccent">@color/jarvis_accent</item>
     </style>
+
+    <!-- What the manifest names. Overridden in values-v31, which adds the
+         splash attributes on top of the same base. -->
+    <style name="Theme.Jarvis" parent="@style/Theme.JarvisBase" />
 
     <!--
       Fully transparent, animation-free theme for JarvisAssistActivity — the

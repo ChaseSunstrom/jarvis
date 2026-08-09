@@ -332,7 +332,11 @@ class JarvisAutomationService : Service() {
         val builder = NotificationCompat.Builder(this, JarvisApp.CHANNEL_SERVICE)
             .setContentTitle("Jarvis automations")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_recent_history)
+            // The Jarvis reactor, the same status icon the approval prompt and
+            // the companion notifications use. A framework drawable here made
+            // the one permanently visible notification this app posts look like
+            // it belonged to some other app.
+            .setSmallIcon(ai.jarvis.app.R.drawable.ic_jarvis_status)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setOngoing(true)
             .setShowWhen(false)

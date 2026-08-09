@@ -12,21 +12,16 @@
   hands straight to ui/JarvisBootAnimation, whose first frame is also black.
   Nothing between the two ever renders a different colour.
 
-  This file only overrides the splash attributes; everything else is inherited
-  from the base theme in values/themes.xml.
+  This style ADDS the splash attributes to Theme.JarvisBase. It has to inherit
+  rather than restate, because a same-named style in a qualified folder replaces
+  the unqualified one entirely — resource qualifiers select, they never merge.
+  A copy of the base's items here would look like it worked and would then go
+  quietly stale the first time somebody edited values/themes.xml, on every
+  device from API 31 up, which today is nearly all of them.
 -->
 <resources>
 
-    <style name="Theme.Jarvis" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/jarvis_bg</item>
-        <item name="android:colorBackground">@color/jarvis_bg</item>
-        <item name="android:statusBarColor">@color/jarvis_bg</item>
-        <item name="android:navigationBarColor">@color/jarvis_bg</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:textColorPrimary">@android:color/white</item>
-        <item name="android:textColorSecondary">@color/jarvis_dim</item>
-        <item name="android:colorAccent">@color/jarvis_accent</item>
-
+    <style name="Theme.Jarvis" parent="@style/Theme.JarvisBase">
         <!-- The splash ground. Must match JarvisUi.BG exactly. -->
         <item name="android:windowSplashScreenBackground">@color/jarvis_bg</item>
         <!-- The reactor, on the same ground, with no icon backplate. -->

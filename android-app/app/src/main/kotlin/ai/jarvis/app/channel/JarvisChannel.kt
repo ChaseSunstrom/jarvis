@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.compat.GrapheneCompat
+import ai.jarvis.app.config.JarvisConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName

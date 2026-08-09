@@ -73,6 +73,13 @@ DEFAULT_TTL = 600.0
 #: as something else's doing, not that call's effect.
 ATTRIBUTION_WINDOW = 10.0
 
+#: `Entity.async_write_state()` writes without the service call's context, so
+#: an entity-backed device reports its change under a *fresh* context id and
+#: the exact match below finds nothing. The fallback matches on target and
+#: recency instead, over a much shorter window — long enough for a device
+#: round-trip, short enough that it cannot claim someone else's change.
+FALLBACK_WINDOW = 2.0
+
 #: Contexts we never record — our own reversals, and read-only plumbing.
 IGNORED_ORIGINS = frozenset({"undo"})
 IGNORED_DOMAINS = frozenset(
@@ -96,7 +103,7 @@ REVERSIBLE_DOMAINS = frozenset(
 #: Why each domain is off-limits, in words a person (or a model relaying it)
 #: can use.
 REFUSALS: dict[str, str] = {
-    "lock": "locks are never undone automatically — say explicitly what you want locked or unlocked",
+    "lock": "locks are never reversed automatically; say plainly what you want locked or unlocked",
     "notify": "a notification cannot be unsent",
     "companion": "a message that was already delivered cannot be unsent",
     "alarm_control_panel": "arming and disarming an alarm is not something to reverse blind",
@@ -184,6 +191,20 @@ class UndoEntry:
             "reason": self.reason or None,
             "undone": self.undone,
         }
+
+
+def _target_ids(data: dict[str, Any]) -> set[str]:
+    """Entity ids a service call named explicitly (empty = area/device/all)."""
+    raw = data.get("entity_id")
+    if raw is None:
+        return set()
+    if isinstance(raw, str):
+        if raw.strip().lower() in ("all", "*"):
+            return set()
+        return {raw.strip().lower()}
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return {str(item).strip().lower() for item in raw if str(item).strip()}
+    return set()
 
 
 def _snapshot(state: "State | None") -> dict[str, Any] | None:
@@ -349,7 +370,7 @@ class UndoRecorder:
             entity_id = event.data.get("entity_id")
             if not entity_id:
                 return
-            entry = self._entry_for_context(context_id)
+            entry = self._entry_for_state(str(entity_id), context_id)
             if entry is None:
                 return
             if entity_id in entry.previous:
@@ -363,19 +384,30 @@ class UndoRecorder:
         except Exception:  # pragma: no cover
             _LOGGER.exception("undo failed recording a state change")
 
-    def _entry_for_context(self, context_id: str) -> UndoEntry | None:
-        """The most recent call under this context, if it is still fresh.
+    def _entry_for_state(self, entity_id: str, context_id: str) -> UndoEntry | None:
+        """Which recorded call caused this state change, if any.
 
-        A script runs every step under one context, so "most recent" is what
-        attributes a change to the step that actually caused it.
+        A script runs every step under one context, so "most recent under this
+        context" is what attributes a change to the step that actually caused
+        it. Failing that (see :data:`FALLBACK_WINDOW`), the newest call that
+        plausibly targeted this entity in the last couple of seconds.
         """
         now = time.time()
         for entry in reversed(self.entries):
             if entry.context_id != context_id:
                 continue
-            if now - entry.created > ATTRIBUTION_WINDOW:
+            return entry if now - entry.created <= ATTRIBUTION_WINDOW else None
+
+        domain = split_entity_id(entity_id)[0]
+        for entry in reversed(self.entries):
+            if now - entry.created > FALLBACK_WINDOW:
                 return None
-            return entry
+            targets = _target_ids(entry.data)
+            if targets:
+                if entity_id.lower() in targets:
+                    return entry
+            elif entry.domain == domain:
+                return entry
         return None
 
     # --- reading ----------------------------------------------------------

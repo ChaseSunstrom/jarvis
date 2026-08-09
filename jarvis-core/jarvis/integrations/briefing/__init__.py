@@ -93,10 +93,11 @@ def join_names(names: list[str], limit: int) -> str:
     extra = len(names) - len(shown)
     if not shown:
         return ""
-    text = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
     if extra > 0:
-        text = f"{text} and {extra} more"
-    return text
+        return f"{', '.join(shown)} and {extra} more"
+    if len(shown) == 1:
+        return shown[0]
+    return f"{', '.join(shown[:-1])} and {shown[-1]}"
 
 
 def _as_datetime(value: Any) -> datetime | None:
@@ -120,6 +121,12 @@ def _as_datetime(value: Any) -> datetime | None:
 
 def _clock_time(moment: datetime) -> str:
     return moment.strftime("%H:%M")
+
+
+def _sentence(text: str) -> str:
+    """Capitalise the first letter only — ``str.capitalize`` eats "12°C"."""
+    text = text.strip()
+    return text[:1].upper() + text[1:] if text else text
 
 
 def _number(value: Any) -> float | None:
@@ -229,7 +236,9 @@ class BriefingBuilder:
             parts.append(text)
             used += len(text) + 1
         if dropped:
-            parts.append(f"There is more, but I'll spare you: {', '.join(dropped)}.")
+            trailer = f"There is more, but I'll spare you: {', '.join(dropped)}."
+            if used + len(trailer) + 1 <= self.max_chars:
+                parts.append(trailer)
         return " ".join(parts), dropped
 
     # --- sections ---------------------------------------------------------
@@ -254,7 +263,7 @@ class BriefingBuilder:
                     bits.append(f"between {round(low)} and {round(high)}{unit} today")
                 elif high is not None:
                     bits.append(f"up to {round(high)}{unit} today")
-            section.lines.append(f"{', '.join(bits)}.".capitalize())
+            section.lines.append(_sentence(f"{', '.join(bits)}."))
             break  # one weather entity is a briefing; five is a forecast service
         return section
 

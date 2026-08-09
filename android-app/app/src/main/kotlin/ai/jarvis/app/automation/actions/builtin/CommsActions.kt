@@ -258,8 +258,10 @@ object SendNotification : JarvisAction {
 
         return try {
             val notification = Notification.Builder(ctx, CHANNEL_ID)
-                // A framework drawable, so this module needs no app resources.
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                // The Jarvis reactor. Same drawable as the approval prompt and
+                // the automation service, so everything this app posts is
+                // recognisably from the same app in the status bar.
+                .setSmallIcon(ai.jarvis.app.R.drawable.ic_jarvis_status)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(Notification.BigTextStyle().bigText(text))

@@ -119,6 +119,10 @@ class JarvisBootAnimation @JvmOverloads constructor(
     private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
         interpolator = LinearInterpolator()
         addUpdateListener { a ->
+            // A cancel() from skip() delivers its callbacks synchronously while
+            // this view is being torn down; nothing may move the clock back off
+            // the end state once the sequence has completed.
+            if (finished) return@addUpdateListener
             timeMs = ((a.animatedValue as Float) * BootTimeline.TOTAL_MS).toLong()
             pushFrame()
         }
@@ -141,13 +145,6 @@ class JarvisBootAnimation @JvmOverloads constructor(
     // --- public API ---------------------------------------------------------
 
     /**
-     * Start the sequence. A second call is ignored, so a configuration change
-     * cannot restart the boot halfway through.
-     *
-     * Honours `Settings.Global.ANIMATOR_DURATION_SCALE`: at 0 this lands on the
-     * end state immediately and completes without ever animating.
-     */
-    /**
      * False when this sequence would not animate at all — the user turned
      * animations off, or asked for reduced motion.
      *
@@ -159,6 +156,13 @@ class JarvisBootAnimation @JvmOverloads constructor(
     fun willPlay(): Boolean =
         !BootTimeline.shouldSkip(animatorScale(), reducedMotion())
 
+    /**
+     * Start the sequence. A second call is ignored, so a configuration change
+     * cannot restart the boot halfway through.
+     *
+     * Honours `Settings.Global.ANIMATOR_DURATION_SCALE`: at 0 this lands on the
+     * end state immediately and completes without ever animating.
+     */
     fun start() {
         if (started) return
         started = true

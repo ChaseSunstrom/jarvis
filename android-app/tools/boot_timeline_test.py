@@ -38,9 +38,33 @@ KOTLIN_COMPAT = ROOT / "app/src/main/kotlin/ai/jarvis/app/compat/GrapheneCompat.
 KOTLIN_CRASH = ROOT / "app/src/main/kotlin/ai/jarvis/app/crash/JarvisCrashHandler.kt"
 KOTLIN_APP = ROOT / "app/src/main/kotlin/ai/jarvis/app/JarvisApp.kt"
 KOTLIN_MAIN = ROOT / "app/src/main/kotlin/ai/jarvis/app/MainActivity.kt"
+KOTLIN_CONFIG = ROOT / "app/src/main/kotlin/ai/jarvis/app/config/JarvisConfig.kt"
+KOTLIN_CHANNEL = ROOT / "app/src/main/kotlin/ai/jarvis/app/channel/JarvisChannel.kt"
+KOTLIN_CRASH_UI = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/CrashLogActivity.kt"
+KOTLIN_SETTINGS = ROOT / "app/src/main/kotlin/ai/jarvis/app/SettingsActivity.kt"
 MANIFEST = ROOT / "app/src/main/AndroidManifest.xml"
+THEMES = ROOT / "app/src/main/res/values/themes.xml"
 THEMES_V31 = ROOT / "app/src/main/res/values-v31/themes.xml"
 ADAPTIVE_ICON = ROOT / "app/src/main/res/mipmap-anydpi-v26/ic_jarvis.xml"
+KOTLIN_SRC_ROOT = ROOT / "app/src/main/kotlin"
+
+#: Every Kotlin file this spec reads back by name. The structural checks at the
+#: bottom run over the WHOLE source tree instead — there is no kotlinc in this
+#: container, so a repo-wide stand-in for the compiler is worth more than one
+#: scoped to the files this feature happened to touch.
+TRACKED_KOTLIN = [
+    KOTLIN_TIMELINE,
+    KOTLIN_ANIMATION,
+    KOTLIN_ORB,
+    KOTLIN_COMPAT,
+    KOTLIN_CRASH,
+    KOTLIN_CRASH_UI,
+    KOTLIN_APP,
+    KOTLIN_MAIN,
+    KOTLIN_CONFIG,
+    KOTLIN_CHANNEL,
+    ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/SystemCheckActivity.kt",
+]
 
 # =========================================================================
 # 1. The boot timeline, mirrored from BootTimeline.kt
@@ -256,11 +280,11 @@ def end_state() -> dict:
     return state_at(TOTAL_MS)
 
 
-def check_lines(device_count):
+def check_lines(action_count):
     lines = [CHECK_CORE, CHECK_VOICE]
-    if device_count is not None and device_count > 0:
+    if action_count is not None and action_count > 0:
         lines.append(
-            "1 device linked" if device_count == 1 else f"{device_count} devices linked"
+            "1 action ready" if action_count == 1 else f"{action_count} actions ready"
         )
     return lines
 
@@ -293,10 +317,10 @@ def classify(exception_class_names) -> str:
 def network_verdict(permission_granted, security_denials, host_failures, successes):
     if not permission_granted:
         return V_DENIED
-    if successes > 0:
-        return V_GRANTED
     if security_denials > 0:
         return V_DENIED
+    if successes > 0:
+        return V_GRANTED
     if host_failures >= SUSPECT_THRESHOLD:
         return V_SUSPECT
     return V_GRANTED
@@ -620,10 +644,10 @@ def test_check_lines_type_on_in_order_and_finish_before_the_handoff():
 
 def test_third_check_line_uses_real_data_or_is_omitted():
     assert check_lines(None) == [CHECK_CORE, CHECK_VOICE]
-    assert check_lines(0) == [CHECK_CORE, CHECK_VOICE], "0 devices must omit the line"
+    assert check_lines(0) == [CHECK_CORE, CHECK_VOICE], "0 actions must omit the line"
     assert check_lines(-4) == [CHECK_CORE, CHECK_VOICE], "garbage must omit the line"
-    assert check_lines(1) == [CHECK_CORE, CHECK_VOICE, "1 device linked"]
-    assert check_lines(12) == [CHECK_CORE, CHECK_VOICE, "12 devices linked"]
+    assert check_lines(1) == [CHECK_CORE, CHECK_VOICE, "1 action ready"]
+    assert check_lines(12) == [CHECK_CORE, CHECK_VOICE, "12 actions ready"]
     # There is never a fourth line, so the timeline's three slots always suffice.
     for n in (None, 0, 1, 2, 500):
         assert len(check_lines(n)) <= CHECK_LINE_COUNT
@@ -719,8 +743,21 @@ def test_security_exception_denies_even_with_the_permission_granted():
     assert network_verdict(True, 1, 0, 0) == V_DENIED
 
 
-def test_one_success_outranks_any_suspicion():
-    assert network_verdict(True, 5, 99, 1) == V_GRANTED
+def test_one_success_outranks_mere_suspicion():
+    assert network_verdict(True, 0, 99, 1) == V_GRANTED
+
+
+def test_a_security_denial_outranks_an_earlier_success():
+    """The Network toggle is revocable while the app is running.
+
+    noteNetworkSuccess() clears the denial counters, so a non-zero
+    securityDenials can only have been recorded AFTER the last success. Letting
+    a stale success win would pin the verdict to GRANTED for the rest of the
+    process the moment the user revoked Network mid-session, and the banner
+    explaining the outage would never appear.
+    """
+    assert network_verdict(True, 1, 0, 1) == V_DENIED
+    assert network_verdict(True, 1, 99, 40) == V_DENIED
 
 
 def test_repeated_resolve_failures_become_suspicion_not_certainty():
@@ -913,7 +950,7 @@ def test_kotlin_timeline_still_encodes_the_rules():
         "if (shouldSkip(animatorScale, reducedMotion)) return 0L",
         "if (scaled > MAX_DURATION_MS) MAX_DURATION_MS else scaled",
         "fun endState(): EndState = stateAt(TOTAL_MS)",
-        "if (deviceCount != null && deviceCount > 0)",
+        "if (actionCount != null && actionCount > 0)",
     ]
     for needle in required:
         assert re.sub(r"\s+", " ", needle) in src, f"BootTimeline.kt no longer contains: {needle}"
@@ -1037,8 +1074,8 @@ def test_kotlin_compat_still_encodes_the_verdict_rules():
     src = flat(KOTLIN_COMPAT)
     required = [
         "if (!permissionGranted) return NetworkVerdict.DENIED",
-        "if (successes > 0) return NetworkVerdict.GRANTED",
         "if (securityDenials > 0) return NetworkVerdict.DENIED",
+        "if (successes > 0) return NetworkVerdict.GRANTED",
         "if (hostFailures >= SUSPECT_THRESHOLD) return NetworkVerdict.SUSPECT",
         'if (name == "java.lang.SecurityException") return Signal.SECURITY',
         'if (name == "java.net.UnknownHostException") return Signal.HOST',
@@ -1157,6 +1194,324 @@ def test_manifest_declares_the_new_screens_and_queries():
     assert "<queries>" in src, (
         "intent visibility must be declared with <queries>, not left to QUERY_ALL_PACKAGES"
     )
+
+
+# =========================================================================
+# Tests: the wiring the boot animation and the checklist depend on
+# =========================================================================
+
+
+def test_skip_moves_the_clock_before_it_cancels_the_animator():
+    """`Animator.cancel()` sends onAnimationCancel AND THEN onAnimationEnd.
+
+    That is documented platform behaviour and AOSP's `endAnimation()` does it,
+    so cancelling re-enters this view's own end listener. Cancel before the
+    clock is moved and that re-entrant finish() settles the orb, fades the home
+    UI up and detaches the view while `timeMs` is still mid-sequence — leaving
+    every statement after the cancel operating on a detached view whose `orb`
+    and callbacks the detach had already nulled.
+    """
+    src = KOTLIN_ANIMATION.read_text()
+    body = src.split("fun skip() {", 1)[1].split("\n    }", 1)[0]
+    clock = body.index("timeMs = BootTimeline.TOTAL_MS")
+    push = body.index("pushFrame()")
+    cancel = body.index("animator.cancel()")
+    assert clock < cancel, "skip() must set the clock BEFORE cancelling the animator"
+    assert push < cancel, "skip() must push the end frame BEFORE cancelling the animator"
+    assert body.rindex("finish()") > cancel, (
+        "skip() still needs a trailing finish(): an animator that never started "
+        "notifies nobody, so nothing else would complete the sequence"
+    )
+    assert "cancel does not fire onAnimationEnd" not in src, (
+        "cancel() DOES fire onAnimationEnd; that comment was wrong"
+    )
+
+
+def test_a_disabled_animation_does_not_wait_for_the_splash():
+    """Animations off must not mean a black screen while the splash exits.
+
+    On API 31+ the sequence is started by the splash-exit listener. If it has
+    been reduced to its end state there is nothing to hand off to, and waiting
+    just holds homeControls at alpha 0 for however long the splash takes.
+    """
+    animation = KOTLIN_ANIMATION.read_text()
+    assert "fun willPlay(): Boolean" in animation
+    assert "BootTimeline.shouldSkip(animatorScale(), reducedMotion())" in flat(KOTLIN_ANIMATION)
+    main = flat(KOTLIN_MAIN)
+    assert "!animation.willPlay()" in main, (
+        "MainActivity must start the sequence immediately when it will not play"
+    )
+
+
+def test_the_third_check_line_has_something_writing_its_input():
+    """A boot line whose input nothing writes is a line that never appears."""
+    animation = KOTLIN_ANIMATION.read_text()
+    assert "fun lastActionCount(context: Context): Int?" in animation
+    assert "JarvisConfig(context.applicationContext).lastActionCount" in flat(KOTLIN_ANIMATION)
+
+    config = flat(KOTLIN_CONFIG)
+    assert "var lastActionCount: Int" in config, "JarvisConfig must own the key"
+    assert 'putInt(KEY_ACTION_COUNT' in config, "lastActionCount must have a setter"
+    assert 'const val KEY_ACTION_COUNT = "last_action_count"' in config
+
+    channel = flat(KOTLIN_CHANNEL)
+    assert "rememberActionCount(tierTable.size)" in channel, (
+        "nothing writes the action count, so the third check line can never show"
+    )
+    assert "JarvisConfig(appContext).lastActionCount = count" in channel
+
+    # And the dead key it replaces is gone for good.
+    for path in TRACKED_KOTLIN:
+        assert "last_device_count" not in path.read_text(), (
+            f"{path.name} still references the key nothing ever wrote"
+        )
+
+
+def test_the_network_verdict_has_call_sites_on_the_wire():
+    """SUSPECT is unreachable unless something reports what the wire did.
+
+    Without these the verdict is only ever the permission check, which is the
+    one signal GrapheneCompat's own KDoc says cannot be relied on.
+    """
+    channel = KOTLIN_CHANNEL.read_text()
+    code = re.sub(r"/\*.*?\*/", " ", channel, flags=re.S)
+    code = re.sub(r"//[^\n]*", " ", code)
+    assert "GrapheneCompat.noteNetworkFailure(" in code, (
+        "no failure call site: hostFailures can never reach SUSPECT_THRESHOLD"
+    )
+    assert "GrapheneCompat.noteNetworkSuccess()" in code, (
+        "no success call site: suspicion would never clear once raised"
+    )
+    # The failure site has to be the socket's own failure callback.
+    failure = code.split("override fun onFailure(", 1)[1][:900]
+    assert "GrapheneCompat.note" in failure, "onFailure must fold into the verdict"
+
+
+def test_crash_records_are_redacted_before_they_are_stored():
+    """The crash screen's whole purpose is a COPY button.
+
+    A stack trace out of OkHttp or a JSON parser routinely quotes the frame or
+    the URL that failed, and channel/Redact.kt exists to keep the bearer token
+    out of exactly that. It has to be applied on the way in, because the file is
+    what the COPY button reads.
+    """
+    src = KOTLIN_CRASH.read_text()
+    assert "import ai.jarvis.app.channel.Redact" in src
+    record = src.split("internal fun record(", 1)[1].split("\n    }", 1)[0]
+    assert "redact(safe { throwable.message }" in re.sub(r"\s+", " ", record), (
+        "the exception message is stored verbatim"
+    )
+    assert "redact(sw.toString().take(CrashRecord.MAX_STACK_CHARS))" in re.sub(
+        r"\s+", " ", record
+    ), "the stack trace is stored verbatim"
+    # The redactor itself must not be able to become the crash.
+    helper = src.split("private fun redact(value: String)", 1)[1][:400]
+    assert "catch (t: Throwable)" in helper
+
+    ui = KOTLIN_CRASH_UI.read_text()
+    assert "EXTRA_IS_SENSITIVE" in ui, (
+        "a copied crash report must not be rendered in the system clipboard preview"
+    )
+
+
+def test_redact_masks_the_shapes_a_stack_trace_carries():
+    """Mirror of channel/Redact.kt's two regex families, on real trace text."""
+    src = (ROOT / "app/src/main/kotlin/ai/jarvis/app/channel/Redact.kt").read_text()
+    keys = re.search(r"SECRET_KEYS = listOf\(([^)]*)\)", src).group(1)
+    keys = re.findall(r'"([a-z_]+)"', keys)
+    assert "token" in keys and "access_token" in keys and "authorization" in keys
+
+    def redact(value: str) -> str:
+        out = value
+        for key in keys:
+            out = re.sub(
+                r'"%s"\s*:\s*"[^"]*"' % re.escape(key), '"%s":"[redacted]"' % key,
+                out, flags=re.I,
+            )
+            out = re.sub(
+                r"([?&])%s=[^&\s\"]*" % re.escape(key), r"\g<1>%s=[redacted]" % key,
+                out, flags=re.I,
+            )
+        return out
+
+    frame = 'java.io.IOException: sending {"type":"auth","access_token":"s3cr3t-value"}'
+    assert "s3cr3t-value" not in redact(frame)
+    url = "java.net.UnknownHostException: GET https://box.local/api?token=abc123&x=1"
+    assert "abc123" not in redact(url)
+    assert "&x=1" in redact(url), "redaction must not eat the rest of the query"
+    plain = "java.lang.IllegalStateException: nothing secret here"
+    assert redact(plain) == plain, "redaction must leave ordinary traces alone"
+
+
+def test_the_splash_theme_extends_the_base_rather_than_restating_it():
+    """A same-named style in a qualified folder REPLACES the unqualified one.
+
+    Resource qualifiers select a winner, they never merge. values-v31 must
+    therefore inherit the shared items, or every item added to values/themes.xml
+    silently stops applying from API 31 up — which is nearly every device.
+    """
+    base = THEMES.read_text()
+    assert '<style name="Theme.JarvisBase"' in base, "no shared base style to inherit from"
+    assert '<style name="Theme.Jarvis" parent="@style/Theme.JarvisBase"' in base
+
+    v31 = THEMES_V31.read_text()
+    assert '<style name="Theme.Jarvis" parent="@style/Theme.JarvisBase">' in v31, (
+        "values-v31 redeclares Theme.Jarvis without inheriting the base"
+    )
+    for item in ("android:windowBackground", "android:colorAccent", "android:statusBarColor"):
+        assert item not in v31, (
+            f"values-v31 restates {item}; it must inherit it, or the two drift"
+        )
+
+
+def test_every_notification_uses_this_app_s_own_status_icon():
+    """A framework drawable in the status bar reads as some other app."""
+    offenders = []
+    for path in sorted(KOTLIN_SRC_ROOT.rglob("*.kt")):
+        for match in re.finditer(r"setSmallIcon\(([^)]*)\)", path.read_text()):
+            if "android.R.drawable" in match.group(1):
+                offenders.append(f"{path.name}: {match.group(1).strip()}")
+    assert not offenders, "framework notification icons: " + "; ".join(offenders)
+
+
+def test_settings_reaches_the_diagnostics_screens():
+    """The home banner only appears when something is already wrong.
+
+    Someone who wants the checklist before that has to be able to find it.
+    """
+    src = flat(KOTLIN_SETTINGS)
+    assert "ai.jarvis.app.ui.SystemCheckActivity::class.java" in src
+    assert "ai.jarvis.app.ui.CrashLogActivity::class.java" in src
+
+
+# =========================================================================
+# Tests: structural checks over the Kotlin this spec tracks
+#
+# No kotlinc in this container, so these stand in for the compiler on the two
+# things that are cheap to check and expensive to get wrong.
+# =========================================================================
+
+
+def strip_kotlin_literals(src: str) -> str:
+    """Source with comments, strings and char literals blanked out."""
+    out = []
+    i = 0
+    n = len(src)
+    while i < n:
+        two = src[i:i + 2]
+        if two == "//":
+            i = src.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if two == "/*":
+            depth = 1  # Kotlin block comments nest.
+            i += 2
+            while i < n and depth:
+                if src[i:i + 2] == "/*":
+                    depth += 1
+                    i += 2
+                elif src[i:i + 2] == "*/":
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            continue
+        if src[i:i + 3] == '"""':
+            end = src.find('"""', i + 3)
+            i = n if end < 0 else end + 3
+            continue
+        if src[i] == '"':
+            i += 1
+            while i < n and src[i] != '"':
+                i += 2 if src[i] == "\\" else 1
+            i += 1
+            continue
+        if src[i] == "'":
+            i += 1
+            while i < n and src[i] != "'":
+                i += 2 if src[i] == "\\" else 1
+            i += 1
+            continue
+        out.append(src[i])
+        i += 1
+    return "".join(out)
+
+
+def all_kotlin() -> list[Path]:
+    files = sorted(KOTLIN_SRC_ROOT.rglob("*.kt"))
+    assert len(files) > 50, f"only {len(files)} Kotlin files found; wrong root?"
+    return files
+
+
+def test_tracked_kotlin_is_bracket_balanced():
+    for path in TRACKED_KOTLIN:
+        assert path.is_file(), f"missing {path}"
+    for path in all_kotlin():
+        code = strip_kotlin_literals(path.read_text())
+        for open_ch, close_ch in (("{", "}"), ("(", ")"), ("[", "]")):
+            assert code.count(open_ch) == code.count(close_ch), (
+                f"{path.name}: {open_ch}{close_ch} unbalanced "
+                f"({code.count(open_ch)} vs {code.count(close_ch)})"
+            )
+
+
+def test_no_kdoc_block_is_orphaned_from_its_declaration():
+    """Two KDoc blocks in a row means one of them documents nothing.
+
+    Kotlin accepts it silently — the first block just stops being anybody's
+    documentation. It is what you get when a new function is pasted in between
+    an existing KDoc and the declaration it belonged to, which is easy to do and
+    invisible in a diff that only shows the added lines.
+    """
+    # A file-header banner sitting above the first declaration's own KDoc is the
+    # same shape and is deliberate, so only look past the first declaration.
+    first_decl = re.compile(
+        r"^(?:@\w[\w.]*\s*)*"
+        r"(?:public |internal |private |protected |abstract |open |sealed |data |"
+        r"enum |annotation |value |inline |)*"
+        r"(?:class|object|interface|fun|typealias)\b",
+        re.M,
+    )
+    orphans = []
+    for path in all_kotlin():
+        src = path.read_text()
+        start = first_decl.search(src)
+        if start is None:
+            continue
+        # `*/` then only blank lines and annotations before the next `/**`.
+        for match in re.finditer(r"\*/\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*/\*\*", src):
+            if match.start() < start.start():
+                continue
+            orphans.append(f"{path.relative_to(KOTLIN_SRC_ROOT)}:{src[: match.start()].count(chr(10)) + 1}")
+    assert not orphans, "KDoc with no declaration after it: " + "; ".join(orphans)
+
+
+def test_tracked_kotlin_has_no_unused_imports():
+    """Cheap stand-in for the compiler warning, since there is no kotlinc here.
+
+    A name counts as used if it appears in the code OR in a KDoc `[Link]`, which
+    is what the Kotlin compiler itself accepts.
+    """
+    unused = []
+    for path in all_kotlin():
+        src = path.read_text()
+        body = "\n".join(l for l in src.splitlines() if not l.startswith("import "))
+        code = strip_kotlin_literals(body)
+        links = set(re.findall(r"\[([A-Za-z_][A-Za-z0-9_.]*)", body))
+        for line in src.splitlines():
+            if not line.startswith("import "):
+                continue
+            spec = line[len("import "):].strip()
+            if spec.endswith("*"):
+                continue
+            name = spec.split(" as ")[-1].strip() if " as " in spec else spec.split(".")[-1]
+            if re.search(r"\b%s\b" % re.escape(name), code):
+                continue
+            if any(link == name or link.startswith(name + ".") for link in links):
+                continue
+            unused.append(f"{path.relative_to(KOTLIN_SRC_ROOT)}: {spec}")
+    assert not unused, "unused imports: " + "; ".join(unused)
 
 
 def main() -> int:

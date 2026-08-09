@@ -78,7 +78,12 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         super.onResume()
         // Settings may have changed the server behind our back.
         if (convo?.isRunning != true && !booting) showIdle()
-        refreshStatusBanner()
+        // Not while the power-on is playing. The banner sits inside
+        // homeControls, which is at alpha 0 until the handoff, so the seven
+        // binder round-trips behind missingEssentials() would buy an invisible
+        // view on the cold-start critical path. The sequence's onComplete
+        // refreshes it the moment there is something to see.
+        if (!booting) refreshStatusBanner()
     }
 
     // --- the power-on -------------------------------------------------------
@@ -368,7 +373,12 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // Detaching the overlay cancels its clock and drops its reference to
         // the orb; skipping first makes sure the orb is left settled rather
         // than frozen mid-ignition if this Activity dies during the boot.
-        boot?.skip()
+        //
+        // The completion callback goes first, though. It exists to hand the
+        // home screen back — fade the controls up, re-probe the checklist — and
+        // running that against an Activity that is being destroyed is work for
+        // a screen nobody will see again.
+        boot?.let { it.onComplete = null; it.skip() }
         boot = null
         super.onDestroy()
     }

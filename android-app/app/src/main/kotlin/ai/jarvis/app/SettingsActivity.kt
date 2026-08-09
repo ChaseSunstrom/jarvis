@@ -174,6 +174,23 @@ class SettingsActivity : Activity() {
                     "tier and how it was authorised. It is local and yours."
             )
         )
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "SYSTEM CHECK") {
+                    startActivity(Intent(this, ai.jarvis.app.ui.SystemCheckActivity::class.java))
+                },
+                JarvisUi.ghost(ctx, "CRASH LOGS") {
+                    startActivity(Intent(this, ai.jarvis.app.ui.CrashLogActivity::class.java))
+                },
+            )
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "System check lists every permission and special access Jarvis can use and what " +
+                    "breaks without it. Crash logs are written to this device and go nowhere else."
+            )
+        )
 
         // --- system access --------------------------------------------------
 
