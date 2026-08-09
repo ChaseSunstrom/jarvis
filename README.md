@@ -126,9 +126,21 @@ The full model is [`docs/security.md`](docs/security.md).
   assistant on Android Auto — no API, no role, no category. Jarvis in the car
   is a phone-side experience playing through the car speakers.
   [`docs/android-auto.md`](docs/android-auto.md).
-- **Wake word costs battery on the phone.** The low-power DSP hotword path is
-  reserved for the OEM assistant, so on-device detection is a foreground
-  service holding the mic. The app gates *when* it listens instead.
+- **Wake word is not implemented on the phone.** Say it plainly: there is no
+  hotword service in `android-app`. `config/WakeWordGate.kt` decides *when*
+  listening would be worth the battery, and it is tested — but nothing calls
+  it, the "Listen for Hey Jarvis" switch in Settings writes a preference
+  nothing reads, and no code opens a mic to look for the word. Activation today
+  is the assistant gesture, the app, or a headset button.
+  `jarvis-core` already runs the detector — the pipeline's `wake` stage drives
+  openWakeWord over Wyoming — so the missing piece is a foreground service on
+  the phone that streams audio with `start_stage: "wake"` rather than the
+  hardcoded `"stt"` in `AssistPipelineClient`. That is the work; it has not
+  been done.
+- **An earpiece is the good hands-free story, and it works today.** Capture
+  moves to the headset, the reply is echo-cancelled so Jarvis does not hear
+  itself, and the headset button starts a turn. See
+  [`docs/earpiece.md`](docs/earpiece.md).
 - **Multi-agent delegation and coding jobs are aspirational at 8B.** They
   work; whether the decomposition is any good depends on your model.
   `make eval-decomp` is the ship/no-ship gate, and failing it is a reason to
