@@ -586,6 +586,18 @@ class PresenceReporter:
     def note_interaction(self, when: float | None = None) -> None:
         self.sampler.note_interaction(when)
 
+    def reconnected(self) -> None:
+        """Forget what the server knows, so the next poll reports everything.
+
+        A reconnect gives us a fresh ``DevicePresence`` on the server, and its
+        defaults are "screen off, locked, never interacted" — which reads as
+        BACKGROUND, and a BACKGROUND device is never sent a question. Comparing
+        against the pre-reconnect snapshot would leave it that way until
+        something happened to change.
+        """
+        self.last_sent = None
+        self._last_sent_at = 0.0
+
     async def poll(self, force: bool = False) -> str | None:
         """Sample once and maybe send. Returns the reason it sent, or None."""
         signals = self.sampler.sample()

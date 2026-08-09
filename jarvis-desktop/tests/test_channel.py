@@ -817,3 +817,106 @@ async def test_a_connection_refused_by_the_host_check_never_reaches_the_server(c
         await asyncio.wait_for(channel.run_forever(connect=connector, max_sessions=1), timeout=5)
 
     assert dialled == []
+
+
+# --- cross-device conversation, wired ---------------------------------------
+#
+# The companion handler is only reachable if the channel routes `jarvis_message`
+# to it and gives it a way to answer. Both were missing: the module existed and
+# nothing could ever call it.
+
+
+async def test_a_jarvis_message_reaches_the_companion_handler(config, make_registry):
+    from jarvis_desktop.companion import AskOutcome, CompanionHandler
+
+    channel = DeviceChannel(config, make_registry([]))
+
+    class Asker:
+        name = "test"
+        prompts: list = []
+
+        def usable(self) -> bool:
+            return True
+
+        @property
+        def unattended(self) -> bool:
+            return False
+
+        async def ask(self, message):
+            self.prompts.append(message)
+            return AskOutcome.answered("no")
+
+    asker = Asker()
+    channel.companion = CompanionHandler(channel.send_frame, asker=asker)
+    transport = FakeTransport([auth_required(), auth_ok(), register_ok()])
+
+    async with live_session(channel, transport):
+        transport.push(
+            {
+                "type": "jarvis_message",
+                "message_id": "m-1",
+                "kind": "ask",
+                "mode": "ask",
+                "text": "Deploy to production?",
+                "options": ["yes", "no"],
+                "timeout_s": 30,
+            }
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        while not transport.of_type("jarvis_message_result") and loop.time() < deadline:
+            await asyncio.sleep(0.005)
+
+    results = transport.of_type("jarvis_message_result")
+    assert len(results) == 1
+    assert results[0] == {
+        "type": "jarvis_message_result",
+        "message_id": "m-1",
+        "status": "answered",
+        "answer": "no",
+    }
+    assert [m.text for m in asker.prompts] == ["Deploy to production?"]
+    await channel.companion.close()
+
+
+async def test_a_jarvis_message_without_a_handler_is_ignored_not_fatal(
+    config, make_registry
+):
+    channel = DeviceChannel(config, make_registry([]))
+    assert channel.companion is None
+    transport = FakeTransport([auth_required(), auth_ok(), register_ok()])
+
+    async with live_session(channel, transport):
+        transport.push({"type": "jarvis_message", "message_id": "m-1", "kind": "notify"})
+        await asyncio.sleep(0.02)
+        assert channel.registered, "an unhandled proactive message must not kill the session"
+
+    assert not transport.of_type("jarvis_message_result")
+
+
+async def test_send_frame_refuses_before_registration(config, make_registry):
+    channel = DeviceChannel(config, make_registry([]))
+    assert await channel.send_frame({"type": "jarvis_message_result"}) is False
+
+
+async def test_registration_resets_the_presence_snapshot(config, make_registry):
+    channel = DeviceChannel(config, make_registry([]))
+    calls: list[int] = []
+    channel.on_registered = lambda: calls.append(1)
+    transport = FakeTransport([auth_required(), auth_ok(), register_ok()])
+    await run_session(channel, transport)
+    assert calls == [1]
+
+
+async def test_a_broken_registration_hook_does_not_break_the_session(
+    config, make_registry
+):
+    channel = DeviceChannel(config, make_registry([]))
+
+    def boom() -> None:
+        raise RuntimeError("no")
+
+    channel.on_registered = boom
+    transport = FakeTransport([auth_required(), auth_ok(), register_ok()])
+    await run_session(channel, transport)
+    assert transport.of_type("jarvis/device/register")

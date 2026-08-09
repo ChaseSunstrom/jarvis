@@ -330,7 +330,11 @@ async def test_notify_that_cannot_be_shown_is_undeliverable():
 async def test_critical_importance_raises_the_urgency():
     notifier = RecordingNotifier()
     handler, _ = build(notifier=notifier)
-    await handler.handle(message_frame(mode="notify", importance="critical"))
+    # kind AND mode: the default frame is a question, and a question is never
+    # rendered as a toast — see test_a_question_is_never_auto_acknowledged.
+    await handler.handle(
+        message_frame(kind="notify", mode="notify", importance="critical")
+    )
     assert notifier.shown[0][2] == "critical"
 
 
@@ -1016,3 +1020,71 @@ def test_this_module_cannot_reach_the_action_layer():
         "dispatch(",
     ):
         assert forbidden not in text, f"companion.py must not reach {forbidden}"
+
+
+# --- a question is never answered by this machine on the user's behalf -------
+#
+# The bug: `_notify` reports `answered` with an empty string, which is how
+# every device acknowledges delivery of a plain message. A `kind: ask` frame
+# that arrived with `mode: notify` — which jarvis-core's routing produced for a
+# critical message when nothing was reachable — went down that path, so the
+# desktop "answered" a question nobody had read. On the server that resolves
+# the waiting `companion.ask` with an empty reply AND stops the escalation that
+# would have put the question in front of the user somewhere else.
+
+
+async def test_a_question_is_never_auto_acknowledged():
+    notifier = RecordingNotifier()
+    asker = ScriptedAsker(AskOutcome.answered("yes"))
+    handler, send = build(notifier=notifier, asker=asker)
+
+    await handler.handle(message_frame(kind="ask", mode="notify"))
+
+    assert send.statuses == [STATUS_ANSWERED]
+    assert send.frames[0]["answer"] == "yes"
+    assert asker.prompts, "the question must reach a human, not a toast"
+    assert not notifier.shown
+
+
+async def test_a_question_with_no_way_to_ask_is_undeliverable_not_answered():
+    notifier = RecordingNotifier()
+    handler, send = build(notifier=notifier, asker=UnavailableAsker())
+
+    await handler.handle(message_frame(kind="ask", mode="notify"))
+
+    assert send.statuses == [STATUS_UNDELIVERABLE]
+    assert "answer" not in send.frames[0]
+
+
+async def test_a_speak_mode_question_is_still_a_question():
+    speaker = RecordingSpeaker()
+    asker = ScriptedAsker(AskOutcome.dismissed())
+    handler, send = build(speaker=speaker, asker=asker)
+
+    await handler.handle(message_frame(kind="ask", mode="speak"))
+
+    assert send.statuses == [STATUS_DISMISSED]
+    assert not speaker.spoken
+
+
+def test_parse_keeps_a_question_a_question():
+    for mode in ("notify", "speak", "nonsense", ""):
+        message = CompanionMessage.parse(message_frame(kind="ask", mode=mode))
+        assert message is not None
+        assert message.mode == "ask", mode
+        assert message.wants_answer
+
+
+def test_parse_leaves_real_notifications_alone():
+    message = CompanionMessage.parse(message_frame(kind="notify", mode="notify"))
+    assert message is not None and message.mode == "notify" and not message.wants_answer
+
+
+async def test_notify_direct_call_refuses_to_answer_for_a_question():
+    # The private guard, reached directly: even if a future caller routes a
+    # question here, posting a toast is not an answer.
+    notifier = RecordingNotifier()
+    handler, _ = build(notifier=notifier)
+    message = CompanionMessage.parse(message_frame(kind="ask", mode="ask"))
+    assert message is not None
+    assert handler._notify(message).status == STATUS_UNDELIVERABLE

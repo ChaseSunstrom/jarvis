@@ -196,6 +196,60 @@ async def test_briefing_evening_looks_at_tomorrow(tmp_path):
     assert "1 light still on" in evening["text"]
 
 
+async def test_briefing_reads_a_flattened_calendar_entity(tmp_path):
+    """Some calendar sources publish one event on the entity, not a list."""
+    jarvis = make_jarvis(tmp_path)
+    jarvis.states.set(
+        "calendar.personal",
+        "on",
+        {"friendly_name": "Personal", "message": "Haircut", "start_time": _today_at(11)},
+    )
+    await briefing_integration.async_setup(jarvis, {})
+
+    result = await call(jarvis, "briefing", "generate", kind="morning")
+
+    assert "Haircut at 11:00" in result["text"]
+
+
+async def test_briefing_notes_what_happened_overnight(tmp_path):
+    jarvis = make_jarvis(tmp_path)
+    jarvis.states.set(
+        "binary_sensor.back_door",
+        "on",
+        {"friendly_name": "Back Door", "device_class": "door"},
+    )
+    jarvis.states.set(
+        "binary_sensor.back_door",
+        "off",
+        {"friendly_name": "Back Door", "device_class": "door"},
+    )
+    await briefing_integration.async_setup(jarvis, {})
+
+    morning = await call(jarvis, "briefing", "generate", kind="morning")
+    evening = await call(jarvis, "briefing", "generate", kind="evening")
+
+    assert "Opened and closed again overnight: Back Door" in morning["text"]
+    # It is only interesting first thing; at bedtime it is noise.
+    assert "overnight" not in evening["text"]
+
+
+async def test_briefing_flags_a_door_that_is_open_now(tmp_path):
+    jarvis = make_jarvis(tmp_path)
+    jarvis.states.set(
+        "binary_sensor.patio",
+        "on",
+        {"friendly_name": "Patio Door", "device_class": "door"},
+    )
+    jarvis.states.set("sensor.hall_battery", "9", {"friendly_name": "Hall Sensor",
+                                                   "device_class": "battery"})
+    await briefing_integration.async_setup(jarvis, {})
+
+    result = await call(jarvis, "briefing", "generate", kind="evening")
+
+    assert "Patio Door still open" in result["text"]
+    assert "Low battery: Hall Sensor at 9%" in result["text"]
+
+
 async def test_briefing_delivers_through_companion_and_speaks_when_present(tmp_path):
     jarvis = make_jarvis(tmp_path)
     transport = await setup_companion(jarvis, active=True)

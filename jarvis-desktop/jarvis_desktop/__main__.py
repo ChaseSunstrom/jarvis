@@ -30,9 +30,11 @@ from . import __version__
 from .actions.builtins import build_context, build_registry
 from .audit import AuditLog
 from .channel import DeviceChannel
+from .companion import CompanionHandler, build_asker
 from .config import Config, default_config_path, load_config, normalize_server_url
 from .consent import build_gateway
 from .policy import ActionTier, PolicyStore, UserPolicy
+from .presence import PresenceReporter
 from .triggers import CronSchedule, TriggerManager, build_triggers, next_fire_times
 
 _LOGGER = logging.getLogger("jarvis_desktop")
@@ -334,6 +336,21 @@ async def cmd_run(config: Config, once: bool = False) -> int:
 
     triggers = TriggerManager(emit, build_triggers(config.triggers))
 
+    # --- the other direction: jarvis-core reaching the human at this desk ---
+    #
+    # Presence tells the server whether the user is here; companion renders
+    # what it decides to send. Neither is handed the registry, the dispatcher
+    # or the policy store, so a proactive message has no path to running
+    # anything — that is wiring, not a rule someone has to remember.
+    presence = PresenceReporter(emit)
+    companion = CompanionHandler(
+        channel.send_frame,
+        asker=build_asker(headless=config.headless_deny),
+        on_interaction=presence.note_interaction,
+    )
+    channel.companion = companion
+    channel.on_registered = presence.reconnected
+
     _LOGGER.info(
         "jarvis-desktop %s starting: %s -> %s, %d actions, consent via %s",
         __version__,
@@ -342,6 +359,7 @@ async def cmd_run(config: Config, once: bool = False) -> int:
         len(registry),
         consent.name,
     )
+    _LOGGER.info("%s", companion.describe())
     if policy.panic:
         _LOGGER.warning("PANIC is set: every command will be denied until you clear it")
     if not policy.automation_enabled:
@@ -356,6 +374,7 @@ async def cmd_run(config: Config, once: bool = False) -> int:
             loop.add_signal_handler(sig, stop.set)
 
     await triggers.start()
+    await presence.start()
     runner = asyncio.create_task(channel.run_forever(max_sessions=1 if once else None))
     stopper = asyncio.create_task(stop.wait())
     try:
@@ -363,6 +382,11 @@ async def cmd_run(config: Config, once: bool = False) -> int:
     finally:
         _LOGGER.info("shutting down")
         await channel.stop()
+        await presence.stop()
+        # Cancels any question still on screen. The ledger records nothing for
+        # it, so the server gets no answer and a redelivery after the next
+        # connection is free to ask again.
+        await companion.close()
         await triggers.stop()
         for task in (runner, stopper):
             task.cancel()
