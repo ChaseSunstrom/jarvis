@@ -72,6 +72,18 @@ every other tool, so an entity you have not exposed is not in it. A digest
 never has to name a target, which would otherwise make it a comfortable way to
 read out the names and states of exactly the things you hid.
 
+> **If you add a calendar or todo integration, read this first.** Every other
+> section of a briefing is built from entity *names*, which you wrote. The
+> `calendar` and `tasks` sections are the only ones that repeat free-form text
+> from somewhere else — event summaries, task titles — and `get_briefing`
+> hands that to the model unfenced and without marking the turn untrusted. No
+> integration in this repo produces `calendar.*` or `todo.*` entities today
+> (MQTT discovery cannot: see `ENTITY_CLASSES` in
+> `jarvis/integrations/mqtt/entity.py`), so the path is latent. The moment one
+> does, an invitation from a stranger is a string a stranger wrote, and this
+> tool should call `mark_untrusted_result` — which costs you a CONFIRM on any
+> action later in that turn, and that is the correct price.
+
 ### Delivery
 
 `briefing.deliver` hands the text to `companion.notify` with `kind: notify`

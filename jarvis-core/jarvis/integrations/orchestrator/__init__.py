@@ -47,6 +47,22 @@ WHAT THE HUMAN SEES IS WHAT RUNS
     needed here (unlike the entity tools, which must freeze a resolved target
     before a human sees it).
 
+    Which is why nothing on this path shortens a command to make it fit. The
+    service bounds ``command`` at 4000 characters; trimming to that bound
+    would send something the human never read, and the last thing to fall off
+    the end of a shell command is routinely the thing that *limited* it —
+    ``| head``, ``-maxdepth 1``, a closing quote. Over the bound is a refusal
+    with a sentence, and the byte-for-byte echo check compares against the
+    string that was approved rather than against a trimmed copy of it.
+
+ONE AUDIT LINE BEFORE, ONE AFTER
+    ``_AUDIT`` records the dispatch *before* the approve call, not only its
+    result. Once the orchestrator has been told to approve, the command is the
+    sandbox's problem and a read timeout on this side does not recall it — so a
+    trail written only on the happy path is one that anybody able to make the
+    call fail can keep clean. The failure line says the command may have run,
+    and so does what the model is handed back.
+
 EVERYTHING THAT COMES BACK IS UNTRUSTED
     Specialist-agent prose, generated diffs, and command stdout/stderr are all
     text produced outside this process. They are fenced with the same markers
@@ -101,8 +117,25 @@ DEFAULT_CONNECT_TIMEOUT = 3.0
 #: The service's own pydantic bound. Mirrored so a too-long list is refused
 #: here with a sentence the model can act on, rather than a 422 from FastAPI.
 MAX_TASKS = 8
+#: The service's ``ExecRequestBody.command`` bound. A command longer than this
+#: is REFUSED, never shortened: the human approved the whole string, and a
+#: truncated one is a different command that nobody saw. See
+#: :func:`async_execute`.
 MAX_COMMAND_CHARS = 4000
 MAX_INSTRUCTION_CHARS = 8000
+#: ``ExecRequestBody.why`` / ``CodeTaskBody.repo``. Unlike the command, these
+#: are labels rather than things that run, so overrunning them is refused for
+#: the same reason a 422 would be unhelpful — with a sentence, not a shrug.
+MAX_WHY_CHARS = 1000
+MAX_REPO_CHARS = 200
+
+#: How much longer than the *service's* own wait-for-a-result budget the
+#: approve call is given to answer. Without this the two deadlines are the
+#: same number (both default to 120s), so any command that runs to the
+#: server's limit loses a photo finish: the sandbox executes it, the server
+#: starts writing the answer, and this side has already given up and reported
+#: a transport failure for a command that really ran. See :func:`async_execute`.
+APPROVE_TIMEOUT_MARGIN = 30.0
 
 #: Applying a diff has two shapes and only these two.
 APPLY_MODES = ("commit", "worktree")
@@ -223,6 +256,7 @@ class OrchestratorClient:
         *,
         json: Any = None,
         approving: bool = False,
+        read_timeout: float | None = None,
     ) -> dict[str, Any]:
         if not self.config.configured:
             raise NotConfigured(
@@ -230,9 +264,19 @@ class OrchestratorClient:
                 "delegation, code tasks and command execution are unavailable"
             )
         url = f"{self.config.url}{path}"
+        extra: dict[str, Any] = {}
+        if read_timeout is not None:
+            extra["timeout"] = httpx.Timeout(
+                read_timeout,
+                connect=min(self.config.connect_timeout, read_timeout),
+            )
         try:
             response = await self._client.request(
-                method, url, json=json, headers=self._headers(approving=approving)
+                method,
+                url,
+                json=json,
+                headers=self._headers(approving=approving),
+                **extra,
             )
         except httpx.HTTPError as exc:
             raise OrchestratorError(
@@ -276,8 +320,16 @@ class OrchestratorClient:
         )
 
     async def execute_approve(self, request_id: str) -> dict[str, Any]:
+        # This one call blocks for as long as the command takes, and the
+        # service has its own budget for that. Outlasting it by a margin is
+        # what keeps "the HTTP call failed" and "the command did not run" the
+        # same statement.
         return await self._request(
-            "POST", "/execute/approve", json={"request_id": request_id}, approving=True
+            "POST",
+            "/execute/approve",
+            json={"request_id": request_id},
+            approving=True,
+            read_timeout=self.config.timeout + APPROVE_TIMEOUT_MARGIN,
         )
 
 
@@ -379,11 +431,26 @@ async def async_code_task(
 ) -> dict[str, Any]:
     """Start a coding job. It produces a diff; it never applies one."""
     repo_name = _scalar(repo)
-    text = _scalar(instruction)[:MAX_INSTRUCTION_CHARS]
+    text = _scalar(instruction)
     if not repo_name:
         return _error("code_task needs a repo (a directory inside the workspace)")
     if not text:
         return _error("code_task needs an instruction")
+    if len(repo_name) > MAX_REPO_CHARS:
+        return _error(
+            f"that repo name is {len(repo_name)} characters; the limit is "
+            f"{MAX_REPO_CHARS}. Name a directory inside the workspace."
+        )
+    if len(text) > MAX_INSTRUCTION_CHARS:
+        # Shortening it would start a job for something other than what was
+        # asked, and the only reviewer of that is a human reading the diff.
+        return _error(
+            f"that instruction is {len(text)} characters; the limit is "
+            f"{MAX_INSTRUCTION_CHARS}. Nothing was started. Split it into "
+            "smaller jobs rather than trimming it — a shortened instruction "
+            "produces a diff for a different task.",
+            repo=repo_name,
+        )
     try:
         payload = await client.code_task(repo_name, text)
     except OrchestratorError as exc:
@@ -457,11 +524,26 @@ async def async_execute(
     orchestrator calls below are request-then-approve because the human has
     already said yes; the service still refuses the second one without the
     approval secret, in a different process.
+
+    The command is never shortened to fit. It arrives here having already been
+    quoted to a human byte for byte, so trimming it to the service's 4000-char
+    bound would send a *different* command — one nobody approved, and one whose
+    meaning can invert when the part that falls off the end was the part that
+    limited it. Over the bound is a refusal.
     """
-    text = _scalar(command)[:MAX_COMMAND_CHARS]
-    reason = _scalar(why)
+    text = _scalar(command)
+    reason = _scalar(why)[:MAX_WHY_CHARS]
     if not text:
         return _error("execute_command needs a command")
+    if len(text) > MAX_COMMAND_CHARS:
+        return _error(
+            f"that command is {len(text)} characters; the limit is "
+            f"{MAX_COMMAND_CHARS}. Nothing was sent and nothing ran. It is "
+            "refused rather than shortened, because a shortened command is "
+            "not the one that was approved — put it in a script and run that.",
+            command_chars=len(text),
+            limit=MAX_COMMAND_CHARS,
+        )
     if not client.config.can_approve:
         return _error(
             "no approval secret is configured, so no command can be executed here"
@@ -486,10 +568,30 @@ async def async_execute(
             stored=stored,
         )
 
+    # On the record BEFORE the sandbox is released, not after. Everything past
+    # this line can fail in ways that leave the command running anyway — a read
+    # timeout, a dropped connection, a killed process — and an audit trail that
+    # only records the calls that came back cleanly is one an attacker evades
+    # by making sure they do not.
+    _AUDIT.info(
+        "dispatching %r to the sandbox (request %s)", text, request_id
+    )
     try:
         result = await client.execute_approve(request_id)
     except OrchestratorError as exc:
-        return _error(str(exc), command=text, request_id=request_id)
+        _AUDIT.warning(
+            "request %s was approved and released to the sandbox, but the "
+            "result never came back (%s). It may well have run.",
+            request_id, exc,
+        )
+        return _error(
+            f"{exc}. The command was already approved and released to the "
+            "sandbox before this failed, so it may have run — say so rather "
+            "than reporting that nothing happened, and do NOT retry it.",
+            command=text,
+            request_id=request_id,
+            may_have_run=True,
+        )
 
     _AUDIT.info(
         "executed %r in the sandbox (request %s, exit %s)",

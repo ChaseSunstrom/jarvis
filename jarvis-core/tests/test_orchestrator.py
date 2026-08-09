@@ -20,6 +20,7 @@ this module is really about:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -695,3 +696,179 @@ async def test_every_tool_schema_is_well_formed(tmp_path: Path) -> None:
         assert schema["name"] == name
         assert schema["description"]
         assert schema["parameters"]["type"] == "object"
+
+
+# ===========================================================================
+# what was approved is what is sent — including at the size bound
+# ===========================================================================
+async def test_an_overlong_command_is_refused_not_trimmed_to_fit(
+    tmp_path: Path,
+) -> None:
+    """The failure this pins is subtle and it is the whole module's premise.
+
+    The service bounds ``command`` at 4000 characters. Shortening one to fit
+    used to happen silently and *after* the human had approved the full string,
+    so the approval prompt and the sandbox saw two different commands. The
+    verbatim echo check could not catch it either: it compared the service's
+    answer against the already-trimmed copy, so it agreed with itself.
+
+    What makes it more than untidy is which end is lost. The tail of a shell
+    command is where its limits live, so trimming widens rather than narrows:
+    here a `find ... -delete` that was scoped by `-maxdepth 1` arrives without
+    it, which is a different command against a different set of files.
+    """
+    fake = FakeOrchestrator(EXEC_ROUTES)
+    jarvis, registry = await build(tmp_path, fake)
+    assert registry is not None
+
+    scope = " -maxdepth 1"
+    command = "find /srv -name '*.bak' -delete" + "#" * (
+        4001 - len("find /srv -name '*.bak' -delete") - len(scope)
+    ) + scope
+    assert len(command) > 4000
+
+    held = await registry.call("execute_command", {"command": command, "why": "tidy"})
+    assert held["status"] == "approval_required"
+    # The human is quoted the whole thing, limiter and all.
+    assert held["arguments"]["command"] == command
+    assert held["arguments"]["command"].endswith(scope)
+
+    done = await registry.approve_request(held["request_id"])
+    result = done["result"]
+    assert result["status"] == "error"
+    assert "4000" in result["error"]
+    assert result["command_chars"] == len(command)
+    # Refused here: the orchestrator was never asked, so nothing ran at all.
+    assert fake.requests == []
+    await shutdown(jarvis)
+
+
+async def test_a_command_at_the_bound_still_goes_through_whole(
+    tmp_path: Path,
+) -> None:
+    """The refusal is a bound, not a haircut applied one character early."""
+    fake = FakeOrchestrator(EXEC_ROUTES)
+    jarvis, _ = await build(tmp_path, fake)
+    command = "echo " + "x" * (4000 - len("echo "))
+    assert len(command) == 4000
+
+    result = await call_service(jarvis, "execute", {"command": command})
+    assert result["status"] != "error", result.get("error")
+    sent = json.loads(fake.requests[0].content)["command"]
+    assert sent == command
+    await shutdown(jarvis)
+
+
+async def test_an_overlong_instruction_is_refused_not_trimmed(tmp_path: Path) -> None:
+    """A trimmed instruction starts a job for a task nobody asked for."""
+    fake = FakeOrchestrator({"POST /code_task": {"job_id": "j1", "status": "running"}})
+    jarvis, _ = await build(tmp_path, fake)
+    result = await call_service(
+        jarvis, "code_task", {"repo": "jarvis", "instruction": "x" * 8001}
+    )
+    assert result["status"] == "error"
+    assert "8000" in result["error"]
+    assert fake.requests == []
+    await shutdown(jarvis)
+
+
+async def test_a_long_why_is_trimmed_rather_than_failing_an_approved_command(
+    tmp_path: Path,
+) -> None:
+    """`why` is a label, not a thing that runs, so it may be cut — the command may not.
+
+    The service bounds it at 1000 characters. Passing an over-long one straight
+    through turned a command a human had *already approved* into a 422 from
+    pydantic, which reads to the user as the approval having been lost.
+    """
+    fake = FakeOrchestrator(EXEC_ROUTES)
+    jarvis, _ = await build(tmp_path, fake)
+    result = await call_service(
+        jarvis, "execute", {"command": "df -h", "why": "w" * 4000}
+    )
+    assert result["status"] != "error", result.get("error")
+    body = json.loads(fake.requests[0].content)
+    assert body["command"] == "df -h"
+    assert len(body["why"]) == 1000
+    await shutdown(jarvis)
+
+
+# ===========================================================================
+# the audit trail cannot be kept clean by making the call fail
+# ===========================================================================
+async def test_the_dispatch_is_audited_before_the_sandbox_is_released(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Approve is the point of no return, so it is logged before, not after.
+
+    Everything past ``/execute/approve`` can fail while the command runs
+    anyway — the server enqueues it and only *then* waits for a result. A trail
+    written only when the HTTP call comes back cleanly is one that anybody who
+    can make it not come back keeps empty.
+    """
+    routes = dict(EXEC_ROUTES)
+    routes["POST /execute/approve"] = lambda r: httpx.Response(
+        504, json={"detail": "gateway timeout"}
+    )
+    fake = FakeOrchestrator(routes)
+    jarvis, _ = await build(tmp_path, fake)
+
+    with caplog.at_level("INFO", logger="jarvis.orchestrator.audit"):
+        result = await call_service(
+            jarvis, "execute", {"command": "sleep 600", "why": "long one"}
+        )
+
+    assert result["status"] == "error"
+    # The model is told the truth: it may have run. "Nothing happened" would be
+    # a guess, and the wrong one to make.
+    assert result["may_have_run"] is True
+    assert "may have run" in result["error"]
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "dispatching" in logged and "sleep 600" in logged
+    assert "may well have run" in logged
+    # It really was released — request and approve both left this process.
+    assert fake.paths() == ["POST /execute/request", "POST /execute/approve"]
+    await shutdown(jarvis)
+
+
+async def test_a_refused_command_leaves_no_dispatch_in_the_audit_log(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The other half: the trail must not claim a dispatch that never happened."""
+    fake = FakeOrchestrator(EXEC_ROUTES)
+    jarvis, _ = await build(tmp_path, fake)
+    with caplog.at_level("INFO", logger="jarvis.orchestrator.audit"):
+        await call_service(jarvis, "execute", {"command": "y" * 5000})
+    assert [r for r in caplog.records if "dispatching" in r.getMessage()] == []
+    assert fake.requests == []
+    await shutdown(jarvis)
+
+
+async def test_approve_outlasts_the_services_own_result_budget(tmp_path: Path) -> None:
+    """The two deadlines must not be the same number.
+
+    ``/execute/approve`` blocks for as long as the command runs, and the
+    orchestrator waits ``EXEC_RESULT_TIMEOUT`` (120s by default) for the
+    sandbox before answering. This client's read timeout defaulted to the same
+    120s, so a command that ran to the service's limit lost a photo finish:
+    the sandbox executed it, the server began writing the answer, and this side
+    had already given up and reported a transport failure for a command that
+    really ran.
+    """
+    seen: list[Any] = []
+
+    def approve(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions.get("timeout"))
+        return httpx.Response(200, json={"status": "done", "exit_code": 0})
+
+    routes = dict(EXEC_ROUTES)
+    routes["POST /execute/approve"] = approve
+    fake = FakeOrchestrator(routes)
+    jarvis, _ = await build(tmp_path, fake)
+
+    await call_service(jarvis, "execute", {"command": "df -h"})
+    assert seen and seen[0]["read"] > 120.0
+    await shutdown(jarvis)

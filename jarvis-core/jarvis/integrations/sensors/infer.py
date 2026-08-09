@@ -55,6 +55,40 @@ HINT_KEYS = frozenset(
 #: Keys carrying the reading itself.
 VALUE_KEYS = ("state", "value", "val")
 
+#: Keys that are a credential rather than a reading. The webhook ingest door
+#: is documented as accepting its token in the body, and every other body key
+#: is a candidate for both the value and the attribute bag — so without this,
+#: ``{"token": "..."}`` becomes the sensor's *state*, and a token alongside
+#: two other keys becomes an attribute. Either way the shared ingest secret
+#: ends up on the state machine, readable by anything that can read
+#: ``/api/states``, and written to the recorder and to narration. Dropped
+#: outright: never a value, never an attribute, never a hint.
+SECRET_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "auth",
+        "authorization",
+        "hmac",
+        "key",
+        "passwd",
+        "password",
+        "secret",
+        "sig",
+        "signature",
+        "token",
+    }
+)
+
+#: Keys that address the post rather than describe the reading. A body that
+#: says only ``{"sensor_id": "x"}`` is a post with no reading in it, not a
+#: sensor whose value is its own name — and a posted ``sensor_id`` must not
+#: overwrite the real one in the attribute bag.
+ROUTING_KEYS = frozenset({"entity_id", "id", "sensor_id", "webhook_id"})
+
+#: Never a reading and never stored.
+DROPPED_KEYS = SECRET_KEYS | ROUTING_KEYS
+
 MAX_NAME_CHARS = 64
 
 
@@ -411,6 +445,11 @@ def _clean_hints(source: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_dropped(key: Any) -> bool:
+    """True for a credential or a routing key, however it is spelled."""
+    return slug(key) in DROPPED_KEYS
+
+
 def parse_payload(payload: Any, sensor_id: Any = "") -> Payload:
     """Understand ``{"state": ...}``, ``{"value": ...}`` or a bare value.
 
@@ -423,9 +462,13 @@ def parse_payload(payload: Any, sensor_id: Any = "") -> Payload:
     if not isinstance(payload, Mapping):
         return Payload(value=payload)
 
-    body = dict(payload)
-    attributes = body.get("attributes")
-    attributes = dict(attributes) if isinstance(attributes, Mapping) else {}
+    body = {k: v for k, v in payload.items() if not _is_dropped(k)}
+    attributes = payload.get("attributes")
+    attributes = (
+        {k: v for k, v in attributes.items() if not _is_dropped(k)}
+        if isinstance(attributes, Mapping)
+        else {}
+    )
 
     hints = _clean_hints(attributes)
     hints.update(_clean_hints(body))
@@ -539,6 +582,7 @@ class SensorSpec:
     domain: str
     device_class: str | None = None
     unit: str | None = None
+    icon: str | None = None
     name: str = ""
     area_id: str | None = None
     state: str = STATE_UNKNOWN
@@ -555,6 +599,7 @@ class SensorSpec:
             "domain": self.domain,
             "device_class": self.device_class,
             "unit_of_measurement": self.unit,
+            "icon": self.icon,
             "name": self.name,
             "area_id": self.area_id,
             "state": self.state,
@@ -639,8 +684,9 @@ def infer(
     if domain == BINARY_SENSOR:
         unit = None  # an on/off value has no unit, whatever was posted
 
-    # --- name + area ------------------------------------------------------
+    # --- name, icon + area ------------------------------------------------
     name = _clean_name(merged.get("name") or merged.get("friendly_name"), humanize(clean_id))
+    icon = _clean_name(merged.get("icon"), "") or None
     area_id = index.resolve(merged.get("area_id") or merged.get("area"))
     if area_id is None:
         area_id = index.match(clean_id)
@@ -651,6 +697,7 @@ def infer(
         domain=domain,
         device_class=device_class,
         unit=unit,
+        icon=icon,
         name=name,
         area_id=area_id,
         state=normalize_state(parsed.value, domain),
@@ -666,7 +713,10 @@ __all__ = [
     "BINARY_SENSOR",
     "CLASS_TABLE",
     "ClassEntry",
+    "DROPPED_KEYS",
     "Payload",
+    "ROUTING_KEYS",
+    "SECRET_KEYS",
     "SENSOR",
     "SensorSpec",
     "format_number",

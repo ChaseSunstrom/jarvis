@@ -69,11 +69,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
 
 from ...auth import extract_bearer_token, get_auth
+from ...automation.triggers import WebhookHandler
 from ...const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from ...entity import Entity, EntityPlatform
 from ...services import ServiceCall
 from .infer import (
     ALLOWED_DOMAINS,
+    DROPPED_KEYS,
     AreaIndex,
     SensorSpec,
     humanize,
@@ -139,7 +141,10 @@ def _clean_attributes(source: Mapping[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in list((source or {}).items())[:MAX_ATTRIBUTES]:
         name = slug(key)[:48]
-        if not name:
+        # `sensors.set` hands an attribute bag straight through from a service
+        # call, so the credential filter has to bite here too and not only in
+        # `parse_payload`. A secret must never reach the state machine.
+        if not name or name in DROPPED_KEYS:
             continue
         if isinstance(value, str):
             value = "".join(ch for ch in value if ch.isprintable())[:MAX_ATTRIBUTE_CHARS]
