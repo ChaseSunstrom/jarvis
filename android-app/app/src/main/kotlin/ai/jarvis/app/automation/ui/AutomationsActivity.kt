@@ -299,10 +299,11 @@ class AutomationsActivity : Activity() {
 
             // Why it is off. Shown verbatim so the user is turning it on with
             // the reason in front of them, not despite it.
-            if (admission?.needsUserEnablement == true && admission.reason.isNotBlank()) {
+            val heldOff = admission?.takeIf { it.needsUserEnablement }?.reason.orEmpty()
+            if (heldOff.isNotBlank()) {
                 addView(
                     TextView(this@AutomationsActivity).apply {
-                        text = admission.reason
+                        text = heldOff
                         setTextColor(JarvisUi.DENY)
                         textSize = 11f
                         setPadding(0, JarvisUi.dp(this@AutomationsActivity, 6), 0, 0)
@@ -339,6 +340,8 @@ class AutomationsActivity : Activity() {
             }
         )
 
+        val heldOff = admission?.takeIf { it.needsUserEnablement }?.reason.orEmpty()
+        val isRunning = runtime?.engine?.runningTaskIds?.contains(task.id) == true
         col.addView(JarvisUi.label(this, "STATE"))
         col.addView(
             JarvisUi.mono(
@@ -349,11 +352,8 @@ class AutomationsActivity : Activity() {
                     append("source:        ${task.source.name}\n")
                     append("mode:          ${task.mode.name}\n")
                     append("runnable:      ${task.isRunnable()}\n")
-                    append("running now:   ")
-                    append(runtime?.engine?.runningTaskIds?.contains(task.id) == true)
-                    if (admission?.needsUserEnablement == true) {
-                        append("\nheld off:      ${admission.reason}")
-                    }
+                    append("running now:   $isRunning")
+                    if (heldOff.isNotBlank()) append("\nheld off:      $heldOff")
                 }
             ),
             matchWidth()

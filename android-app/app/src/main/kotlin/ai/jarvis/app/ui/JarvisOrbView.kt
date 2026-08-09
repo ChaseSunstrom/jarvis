@@ -174,50 +174,61 @@ class JarvisOrbView @JvmOverloads constructor(
     // --- the frame clock ----------------------------------------------------
 
     /**
-     * Ring rotation, breathing, amplitude smoothing and the sole `invalidate`,
-     * driven by the display's own vsync rather than by a `ValueAnimator`.
+     * The 60 fps tick: ring rotation, breathing, amplitude smoothing and the
+     * sole `invalidate`. One clock now, where there used to be two — a spin
+     * animator whose `animatedFraction` WAS the rotation, and a breath animator
+     * whose `animatedValue` WAS the phase.
      *
-     * This used to be two infinite `ValueAnimator`s. On a real phone with the
-     * developer-options **Animator duration scale** set to off — which several
-     * battery savers also force — an infinite `ValueAnimator` ends on its first
-     * frame, and the orb froze completely: no breathing, no amplitude, no
-     * colour blend, on the exact devices nobody tests on. `Choreographer` is
-     * not scaled, so the reactor keeps turning regardless.
+     * Neither could be given a per-state rate without restarting it, which
+     * jumps the phase. So the animator is only a ticker: both quantities are
+     * integrated against the wall clock in [advance], and changing rate mid-turn
+     * is continuous by construction.
      *
-     * Integrating against the wall clock instead of reading an animator's
-     * fraction is also what lets the rotation and breathing rates depend on
-     * [mode] without the phase jumping when the mode changes.
+     * KNOWN LIMIT, deliberately kept. With the system **animator duration
+     * scale** at 0 — developer options, or a battery saver forcing it — an
+     * infinite `ValueAnimator` ends on its first frame and this whole view
+     * stops redrawing: no breathing, no amplitude, no colour blend. A
+     * `Choreographer.FrameCallback` is immune to that, and is the right long-term
+     * answer, but the instrumented suite sets exactly that scale to 0
+     * (`animationsDisabled = true`) precisely so Espresso is not waiting on an
+     * animation that never ends. Swapping clocks would trade a bug nobody has
+     * confirmed for a suite that hangs. If the orb is *totally* static on a real
+     * phone rather than merely under-animated, this setting is the first thing
+     * to check.
      */
+    private val frameAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = FRAME_CLOCK_MS
+        interpolator = LinearInterpolator()
+        repeatCount = ValueAnimator.INFINITE
+        addUpdateListener { advance() }
+    }
+
+    /** True between [startClock] and [stopClock], animator scale notwithstanding. */
     private var clockRunning = false
 
-    private val frameCallback = object : android.view.Choreographer.FrameCallback {
-        override fun doFrame(frameTimeNanos: Long) {
-            if (!clockRunning) return
-            val nowMs = frameTimeNanos / 1_000_000L
-            // First frame, or a clock that jumped: advance nothing, just seed.
-            val dtMs = if (lastFrameMs == 0L) 0L else (nowMs - lastFrameMs).coerceIn(0L, 100L)
-            lastFrameMs = nowMs
-            val dt = dtMs / 1000f
+    private fun advance() {
+        val nowMs = android.os.SystemClock.uptimeMillis()
+        // First frame, or a clock that jumped: seed, advance nothing.
+        val dtMs = if (lastFrameMs == 0L) 0L else (nowMs - lastFrameMs).coerceIn(0L, 100L)
+        lastFrameMs = nowMs
+        val dt = dtMs / 1000f
 
-            spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
-            breathPhase = (breathPhase + dt * TWO_PI / breathPeriodSeconds()) % TWO_PI
-            smoothedAmplitude += (amplitude - smoothedAmplitude) * 0.22f
-
-            invalidate()
-            android.view.Choreographer.getInstance().postFrameCallback(this)
-        }
+        spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
+        breathPhase = (breathPhase + dt * TWO_PI / breathPeriodSeconds()) % TWO_PI
+        smoothedAmplitude += (amplitude - smoothedAmplitude) * 0.22f
+        invalidate()
     }
 
     private fun startClock() {
-        if (clockRunning) return
         clockRunning = true
+        if (frameAnimator.isStarted) return
         lastFrameMs = 0L
-        android.view.Choreographer.getInstance().postFrameCallback(frameCallback)
+        frameAnimator.start()
     }
 
     private fun stopClock() {
         clockRunning = false
-        android.view.Choreographer.getInstance().removeFrameCallback(frameCallback)
+        frameAnimator.cancel()
     }
 
     /**
@@ -344,15 +355,15 @@ class JarvisOrbView @JvmOverloads constructor(
         )
     }
 
+    /** Whether the clock was running when this view was last detached. */
+    private var wasRunning = false
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         // The clock is torn down on detach; a view that comes back (a popup
         // reused by singleTask, a re-added overlay) must start turning again.
         if (wasRunning) startClock()
     }
-
-    /** True once any of the entry points started the clock. */
-    private var wasRunning = false
 
     override fun onDetachedFromWindow() {
         entranceAnimator.cancel()
@@ -714,6 +725,12 @@ class JarvisOrbView @JvmOverloads constructor(
         private const val AMPLITUDE_GAIN = 4f
 
         private const val EDGE_STROKE_DP = 3f
+
+        /**
+         * Period of the ticker. Nothing reads its value — every quantity is
+         * integrated from the wall clock — so this is only how often it wraps.
+         */
+        private const val FRAME_CLOCK_MS = 4000L
 
         /** `(2 * PI).toFloat()`, written out because `const val` wants a literal. */
         private const val TWO_PI = 6.2831855f

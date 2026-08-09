@@ -60,8 +60,21 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
-            return
+            // NOT requestPermissions() from here. This activity is
+            // android:noHistory, so the platform finishes it the moment the
+            // permission dialog covers it — onRequestPermissionsResult would
+            // never run, and the first grant would land on a dead activity.
+            // That is a first-run dead end: the assist gesture appears to do
+            // nothing, forever, until the user finds the app icon.
+            //
+            // So hand off to the home screen, which is an ordinary activity
+            // that can hold a permission round trip — the same shape as the
+            // not-configured hand-off above.
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            )
+            finish(); return
         }
         begin()
     }
