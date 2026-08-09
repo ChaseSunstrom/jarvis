@@ -2,6 +2,7 @@ package ai.jarvis.app.automation.triggers
 
 import android.content.Context
 import android.util.Log
+import ai.jarvis.app.automation.policy.TrustLevel
 import ai.jarvis.app.automation.tasks.TaskDefinition
 import ai.jarvis.app.automation.tasks.TaskJson
 import ai.jarvis.app.automation.tasks.TriggerSpec
@@ -106,13 +107,22 @@ class TriggerManager(
     }
 
     private fun emit(trigger: JarvisTrigger, payload: JSONObject) {
+        val data = TaskJson.jsonToMap(payload)
         val event = TriggerEvent(
             triggerId = trigger.id,
-            data = TaskJson.jsonToMap(payload),
+            data = data,
             // From the TRIGGER, not from the payload. Nothing inside `payload`
             // can raise its own trust level.
             trust = trigger.trust,
-            atMs = now()
+            atMs = now(),
+            // A payload MAY, however, lower it. `untrusted: true` on a payload is
+            // read one way only — it can mark a trusted trigger's data as
+            // third-party (the server firing `manual` with its own data map), and
+            // it can never clear the taint an untrusted trigger already carries.
+            // Lowering is always safe; the rule that matters is that nothing can
+            // raise its own trust.
+            dataTainted = trigger.trust == TrustLevel.UNTRUSTED ||
+                data["untrusted"] == true
         )
         try {
             onEvent(event)

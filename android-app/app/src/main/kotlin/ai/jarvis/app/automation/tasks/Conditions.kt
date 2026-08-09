@@ -35,6 +35,42 @@ object ConditionEvaluator {
         "always", "never"
     )
 
+    /**
+     * Every task VARIABLE this condition tree reads, as root names.
+     *
+     * Only the `variable` leaf can see a task variable — every other leaf reads
+     * [ConditionContext] fields the platform filled in — so this walk is short.
+     * It exists because [TaskRunner] has to know when a decision was made using
+     * tainted text: `if reply contains "yes" then <action>` routes untrusted
+     * content into control flow, and the chosen action's own parameters can be
+     * entirely constant. Interpolation taint alone would miss it.
+     *
+     * Root names, not full paths, because that is what
+     * [TaskRunner]'s tainted set is keyed on ("reply", not "reply.body").
+     */
+    fun variableRoots(spec: ConditionSpec, depth: Int = 0): Set<String> {
+        val out = LinkedHashSet<String>()
+        collectVariableRoots(spec, out, depth)
+        return out
+    }
+
+    /** [variableRoots] over a whole list, e.g. a task's top-level conditions. */
+    fun variableRoots(specs: List<ConditionSpec>): Set<String> {
+        val out = LinkedHashSet<String>()
+        for (spec in specs) collectVariableRoots(spec, out, 0)
+        return out
+    }
+
+    private fun collectVariableRoots(spec: ConditionSpec, into: MutableSet<String>, depth: Int) {
+        if (depth > TaskLimits.MAX_STEP_DEPTH) return
+        if (spec.type.trim().lowercase() == "variable") {
+            val name = spec.params["name"] ?: spec.params["variable"]
+            name?.toString()?.trim()?.substringBefore('.')?.takeIf { it.isNotEmpty() }
+                ?.let(into::add)
+        }
+        for (child in spec.children) collectVariableRoots(child, into, depth + 1)
+    }
+
     /** All of [specs] must pass. An empty list passes: no conditions, no obstacle. */
     fun evaluateAll(specs: List<ConditionSpec>, ctx: ConditionContext): ConditionOutcome {
         for (spec in specs) {

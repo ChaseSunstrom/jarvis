@@ -140,7 +140,25 @@ class TaskEngine(
 
     // --- modes --------------------------------------------------------------
 
-    private suspend fun start(task: TaskDefinition, event: TriggerEvent?) {
+    /**
+     * Serialises the mode decision PER TASK.
+     *
+     * `onTriggerEvent` launches a coroutine per event, so two broadcasts a
+     * millisecond apart genuinely race here. Without this, both would read
+     * `running[task.id]` as idle and a `SINGLE` task would run twice — the one
+     * mode whose entire contract is that it does not — and a `RESTART` task
+     * would cancel one job, launch two, and leave the one that lost the write to
+     * `running` executing with nothing tracking it.
+     *
+     * Per task rather than global: a `RESTART` that joins a cancelled run must
+     * not hold up an unrelated task's trigger.
+     */
+    private val startLocks = ConcurrentHashMap<String, Mutex>()
+
+    private suspend fun start(task: TaskDefinition, event: TriggerEvent?) =
+        startLocks.getOrPut(task.id) { Mutex() }.withLock { startLocked(task, event) }
+
+    private suspend fun startLocked(task: TaskDefinition, event: TriggerEvent?) {
         when (task.mode) {
             TaskMode.SINGLE -> {
                 if (running[task.id]?.isActive == true) {
@@ -190,12 +208,20 @@ class TaskEngine(
     }
 
     private suspend fun drainQueue(task: TaskDefinition) {
+        // Non-QUEUED modes return before taking anything, which is also what
+        // keeps this deadlock-free: RESTART is the only mode that joins a job
+        // while holding the start lock, and a RESTART task never gets here.
         if (task.mode != TaskMode.QUEUED) return
-        val next = queueLock.withLock { queues[task.id]?.removeFirstOrNull() } ?: return
-        // Re-read the task: it may have been disabled or edited while we ran.
-        val fresh = store.get(task.id) ?: return
-        if (!fresh.isRunnable() || !accepting) return
-        launchRun(fresh, next)
+        // Same lock as `start`, and taken before `queueLock` in both places, so
+        // draining the queue cannot race a fresh trigger into a second run.
+        startLocks.getOrPut(task.id) { Mutex() }.withLock {
+            val next = queueLock.withLock { queues[task.id]?.removeFirstOrNull() } ?: return
+            // Re-read the task: it may have been disabled or edited while we ran.
+            val fresh = store.get(task.id) ?: return
+            if (!fresh.isRunnable() || !accepting) return
+            if (running[task.id]?.isActive == true) return
+            launchRun(fresh, next)
+        }
     }
 
     private fun publish(result: TaskRunResult) {
@@ -217,15 +243,54 @@ class TaskEngine(
      * Even a server-requested run is only a *run*: every step still goes
      * through the policy table, and a disabled task stays disabled. "Run this
      * now" is not a way to execute something the user switched off.
+     *
+     * The task's own CONDITIONS are enforced here too. They are part of what the
+     * user approved — `TaskSafety.requiresReconsent` treats editing them exactly
+     * like editing a step — so "only when I am at home", "only on weekdays" and
+     * "only while charging" must hold for a run the server asked for as much as
+     * for one a trigger started. Without that, `runNow` would be a way to
+     * execute a restricted task outside its restrictions.
+     *
+     * @param dataTrusted see [ai.jarvis.app.automation.triggers.ManualTriggers.fire].
+     *   Only a local tap may pass true.
+     * @param force skips the conditions. Reserved for a deliberate local
+     *   override — a "run it anyway" button the user pressed while looking at
+     *   the reason it would not run. Nothing on the command path may pass true.
      */
-    suspend fun runNow(taskId: String, data: Map<String, Any?> = emptyMap()): Boolean {
+    suspend fun runNow(
+        taskId: String,
+        data: Map<String, Any?> = emptyMap(),
+        dataTrusted: Boolean = false,
+        force: Boolean = false
+    ): Boolean {
         if (!accepting) return false
         val task = store.get(taskId) ?: return false
         if (!task.enabled) {
             Log.i(TAG, "refusing to run $taskId: it is switched off")
             return false
         }
-        start(task, TriggerEvent(TriggerIds.MANUAL, data + mapOf("id" to taskId), atMs = now()))
+        if (!force && task.conditions.isNotEmpty()) {
+            val context = try {
+                probe.sample()
+            } catch (t: Throwable) {
+                Log.w(TAG, "could not sample device state; $taskId not run", t)
+                null
+            } ?: return false
+            val outcome = ConditionEvaluator.evaluateAll(task.conditions, context)
+            if (!outcome.passed) {
+                Log.i(TAG, "refusing to run $taskId: ${outcome.reason}")
+                return false
+            }
+        }
+        start(
+            task,
+            TriggerEvent(
+                triggerId = TriggerIds.MANUAL,
+                data = data + mapOf("id" to taskId),
+                atMs = now(),
+                dataTainted = !dataTrusted && data.isNotEmpty()
+            )
+        )
         return true
     }
 

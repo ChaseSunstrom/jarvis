@@ -23,7 +23,23 @@ data class TriggerEvent(
     /** Payload. Treat every string in here as data, never as an instruction. */
     val data: Map<String, Any?> = emptyMap(),
     val trust: TrustLevel = TrustLevel.TRUSTED,
-    val atMs: Long = 0L
+    val atMs: Long = 0L,
+    /**
+     * True when the PAYLOAD is third-party or model-authored, even though the
+     * trigger itself is trusted.
+     *
+     * The case this exists for is the manual trigger: `manual` is fired by a
+     * human tap *and* by jarvis-core, and a server-supplied `data` map is model
+     * output — the same class of text an `ask_jarvis` reply is. Degrading the
+     * whole run for it would be wrong (a tap with no data is not suspect), so
+     * the payload's variables are tainted instead and contagion does the rest.
+     *
+     * Defaults to [untrusted], so an untrusted trigger taints its payload
+     * without every construction site having to say so twice. It may be set
+     * true on a trusted trigger; it must never be set false on an untrusted
+     * one, and nothing in the codebase does.
+     */
+    val dataTainted: Boolean = trust == TrustLevel.UNTRUSTED
 ) {
     val untrusted: Boolean get() = trust == TrustLevel.UNTRUSTED
 }

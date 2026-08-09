@@ -111,14 +111,29 @@ object TaskSafety {
      *
      * The rules, in one place:
      *
-     *  * A LOCAL task is whatever the user set. They are sitting in front of it.
-     *  * A SERVER task that passes screening may arrive enabled — nothing in it
+     *  * A task the user wrote HERE is whatever they set. They are sitting in
+     *    front of it in the editor.
+     *  * Anything else that passes screening may arrive enabled — nothing in it
      *    can act without at least a Tier-2 prompt.
-     *  * A SERVER task that fails screening is off until [TaskDefinition.enabledByUser].
-     *    The server cannot set that flag: it is stripped on import.
+     *  * Anything else that fails screening is off until
+     *    [TaskDefinition.enabledByUser]. The server cannot set that flag: it is
+     *    stripped on import.
+     *
+     * @param authoredLocally true ONLY when this task was just written in this
+     *   app's own task editor. It is deliberately not the same question as
+     *   `task.source == LOCAL`: `source` is a field, and a JSON bundle the user
+     *   was sent — by mail, by a chat app, by a server writing a file — can
+     *   simply claim `"source": "LOCAL"`. Trusting the field would let an
+     *   imported task with a `send_sms` step arrive switched on and unscreened,
+     *   which is the one outcome this whole object exists to prevent. So
+     *   `TaskStore.import` passes false, and only the editor passes true.
      */
-    fun effectiveEnabled(task: TaskDefinition, admission: TaskAdmission): Boolean = when {
-        task.source == TaskSource.LOCAL -> task.enabled
+    fun effectiveEnabled(
+        task: TaskDefinition,
+        admission: TaskAdmission,
+        authoredLocally: Boolean = task.source == TaskSource.LOCAL
+    ): Boolean = when {
+        authoredLocally -> task.enabled
         admission.mayAutoEnable -> task.enabled
         else -> task.enabledByUser && task.enabled
     }

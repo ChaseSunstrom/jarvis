@@ -7,6 +7,9 @@ import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
 
+// `SystemEventBus.DYNAMIC_ACTIONS` and `ACCEPTED_BROADCASTS` are declared at the
+// bottom of this file; `SystemEventReceiver.onReceive` reads the second of them.
+
 /**
  * The single `BroadcastReceiver` behind every system-event trigger.
  *
@@ -38,13 +41,35 @@ class SystemEventReceiver(
 ) : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == null) return
+        val action = intent?.action ?: return
+        // The manifest copy of this receiver is android:exported="true" — it has
+        // to be, or the system will not deliver to it. An intent-filter only
+        // constrains IMPLICIT intents, so any app on the phone can address this
+        // component explicitly with an action of its choosing. The filter's own
+        // actions are all protected broadcasts and the platform refuses to let a
+        // third party send those, but nothing stops one sending
+        // `ai.jarvis.app.automation.SYNTHETIC_BOOT` — an app-private action that
+        // `BootCompletedTrigger` accepts — and forging a boot event runs whatever
+        // the user wired to `boot_completed`, and parks an attacker-chosen intent
+        // on the replay buffer while force-starting the service.
+        //
+        // So the broadcast door takes an allow-list, and the synthetic boot is
+        // deliberately not on it: that one is only ever injected in-process, via
+        // SystemEventBus.publish, by our own BootReceiver.
+        if (action !in SystemEventBus.ACCEPTED_BROADCASTS) {
+            Log.w(TAG, "ignoring unexpected broadcast: $action")
+            return
+        }
         val app = context.applicationContext
         if (dynamic) {
             SystemEventBus.deliverLive(intent)
         } else {
             SystemEventBus.deliverCold(app, intent)
         }
+    }
+
+    private companion object {
+        const val TAG = "JarvisTriggers"
     }
 }
 
@@ -200,6 +225,26 @@ object SystemEventBus {
         "android.bluetooth.device.action.ACL_CONNECTED",
         "android.bluetooth.device.action.ACL_DISCONNECTED"
     )
+
+    /**
+     * Everything [SystemEventReceiver] will accept off a real broadcast.
+     *
+     * [DYNAMIC_ACTIONS] plus the two the manifest declares that the dynamic
+     * registration does not need. Every entry is a PROTECTED broadcast, which
+     * means the platform itself refuses to deliver one sent by an ordinary app —
+     * so an allow-list drawn from this set is also an "only the system may
+     * originate these" check.
+     *
+     * `BootReceiver.ACTION_SYNTHETIC_BOOT` is deliberately absent. It is an
+     * app-private action with no protection at all, and it reaches the bus
+     * through `SystemEventBus.publish` from inside this process, never through a
+     * broadcast we accept.
+     */
+    val ACCEPTED_BROADCASTS: Set<String> = buildSet {
+        addAll(DYNAMIC_ACTIONS)
+        add(Intent.ACTION_BOOT_COMPLETED)
+        add("android.net.conn.CONNECTIVITY_CHANGE")
+    }
 }
 
 /**

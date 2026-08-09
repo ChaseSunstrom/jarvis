@@ -361,6 +361,13 @@ control — one future call site, or one refactor, and Tier 3 would be a comment
 rather than a gate. Reads are exempt: a Tier-2 read the user has set to "always
 allow" legitimately runs with no prompt at all.
 
+Be clear about what it is and is not. It is a cheap consistency check against a
+wiring mistake, not a proof of consent — in-process code that can put any Jarvis
+screen in front can stamp the same evidence. It happens to also foil that: an
+attacker who deliberately brings Jarvis' own UI forward then fails the settle
+step, because the app they wanted to drive never comes back. The real guarantee
+is still the prompt itself, plus the app-pinning above.
+
 ---
 
 ## The denylist

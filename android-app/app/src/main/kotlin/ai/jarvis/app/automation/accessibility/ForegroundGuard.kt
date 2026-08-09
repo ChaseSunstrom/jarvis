@@ -118,7 +118,7 @@ object ForegroundGuard {
      * "`ActionRegistry` says it asked" from an assumption into a check.
      */
     fun hasConsentEvidence(ageMs: Long): Boolean =
-        ageMs in 0..CONSENT_EVIDENCE_MS
+        ageMs >= 0L && ageMs <= CONSENT_EVIDENCE_MS
 
     /** The refusal wording, kept next to the rule it explains. */
     fun noConsentEvidenceMessage(actionId: String): String =

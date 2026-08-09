@@ -164,7 +164,13 @@ object TaskJson {
         return StepSpec(
             type = type,
             action = o.optString("action").trim().ifEmpty { null },
-            params = paramsOf(o, extraReserved = STEP_RESERVED),
+            // `tier` is read back out of params by TaskRunner, where it goes
+            // through max(local, declared) and can only make a step stricter.
+            // In the nested-`params` form it would otherwise be dropped on the
+            // floor and the raise would silently not happen, so it is hoisted:
+            // a step that asks to be treated as CONFIRM gets to be treated as
+            // CONFIRM whichever spelling it used.
+            params = paramsOf(o, extraReserved = STEP_RESERVED).withHoistedTier(o),
             storeAs = o.optString("store_as").trim().ifEmpty { null },
             timeoutMs = if (o.has("timeout_ms")) o.optLong("timeout_ms") else null,
             condition = conditionFrom(o.opt("condition"), depth),
@@ -223,6 +229,19 @@ object TaskJson {
             out[key] = fromJsonValue(o.opt(key), 0)
         }
         return out
+    }
+
+    /**
+     * Carry a step-level `tier` into the params map when the step used the
+     * nested-`params` form, which otherwise discards every sibling key.
+     *
+     * Only ever ADDS the key, and only when params does not already carry one,
+     * so the nested form still wins where both are present.
+     */
+    private fun Map<String, Any?>.withHoistedTier(o: JSONObject): Map<String, Any?> {
+        if (containsKey("tier")) return this
+        if (!o.has("tier") || o.isNull("tier")) return this
+        return this + ("tier" to fromJsonValue(o.opt("tier"), 0))
     }
 
     private val BASE_RESERVED = setOf("type", "params")

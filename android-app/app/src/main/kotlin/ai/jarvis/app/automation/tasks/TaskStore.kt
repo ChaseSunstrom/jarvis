@@ -106,8 +106,17 @@ class TaskStore(
      * @param fromServer true when this arrived over the socket. Forces
      *   [TaskSource.SERVER] regardless of what the payload claimed, so a
      *   pushed task cannot label itself local to skip screening.
+     * @param authoredLocally true ONLY for the app's own task editor. A task
+     *   that arrived as a FILE is not authored locally however its `source`
+     *   field reads — see [TaskSafety.effectiveEnabled]. Defaults to "whatever
+     *   the payload claims", which is right for the editor and wrong for
+     *   everything else, so [import] passes it explicitly.
      */
-    suspend fun upsert(task: TaskDefinition, fromServer: Boolean): TaskUpsertResult {
+    suspend fun upsert(
+        task: TaskDefinition,
+        fromServer: Boolean,
+        authoredLocally: Boolean = !fromServer && task.source == TaskSource.LOCAL
+    ): TaskUpsertResult {
         val previous = get(task.id)
         val source = if (fromServer) TaskSource.SERVER else task.source
 
@@ -127,7 +136,9 @@ class TaskStore(
         )
 
         val admission = TaskSafety.screen(candidate, tierOf)
-        val stored = candidate.copy(enabled = TaskSafety.effectiveEnabled(candidate, admission))
+        val stored = candidate.copy(
+            enabled = TaskSafety.effectiveEnabled(candidate, admission, authoredLocally)
+        )
 
         write { list -> list.filter { it.id != stored.id } + stored }
 
@@ -137,13 +148,24 @@ class TaskStore(
         return TaskUpsertResult(stored, admission, heldForConsent = !stored.enabled && candidate.enabled)
     }
 
-    /** Replace the whole set — the import path, and how the server syncs. */
+    /**
+     * Replace the whole set — the import path, and how the server syncs.
+     *
+     * A server sync prunes only the tasks the SERVER owns. jarvis-core has no
+     * idea what the user typed into the phone's own task editor, so "not in my
+     * payload" means "I never sent it", not "delete it": a sync that dropped
+     * local tasks would let one wrong — or injected — sync frame wipe every
+     * automation the user wrote by hand, including the ones they had to enable
+     * by hand because they contain a CONFIRM step. A local replace-all is a
+     * deliberate act by someone holding the phone, and prunes everything.
+     */
     suspend fun replaceAll(tasks: List<TaskDefinition>, fromServer: Boolean): List<TaskUpsertResult> {
         val results = ArrayList<TaskUpsertResult>(tasks.size)
         for (task in tasks) results.add(upsert(task, fromServer))
-        // Anything not in the incoming set is gone.
         val keep = tasks.map { it.id }.toSet()
-        write { list -> list.filter { it.id in keep } }
+        write { list ->
+            list.filter { it.id in keep || (fromServer && it.source != TaskSource.SERVER) }
+        }
         return results
     }
 
@@ -195,11 +217,15 @@ class TaskStore(
      * Import a bundle. Screened exactly like a push: an imported task with a
      * CONFIRM step arrives switched off, whether it came from a server or from
      * a file the user was sent.
+     *
+     * `authoredLocally = false` is what makes that sentence true. A bundle is a
+     * document, and a document can say `"source": "LOCAL"` about itself; only
+     * the task editor knows a human just typed it.
      */
     suspend fun import(bundle: JSONObject, fromServer: Boolean): List<TaskUpsertResult> {
         val tasks = TaskJson.bundleFromJson(bundle)
         if (tasks.isEmpty()) return emptyList()
-        return tasks.map { upsert(it, fromServer) }
+        return tasks.map { upsert(it, fromServer, authoredLocally = false) }
     }
 
     // --- change notification ------------------------------------------------
