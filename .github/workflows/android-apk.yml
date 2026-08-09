@@ -1,21 +1,16 @@
 name: Build Jarvis APK
 
-# Builds the Jarvis Android APK by cloning home-assistant/android, applying the
-# jarvis overlay, and running Gradle. The debug APK needs no secrets and is
-# directly installable — download it from the run's Artifacts, or from the
-# Release assets on a tag push.
+# Builds the STANDALONE Jarvis Android app (android-app/, package ai.jarvis.app).
+# No Home Assistant fork, no Google Play Services, no Firebase — so this is now
+# a plain Gradle build of our own project rather than a 25-minute compile of
+# somebody else's app.
 #
-# Heads-up: this compiles the full HA Android app, so a run takes ~15-25 min.
-# It's manual (workflow_dispatch) or tag-triggered on purpose — it does not run
-# on every push.
+# Debug builds need no secrets and install directly: run the workflow, then
+# download the APK from the run's Artifacts.
 
 on:
   workflow_dispatch:
     inputs:
-      ha_ref:
-        description: "home-assistant/android ref (branch/tag). Blank = default branch."
-        required: false
-        default: ""
       build_type:
         description: "debug (no secrets, installable) or release (signed)"
         required: false
@@ -24,25 +19,26 @@ on:
         options: ["debug", "release"]
   push:
     tags: ["v*"]
+    paths-ignore: ["**/*.md"]
 
 permissions:
-  contents: write   # create/upload GitHub Releases on tag
+  contents: write # attach the APK to a Release on tag
 
 concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android-app
     env:
-      # tags default to release; manual runs use the chosen input (default debug)
       BUILD_TYPE: ${{ github.event_name == 'push' && 'release' || (github.event.inputs.build_type || 'debug') }}
-      HA_ANDROID_REPO: https://github.com/home-assistant/android
     steps:
-      - name: Checkout jarvis
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -53,36 +49,24 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Clone home-assistant/android
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # The repo ships gradle-wrapper.properties but not the wrapper JAR
+          # (a binary we deliberately don't commit), so the action provides
+          # Gradle and we invoke it directly instead of ./gradlew.
+          gradle-version: "8.10"
+
+      - name: Assemble
         run: |
           set -eu
-          REF="${{ github.event.inputs.ha_ref }}"
-          if [ -n "$REF" ]; then
-            git clone --depth 1 --branch "$REF" "$HA_ANDROID_REPO" ha-android-fork
-          else
-            git clone --depth 1 "$HA_ANDROID_REPO" ha-android-fork
-          fi
-
-      - name: Apply Jarvis overlay
-        env:
-          HA_ANDROID_DIR: ${{ github.workspace }}/ha-android-fork
-        run: bash android/apply-to-fork.sh
-
-      - name: Assemble APK
-        working-directory: ha-android-fork
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx5g"
-        run: |
-          set -eu
-          # Jarvis is baked into src/main and shipped as the degoogled
-          # `minimal` flavor (no brittle custom-flavor inheritance).
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew :app:assembleMinimalRelease --no-daemon --stacktrace
+            gradle :app:assembleRelease --no-daemon --stacktrace
           else
-            ./gradlew :app:assembleMinimalDebug --no-daemon --stacktrace
+            gradle :app:assembleDebug --no-daemon --stacktrace
           fi
 
-      - name: Package + sign APK
+      - name: Package + sign
         id: apk
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -91,26 +75,21 @@ jobs:
           KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -eu
-          OUTDIR="ha-android-fork/app/build/outputs/apk/minimal/$BUILD_TYPE"
+          OUTDIR="app/build/outputs/apk/$BUILD_TYPE"
           ls -la "$OUTDIR"
           SRC="$(ls "$OUTDIR"/*.apk | head -n1)"
-          echo "built: $SRC"
 
           BTDIR="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
           export PATH="$BTDIR:$PATH"
 
           if [ "$BUILD_TYPE" = "debug" ]; then
-            # Debug APKs are already signed with the Android debug key.
-            OUT="jarvis-debug.apk"
+            OUT="jarvis-debug.apk"          # already signed with the debug key
             cp "$SRC" "$OUT"
           else
-            # Release: use the repo keystore secret if present, else an
-            # ephemeral key (installs fine, but updates need an uninstall
-            # because the signature changes each build).
             if [ -n "${KEYSTORE_B64:-}" ]; then
               echo "$KEYSTORE_B64" | base64 -d > ks.jks
             else
-              echo "::warning::No ANDROID_KEYSTORE_BASE64 secret set — signing with an EPHEMERAL key. The APK installs, but in-place updates (Obtainium) need an uninstall first. Add a keystore secret for stable updates (see android/keystore.md)."
+              echo "::warning::No ANDROID_KEYSTORE_BASE64 secret — signing with an EPHEMERAL key. The APK installs, but in-place updates (Obtainium) will need an uninstall first. See android-app/README.md."
               KS_PASS=jarvis; KEY_ALIAS=jarvis; KEY_PASS=jarvis
               keytool -genkeypair -v -keystore ks.jks -alias "$KEY_ALIAS" \
                 -keyalg RSA -keysize 4096 -validity 10000 \
@@ -126,52 +105,52 @@ jobs:
             rm -f ks.jks aligned.apk
           fi
 
-          # Resolve the actual installed package id (debug builds may carry a
-          # .debug suffix) and emit exact assistant-role commands.
           PKG="$("$BTDIR/aapt" dump badging "$OUT" | sed -n "s/.*package: name='\([^']*\)'.*/\1/p")"
-          echo "package: $PKG"
-          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "path=android-app/$OUT" >> "$GITHUB_OUTPUT"
           echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
 
           {
             echo "### Jarvis APK ready ($BUILD_TYPE)"
             echo ""
-            echo "- File: \`$OUT\`"
-            echo "- Package: \`$PKG\`"
+            echo "- File: \`$OUT\`  ·  Package: \`$PKG\`"
             echo ""
-            echo "After installing, apply the GrapheneOS assistant role:"
+            echo "Install, then grant the assistant role (GrapheneOS clears it on every update):"
             echo '```bash'
-            echo "adb shell settings put secure assistant $PKG/io.homeassistant.companion.android.jarvis.JarvisAssistActivity"
-            echo "adb shell settings put secure voice_interaction_service $PKG/io.homeassistant.companion.android.jarvis.JarvisVoiceInteractionService"
+            echo "adb install -r $OUT"
+            echo "adb shell settings put secure assistant $PKG/ai.jarvis.app.JarvisAssistActivity"
+            echo "adb shell settings put secure voice_interaction_service $PKG/ai.jarvis.app.assist.JarvisVoiceInteractionService"
             echo "adb shell settings put secure assist_gesture_enabled 1"
             echo '```'
+            echo ""
+            echo "Then open Jarvis → Settings and point it at your jarvis-core URL + token."
           } >> "$GITHUB_STEP_SUMMARY"
 
           {
             echo "# Package: $PKG"
-            echo "adb shell settings put secure assistant $PKG/io.homeassistant.companion.android.jarvis.JarvisAssistActivity"
-            echo "adb shell settings put secure voice_interaction_service $PKG/io.homeassistant.companion.android.jarvis.JarvisVoiceInteractionService"
+            echo "adb install -r $OUT"
+            echo "adb shell settings put secure assistant $PKG/ai.jarvis.app.JarvisAssistActivity"
+            echo "adb shell settings put secure voice_interaction_service $PKG/ai.jarvis.app.assist.JarvisVoiceInteractionService"
             echo "adb shell settings put secure assist_gesture_enabled 1"
-          } > adb-role-commands.txt
+          } > adb-setup.txt
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: jarvis-${{ env.BUILD_TYPE }}-apk
           path: |
             ${{ steps.apk.outputs.path }}
-            adb-role-commands.txt
+            android-app/adb-setup.txt
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach APK to Release
+      - name: Attach to Release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+        working-directory: .
         run: |
           set -eu
           TAG="${GITHUB_REF_NAME}"
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --title "Jarvis $TAG" \
-              --notes "Jarvis APK ($BUILD_TYPE). Package: ${{ steps.apk.outputs.pkg }}"
-          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" adb-role-commands.txt --clobber
+              --notes "Standalone Jarvis APK. Package: ${{ steps.apk.outputs.pkg }}"
+          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" android-app/adb-setup.txt --clobber
