@@ -156,6 +156,34 @@ def agent(harness, proxy, work_root):
         instance.stop()
 
 
+@pytest.fixture(autouse=True)
+def fail_closed(request):
+    """Every test starts with the answer set to "no", and nothing remembered.
+
+    The control files and the policy store outlive a test, so without this the
+    verdict one test set decides what the next one measures — and a test that
+    fails half way through, having granted approval, arms the rest of the file.
+    Autouse rather than opt-in precisely because the tests that most need it
+    are the ones that never mention consent at all (the path-escape cases, the
+    reconnect case): those must be refused by a guard, and there must be no way
+    for an inherited approval to be the reason they pass.
+
+    It runs only when a test actually uses the agent, so a session with no
+    harness still skips instead of erroring. It deliberately does NOT touch the
+    policy store: "nothing was persisted all session" is an assertion the
+    closing sweep makes about the whole run, and a fixture that quietly deleted
+    the file each time would make it unfalsifiable. The one test that writes a
+    policy on purpose puts it back itself.
+    """
+    if "live" not in request.fixturenames and "agent" not in request.fixturenames:
+        yield
+        return
+    instance = request.getfixturevalue("agent")
+    instance.control.fail_closed()
+    yield
+    instance.control.fail_closed()
+
+
 @pytest.fixture
 def live(agent, harness):
     """Fail fast, with the log, if the agent or the server died earlier."""

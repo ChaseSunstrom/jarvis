@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -135,6 +136,15 @@ async def async_wait_until(
 # ---------------------------------------------------------------------------
 # talking to the server without an event loop
 # ---------------------------------------------------------------------------
+#: Loopback only, and explicitly *not* through any proxy. ``urlopen`` honours
+#: ``http_proxy`` from the environment, so on a runner behind one every REST
+#: call the fixtures make would be handed to a proxy that cannot route
+#: 127.0.0.1 — and the symptom would be "the agent never registered" ninety
+#: seconds later rather than the truth. ``ProxyHandler({})`` disables the
+#: lookup outright; the harness is always on this machine.
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def service_call(
     base_url: str,
     token: str,
@@ -156,7 +166,7 @@ def service_call(
         method="POST",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with _DIRECT.open(request, timeout=timeout) as response:  # noqa: S310
         body = json.loads(response.read().decode("utf-8") or "{}")
     return body.get("service_response", body)
 
@@ -272,6 +282,16 @@ class TcpProxy:
     def live(self) -> int:
         return len(self._live)
 
+    def stats(self) -> str:
+        """One line for a failure message. Reconnect failures are unreadable
+        without knowing how many times the agent actually dialled."""
+        return (
+            f"proxy :{self.port} -> {self.target_host}:{self.target_port} "
+            f"opened={self.opened} established={self.established} "
+            f"refused={self.refused} live={self.live} "
+            f"accepting={self._accepting}"
+        )
+
     def block(self) -> None:
         """Refuse new connections until :meth:`unblock`.
 
@@ -366,8 +386,30 @@ class ControlDir:
         self.asks_path = self.path / "asks.jsonl"
         # Fail closed by default: a test that forgets to say otherwise gets a
         # denial, never an approval.
+        self.fail_closed()
+
+    def fail_closed(self) -> None:
+        """Back to deny/dismiss.
+
+        Called before every test as well as at construction. Without it the
+        verdict a test set survives into the next one, so a security test that
+        does not set its own verdict — and one that fails half way through
+        having set ``approved`` — would silently decide what the *following*
+        test was measuring. An approval must never be inherited.
+        """
         self.set_consent("denied")
         self.set_answer(status="dismissed")
+
+    def discard_records(self) -> None:
+        """Drop the prompt and question logs. Only used before the agent starts.
+
+        CI points the work directory at a checked-out artifacts path, and a
+        developer re-runs into the same one, so a second run would otherwise
+        read the first run's prompts.
+        """
+        for path in (self.prompts_path, self.asks_path):
+            with contextlib.suppress(OSError):
+                path.unlink()
 
     # --- what the test sets ------------------------------------------------
     def set_consent(self, verdict: str) -> None:
@@ -455,12 +497,54 @@ class DesktopAgent:
         return self.state_dir / "audit.jsonl"
 
     def policy(self) -> dict[str, Any]:
-        """The persisted policy store, or ``{}`` before anything is remembered."""
+        """The persisted policy store, or ``{}`` before anything is remembered.
+
+        Note what ``{}`` means: on a green run this file does not exist at all,
+        because nothing the suite does is ever remembered. That makes "the
+        policies map is empty" a weak assertion on its own — it would hold just
+        as well if this were reading the wrong path. ``test_the_policy_store_is
+        _real_and_a_tier_two_answer_can_be_remembered`` is the positive control
+        that pins this path to the one the agent really writes; the emptiness
+        assertions elsewhere lean on it.
+        """
         try:
             loaded = json.loads(self.policy_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
         return loaded if isinstance(loaded, dict) else {}
+
+    def remembered(self) -> dict[str, Any]:
+        """Just the ``policies`` map."""
+        policies = self.policy().get("policies")
+        return policies if isinstance(policies, dict) else {}
+
+    def write_policy(
+        self,
+        policies: dict[str, str] | None = None,
+        automation_enabled: bool = True,
+        panic: bool = False,
+    ) -> None:
+        """Edit the policy file from outside the agent, as the CLI or a human would.
+
+        ``PolicyStore`` re-stats the file on every read, so the running agent
+        picks this up on its next decision without a restart — which is exactly
+        the property that makes the panic switch worth having, and the only way
+        to test it against a live process.
+        """
+        _write_json(
+            self.policy_path,
+            {
+                "version": 1,
+                "automation_enabled": bool(automation_enabled),
+                "panic": bool(panic),
+                "policies": dict(policies or {}),
+            },
+        )
+
+    def forget_policy(self) -> None:
+        """Remove the policy file entirely: back to the shipped defaults."""
+        with contextlib.suppress(OSError):
+            self.policy_path.unlink()
 
     def audit(self) -> list[dict[str, Any]]:
         return _read_jsonl(self.audit_path)
@@ -503,10 +587,35 @@ class DesktopAgent:
             encoding="utf-8",
         )
 
+    def reset(self) -> None:
+        """Delete everything a previous run of this suite left behind.
+
+        The work directory is not always fresh: CI points it at a path inside
+        the checkout and a developer re-runs into the same one. A stale
+        ``audit.jsonl`` would be read by the closing sweep as though this run
+        had produced it, and a stale ``policy.json`` — which only a failed run
+        can leave — would start the agent with something already remembered.
+        Only files this suite owns are removed, and only before the agent is
+        started.
+        """
+        for path in (self.policy_path, self.audit_path):
+            with contextlib.suppress(OSError):
+                path.unlink()
+        self.control.discard_records()
+        self.control.fail_closed()
+        if self.workspace.exists():
+            for child in self.workspace.iterdir():
+                with contextlib.suppress(OSError):
+                    if child.is_dir() and not child.is_symlink():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink()
+
     # --- lifecycle --------------------------------------------------------
     def start(self) -> "DesktopAgent":
         if self._process is not None:
             return self
+        self.reset()
         self.write_config()
         env = dict(os.environ)
         env.update(

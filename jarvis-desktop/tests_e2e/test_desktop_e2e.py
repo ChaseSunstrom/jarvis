@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import platform
 from typing import Any
 
 import pytest
@@ -163,8 +164,10 @@ async def test_a_tier_one_action_runs_and_returns_a_real_result(client, live):
     assert outcome["tier_name"] == "AUTO"
 
     result = outcome["result"]
-    # Plausible, real values measured on this machine — not a fixture.
-    assert result["os"] == "Linux"
+    # Plausible, real values measured on this machine — not a fixture. Compared
+    # against this process's own view rather than hard-coded to the CI runner,
+    # so the suite is runnable on a developer's machine too.
+    assert result["os"] == platform.system()
     assert result["hostname"], "no hostname in the system state"
     assert result["device_name"] == DEVICE_NAME
     assert result["python"].startswith("3."), result["python"]
@@ -353,6 +356,103 @@ async def test_the_server_cannot_lower_a_tier(client, live, harness):
 
 
 # ===========================================================================
+# 6b. the policy store, from outside the agent
+# ===========================================================================
+async def test_the_policy_store_is_real_and_only_tier_two_can_be_remembered(client, live):
+    """The positive control for every "nothing was remembered" assertion.
+
+    Those assertions read ``state/policy.json``, and on a green run that file
+    does not exist — which means an empty result proves nothing on its own. It
+    would look identical if this suite were reading the wrong path, or if the
+    agent's state directory were somewhere else entirely. So this test makes
+    the store exist, on purpose, by answering *always* to the one tier that is
+    allowed to remember it:
+
+    * a Tier-2 ``approved_always`` writes the file this suite reads, at the
+      path this suite reads it from, and the next identical command does not
+      ask — so remembering demonstrably works, and Tier 3 refusing to do it is
+      a property of Tier 3 rather than of a feature that never worked;
+    * then the file is edited from *outside* the running process, which is the
+      other half: ``never`` and ``panic`` are the user's local kill switches,
+      and they are worthless if a long-lived agent only reads them at startup.
+    """
+    assert not live.policy_path.exists(), (
+        f"something was already remembered before this test ran: {live.policy()}"
+    )
+
+    try:
+        # --- a NOTIFY answer that IS allowed to be remembered -------------
+        live.control.set_consent("approved_always")
+        prompts_before = len(live.control.prompts())
+
+        first = await dispatch(
+            client, "write_file", {"path": "remembered.txt", "content": "once\n"}
+        )
+        assert first["status"] == "ok", first
+        assert first["tier"] == 2
+        assert first["tier_name"] == "NOTIFY"
+        prompts = live.control.prompts()
+        assert len(prompts) == prompts_before + 1, "a NOTIFY action ran without asking"
+        assert prompts[-1]["rememberable"] is True, (
+            "a Tier-2 prompt did not offer to remember the answer"
+        )
+        assert (live.workspace / "remembered.txt").read_text(encoding="utf-8") == "once\n"
+
+        # The file the suite reads is the file the agent writes. Everything
+        # else in this suite that asserts "the policy store is empty" depends
+        # on this line being true.
+        assert live.policy_path.exists(), (
+            f"'always' was answered and accepted, but {live.policy_path} was never "
+            "written — the emptiness assertions elsewhere are reading nothing"
+        )
+        assert live.remembered() == {"write_file": "allow_always"}, live.policy()
+
+        # And it takes effect: the same command again, with nobody asked.
+        live.control.set_consent("denied")  # would refuse, if it were consulted
+        second = await dispatch(
+            client, "write_file", {"path": "remembered.txt", "content": "twice\n"}
+        )
+        assert second["status"] == "ok", second
+        assert len(live.control.prompts()) == prompts_before + 1, (
+            "the remembered answer was not used — it asked again"
+        )
+        assert (live.workspace / "remembered.txt").read_text(encoding="utf-8") == "twice\n"
+
+        # --- the user's kill switches, set while the agent is running ------
+        live.write_policy({"write_file": "never"})
+        prompts_before = len(live.control.prompts())
+        live.control.set_consent("approved")  # cannot help: NEVER outranks it
+
+        blocked = await dispatch(
+            client, "write_file", {"path": "remembered.txt", "content": "three\n"}
+        )
+        assert blocked["status"] == "denied", blocked
+        assert "blocked write_file" in blocked.get("error", ""), blocked
+        assert len(live.control.prompts()) == prompts_before, (
+            "a NEVER action prompted; the user should not be asked to reconsider"
+        )
+        assert (live.workspace / "remembered.txt").read_text(encoding="utf-8") == "twice\n"
+
+        # Panic outranks everything, including a Tier-1 action that never asks.
+        live.write_policy({}, panic=True)
+        panicked = await dispatch(client, "get_system_state")
+        assert panicked["status"] == "denied", panicked
+        assert "panic" in panicked.get("error", ""), panicked
+        assert len(live.control.prompts()) == prompts_before
+    finally:
+        # Back to the shipped defaults, so the closing sweep is measuring this
+        # session and not this test.
+        live.forget_policy()
+        live.control.fail_closed()
+
+    assert not live.policy_path.exists()
+    recovered = await dispatch(client, "get_system_state", reason="after the panic")
+    assert recovered["status"] == "ok", (
+        f"clearing the panic flag was not picked up by the running agent: {recovered}"
+    )
+
+
+# ===========================================================================
 # 7. companion.ask, all the way to the desk and back
 # ===========================================================================
 async def test_companion_ask_round_trips_through_the_agent(client, live):
@@ -399,15 +499,20 @@ async def test_companion_ask_round_trips_through_the_agent(client, live):
 # 8. a path escape and an SSRF attempt are refused
 # ===========================================================================
 @pytest.mark.parametrize(
-    "path",
+    ("path", "because"),
     [
-        "../../../../etc/passwd",
-        "/etc/passwd",
-        "subdir/../../../../etc/shadow",
-        "~/.ssh/id_rsa",
+        # The expected reason is pinned per case rather than matched against a
+        # list of phrases. A path that is refused for the wrong reason — "no
+        # such file", say, which is what a broken scope would produce for the
+        # ~ case — is a scope that is not doing its job, and a loose match
+        # would call that a pass.
+        ("../../../../etc/passwd", "path escapes the sandbox"),
+        ("/etc/passwd", "path is outside the allowed roots"),
+        ("subdir/../../../../etc/shadow", "path escapes the sandbox"),
+        ("~/.ssh/id_rsa", "home-relative paths are not allowed"),
     ],
 )
-async def test_a_path_escape_is_refused(client, live, path):
+async def test_a_path_escape_is_refused(client, live, path, because):
     """``read_file`` is Tier 1 — it runs with nobody in the loop, so the path
     scope is the only thing standing between the model and the whole disk."""
     prompts_before = len(live.control.prompts())
@@ -417,11 +522,7 @@ async def test_a_path_escape_is_refused(client, live, path):
     assert outcome["status"] != "ok", f"{path} was read: {outcome}"
     assert "content" not in (outcome.get("result") or {})
     error = outcome.get("error", "")
-    assert error, outcome
-    assert any(
-        phrase in error
-        for phrase in ("escapes", "outside the allowed roots", "are not allowed")
-    ), error
+    assert because in error, f"{path} was refused, but not by the path scope: {error!r}"
     assert "root:x:" not in str(outcome), "file contents leaked into the reply"
     # Refused by the scope, not by a prompt somebody might one day approve.
     assert len(live.control.prompts()) == prompts_before
@@ -444,30 +545,49 @@ async def test_a_symlink_out_of_the_workspace_is_refused(client, live):
 
 
 @pytest.mark.parametrize(
-    "url",
+    ("url", "because"),
     [
-        "http://169.254.169.254/latest/meta-data/",
-        "http://metadata.google.internal/computeMetadata/v1/",
-        "http://[::1]:8080/api/",
-        "http://192.168.0.1/admin",
-        "file:///etc/passwd",
+        (
+            "http://169.254.169.254/latest/meta-data/",
+            "address 169.254.169.254 is blocked",
+        ),
+        (
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "host metadata.google.internal is blocked",
+        ),
+        ("http://[::1]:8080/api/", "address ::1 is blocked"),
+        ("http://192.168.0.1/admin", "address 192.168.0.1 is blocked"),
+        ("file:///etc/passwd", "only http and https are allowed"),
     ],
 )
-async def test_an_ssrf_target_is_refused_even_with_approval(client, live, url):
+async def test_an_ssrf_target_is_refused_even_with_approval(client, live, url, because):
     """Approval is granted here on purpose.
 
     The guard must be what refuses this, not the policy engine — otherwise a
     user who clicks Approve (or a NOTIFY action they once allowed) would be one
     click away from the cloud metadata service.
+
+    The status is asserted, not just the text. A URL that is simply unreachable
+    comes back as ``error`` ("request failed: ..."), and a guard refusal comes
+    back as ``denied`` ("refused: ..."), because they are different
+    constructors. Matching loosely on the word "refused" would let a *removed*
+    guard pass on any machine where the connection is merely declined —
+    ``[Errno 111] Connection refused`` contains it. That is not a hypothetical:
+    it is what ``http://[::1]:8080/`` produces on a runner with IPv6 loopback.
     """
     live.control.set_consent("approved")
 
     outcome = await dispatch(client, "http_request", {"url": url})
 
-    assert outcome["status"] != "ok", f"{url} was fetched: {outcome}"
+    assert outcome["status"] == "denied", (
+        f"{url} was not refused by the SSRF guard (a guard refusal is `denied`; "
+        f"`error` means it was attempted and merely failed): {outcome}"
+    )
     error = outcome.get("error", "")
-    assert "refused" in error or "blocked" in error or "allowed" in error, outcome
-    assert "result" not in outcome or not (outcome.get("result") or {}).get("body")
+    assert error.startswith("refused: "), error
+    assert because in error, f"{url} was refused for the wrong reason: {error!r}"
+    assert not (outcome.get("result") or {}).get("body")
+    assert "root:x:" not in str(outcome), "the target's content came back"
 
 
 async def test_the_server_itself_is_still_reachable(client, live, harness):
@@ -516,7 +636,7 @@ async def test_the_agent_reconnects_and_re_registers_after_the_socket_dies(
     try:
         proxy.block()
         dropped = proxy.drop_all()
-        assert dropped >= 1, "there was no live connection to cut"
+        assert dropped >= 1, f"there was no live connection to cut. {proxy.stats()}"
 
         # The gap, as the server reports it rather than as a poll happens to
         # catch it.
@@ -553,8 +673,13 @@ async def test_the_agent_reconnects_and_re_registers_after_the_socket_dies(
         # Let it back in. It is the agent that reconnects — nothing here
         # restarts it, and nothing tells it to try again.
         proxy.unblock()
+        # The agent's reconnect delay is exponential from one second and is not
+        # configurable, so the wait has to cover several failed dials on a
+        # loaded runner having pushed the next one out. 150s is roughly twice
+        # the worst case after six refusals; anything past that is a hang, not
+        # slowness, and the proxy counters say which.
         registered = await back.wait_for(
-            lambda e: (e.get("data") or {}).get("device_id") == DEVICE_ID, timeout=90
+            lambda e: (e.get("data") or {}).get("device_id") == DEVICE_ID, timeout=150
         )
         assert registered["data"]["connected"] is True
 
@@ -563,8 +688,8 @@ async def test_the_agent_reconnects_and_re_registers_after_the_socket_dies(
             f"it came back without its manifest: {entry}"
         )
         assert proxy.established == established_before + 1, (
-            f"expected exactly one new session, saw "
-            f"{proxy.established - established_before} (refused: {proxy.refused})"
+            f"expected exactly one new relayed session, saw "
+            f"{proxy.established - established_before}. {proxy.stats()}"
         )
 
         # Everything the old session sent is already queued behind the
