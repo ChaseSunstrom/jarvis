@@ -33,6 +33,24 @@ CORE_INTEGRATIONS = ("homeassistant_compat", "domains", "voice", "llm", "automat
 # Keys in configuration.yaml that are NOT integrations.
 NON_INTEGRATION_KEYS = {"jarvis", "packages", "secrets"}
 
+#: Config keys that ARE features but are not integration names, because another
+#: integration consumes them. Without this the loader warned
+#:
+#:     No integration named 'input_boolean' (config key ignored)
+#:
+#: about five keys in the shipped configuration.yaml — and the "ignored" was
+#: simply untrue: `automation._async_setup_input_helpers` bootstraps
+#: `input_helpers` whenever any of them is present, so the entities exist. Five
+#: lines of false alarm at every start, each listing all 31 integrations, in the
+#: first screen anyone reads when something has gone wrong.
+KEYS_HANDLED_BY_ANOTHER_INTEGRATION = {
+    "input_boolean",
+    "input_number",
+    "input_select",
+    "input_text",
+    "input_datetime",
+}
+
 
 def available_integrations() -> list[str]:
     root = Path(__file__).parent
@@ -85,6 +103,7 @@ async def async_setup_integrations(jarvis: "Jarvis", config: dict[str, Any]) -> 
         key.split(" ")[0]
         for key in config
         if key not in NON_INTEGRATION_KEYS
+        and key not in KEYS_HANDLED_BY_ANOTHER_INTEGRATION
     ]
     wanted: list[str] = []
     for name in (*CORE_INTEGRATIONS, *requested):

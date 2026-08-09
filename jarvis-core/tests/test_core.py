@@ -378,3 +378,43 @@ async def test_a_real_bug_still_gets_its_traceback(tmp_path, caplog):
         "a programming error must keep its traceback"
     )
     assert any(r.levelname == "ERROR" for r in records)
+
+
+async def test_input_helper_keys_do_not_warn_about_a_missing_integration(
+    tmp_path, caplog
+):
+    """`input_boolean:` and friends are features, not integration names.
+
+    `automation._async_setup_input_helpers` bootstraps `input_helpers` whenever
+    one is present, so the entities really are created — but the loader warned
+    "No integration named 'input_boolean' (config key ignored)" for all five,
+    each listing every available integration. The warning was false: the key is
+    consumed, not ignored.
+    """
+    import logging as _logging
+
+    from jarvis.integrations import async_setup_integrations
+
+    jarvis = Jarvis(tmp_path)
+    config = {
+        "input_boolean": {"guest_mode": {"name": "Guest mode"}},
+        "input_number": {"volume": {"min": 0, "max": 10}},
+        "input_select": {"mode": {"options": ["home", "away"]}},
+        "input_text": {"note": {}},
+        "input_datetime": {"alarm": {"has_time": True}},
+    }
+    with caplog.at_level(_logging.WARNING, logger="jarvis.integrations"):
+        await async_setup_integrations(jarvis, config)
+
+    bogus = [r for r in caplog.records if "No integration named" in r.getMessage()]
+    assert not bogus, (
+        "warned about config keys that another integration consumes: "
+        + "; ".join(r.getMessage().split(" (")[0] for r in bogus)
+    )
+
+    # A key that really is a typo must still be reported — the point is to stop
+    # lying about the five, not to stop reporting anything.
+    caplog.clear()
+    with caplog.at_level(_logging.WARNING, logger="jarvis.integrations"):
+        await async_setup_integrations(Jarvis(tmp_path), {"input_bolean": {}})
+    assert any("No integration named" in r.getMessage() for r in caplog.records)
