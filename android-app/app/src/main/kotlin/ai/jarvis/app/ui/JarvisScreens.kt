@@ -32,6 +32,16 @@ object JarvisScreens {
      * automation module is not present in this build.
      */
     fun open(context: Context, className: String, label: String): Boolean {
+        // Both screens are declared in AndroidManifest.xml, so when the class
+        // behind one is absent `startActivity` does NOT throw
+        // ActivityNotFoundException — it resolves, and the app dies later on the
+        // main thread with "Unable to instantiate activity". Resolving the class
+        // first is what actually makes a missing screen a toast, not a crash.
+        if (!isPresent(className)) {
+            Toast.makeText(context, "$label is not available in this build", Toast.LENGTH_SHORT)
+                .show()
+            return false
+        }
         val intent = Intent().setClassName(context.packageName, className)
         return try {
             context.startActivity(intent)
@@ -42,5 +52,14 @@ object JarvisScreens {
                 .show()
             false
         }
+    }
+
+    /** Throwable, not ClassNotFoundException: a LinkageError must not crash us either. */
+    private fun isPresent(className: String): Boolean = try {
+        Class.forName(className)
+        true
+    } catch (t: Throwable) {
+        Log.w(TAG, "$className is not present in this build", t)
+        false
     }
 }

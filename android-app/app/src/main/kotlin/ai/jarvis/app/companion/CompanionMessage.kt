@@ -53,10 +53,12 @@ object CompanionProtocol {
 
     val VALID_MODES = setOf(MODE_SPEAK, MODE_ASK, MODE_NOTIFY)
 
+    const val KIND_ASK = "ask"
+
     /** `kind` -> the mode used when the server sent no usable `mode`. */
     private val KIND_TO_MODE = mapOf(
         "say" to MODE_SPEAK,
-        "ask" to MODE_ASK,
+        KIND_ASK to MODE_ASK,
         "notify" to MODE_NOTIFY
     )
 
@@ -118,7 +120,17 @@ object CompanionProtocol {
         val rawMode = msg.optString("mode").trim().lowercase(Locale.ROOT)
         // The server's routing decision is the authority; when it is missing or
         // garbled, fall back to what the message *is*.
-        val mode = if (rawMode in VALID_MODES) rawMode else KIND_TO_MODE[kind].orEmpty()
+        val routed = if (rawMode in VALID_MODES) rawMode else KIND_TO_MODE[kind].orEmpty()
+        // ...with one exception, and it is the load-bearing one. The server
+        // picks the PRESENTATION; it does not get to turn a question into
+        // something this phone acknowledges on the user's behalf. `notify` and
+        // `speak` both end in a `answered` result — that is how a device says
+        // "delivered" — and for a `kind: ask` the server reads that as a reply
+        // nobody gave: it resolves the waiting `companion.ask` with an empty
+        // answer AND stops escalating, so the question reaches the user on no
+        // device at all. jarvis-core produced exactly that frame for a critical
+        // message when nothing was reachable. Only a human answers a question.
+        val mode = if (kind == KIND_ASK && routed != MODE_ASK) MODE_ASK else routed
 
         val importance = msg.optString("importance").trim().lowercase(Locale.ROOT)
             .takeIf { it in VALID_IMPORTANCE } ?: "normal"

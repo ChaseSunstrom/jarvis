@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
+import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.companion.CompanionProtocol
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import kotlinx.coroutines.CancellationException
@@ -146,6 +148,18 @@ class JarvisChannel(
         .build()
 
     private val watcher = NetworkWatcher(appContext)
+
+    /**
+     * Tells jarvis-core whether the user is actually at this phone.
+     *
+     * Load-bearing rather than telemetry: `presence.rank()` refuses to put a
+     * question on a device below IDLE, and a freshly registered device with no
+     * report sits on the server's defaults — screen off, locked, never
+     * interacted — which is BACKGROUND. Without this the phone can be sent a
+     * notification and never a question.
+     */
+    val presence = PresenceReporter(appContext, { event, data -> sendEvent(event, data) })
+
     private val gate = CommandGate()
     private val backoff = Backoff()
     private val random = Random()
@@ -206,6 +220,13 @@ class JarvisChannel(
         // — e.g. `AutomationRuntime.deviceEvents = DeviceLink(channel)`. Wiring
         // both paths would send every event to the server twice.
         if (subscribeToBridgeEvents) AutomationBridge.subscribe(this)
+        // The other direction: Jarvis reaching the user. `sendFrame` accepts
+        // only `jarvis_message_result`, so this seam cannot grow into a way to
+        // put arbitrary frames on the socket.
+        CompanionMessageHandler.sender = CompanionMessageHandler.Sender { frame ->
+            sendFrame(frame)
+        }
+        presence.start()
         watcher.start()
         scope.launch {
             // A network appearing is a reason to stop waiting out a backoff.
@@ -237,6 +258,12 @@ class JarvisChannel(
         session = null
         if (AutomationBridge.channel === this) AutomationBridge.channel = null
         AutomationBridge.unsubscribe(this)
+        presence.stop()
+        // Anything still on screen was never answered, so the server gets
+        // nothing for it and a redelivery after the next start is free to ask
+        // again — the same rule `gate.clearAll()` applies to commands.
+        CompanionMessageHandler.sender = null
+        CompanionMessageHandler.reset(appContext)
         watcher.stop()
         gate.clearAll()
         failPendingRequests("the channel was stopped")
@@ -415,6 +442,13 @@ class JarvisChannel(
         rememberActionCount(tierTable.size)
         startHeartbeat(current)
         flushEvents(current)
+        // A fresh session means a fresh DevicePresence on the server. Comparing
+        // against the pre-reconnect snapshot would leave it on its defaults —
+        // locked, screen off, never interacted — until something happened to
+        // change, and a device that reads as BACKGROUND is never asked a
+        // question. Reported after flushEvents so it goes out on the live
+        // socket rather than into the offline queue.
+        presence.onReconnected()
     }
 
     /**
@@ -571,6 +605,23 @@ class JarvisChannel(
             ChannelFrames.TYPE_RESULT -> onResult(current, msg)
 
             ChannelFrames.TYPE_DEVICE_COMMAND -> onDeviceCommand(current, msg)
+
+            CompanionProtocol.TYPE_MESSAGE -> {
+                // Jarvis reaching the USER, not the user's phone. Deliberately
+                // a different door from `device_command`: the handler is
+                // reachable only through this branch, holds no reference to the
+                // action dispatcher or the policy store, and the struct it
+                // parses into has no slot for an action, params or a tier. A
+                // proactive message is information and questions only, and an
+                // answer of "yes" comes back as data on the `device_command`
+                // path with the full Tier-1/2/3 treatment.
+                //
+                // Not rate-limited by [inbound]: that bucket exists to cap what
+                // the server can make this phone *do*, and this makes it draw a
+                // notification. The one-answer-per-id ledger is what stops a
+                // flood turning into a flood of replies.
+                CompanionMessageHandler.handle(appContext, msg)
+            }
 
             else -> Log.d(TAG, "ignoring frame type ${msg.optString("type")}")
         }
@@ -836,6 +887,29 @@ class JarvisChannel(
 
     override fun onDeviceEvent(event: String, data: JSONObject, untrusted: Boolean) {
         sendEvent(event, data, untrusted)
+    }
+
+    /**
+     * Put one raw frame on the socket, unwrapped. False when it could not go.
+     *
+     * For `jarvis_message_result`, which is a *reply* to something the server
+     * sent — so it is not a `device_event` and is not rate-limited, for the
+     * same reason a `device_result` is not: dropping a reply strands whatever
+     * is waiting on the other end. [CompanionMessageHandler] keeps the frame
+     * and replays it on redelivery either way.
+     *
+     * Not a general escape hatch: it refuses anything that is not a companion
+     * result, so it can never become a way to send a `device_result` or an
+     * `auth` frame that skipped the checks those have.
+     */
+    fun sendFrame(frame: JSONObject): Boolean {
+        if (frame.optString("type") != CompanionProtocol.TYPE_RESULT) {
+            Log.w(TAG, "refusing to send a raw ${frame.optString("type")} frame")
+            return false
+        }
+        val current = session ?: return false
+        if (!current.registered) return false
+        return current.sendRaw(frame.toString())
     }
 
     override fun sendEvent(event: String, data: JSONObject, untrusted: Boolean): Boolean {

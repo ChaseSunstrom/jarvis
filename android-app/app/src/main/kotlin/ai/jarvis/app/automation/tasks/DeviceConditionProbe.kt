@@ -75,7 +75,9 @@ class DeviceConditionProbe(
         if (level < 0 || scale <= 0) {
             null
         } else {
-            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            // Safe call, not `!!`: `level >= 0` already implies the intent was
+            // non-null, but that is not a smart cast the compiler can see.
+            val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
             (level * 100 / scale) to (
                 status == BatteryManager.BATTERY_STATUS_CHARGING ||
                     status == BatteryManager.BATTERY_STATUS_FULL

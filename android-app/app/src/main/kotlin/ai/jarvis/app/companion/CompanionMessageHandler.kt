@@ -239,6 +239,22 @@ object CompanionMessageHandler {
 
     private fun notifyOrFail(app: Context, message: CompanionProtocol.Message) {
         val shown = CompanionNotifications.post(app, message, askIntent(app, message))
+        if (message.wantsAnswer) {
+            // Belt and braces behind the rule [CompanionProtocol.parse]
+            // enforces. A posted notification is DELIVERY, and this protocol
+            // spells delivery `answered` because there is no fifth status — but
+            // a question is answered by a person choosing something, never by
+            // this phone confirming it drew a notification. If a question ever
+            // reaches here, leave it unsettled: the user can still tap through
+            // and answer it, and the watchdog reports `timeout` if they do not,
+            // which is what makes the server escalate.
+            if (!shown) {
+                settle(app, message.messageId, CompanionProtocol.STATUS_UNDELIVERABLE, null)
+            } else {
+                armWatchdog(app, message)
+            }
+            return
+        }
         settle(
             app,
             message.messageId,
@@ -339,11 +355,16 @@ object CompanionMessageHandler {
      * got no answer for anything still in flight, so a redelivery after the
      * next connection is free to ask again.
      */
-    fun reset() {
+    fun reset(context: Context? = null) {
         for (runnable in watchdogs.values) main.removeCallbacks(runnable)
         watchdogs.clear()
         ledger.clear()
         speechHost = null
+        // A question whose ledger entry has just gone can no longer be
+        // answered; leaving its notification up offers a control that does
+        // nothing. Also the only thing that bounds `posted` across a long
+        // uptime, since it is otherwise trimmed only by an answer.
+        context?.let { CompanionNotifications.cancelAll(it) }
     }
 
     // --- intent extras ------------------------------------------------------

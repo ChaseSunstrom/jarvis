@@ -314,6 +314,33 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 
         <!--
+          THE CROSS-DEVICE QUESTION SCREEN — jarvis-core asking YOU something
+          and waiting for the answer. A close relative of ApprovalActivity, and
+          the differences are deliberate:
+
+          exported=false — only this app may raise a question, so no other app
+          can forge one, and the message_id extras cannot be supplied from
+          outside. launchMode standard, like the consent screen: two questions
+          stack and each answers its own message_id rather than one silently
+          replacing the other and leaving the server waiting on a reply that
+          will never come. Its own taskAffinity so it never lands in the main
+          Jarvis task. configChanges covers rotation: a recreated activity
+          reports `dismissed` in onDestroy, which would escalate a question the
+          user is in the middle of reading. No android:noHistory — the question
+          must survive the user glancing at another app.
+        -->
+        <activity
+            android:name=".companion.CompanionAskActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisApproval"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="standard"
+            android:taskAffinity="ai.jarvis.app.companion"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
           VoiceInteractionService so the app can hold the device assistant role
           (Settings > Apps > Default apps > Digital assistant app, or the Secure
           Settings written by adb — see README).

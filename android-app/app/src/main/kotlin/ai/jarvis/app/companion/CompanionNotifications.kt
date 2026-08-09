@@ -92,10 +92,16 @@ object CompanionNotifications {
             // keyguard and let the redacted public version speak for it there.
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(redacted(app, channel, title, pending))
-            .setTimeoutAfter(message.timeoutMs)
             .setShowWhen(true)
 
         if (message.wantsAnswer) {
+            // `timeout_s` is how long the SERVER waits for an answer, so once
+            // it has passed the question is dead and the notification should go
+            // with it. It is emphatically NOT a shelf life for a plain message:
+            // "the washing machine finished" carries the server's 30s notify
+            // timeout, and self-destructing after 30 seconds is how a user
+            // misses the message the whole feature exists to deliver.
+            builder.setTimeoutAfter(message.timeoutMs)
             // A question must not be swiped into oblivion without an answer:
             // dismissing it is a deliberate act inside the activity, which is
             // what reports `dismissed` and lets the server escalate.
@@ -127,6 +133,22 @@ object CompanionNotifications {
             Log.w(TAG, "could not cancel the companion notification", t)
         }
     }
+
+    /**
+     * Take every companion notification down.
+     *
+     * Called when the channel goes away for good. A question whose ledger entry
+     * has just been cleared can no longer be answered — tapping it lands on an
+     * id nobody remembers — so leaving it on the shade is offering the user a
+     * control that does nothing.
+     */
+    fun cancelAll(context: Context) {
+        val ids = posted.keys.toList()
+        for (id in ids) cancel(context, id)
+    }
+
+    /** How many companion notifications this process believes are up. */
+    val postedCount: Int get() = posted.size
 
     /** Title text. Sensitive questions do not put themselves in the title. */
     fun titleFor(message: CompanionProtocol.Message): String = when {
