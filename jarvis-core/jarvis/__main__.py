@@ -23,7 +23,7 @@ from typing import Any
 
 from .api.server import create_app
 from .auth import async_setup_auth
-from .config import ConfigError, load_config
+from .config import ConfigError, load_config_with_provenance
 from .const import VERSION
 from .core import Jarvis
 
@@ -139,10 +139,33 @@ def _install_signal_handlers(stop: Any) -> Any:
     return _remove
 
 
+def _reapply_early_consumers(jarvis: Jarvis, args: argparse.Namespace) -> None:
+    """Re-run the setup steps that happened before the overlay was readable.
+
+    Logging is configured from the raw YAML long before the Jarvis object
+    exists — it has to be, or a configuration error has nowhere to print. That
+    means a log level set from the console is applied at startup and then
+    immediately overwritten by the file's, so turning on debug logging appears
+    to work and is gone by morning.
+
+    An explicit `--log-level` or `--verbose` still wins: a flag typed on the
+    command line is a stronger statement of intent than a stored preference.
+
+    One key today. It is a function rather than two lines inline because the
+    next setting read before setup will want the same treatment, and the reason
+    is easier to find written down once.
+    """
+    if args.log_level or args.verbose:
+        return
+    level = (jarvis.config.get("jarvis") or {}).get("log_level")
+    if level:
+        logging.getLogger().setLevel(_level(level))
+
+
 async def async_run(args: argparse.Namespace) -> int:
     config_dir = Path(args.config).expanduser().resolve()
     try:
-        config = load_config(config_dir)
+        config, package_provenance = load_config_with_provenance(config_dir)
     except ConfigError as err:
         setup_logging({}, args.log_level)
         _LOGGER.error("Configuration error: %s", err)
@@ -179,7 +202,11 @@ async def async_run(args: argparse.Namespace) -> int:
 
     remove_handlers = _install_signal_handlers(_stop)
     try:
-        await jarvis.async_setup(config)
+        await jarvis.async_setup(config, package_provenance)
+        # setup_logging ran against the raw YAML thirty lines above, before the
+        # Jarvis object existed, so a log level set from the console silently
+        # reverted to the file's on every restart. Re-apply the effective one.
+        _reapply_early_consumers(jarvis, args)
         if stopping:  # signalled before the server ever came up
             return 0
 

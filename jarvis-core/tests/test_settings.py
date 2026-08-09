@@ -219,3 +219,72 @@ async def test_reset_forgets_the_override_and_says_whether_it_did(tmp_path):
 
     reloaded = SettingsOverlay(tmp_path)
     assert await reloaded.async_load() == {}
+
+
+# ---------------------------------------------------------------------------
+# the wiring: does an overlaid setting reach the thing that reads it?
+# ---------------------------------------------------------------------------
+async def test_an_overlaid_setting_reaches_the_integration_at_boot(tmp_path):
+    """The bug this commit exists to prevent, tested where it lives.
+
+    Integrations are constructed from the dict handed to
+    `async_setup_integrations`, not from `jarvis.config`. An overlay applied
+    only to the attribute would leave the assistant running the file's model
+    while the console reported the overlay's — and a test that inspected
+    `jarvis.config` would pass throughout. So this asserts on the object the
+    conversation actually uses.
+    """
+    from jarvis.core import Jarvis
+
+    overlay = SettingsOverlay(tmp_path)
+    await overlay.async_set("llm.model", "qwen3:14b")
+    await overlay.async_set("llm.max_tool_rounds", 3)
+
+    jarvis = Jarvis(tmp_path)
+    await jarvis.async_setup({"llm": {"model": "qwen3:8b", "url": "http://127.0.0.1:11434"}})
+
+    agent = jarvis.data.get("llm")
+    assert agent is not None, "the llm integration did not set up"
+    assert agent.model == "qwen3:14b"
+    assert agent.max_tool_rounds == 3
+    # And the client's own default, which `chat()` falls back to whenever a
+    # caller does not pass a model. Setting only the agent leaves half the
+    # calls on the old model, which reads as the setting working sometimes.
+    assert agent.client.model == "qwen3:14b"
+
+    await jarvis.async_stop()
+
+
+async def test_the_raw_config_is_kept_so_reset_can_show_what_it_reverts_to(tmp_path):
+    from jarvis.core import Jarvis
+
+    overlay = SettingsOverlay(tmp_path)
+    await overlay.async_set("jarvis.name", "Friday")
+
+    jarvis = Jarvis(tmp_path)
+    await jarvis.async_setup({"jarvis": {"name": "Jarvis"}})
+
+    assert jarvis.config["jarvis"]["name"] == "Friday"
+    assert jarvis.raw_config["jarvis"]["name"] == "Jarvis"
+
+    await jarvis.async_stop()
+
+
+async def test_a_dropped_overlay_entry_does_not_stop_startup(tmp_path, caplog):
+    """The unbootable-box case, end to end."""
+    from jarvis.core import Jarvis
+
+    overlay = SettingsOverlay(tmp_path)
+    await overlay.async_set("voice.tts_voice", "en_GB-alan-medium")
+
+    jarvis = Jarvis(tmp_path)
+    with caplog.at_level("WARNING"):
+        # `voice:` present but not a section — what commenting out its body
+        # leaves behind.
+        await jarvis.async_setup({"jarvis": {"name": "Jarvis"}, "voice": "oops"})
+
+    assert jarvis.config["jarvis"]["name"] == "Jarvis"  # it booted
+    assert [entry.key for entry in jarvis.settings.unapplied] == ["voice.tts_voice"]
+    assert "voice.tts_voice not applied" in caplog.text
+
+    await jarvis.async_stop()

@@ -16,6 +16,7 @@ from .bus import Context, EventBus
 from .const import EVENT_JARVIS_START, EVENT_JARVIS_STOP
 from .registry import AreaRegistry, DeviceRegistry, EntityRegistry
 from .services import ServiceRegistry
+from .settings import SettingsOverlay
 from .state import StateMachine
 from .store import Store
 
@@ -26,12 +27,20 @@ class Jarvis:
     def __init__(self, config_dir: str | Path) -> None:
         self.config_dir = Path(config_dir).resolve()
         self.config: dict[str, Any] = {}
+        #: The configuration exactly as the files give it, before the overlay.
+        #: Kept so the console can show what a setting would revert to.
+        self.raw_config: dict[str, Any] = {}
         self.bus = EventBus()
         self.states = StateMachine(self.bus)
         self.services = ServiceRegistry(self.bus)
         self.areas = AreaRegistry(self.bus, Store(self.config_dir, "area_registry"))
         self.devices = DeviceRegistry(self.bus, Store(self.config_dir, "device_registry"))
         self.entities = EntityRegistry(self.bus, Store(self.config_dir, "entity_registry"))
+        # An attribute beside the registries rather than a `data` key: the
+        # reload services have to reach it without importing an integration,
+        # and it has the same lifecycle as the rest of the core infrastructure.
+        # `data` stays what its comment below says it is.
+        self.settings = SettingsOverlay(self.config_dir)
         # Free-form scratch space shared by integrations (keyed by domain).
         self.data: dict[str, Any] = {}
         self.is_running = False
@@ -79,9 +88,33 @@ class Jarvis:
         return None
 
     # --- lifecycle --------------------------------------------------------
-    async def async_setup(self, config: dict[str, Any]) -> None:
+    async def async_install_config(
+        self, config: dict[str, Any], package_provenance: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        """Merge the settings overlay over `config` and adopt the result.
+
+        Returns the overlaid dict, and callers must use the return value rather
+        than the dict they passed in. That is the whole point: integrations are
+        built from the dict handed to `async_setup_integrations`, not from
+        `self.config`, so an overlay applied only to the attribute would leave
+        every LLM and voice setting inert at boot — the console would report a
+        model that nothing was running.
+        """
+        self.raw_config = config
+        merged, _unapplied = self.settings.apply(config, package_provenance or {})
+        self.config = merged
+        return merged
+
+    async def async_setup(
+        self,
+        config: dict[str, Any],
+        package_provenance: dict[str, str] | None = None,
+    ) -> None:
         """Load registries and set up every configured integration."""
-        self.config = config
+        await self.settings.async_load()
+        # Rebinding the local on purpose — see async_install_config. Both the
+        # areas loop below and async_setup_integrations must see the overlay.
+        config = await self.async_install_config(config, package_provenance)
         await asyncio.gather(
             self.areas.load(), self.devices.load(), self.entities.load()
         )
