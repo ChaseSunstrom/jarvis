@@ -34,7 +34,21 @@ class MicStreamer(
      */
     private val captureProfile: () -> CaptureProfile = {
         CaptureProfile.forRoute(AudioRoute())
-    }
+    },
+    /**
+     * Capture could not start, with a sentence for the user.
+     *
+     * Every failure below used to be `Log.e(...); return`, which made a dead
+     * microphone indistinguishable from a working one: the caller saw a
+     * streamer that had "started", the orb said LISTENING, and the only
+     * evidence was a logcat line on a phone nobody has a cable for. A silent
+     * failure is a bug in itself, so the reason has to reach a screen.
+     *
+     * Delivered on the main thread. Defaults to a no-op so the callers that
+     * have nowhere to put it (the companion prompt handles its own failure)
+     * are unaffected.
+     */
+    private val onUnavailable: (String) -> Unit = {}
 ) {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var running = false
@@ -52,6 +66,7 @@ class MicStreamer(
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING)
         if (minBuf <= 0) {
             Log.e(TAG, "invalid min buffer size: $minBuf")
+            fail("This device will not open a 16 kHz mono recorder.")
             return
         }
         // VOICE_COMMUNICATION when the reply would otherwise be heard as a new
@@ -74,10 +89,17 @@ class MicStreamer(
         val rec = try {
             AudioRecord(source, SAMPLE_RATE, CHANNEL, ENCODING, minBuf * 2)
         } catch (e: Exception) {
-            Log.e(TAG, "AudioRecord init failed", e); return
+            Log.e(TAG, "AudioRecord init failed", e)
+            // The usual cause is a revoked RECORD_AUDIO, which on GrapheneOS
+            // can also be "granted" while the per-app Sensors toggle is off.
+            fail("The microphone could not be opened. Check the Microphone permission for Jarvis.")
+            return
         }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord not initialized"); rec.release(); return
+            Log.e(TAG, "AudioRecord not initialized")
+            rec.release()
+            fail("The microphone is busy — another app may be holding it.")
+            return
         }
         record = rec
         running = true
@@ -95,6 +117,11 @@ class MicStreamer(
                 main.post { onLevel(out) }
             }
         }
+    }
+
+    /** Report a capture failure to the caller, on the main thread. */
+    private fun fail(reason: String) {
+        main.post { onUnavailable(reason) }
     }
 
     fun stop() {

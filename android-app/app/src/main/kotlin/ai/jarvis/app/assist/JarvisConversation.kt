@@ -59,10 +59,44 @@ class JarvisConversation(
     // energy VAD
     private var speechStartedAt = 0L
     private var lastVoiceAt = 0L
+    /** When the level first went above [START_THRESHOLD] in the current run. */
+    private var aboveSince = 0L
     private var sawSpeech = false
     private var turnActive = false
     private var responseBuffer = StringBuilder()
-    private val inactivity = Runnable { if (isListening()) stopWith(idle = true) }
+
+    /**
+     * Nothing was heard within [inactivityMs] of the pipeline asking for audio.
+     *
+     * Two outcomes, deliberately different. If speech was detected the turn is
+     * simply over and this is a normal end. If it was NOT, the microphone
+     * produced [inactivityMs] of nothing usable, and saying so is the whole
+     * point: without it a revoked permission, a muted mic, a mic another app is
+     * holding and a perfectly working mic in a quiet room all look identical —
+     * the surface just closes.
+     */
+    private val inactivity = Runnable {
+        if (!isListening()) return@Runnable
+        if (sawSpeech) {
+            stopWith(idle = true)
+        } else {
+            ui.onError(NOTHING_HEARD)
+            main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
+        }
+    }
+
+    /**
+     * Backstop for a turn whose end-of-speech never arrives.
+     *
+     * [inactivity] is disarmed the moment speech is detected, so without this a
+     * room whose noise floor sits in the [END_THRESHOLD]..[START_THRESHOLD]
+     * dead band after one cough would hold the turn open forever: the level
+     * matches neither edge, `endAudio()` is never sent, and nothing is left to
+     * time out. Ending the audio is the right response rather than tearing the
+     * conversation down — we have the user's speech, so let the server
+     * transcribe it.
+     */
+    private val turnCap = Runnable { if (isListening() && sawSpeech) endTurnAudio() }
 
     val isRunning: Boolean get() = running
 
@@ -92,6 +126,12 @@ class JarvisConversation(
             onPcm = { buf, len -> client?.sendAudio(buf, len) },
             onLevel = ::onMicLevel,
             captureProfile = { profile },
+            // Capture never started. Say why, then end the conversation rather
+            // than leaving the orb listening to a microphone that is not there.
+            onUnavailable = { reason ->
+                ui.onError(reason)
+                main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
+            },
         ).also { it.start() }
         // LISTENING is signalled once the pipeline run starts (onState).
     }
@@ -102,6 +142,7 @@ class JarvisConversation(
         if (!running && !idle) return
         running = false
         main.removeCallbacks(inactivity)
+        main.removeCallbacks(turnCap)
         mic?.stop(); mic = null
         tts?.stop(); tts = null
         client?.close(); client = null
@@ -122,7 +163,9 @@ class JarvisConversation(
         if (!running) return
         responseBuffer = StringBuilder()
         sawSpeech = false
+        aboveSince = 0L
         turnActive = true
+        main.removeCallbacks(turnCap)
         main.post {
             ui.onTranscript("")
             ui.onResponse("")
@@ -143,19 +186,43 @@ class JarvisConversation(
         if (!isListening()) return
 
         if (level > START_THRESHOLD) {
-            if (!sawSpeech) {
+            // Start edge, debounced. MIN_SPEECH_MS is a minimum turn LENGTH,
+            // not a start guard, so without this a single 64 ms transient — a
+            // cough, a chair, a door — latches the turn and disarms the
+            // inactivity timeout. jarvis-web gates the same edge on 120 ms of
+            // sustained energy (lib/wake.ts minSpeechMs).
+            if (aboveSince == 0L) aboveSince = now
+            if (!sawSpeech && now - aboveSince >= START_DEBOUNCE_MS) {
                 sawSpeech = true
                 speechStartedAt = now
                 main.removeCallbacks(inactivity)
+                main.removeCallbacks(turnCap)
+                main.postDelayed(turnCap, MAX_TURN_MS)
             }
-            lastVoiceAt = now
-        } else if (sawSpeech &&
-            now - speechStartedAt > MIN_SPEECH_MS &&
-            now - lastVoiceAt > END_SILENCE_MS
-        ) {
-            turnActive = false
-            client?.endAudio()
+            if (sawSpeech) lastVoiceAt = now
+        } else {
+            aboveSince = 0L
+            if (level >= END_THRESHOLD) {
+                // The dead band between the two thresholds is ambiguous audio,
+                // not silence, so it must not advance the hangover — the same
+                // rule as jarvis-web, which clears `belowSince` whenever the
+                // level is not below endThreshold (lib/wake.ts).
+                lastVoiceAt = now
+            } else if (sawSpeech &&
+                now - speechStartedAt > MIN_SPEECH_MS &&
+                now - lastVoiceAt > END_SILENCE_MS
+            ) {
+                endTurnAudio()
+            }
         }
+    }
+
+    /** End-of-audio for this turn: the sentinel jarvis-core waits on. */
+    private fun endTurnAudio() {
+        if (!turnActive) return
+        turnActive = false
+        main.removeCallbacks(turnCap)
+        client?.endAudio()
     }
 
     private fun isListening() =
@@ -169,6 +236,8 @@ class JarvisConversation(
             AssistPipelineClient.State.LISTENING -> {
                 turnActive = true
                 sawSpeech = false
+                aboveSince = 0L
+                main.removeCallbacks(turnCap)
                 ui.onMode(JarvisOrbView.Mode.LISTENING, "LISTENING")
                 if (inactivityMs > 0) {
                     main.removeCallbacks(inactivity)
@@ -178,6 +247,7 @@ class JarvisConversation(
             AssistPipelineClient.State.THINKING -> {
                 ui.onMode(JarvisOrbView.Mode.THINKING, "PROCESSING")
                 main.removeCallbacks(inactivity)
+                main.removeCallbacks(turnCap)
             }
             AssistPipelineClient.State.SPEAKING ->
                 ui.onMode(JarvisOrbView.Mode.SPEAKING, "RESPONDING")
@@ -218,9 +288,66 @@ class JarvisConversation(
     }
 
     companion object {
-        private const val START_THRESHOLD = 0.06f
+        /**
+         * Energy VAD thresholds, on the same 0..1 smoothed-RMS scale
+         * [MicStreamer] reports.
+         *
+         * These were 0.06 for both edges, which is -24 dBFS, and no
+         * conversational speech off a phone mic at arm's length ever reached
+         * it: real speech lands around 0.01-0.03 raw, and MicStreamer's
+         * one-pole smoother (alpha 0.3 per 64 ms chunk) tracks the quarter-
+         * second mean of the envelope rather than the vowel peaks, pulling it
+         * down further. The capture source makes it worse rather than better —
+         * VOICE_RECOGNITION is chosen precisely because it is un-AGC'd (see
+         * AudioRoute), so nothing lifts the level towards the threshold.
+         *
+         * The only signal that ever exercised this VAD was SyntheticSpeech, a
+         * continuous 220 Hz sine deliberately sitting five times above it, so
+         * the emulator suite could not see the problem.
+         *
+         * These are jarvis-web's numbers (`src/lib/wake.ts`: startThreshold
+         * 0.02, endThreshold 0.01), which is the client that demonstrably
+         * works — and it feeds on a getUserMedia stream with autoGainControl
+         * enabled, i.e. a signal that is already louder than this one.
+         *
+         * Separate start and end edges give the hysteresis a single threshold
+         * cannot: crossing 0.02 starts a turn, and only falling below 0.01
+         * counts towards the hangover.
+         */
+        private const val START_THRESHOLD = 0.02f
+        private const val END_THRESHOLD = 0.01f
+
+        /**
+         * Barge-in over the reply. Must stay well above [START_THRESHOLD]: it
+         * is answered by cancelling TTS and starting a new turn, so a value
+         * near the start edge would make the phone interrupt itself.
+         */
         private const val BARGE_THRESHOLD = 0.10f
+
+        /** Sustained energy required to latch the start edge (jarvis-web: 120 ms). */
+        private const val START_DEBOUNCE_MS = 120L
+
+        /** Minimum length of a turn before its end may be declared. */
         private const val MIN_SPEECH_MS = 300L
+
+        /** Trailing silence that ends a turn. */
         private const val END_SILENCE_MS = 900L
+
+        /**
+         * Hard cap on one turn's audio. Only a backstop — see [turnCap]. Long
+         * enough that no real utterance is cut off.
+         */
+        private const val MAX_TURN_MS = 30_000L
+
+        /** How long an error stays on screen before the surface closes. */
+        private const val ERROR_LINGER_MS = 2_000L
+
+        /**
+         * Said when the microphone ran and the VAD heard nothing at all. Not a
+         * pipeline error — an honest report that there was no audio, which is
+         * the one thing the old silent-close path never told anybody.
+         */
+        private const val NOTHING_HEARD =
+            "I did not hear anything. Check the microphone permission, or speak a little closer."
     }
 }

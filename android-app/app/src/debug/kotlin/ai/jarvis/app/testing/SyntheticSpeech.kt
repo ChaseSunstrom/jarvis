@@ -17,11 +17,11 @@ import kotlin.math.sin
  *    level ≈ amplitude          level ≈ 0
  * ```
  *
- * `JarvisConversation` starts a turn when the smoothed RMS crosses
- * `START_THRESHOLD` (0.06) and ends it after `END_SILENCE_MS` (900 ms) below it,
- * provided at least `MIN_SPEECH_MS` (300 ms) of speech happened. The defaults
- * below clear both by a comfortable margin without being so loud that they
- * saturate.
+ * `JarvisConversation` starts a turn when the smoothed RMS stays above
+ * `START_THRESHOLD` for `START_DEBOUNCE_MS`, and ends it after `END_SILENCE_MS`
+ * below `END_THRESHOLD`, provided at least `MIN_SPEECH_MS` of speech happened.
+ * The defaults below clear both, at a level a person actually produces — see
+ * [DEFAULT_AMPLITUDE] for why that matters more than the margin does.
  *
  * ## Why it repeats
  *
@@ -90,17 +90,25 @@ class SyntheticSpeech(
 
         /**
          * Comfortably past `END_SILENCE_MS` (900 ms), with room for the server
-         * to answer before the next burst barges in over the reply.
+         * to answer before the next burst arrives.
          */
         const val DEFAULT_SILENCE_MS = 3_500L
 
         /**
-         * RMS of a full-scale sine is 1/√2 ≈ 0.707 of its peak, so 0.45 peak
-         * lands around 0.32 RMS — five times `START_THRESHOLD` (0.06) and three
-         * times `BARGE_THRESHOLD` (0.10), which is the margin that keeps this
-         * from being a timing test.
+         * RMS of a full-scale sine is 1/√2 ≈ 0.707 of its peak, so 0.12 peak
+         * lands around 0.085 RMS.
+         *
+         * This used to be 0.45 peak — 0.32 RMS, five times the old
+         * `START_THRESHOLD` of 0.06 — and that margin is exactly what let a
+         * VAD threshold three times too high for a real microphone pass CI
+         * unchanged for the whole life of the app. A synthetic voice that can
+         * only pass at 16x the real threshold cannot catch that class of
+         * regression, so this now sits where conversational speech actually
+         * sits: a small multiple of the start edge, and deliberately BELOW
+         * `BARGE_THRESHOLD` (0.10) so the fake microphone does not interrupt
+         * the reply it just asked for.
          */
-        const val DEFAULT_AMPLITUDE = 0.45f
+        const val DEFAULT_AMPLITUDE = 0.12f
 
         /** Low enough to survive any resampling, high enough to be audible. */
         const val DEFAULT_TONE_HZ = 220.0
