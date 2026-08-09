@@ -1,6 +1,7 @@
 """Core contract tests: bus, state machine, services, registries, config."""
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -9,7 +10,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jarvis.bus import Context, EventBus  # noqa: E402
-from jarvis.config import ConfigError, load_config  # noqa: E402
+from jarvis.config import (  # noqa: E402
+    ConfigError,
+    load_config,
+    load_config_with_provenance,
+    load_provenance,
+)
 from jarvis.const import EVENT_STATE_CHANGED  # noqa: E402
 from jarvis.core import Jarvis  # noqa: E402
 from jarvis.entity import Entity, EntityPlatform  # noqa: E402
@@ -285,6 +291,135 @@ def test_config_include_secret_env_and_packages(tmp_path, monkeypatch):
     assert len(config["light"]) == 2
     assert {entry["platform"] for entry in config["light"]} == {"demo", "other"}
     assert "packages" not in config  # folded away
+
+
+def test_merge_packages_records_which_package_supplied_each_key(tmp_path):
+    """After the merge, a package's value is indistinguishable from a literal.
+
+    Which is a problem for anything that has to decide whether it may shadow a
+    value: overlaying `llm.model` is fine when configuration.yaml set it and
+    wrong when `packages/ollama.yaml` did, because the user edits that file and
+    would never see why their edit stopped taking effect. This is the one
+    moment the answer is known.
+    """
+    _write(tmp_path, "packages/lights.yaml", "light:\n  - platform: demo\n")
+    _write(tmp_path, "packages/brain.yaml", "llm:\n  model: qwen3:8b\n")
+    _write(tmp_path, "packages/more_lights.yaml", "light:\n  - platform: other\n")
+    _write(
+        tmp_path,
+        "configuration.yaml",
+        "jarvis:\n"
+        "  name: Jarvis\n"
+        "llm:\n"
+        "  url: http://127.0.0.1:11434\n"
+        "packages: !include_dir_named packages\n",
+    )
+
+    config, provenance = load_config_with_provenance(tmp_path)
+
+    # A whole key a package introduced, by package name.
+    assert provenance["light"] == "more_lights" or provenance["light"] == "lights"
+    # A subkey merged into a mapping configuration.yaml already owns. Recorded
+    # per subkey, because `llm.url` came from the file and `llm.model` did not.
+    assert provenance["llm.model"] == "brain"
+    assert "llm.url" not in provenance
+    # And nothing claims to know about keys no package touched.
+    assert "jarvis" not in provenance
+    assert config["llm"] == {"url": "http://127.0.0.1:11434", "model": "qwen3:8b"}
+
+
+def test_load_config_is_unchanged_by_provenance_collection(tmp_path):
+    """The new path is an addition, not a migration."""
+    _write(tmp_path, "packages/lights.yaml", "light:\n  - platform: demo\n")
+    _write(
+        tmp_path,
+        "configuration.yaml",
+        "jarvis:\n  name: Jarvis\npackages: !include_dir_named packages\n",
+    )
+
+    assert load_config(tmp_path) == load_config_with_provenance(tmp_path)[0]
+
+    # And the shipped configuration, which is the one that matters.
+    shipped = Path(__file__).resolve().parents[1] / "config"
+    assert load_config(shipped) == load_config_with_provenance(shipped)[0]
+
+
+def test_provenance_reports_env_var_names_but_never_values_or_secrets(tmp_path, monkeypatch):
+    """Explain where a value came from, without becoming a way to read secrets.
+
+    The fixture puts both tags **behind an `!include`**, which is the whole
+    point. At the top level this passes even with the ordinary loader chain;
+    behind an include it only passes if the provenance loader's own include
+    constructors are in place, and the shipped configuration reaches
+    automations, scripts, scenes and every package through exactly those tags.
+    """
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    _write(tmp_path, "secrets.yaml", "mqtt_pass: hunter2seventeen\n")
+    _write(
+        tmp_path,
+        "brain.yaml",
+        "model: !env_var OLLAMA_MODEL qwen3:8b\npassword: !secret mqtt_pass\n",
+    )
+    _write(tmp_path, "configuration.yaml", "jarvis:\n  name: J\nllm: !include brain.yaml\n")
+
+    prov = load_provenance(tmp_path)
+
+    assert prov["llm.model"]["tag"] == "env_var"
+    assert prov["llm.model"]["env_var"] == "OLLAMA_MODEL"
+    assert prov["llm.model"]["env_set"] is False
+    assert prov["llm.model"]["yaml_default"] == "qwen3:8b"
+
+    assert prov["llm.password"]["tag"] == "secret"
+    assert prov["llm.password"]["secret_key"] == "mqtt_pass"
+    # The name, never the value — this map is rendered in a browser.
+    assert "hunter2seventeen" not in json.dumps(prov)
+
+    # And it reports what IS set, so the console can say "your .env is winning".
+    monkeypatch.setenv("OLLAMA_MODEL", "llama3")
+    assert load_provenance(tmp_path)["llm.model"]["env_set"] is True
+
+
+def test_provenance_follows_includes_and_package_directories(tmp_path):
+    """The keys a package supplied are precisely the ones users cannot see."""
+    _write(tmp_path, "packages/brain.yaml", "llm:\n  model: !env_var OLLAMA_MODEL qwen3:8b\n")
+    _write(
+        tmp_path,
+        "configuration.yaml",
+        "jarvis:\n  name: J\npackages: !include_dir_named packages\n",
+    )
+
+    prov = load_provenance(tmp_path)
+
+    assert prov["llm.model"]["env_var"] == "OLLAMA_MODEL"
+
+
+def test_provenance_never_resolves_a_secret_even_for_a_missed_path(tmp_path, monkeypatch):
+    """The empty secrets map is a belt, not decoration.
+
+    Simulates the bug this loader is written to avoid — an include constructor
+    that falls through to the ordinary loader — and asserts the result is a
+    raised ConfigError rather than a quietly resolved secret.
+    """
+    from jarvis import config as config_module
+
+    _write(tmp_path, "secrets.yaml", "mqtt_pass: hunter2seventeen\n")
+    _write(tmp_path, "brain.yaml", "password: !secret mqtt_pass\n")
+    _write(tmp_path, "configuration.yaml", "llm: !include brain.yaml\n")
+
+    def _leaky(loader, node):
+        # What the inherited constructor does: parse with the ordinary loader,
+        # handing it whatever secrets the provenance loader carries.
+        return config_module.load_yaml(
+            loader.config_dir / str(loader.construct_scalar(node)),
+            loader.config_dir,
+            loader.secrets,
+        )
+
+    monkeypatch.setitem(
+        config_module._ProvLoader.yaml_constructors, "!include", _leaky
+    )
+    with pytest.raises(ConfigError):
+        load_provenance(tmp_path)
 
 
 def test_config_missing_secret_raises(tmp_path):
