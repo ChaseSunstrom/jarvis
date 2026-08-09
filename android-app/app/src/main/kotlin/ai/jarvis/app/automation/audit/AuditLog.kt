@@ -41,21 +41,22 @@ data class AuditEntry(
     val note: String? = null
 ) {
     /** Serialised form. `params` is redacted here and only here. */
-    internal fun toJson(): JSONObject = JSONObject()
-        .put("ts", timestamp)
-        .put("action", actionId)
-        .put("params", ParamRedaction.redact(params))
-        .put("tier", tier.name)
-        .put("decision", decision.name)
-        .put("status", status)
-        .put("ok", ok)
-        .apply {
-            error?.let { put("error", Redactor.truncate(it)) }
-            commandId?.let { put("command_id", it) }
-            note?.let { put("note", Redactor.truncate(it)) }
-        }
-        .put("source", source)
-        .put("duration_ms", durationMs)
+    internal fun toJson(): JSONObject {
+        val out = JSONObject()
+            .put("ts", timestamp)
+            .put("action", actionId)
+            .put("params", ParamRedaction.redact(params))
+            .put("tier", tier.name)
+            .put("decision", decision.name)
+            .put("status", status)
+            .put("ok", ok)
+            .put("source", source)
+            .put("duration_ms", durationMs)
+        error?.let { out.put("error", Redactor.truncate(it)) }
+        commandId?.let { out.put("command_id", it) }
+        note?.let { out.put("note", Redactor.truncate(it)) }
+        return out
+    }
 
     companion object {
         internal fun fromJson(o: JSONObject): AuditEntry = AuditEntry(
@@ -105,18 +106,20 @@ class AuditLog(
     /** The file the settings screen can offer to export. */
     fun file(): File = file
 
-    suspend fun record(entry: AuditEntry) = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            try {
-                if (!dir.exists()) dir.mkdirs()
-                val line = entry.toJson().toString()
-                file.appendText(line + "\n")
-                if (lineCount < 0) lineCount = countLines()
-                lineCount += 1
-                if (lineCount >= maxEntries + ROTATE_SLACK) compactLocked()
-            } catch (t: Throwable) {
-                // Never let bookkeeping break the action path.
-                Log.w(TAG, "audit write failed for ${entry.actionId}", t)
+    suspend fun record(entry: AuditEntry) {
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                try {
+                    if (!dir.exists()) dir.mkdirs()
+                    val line = entry.toJson().toString()
+                    file.appendText(line + "\n")
+                    if (lineCount < 0) lineCount = countLines()
+                    lineCount += 1
+                    if (lineCount >= maxEntries + ROTATE_SLACK) compactLocked()
+                } catch (t: Throwable) {
+                    // Never let bookkeeping break the action path.
+                    Log.w(TAG, "audit write failed for ${entry.actionId}", t)
+                }
             }
         }
     }
@@ -129,7 +132,7 @@ class AuditLog(
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 try {
-                    if (!file.exists()) return@withLock emptyList()
+                    if (!file.exists()) return@withLock emptyList<AuditEntry>()
                     val all = ArrayList<AuditEntry>()
                     file.forEachLine { raw ->
                         val line = raw.trim()
@@ -142,7 +145,7 @@ class AuditLog(
                     if (ordered.size > limit) ordered.take(limit) else ordered.toList()
                 } catch (t: Throwable) {
                     Log.w(TAG, "audit read failed", t)
-                    emptyList()
+                    emptyList<AuditEntry>()
                 }
             }
         }
@@ -162,12 +165,13 @@ class AuditLog(
     }
 
     /** User-initiated wipe. */
-    suspend fun clear() = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            runCatching { if (file.exists()) file.delete() }
-                .onFailure { Log.w(TAG, "audit clear failed", it) }
-            lineCount = 0
-            Unit
+    suspend fun clear() {
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                runCatching { if (file.exists()) file.delete() }
+                    .onFailure { Log.w(TAG, "audit clear failed", it) }
+                lineCount = 0
+            }
         }
     }
 

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-desktop"
+version = "0.1.0"
+description = "The Jarvis device agent for Linux, macOS and Windows: local automation with policy enforced on the device."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jarvis" }]
+keywords = ["jarvis", "automation", "self-hosted", "assistant"]
+
+# The only hard dependency is the websocket client. Everything else degrades:
+# no psutil means stdlib metrics, no pyperclip means the platform CLI, no
+# pyautogui means input automation reports itself unsupported, no tkinter means
+# the consent prompt falls back to the terminal.
+dependencies = ["websockets>=12,<16"]
+
+[project.optional-dependencies]
+# Better system metrics (CPU percent, memory, battery).
+metrics = ["psutil>=5.9"]
+# Cross-platform clipboard without the per-OS CLI tools.
+clipboard = ["pyperclip>=1.8"]
+# Synthetic keyboard/mouse and screenshots. Off by default in the config too.
+input = ["pyautogui>=0.9.54"]
+# Windows desktop notifications.
+windows = ["win10toast>=0.9"]
+full = ["psutil>=5.9", "pyperclip>=1.8", "pyautogui>=0.9.54"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+jarvis-desktop = "jarvis_desktop.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["jarvis_desktop*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error::DeprecationWarning:jarvis_desktop.*"]

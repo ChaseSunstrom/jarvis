@@ -18,6 +18,11 @@ from typing import Any
 
 from ...const import (
     ATTR_BRIGHTNESS,
+    ATTR_DEVICE_CLASS,
+    ATTR_FRIENDLY_NAME,
+    ATTR_ICON,
+    ATTR_SUPPORTED_FEATURES,
+    ATTR_UNIT_OF_MEASUREMENT,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_CURRENT_TEMPERATURE,
     ATTR_HVAC_MODE,
@@ -47,12 +52,37 @@ DEFAULT_PAYLOAD_AVAILABLE = "online"
 DEFAULT_PAYLOAD_NOT_AVAILABLE = "offline"
 DEFAULT_BRIGHTNESS_SCALE = 255
 
+# Attributes a device may never set through `json_attributes_topic`. That topic
+# carries live device data, not configuration, so anything publishing to it gets
+# to choose the values -- and friendly_name is what the voice and LLM layers
+# resolve spoken names against. A plug that renames itself "Front Door Lock"
+# would quietly become the target of "unlock the front door".
+BLOCKED_JSON_ATTRIBUTES = frozenset(
+    {
+        ATTR_FRIENDLY_NAME,
+        ATTR_ICON,
+        ATTR_DEVICE_CLASS,
+        ATTR_UNIT_OF_MEASUREMENT,
+        ATTR_SUPPORTED_FEATURES,
+        "entity_id",
+        "device_id",
+        "unique_id",
+    }
+)
+
 
 # --- templating -------------------------------------------------------------
+# SECURITY: MQTT templates are NOT trusted input. `value_template` and friends
+# arrive inside discovery payloads, so anything able to publish to the broker --
+# a compromised bulb, a neighbour on the same LAN, a mis-flashed ESP -- gets to
+# choose the template text. A plain jinja2.Environment gives that publisher
+# arbitrary Python (`{{ ''.__class__.__mro__[1].__subclasses__() }}` reaches
+# `os.system`), so the sandbox is load-bearing, not belt-and-braces.
 try:  # jinja2 is the normal path; the fallback keeps us honest without it
     import jinja2
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-    _ENV: Any = jinja2.Environment(
+    _ENV: Any = ImmutableSandboxedEnvironment(
         undefined=getattr(jinja2, "ChainableUndefined", jinja2.Undefined),
         autoescape=False,
     )
@@ -60,7 +90,11 @@ except ImportError:  # pragma: no cover - jinja2 is a listed dependency
     jinja2 = None  # type: ignore[assignment]
     _ENV = None
 
+# Compiled templates are cached by source text. A hostile broker can mint an
+# unbounded number of distinct templates, so the cache is capped rather than
+# left to grow into the process.
 _TEMPLATE_CACHE: dict[str, Any] = {}
+_TEMPLATE_CACHE_MAX = 512
 
 
 def _fallback_render(template: str, context: dict[str, Any]) -> str:
@@ -74,6 +108,9 @@ def _fallback_render(template: str, context: dict[str, Any]) -> str:
             part = part.strip().strip("]").strip("'\"")
             if not part:
                 continue
+            if part.startswith("_"):
+                # No dunder walking, same reason the jinja2 path is sandboxed.
+                return ""
             if isinstance(current, dict):
                 current = current.get(part)
             elif isinstance(current, list) and part.isdigit():
@@ -116,6 +153,8 @@ def render_value_template(
             except Exception:
                 _LOGGER.warning("Invalid MQTT template %r", template)
                 return default
+            if len(_TEMPLATE_CACHE) >= _TEMPLATE_CACHE_MAX:
+                _TEMPLATE_CACHE.clear()
             _TEMPLATE_CACHE[template] = compiled
         try:
             rendered = compiled.render(**context)
@@ -319,13 +358,14 @@ class MqttEntity(Entity):
         if not topic:
             _LOGGER.warning("%s has no command topic for this action", self.entity_id)
             return False
-        await self._client.async_publish(
+        sent = await self._client.async_publish(
             str(topic),
             payload,
             self._retain if retain is None else retain,
             self._qos if qos is None else qos,
         )
-        return True
+        # Older backends returned None; only an explicit False means "dropped".
+        return sent is not False
 
     # --- templating -------------------------------------------------------
     def _render_command(self, template_key: str, value: Any) -> Any:
@@ -405,9 +445,11 @@ class MqttEntity(Entity):
         mode = str(self._config.get("availability_mode", "latest")).lower()
         states = self._availability_state
         if mode == "all":
-            self._attr_available = len(states) == len(self._availability) and all(
-                states.values()
-            )
+            # Count distinct topics: availability lists sometimes repeat one,
+            # and comparing against the entry count would leave such an entity
+            # unavailable forever no matter what the device says.
+            wanted = {entry["topic"] for entry in self._availability}
+            self._attr_available = wanted <= set(states) and all(states.values())
         elif mode == "any":
             self._attr_available = any(states.values())
         else:  # latest
@@ -437,6 +479,13 @@ class MqttEntity(Entity):
             allow = self._config.get("json_attributes")
             if isinstance(allow, list):
                 data = {k: v for k, v in data.items() if k in allow}
+            blocked = [k for k in data if k in BLOCKED_JSON_ATTRIBUTES]
+            if blocked:
+                _LOGGER.warning(
+                    "%s: ignoring reserved json_attributes %s from %s",
+                    self.entity_id, sorted(blocked), message.topic,
+                )
+                data = {k: v for k, v in data.items() if k not in BLOCKED_JSON_ATTRIBUTES}
             self._json_attributes = data
             self.async_write_state()
 
@@ -559,20 +608,20 @@ class MqttToggleEntity(MqttEntity):
         return self._attr_state == STATE_ON
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self._publish(
+        sent = await self._publish(
             self._config.get("command_topic"),
             self._conf("payload_on", DEFAULT_PAYLOAD_ON),
         )
-        if self._optimistic:
+        if self._optimistic and sent:
             self._attr_state = STATE_ON
             self.async_write_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._publish(
+        sent = await self._publish(
             self._config.get("command_topic"),
             self._conf("payload_off", DEFAULT_PAYLOAD_OFF),
         )
-        if self._optimistic:
+        if self._optimistic and sent:
             self._attr_state = STATE_OFF
             self.async_write_state()
 
@@ -767,10 +816,11 @@ class MqttLight(MqttEntity):
                 payload["color_temp"] = _kelvin_to_mireds(float(kelvin))
             if transition is not None:
                 payload["transition"] = _as_float(transition)
-            await self._publish(self._config.get("command_topic"), payload)
+            sent = await self._publish(self._config.get("command_topic"), payload)
         else:
+            sent = True
             if brightness is not None and self._config.get("brightness_command_topic"):
-                await self._publish(
+                sent &= await self._publish(
                     self._config["brightness_command_topic"],
                     self._render_command(
                         "brightness_command_template", self._scale_brightness(int(brightness))
@@ -778,12 +828,12 @@ class MqttLight(MqttEntity):
                 )
             if rgb is not None and self._config.get("rgb_command_topic"):
                 rgb_payload = ",".join(str(int(component)) for component in tuple(rgb)[:3])
-                await self._publish(
+                sent &= await self._publish(
                     self._config["rgb_command_topic"],
                     self._render_command("rgb_command_template", rgb_payload),
                 )
             if kelvin is not None and self._config.get("color_temp_command_topic"):
-                await self._publish(
+                sent &= await self._publish(
                     self._config["color_temp_command_topic"],
                     self._render_command(
                         "color_temp_command_template", _kelvin_to_mireds(float(kelvin))
@@ -796,10 +846,14 @@ class MqttLight(MqttEntity):
                 and self._config.get("brightness_command_topic")
             )
             if not skip_on:
-                await self._publish(
+                sent &= await self._publish(
                     self._config.get("command_topic"),
                     self._conf("payload_on", DEFAULT_PAYLOAD_ON),
                 )
+
+        if not sent:
+            # Nothing reached the broker; do not paint the light as changed.
+            return
 
         if brightness is not None:
             self._attr_extra_attributes[ATTR_BRIGHTNESS] = max(0, min(255, int(brightness)))
@@ -817,13 +871,13 @@ class MqttLight(MqttEntity):
             payload: dict[str, Any] = {"state": str(self._conf("payload_off", "OFF"))}
             if kwargs.get("transition") is not None:
                 payload["transition"] = _as_float(kwargs["transition"])
-            await self._publish(self._config.get("command_topic"), payload)
+            sent = await self._publish(self._config.get("command_topic"), payload)
         else:
-            await self._publish(
+            sent = await self._publish(
                 self._config.get("command_topic"),
                 self._conf("payload_off", DEFAULT_PAYLOAD_OFF),
             )
-        if self._optimistic:
+        if self._optimistic and sent:
             self._attr_state = STATE_OFF
             self.async_write_state()
 
@@ -894,19 +948,19 @@ class MqttCover(MqttEntity):
         self.async_write_state()
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        await self._publish(
+        sent = await self._publish(
             self._config.get("command_topic"), self._conf("payload_open", "OPEN")
         )
-        if self._optimistic:
+        if self._optimistic and sent:
             self._attr_state = STATE_OPEN
             self._attr_extra_attributes[ATTR_POSITION] = 100
             self.async_write_state()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
-        await self._publish(
+        sent = await self._publish(
             self._config.get("command_topic"), self._conf("payload_close", "CLOSE")
         )
-        if self._optimistic:
+        if self._optimistic and sent:
             self._attr_state = STATE_CLOSED
             self._attr_extra_attributes[ATTR_POSITION] = 0
             self.async_write_state()
@@ -917,11 +971,19 @@ class MqttCover(MqttEntity):
         )
 
     async def async_set_cover_position(self, position: int, **kwargs: Any) -> None:
+        # No falling back to command_topic: that topic speaks OPEN/CLOSE/STOP,
+        # so publishing "50" there is a malformed command the device will
+        # either ignore or, worse, misread.
+        topic = self._config.get("set_position_topic")
+        if not topic:
+            raise ValueError(
+                f"{self.entity_id or self.name} cannot be positioned "
+                "(no set_position_topic configured)"
+            )
         percent = max(0, min(100, int(position)))
         span = self._position_open - self._position_closed
         raw = self._position_closed + span * percent / 100
         payload = self._render_command("set_position_template", _format_number(raw))
-        topic = self._config.get("set_position_topic") or self._config.get("command_topic")
         if await self._publish(topic, payload):
             self._attr_extra_attributes[ATTR_POSITION] = percent
             if self._optimistic or not self._config.get("state_topic"):
@@ -1025,6 +1087,12 @@ class MqttClimate(MqttEntity):
 class MqttLock(MqttEntity):
     mqtt_domain = "lock"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._optimistic = bool(
+            self._config.get("optimistic", not self._config.get("state_topic"))
+        )
+
     async def _async_subscribe_topics(self) -> None:
         await self._subscribe(self._config.get("state_topic"), self._handle_state)
 
@@ -1045,14 +1113,20 @@ class MqttLock(MqttEntity):
         self.async_write_state()
 
     async def async_lock(self, **kwargs: Any) -> None:
-        await self._publish(
+        sent = await self._publish(
             self._config.get("command_topic"), self._conf("payload_lock", "LOCK")
         )
+        if self._optimistic and sent:
+            self._attr_state = STATE_LOCKED
+            self.async_write_state()
 
     async def async_unlock(self, **kwargs: Any) -> None:
-        await self._publish(
+        sent = await self._publish(
             self._config.get("command_topic"), self._conf("payload_unlock", "UNLOCK")
         )
+        if self._optimistic and sent:
+            self._attr_state = STATE_UNLOCKED
+            self.async_write_state()
 
 
 # --- button / number / select / text ----------------------------------------

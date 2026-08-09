@@ -12,7 +12,20 @@ import android.content.SharedPreferences
  * table, and it is written only in response to a human tapping something. The
  * server cannot reach it: there is no action that mutates the policy store.
  */
-class PolicyStore(context: Context) : PolicyProvider {
+class PolicyStore(
+    context: Context,
+    /**
+     * The LOCAL tier of an action id, so this store can enforce the Tier-3 rule
+     * on its own instead of trusting the caller to pass one.
+     *
+     * `Builtins.standard` wires this to the real action table. The default
+     * answers null — "I do not know" — and an unknown tier is treated as
+     * [ActionTier.CONFIRM] when deciding whether an `allow_always` may be
+     * stored, so a store built without the table can never persist a standing
+     * yes for something it cannot classify.
+     */
+    private val tierOf: (String) -> ActionTier? = { null }
+) : PolicyProvider {
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -34,20 +47,37 @@ class PolicyStore(context: Context) : PolicyProvider {
      * the second of two independent guards.
      */
     override fun remember(actionId: String, policy: UserPolicy, effectiveTier: ActionTier) {
-        if (policy == UserPolicy.ALLOW_ALWAYS && !PolicyEngine.canRemember(effectiveTier)) return
-        setPolicy(actionId, policy)
+        setPolicy(actionId, policy, effectiveTier)
     }
 
-    /** Direct set from the settings screen. Same Tier-3 guard as [remember]. */
-    fun setPolicy(actionId: String, policy: UserPolicy, effectiveTier: ActionTier? = null) {
-        if (policy == UserPolicy.ALLOW_ALWAYS &&
-            effectiveTier != null &&
-            !PolicyEngine.canRemember(effectiveTier)
-        ) {
-            return
-        }
-        prefs.edit().putString(key(actionId), policy.name).apply()
+    /**
+     * Direct set from the settings screen. Same Tier-3 guard as [remember], and
+     * it does NOT depend on the caller supplying a tier.
+     *
+     * The tier used for the check is, in order: the one passed in, the one the
+     * local action table reports for this id, or [ActionTier.CONFIRM]. That
+     * last step is the point — an omitted argument used to mean "skip the
+     * check", which made this the one door through which `allow_always` could
+     * be written for `send_sms`. [PolicyEngine.decide] ignores such a value
+     * anyway, but a guard that only works when someone remembers to arm it is
+     * not a second guard.
+     *
+     * @return false when the write was refused because the action is Tier 3, so
+     *   a settings screen can say so rather than silently showing the wrong
+     *   state.
+     */
+    fun setPolicy(
+        actionId: String,
+        policy: UserPolicy,
+        effectiveTier: ActionTier? = null
+    ): Boolean {
+        if (!PolicyEngine.mayStore(policy, effectiveTier, tierOf(actionId))) return false
+        // Stored lower-case to match the constants the settings UI mirrors in
+        // `JarvisConfig.Policy`. Reads go through UserPolicy.fromStored, which
+        // is case-insensitive, so either side may write.
+        prefs.edit().putString(key(actionId), policy.name.lowercase()).apply()
         notifyChanged()
+        return true
     }
 
     /** Forget the standing answer for one action (back to [UserPolicy.ASK]). */

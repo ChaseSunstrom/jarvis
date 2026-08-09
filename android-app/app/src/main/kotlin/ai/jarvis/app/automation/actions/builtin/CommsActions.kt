@@ -156,6 +156,9 @@ object ReadContacts : JarvisAction {
     override val id = "read_contacts"
     override val tier = ActionTier.NOTIFY
     override val description = "Look up contacts by name or number."
+
+    /** A contact name is whatever the person who synced it typed. */
+    override val untrustedOutput = true
     override val paramsSchema = mapOf(
         "query" to "string: name or number fragment to search for",
         "limit" to "int: maximum matches (default 10)"

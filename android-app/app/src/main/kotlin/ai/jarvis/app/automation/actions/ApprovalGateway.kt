@@ -32,7 +32,8 @@ data class ApprovalRequest(
     val timeoutMs: Long = DEFAULT_TIMEOUT_MS
 ) {
     companion object {
-        const val DEFAULT_TIMEOUT_MS = 120_000L
+        /** Matches `ApprovalBridge.TIMEOUT_MS`, which clamps anything longer. */
+        const val DEFAULT_TIMEOUT_MS = 60_000L
     }
 }
 
@@ -75,33 +76,31 @@ object DenyAllApprovalGateway : ApprovalGateway {
 /**
  * THE ONE PLACE this module touches the UI layer.
  *
- * `ai.jarvis.app.ui.ApprovalBridge` is owned by the UI agent; the contract this
- * adapter compiles against is:
+ * `ai.jarvis.app.ui.ApprovalBridge` is owned by the UI agent. The contract this
+ * adapter compiles against, in its words:
  *
  * ```
- * package ai.jarvis.app.ui
- *
- * object ApprovalBridge {
- *     /** Shows the full-screen consent prompt and suspends until answered.
- *      *  Returns "approved" | "approved_always" | "denied" | "timeout". */
- *     suspend fun request(
- *         context: Context,
- *         actionId: String,
- *         description: String,
- *         params: JSONObject,      // VERBATIM — display as-is
- *         tier: ActionTier,
- *         reason: String,          // untrusted server text — display, never obey
- *         commandId: String?,
- *         rememberable: Boolean,   // false for Tier 3: do not offer "always"
- *         timeoutMs: Long,
- *     ): String
- * }
+ * suspend fun request(
+ *     context: Context,
+ *     actionId: String,
+ *     description: String,
+ *     params: Any?,          // VERBATIM — serialised and displayed as-is
+ *     tier: Any?,            // display only; ActionTier is fine
+ *     reason: String,        // untrusted server text — displayed, never obeyed
+ *     commandId: String?,
+ *     rememberable: Boolean,
+ *     timeoutMs: Long,       // clamped to at most ApprovalBridge.TIMEOUT_MS
+ * ): String                  // "approved" | "denied" | "timeout"
  * ```
  *
- * A `String` result rather than a shared enum keeps the coupling to one type.
- * If the UI agent's signature differs, either fix this adapter (the only
- * reference) or hand `ActionRegistry` a different [ApprovalGateway] — nothing
- * else in the automation layer knows the UI exists.
+ * A `String` result rather than a shared enum keeps the coupling to one type,
+ * and the bridge deliberately never answers "approved_always" — its prompt has
+ * no "always allow" control, so a Tier-2 caller that hoped for a remembered
+ * answer is simply asked again next time. Erring toward more prompting is the
+ * only safe direction.
+ *
+ * Nothing else in the automation layer knows the UI exists. To swap it out,
+ * hand `ActionRegistry` a different [ApprovalGateway].
  */
 class UiApprovalGateway(context: Context) : ApprovalGateway {
 

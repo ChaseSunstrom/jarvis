@@ -124,12 +124,16 @@ class JarvisConfig(context: Context) {
     }
 
     /**
-     * The per-action policy namespace. Owned here so the automation module and
-     * the settings UI cannot drift apart on key naming, and so the policy store
-     * is discoverable from one place.
+     * The per-action policy namespace, so the automation module and the
+     * settings UI cannot drift apart on key naming and the store is
+     * discoverable from one place.
      *
-     * One entry per action id: `action_policy.<action_id>` -> one of
-     * [ALLOW_ALWAYS] / [ASK] / [NEVER]. Absent means [ASK].
+     * These constants MIRROR `ai.jarvis.app.automation.policy.PolicyStore`,
+     * which is the implementation and the authority. If the two ever disagree,
+     * PolicyStore wins and this block is the bug.
+     *
+     * One entry per action id: `policy.<action_id>` -> one of [ALLOW_ALWAYS] /
+     * [ASK] / [NEVER]. Absent means [ASK].
      *
      * The rules the store must uphold (enforced by the automation module, not
      * by this object):
@@ -146,25 +150,28 @@ class JarvisConfig(context: Context) {
         /** SharedPreferences file holding the per-action policy. */
         const val FILE = "jarvis_policy"
 
-        /** Prefix for per-action entries. */
-        const val KEY_PREFIX = "action_policy."
+        /** Prefix for per-action entries: `policy.<action_id>`. */
+        const val KEY_PREFIX = "policy."
 
         const val ALLOW_ALWAYS = "allow_always"
         const val ASK = "ask"
         const val NEVER = "never"
 
-        /** SharedPreferences file holding the user-viewable audit log. */
-        const val AUDIT_FILE = "jarvis_audit"
+        /** Master switch: all automation on/off. */
+        const val KEY_AUTOMATION_ENABLED = "automation_enabled"
 
-        /** Key for the JSON-encoded audit entries within [AUDIT_FILE]. */
-        const val AUDIT_KEY = "entries"
+        /** Panic switch: refuse everything until cleared. */
+        const val KEY_PANIC = "panic"
+
+        /** Directory under `filesDir` holding the append-only audit log. */
+        const val AUDIT_DIR = "jarvis"
+
+        /** One JSON object per line, newest last. */
+        const val AUDIT_FILE_NAME = "audit.jsonl"
 
         fun keyFor(actionId: String): String = KEY_PREFIX + actionId
 
         fun open(context: Context): SharedPreferences =
             context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-
-        fun openAudit(context: Context): SharedPreferences =
-            context.applicationContext.getSharedPreferences(AUDIT_FILE, Context.MODE_PRIVATE)
     }
 }

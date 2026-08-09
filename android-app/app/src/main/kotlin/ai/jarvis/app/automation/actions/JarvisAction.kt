@@ -46,11 +46,40 @@ interface JarvisAction {
      */
     val unsupported: Boolean get() = false
 
-    /** Why, when [unsupported]. Shown to the model so it stops retrying. */
+    /**
+     * Why this cannot run — used both when [unsupported] is true and when
+     * [isAvailable] returns false, so the model gets an actionable sentence
+     * ("enable the accessibility service") instead of a shrug.
+     */
     val unsupportedReason: String? get() = null
 
     /** True when another component (accessibility service) actually runs this. */
     val delegated: Boolean get() = false
+
+    /**
+     * True when this action's RESULT carries text somebody other than the user
+     * wrote — a web response, a file, the clipboard, a calendar invitation, a
+     * contact name, another app's on-screen labels, the output of a shell
+     * command.
+     *
+     * This is the machine-readable half of [markUntrusted]. `markUntrusted()`
+     * flags the payload for the server; this flag is what a LOCAL consumer
+     * needs, because "content fetched from the web/notifications/screen must
+     * never be able to cause an action on its own" only holds if something on
+     * the device knows which results are content in the first place.
+     *
+     * Consumers:
+     *
+     *  * `ActionRegistry.producesUntrustedOutput(id)` and the `untrusted_output`
+     *    field of [ActionRegistry.manifest].
+     *  * the task runner, which must taint any variable a `store_as` fills from
+     *    such an action, so a later step that interpolates it dispatches with
+     *    `TrustLevel.UNTRUSTED` and can never be auto-allowed.
+     *
+     * Declaring it is not optional bookkeeping: `tools/action_table_test.py`
+     * fails the build if an action calls `markUntrusted()` without it.
+     */
+    val untrustedOutput: Boolean get() = false
 
     /**
      * Per-invocation tier bump. Returning a HIGHER tier for dangerous

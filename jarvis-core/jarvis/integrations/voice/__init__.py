@@ -26,6 +26,7 @@ before calling :func:`async_setup`.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
@@ -308,6 +309,26 @@ def _build_clients(jarvis: "Jarvis", config: dict[str, Any]) -> tuple[Any, Any, 
     return stt, tts, wake
 
 
+def _entity_ids(target: Any) -> list[str]:
+    """Normalise a service target to a list of entity ids.
+
+    ``entity_id: media_player.a, media_player.b`` is the usual YAML shorthand
+    for two targets; treating it as one id sends play_media a name that
+    matches nothing.
+    """
+    if target is None:
+        return []
+    if isinstance(target, str):
+        candidates: list[str] = target.split(",")
+    elif isinstance(target, (list, tuple, set)):
+        candidates = []
+        for item in target:
+            candidates.extend(str(item).split(","))
+    else:
+        candidates = [str(target)]
+    return [item.strip() for item in candidates if item and item.strip()]
+
+
 def _register_services(jarvis: "Jarvis", data: VoiceData) -> None:
     async def _say(call: "ServiceCall") -> dict[str, Any]:
         text = call.get("text") or call.get("message")
@@ -319,12 +340,16 @@ def _register_services(jarvis: "Jarvis", data: VoiceData) -> None:
             voice=call.get("voice"),
             language=call.get("language"),
         )
-        target = call.get("entity_id") or call.get("media_player")
-        entity_ids = [target] if isinstance(target, str) else list(target or [])
+        entity_ids = _entity_ids(call.get("entity_id") or call.get("media_player"))
         result["entity_id"] = entity_ids
+        # A caller that asked for playback needs to know it did not happen —
+        # logging alone would report success for a dead speaker.
+        failed: dict[str, str] = {}
         for entity_id in entity_ids:
             if not jarvis.services.has_service("media_player", "play_media"):
                 _LOGGER.warning("voice.say: media_player.play_media is not available")
+                for pending in entity_ids:
+                    failed.setdefault(pending, "media_player.play_media is not available")
                 break
             try:
                 await jarvis.services.async_call(
@@ -338,8 +363,13 @@ def _register_services(jarvis: "Jarvis", data: VoiceData) -> None:
                     blocking=True,
                     context=call.context,
                 )
-            except Exception:
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
                 _LOGGER.exception("voice.say: could not play on %s", entity_id)
+                failed[entity_id] = str(err) or type(err).__name__
+        result["failed"] = failed
+        result["played"] = [eid for eid in entity_ids if eid not in failed]
         jarvis.bus.fire(EVENT_VOICE_SAID, dict(result), call.context)
         return result
 

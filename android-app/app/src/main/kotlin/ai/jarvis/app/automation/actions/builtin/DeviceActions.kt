@@ -489,7 +489,7 @@ object GetLocation : JarvisAction {
      */
     private suspend fun awaitFix(lm: LocationManager, provider: String, waitMs: Long): Location? =
         withTimeoutOrNull(waitMs) {
-            suspendCancellableCoroutine { cont ->
+            suspendCancellableCoroutine<Location?> { cont ->
                 val listener = object : LocationListener {
                     override fun onLocationChanged(location: Location) {
                         runCatching { lm.removeUpdates(this) }

@@ -58,7 +58,7 @@ class JarvisConversation(
         if (running) return
         running = true
         responseBuffer = StringBuilder()
-        tts = TtsPlayer(context, config.token)
+        tts = TtsPlayer(context, config.token, config.serverUrl)
         client = AssistPipelineClient(config.serverUrl, config.token, this).also {
             it.connect(config.pipeline)
         }

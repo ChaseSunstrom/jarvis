@@ -1,0 +1,87 @@
+# A tool the LLM can call, defined entirely in YAML. No Python, no restart of
+# anything but Jarvis.
+#
+# Every *.tool.yaml in this directory is loaded because configuration.yaml sets
+# `llm: tools_dir: tools`. One file may hold a single tool (this one) or a YAML
+# list of them.
+#
+# HOW IT WORKS
+#   The `fields:` become the JSON schema the model fills in. Their values are
+#   rendered into `url` (percent-encoded), `headers` and `payload` (verbatim)
+#   as Jinja templates, the request goes out, and the JSON response comes back
+#   to the model wrapped with a reminder that external data is information and
+#   never instructions.
+#
+# TIERS — this is the safety dial:
+#   1  direct      run it now, answer in the same turn. Reads, lookups, queries.
+#   2  background  long-running; Jarvis acknowledges and reports back later.
+#   3  approval    NEVER runs from a model turn. Returns approval_required and
+#                  a request id, and waits for a human to approve it out of
+#                  band. Use for anything that spends money, sends a message,
+#                  opens a door, or cannot be undone.
+#   A tool whose targets land in a gated domain (lock, notify) is treated as
+#   tier 3 regardless of what you write here.
+#
+# CREDENTIALS
+#   Manifests in this directory are read with a plain YAML parser, so !secret
+#   and !env_var do NOT work here. A tool that needs a credential belongs in
+#   the inline `llm: tools:` block in configuration.yaml, which is loaded with
+#   the full Jarvis loader and can reference secrets.yaml. The tool below needs
+#   no credential, which is why it lives here.
+
+name: find_place
+description: >-
+  Look up a place, address or landmark and get its coordinates and full
+  address. Use this before any question about where something is or how far
+  away it is. Returns several candidates, best match first.
+tier: 1
+
+service:
+  method: GET
+  # photon, from docker-compose.yml. Entirely offline: the geocoding index is
+  # on this machine, so a location lookup never leaves the house.
+  url: "http://127.0.0.1:2322/api?q={{ query }}&limit={{ limit }}&lang=en"
+  timeout: 10
+  fields:
+    query:
+      description: The place to look for — a name, an address, or a landmark.
+      example: Kings Cross station
+      required: true
+    limit:
+      description: How many candidates to return, 1 to 10.
+      type: integer
+      example: 5
+
+# ---------------------------------------------------------------------------
+# The same file could hold a list instead, and that is how you group related
+# tools. A POST with a body, and a Tier-3 tool that cannot run without a human:
+#
+# - name: log_note
+#   description: Append a note to the household log.
+#   tier: 1
+#   service:
+#     method: POST
+#     url: "http://127.0.0.1:8080/api/events/household_note"
+#     headers:
+#       Content-Type: application/json
+#     payload:
+#       note: "{{ text }}"
+#       at: "{{ now().isoformat() }}"
+#     fields:
+#       text:
+#         description: The note to record.
+#         required: true
+#
+# - name: order_groceries
+#   description: Place the standing grocery order.
+#   tier: 3                      # spends money — a human says yes, or nobody does
+#   service:
+#     method: POST
+#     url: "http://shop.lan/api/orders"
+#     payload:
+#       basket: "{{ basket }}"
+#     fields:
+#       basket:
+#         description: Named basket to order.
+#         enum: [weekly, party, essentials]
+#         required: true

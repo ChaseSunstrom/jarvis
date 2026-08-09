@@ -270,9 +270,11 @@ ORIGIN_ABBREVIATIONS: dict[str, str] = {
 
 
 def expand_abbreviations(
-    data: dict[str, Any], table: dict[str, str] = ABBREVIATIONS
+    data: dict[str, Any], table: dict[str, str] | None = None
 ) -> dict[str, Any]:
     """Rewrite abbreviated keys to their full names (never clobbering a full key)."""
+    if table is None:
+        table = ABBREVIATIONS
     out: dict[str, Any] = {}
     for key, value in data.items():
         full = table.get(key, key)

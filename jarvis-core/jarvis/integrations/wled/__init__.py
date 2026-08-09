@@ -165,6 +165,18 @@ class WledDevice:
             if entity is not exclude:
                 entity.async_write_state()
 
+    def notify_failure(self, exclude: Entity | None = None) -> None:
+        """The controller stopped answering — nothing riding it is live.
+
+        Only the light polls; without this the companion select would keep
+        advertising the last effect it saw as though the strip were online.
+        """
+        for entity in self.subscribers:
+            if entity is exclude:
+                continue
+            entity._attr_available = False
+            entity.async_write_state()
+
 
 class WledLight(Entity):
     """The controller's master segment as a light entity."""
@@ -200,7 +212,11 @@ class WledLight(Entity):
         self._attr_extra_attributes = attributes
 
     async def async_update(self) -> None:
-        await self._device.async_fetch()
+        try:
+            await self._device.async_fetch()
+        except Exception:
+            self._device.notify_failure(exclude=self)
+            raise
         self._attr_available = True
         # notify() refreshes every subscriber (this entity included) and
         # writes the state of the others; the platform writes ours.
@@ -253,7 +269,11 @@ class WledLight(Entity):
             if str(name).strip().lower() == target:
                 return index
         if target.isdigit():
-            return int(target)
+            index = int(target)
+            # A raw index the controller does not have is silently ignored by
+            # WLED; refuse it here so the caller sees the mistake instead.
+            if 0 <= index < len(self._device.effects) or not self._device.effects:
+                return index
         _LOGGER.warning("wled: unknown effect %r", effect)
         return None
 

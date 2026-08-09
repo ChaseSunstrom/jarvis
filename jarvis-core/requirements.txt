@@ -1,3 +1,33 @@
-aiomqtt>=2.0
-jinja2>=3.1
-httpx>=0.27
+# Jarvis Core runtime dependencies.
+#
+# Deliberately short and pure-Python: every one of these installs from a wheel
+# with no compiler, which is why the Dockerfile needs no build toolchain and
+# the image builds on a Pi as readily as on a desktop.
+#
+# Lower bounds are the oldest release carrying an API this code uses. Upper
+# bounds stop a major release from silently breaking a rebuild — raise them
+# deliberately, with the tests as the check.
+#
+# Test-only dependencies are NOT here, so they stay out of the image:
+#   pip install pytest pytest-asyncio
+
+# --- HTTP server: REST + websocket ------------------------------------------
+# uvicorn[standard] pulls in the fast websocket and HTTP parsers plus uvloop;
+# websockets is also pinned directly because the API layer depends on that
+# implementation being present, not merely on uvicorn's choice of extras.
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+websockets>=12.0,<18.0
+
+# --- HTTP client: Ollama, REST entities, Hue, WLED, YAML tools --------------
+httpx>=0.27,<1.0
+
+# --- Configuration and templating -------------------------------------------
+pyyaml>=6.0,<7.0
+jinja2>=3.1,<4.0
+
+# --- MQTT --------------------------------------------------------------------
+# Optional at runtime: without a backend the client degrades to log-only mode
+# rather than failing, but MQTT discovery is how most real hardware arrives,
+# so it is installed by default. paho-mqtt is the fallback backend.
+aiomqtt>=2.0,<3.0

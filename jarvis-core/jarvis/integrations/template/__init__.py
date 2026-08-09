@@ -51,6 +51,13 @@ DOMAIN = "template"
 
 PLATFORM_KEYS = ("sensor", "binary_sensor", "switch", "button")
 
+# A template entity may read another template entity. Their own writes are
+# suppressed (that is what stops the graph feeding itself), so a single
+# ordered pass leaves anything downstream of a later-declared entity stale
+# forever. Re-render until nothing moves instead, with a hard cap so a
+# circular definition cannot spin.
+MAX_RENDER_PASSES = 10
+
 
 # ---------------------------------------------------------------------------
 # actions
@@ -239,6 +246,7 @@ class TemplateTracker:
         self._own_ids: set[str] = set()
         self._unsubs: list[Any] = []
         self._rendering = False
+        self._warned_unsettled = False
 
     def add(self, entities: list[TemplateEntity]) -> None:
         for entity in entities:
@@ -269,11 +277,26 @@ class TemplateTracker:
         self.render_all()
 
     def render_all(self) -> None:
+        """Render every template entity until the whole set stops changing."""
         self._rendering = True
         try:
             for entity in self.entities:
                 self._own_ids.add(entity.entity_id)
-                entity.async_render_and_write()
+            for _ in range(MAX_RENDER_PASSES):
+                changed = False
+                for entity in self.entities:
+                    if entity.async_render():
+                        changed = True
+                    entity.async_write_state()
+                if not changed:
+                    return
+            if not self._warned_unsettled:
+                self._warned_unsettled = True
+                _LOGGER.warning(
+                    "Template entities did not settle after %d passes; "
+                    "check for entities that depend on each other in a cycle",
+                    MAX_RENDER_PASSES,
+                )
         finally:
             self._rendering = False
 

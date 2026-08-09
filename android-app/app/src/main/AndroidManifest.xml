@@ -361,5 +361,21 @@
             android:name="ai.jarvis.app.automation.triggers.AlarmReceiver"
             android:exported="false" />
 
+        <!--
+          The automation module's two screens. MainActivity and SettingsActivity
+          launch them by name (see ai.jarvis.app.ui.JarvisScreens) rather than by
+          class reference, so this module never imports from that one. Provide
+          classes with exactly these names and the links light up.
+        -->
+        <activity
+            android:name="ai.jarvis.app.automation.ui.AutomationsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <activity
+            android:name="ai.jarvis.app.automation.ui.AuditLogActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
     </application>
 </manifest>

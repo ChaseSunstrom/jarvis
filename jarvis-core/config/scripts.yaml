@@ -1,0 +1,146 @@
+# Scripts — named action sequences.
+#
+# Each entry becomes BOTH a `script.<name>` entity and a `script.<name>`
+# service. That second half is the interesting one: a script with a
+# `description:` and `fields:` is automatically offered to the LLM as a tool,
+# so this file is how you give Jarvis new abilities without writing Python.
+#
+# A script that ends in `stop:` with a `response_variable:` returns structured
+# data to whoever called it — including the model. See `house_status` below.
+#
+# Reference: ../docs/configuration.md, ../docs/integrations.md
+
+# ---------------------------------------------------------------------------
+goodnight:
+  alias: Good night
+  description: >-
+    Shut the house down for the night: lights off, blinds closed, doors locked,
+    speaker quietened. Use when the user says they are going to bed.
+  mode: single
+  fields:
+    delay_minutes:
+      description: Wait this many minutes before starting, for a slow walk upstairs.
+      example: 5
+      default: 0
+  sequence:
+    - variables:
+        wait_seconds: "{{ (delay_minutes | default(0) | float(0)) * 60 }}"
+    - delay: "{{ wait_seconds }}"
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.living_room_speaker
+      data:
+        volume_level: "{{ states('input_number.bedtime_volume') | float(30) / 100 }}"
+    - service: cover.close_cover
+      target:
+        entity_id: cover.living_room_window
+    - parallel:
+        - service: light.turn_off
+          target:
+            entity_id:
+              - light.ceiling_lights
+              - light.kitchen_lights
+        - service: switch.turn_off
+          target:
+            entity_id: switch.decorative_lights
+    # Locking is a gated action when the LLM asks for it, but a script the
+    # user ran deliberately is the user acting, not the model — so this runs.
+    - service: lock.lock
+      target:
+        entity_id: lock.front_door_lock
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.house_mode
+      data:
+        option: night
+    - service: logbook.log
+      data:
+        name: Jarvis
+        message: House secured for the night.
+
+# ---------------------------------------------------------------------------
+good_morning:
+  alias: Good morning
+  description: Open the house up for the day and report the overnight news.
+  mode: single
+  sequence:
+    - service: input_select.select_option
+      target:
+        entity_id: input_select.house_mode
+      data:
+        option: home
+    - service: cover.open_cover
+      target:
+        entity_id: cover.living_room_window
+    - service: light.turn_on
+      target:
+        entity_id: light.kitchen_lights
+      data:
+        brightness: 255
+        color_temp_kelvin: 5000
+    - service: switch.turn_on
+      target:
+        entity_id: switch.coffee_machine
+    - service: voice.say
+      data:
+        text: >-
+          Good morning, Sir. It is {{ states('sensor.outside_temperature') }} degrees outside,
+          feeling more like {{ states('sensor.feels_like_outside') }}.
+
+# ---------------------------------------------------------------------------
+movie_time:
+  alias: Movie time
+  description: Dim the room, close the blinds and hand the evening over to the screen.
+  mode: restart
+  sequence:
+    - scene: scene.movie
+    - service: fan.turn_on
+      target:
+        entity_id: fan.living_room_fan
+
+# ---------------------------------------------------------------------------
+announce:
+  alias: Announce
+  description: >-
+    Say something out loud in the house. Use for information the user should
+    hear immediately; prefer a notification when they are out or asleep.
+  mode: queued
+  max: 10
+  fields:
+    message:
+      description: What to say, in full sentences.
+      example: The washing machine has finished.
+      required: true
+  sequence:
+    - service: voice.say
+      data:
+        text: "{{ message }}"
+    - service: input_text.set_value
+      target:
+        entity_id: input_text.last_announcement
+      data:
+        value: "{{ message[:255] }}"
+
+# ---------------------------------------------------------------------------
+house_status:
+  alias: House status
+  description: >-
+    Everything worth knowing in one call: who is home, what is unlocked or
+    open, the temperature, and the current power draw. Call this instead of
+    reading a dozen entities one at a time.
+  mode: single
+  sequence:
+    - variables:
+        status:
+          anyone_home: "{{ is_state('binary_sensor.anyone_home', 'on') }}"
+          house_mode: "{{ states('input_select.house_mode') }}"
+          outside_temperature: "{{ states('sensor.outside_temperature') | float(0) }}"
+          power_watts: "{{ states('sensor.power_consumption') | float(0) | round(0) }}"
+          front_door_locked: "{{ is_state('lock.front_door_lock', 'locked') }}"
+          garage_open: "{{ is_state('cover.garage_door', 'open') }}"
+          lights_on: >-
+            {{ states.light | selectattr('state', 'eq', 'on')
+               | map(attribute='name') | list }}
+    # `stop` with a response_variable is what makes the data come back out.
+    - stop: status collected
+      response_variable: status

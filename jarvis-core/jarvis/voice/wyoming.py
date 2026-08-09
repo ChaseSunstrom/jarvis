@@ -37,6 +37,19 @@ DEFAULT_CHANNELS = 1
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_CONNECT_TIMEOUT = 10.0
 
+# The header is a single `readline()` on the peer, and asyncio's StreamReader
+# defaults to a 64 KiB line limit. We duplicate small `data` blocks inline for
+# servers that only read the inline form, but anything bigger goes *only* in
+# the length-prefixed block — otherwise a long `synthesize` request produces a
+# header line the server physically cannot read.
+MAX_INLINE_DATA = 4096
+# ...and symmetrically, give our own reader room for servers that send a large
+# `info` event using the inline form (piper with a few hundred voices).
+READ_LIMIT = 4 * 1024 * 1024
+# A stray blank line is a keep-alive, not a protocol violation. Bounded so a
+# babbling peer cannot spin us forever.
+MAX_BLANK_LINES = 32
+
 # TTS servers (piper) usually answer at 22050 Hz; only used if the server
 # never tells us the format it is sending.
 FALLBACK_TTS_RATE = 22050
@@ -96,13 +109,20 @@ class WyomingEvent:
 
 # --- framing ----------------------------------------------------------------
 def encode_event(event: WyomingEvent) -> bytes:
-    """Serialise one event to wire bytes (header line + data + payload)."""
+    """Serialise one event to wire bytes (header line + data + payload).
+
+    Small `data` blocks are written twice — inline in the header *and* in the
+    length-prefixed block — so either flavour of reader understands us. Large
+    ones are written only length-prefixed: the header must stay comfortably
+    inside the peer's `readline()` limit or the message is unreadable.
+    """
     data_bytes = b""
     header: dict[str, Any] = {"type": event.type, "version": PROTOCOL_VERSION}
     if event.data:
-        header["data"] = event.data
         data_bytes = json.dumps(event.data, ensure_ascii=False).encode("utf-8")
         header["data_length"] = len(data_bytes)
+        if len(data_bytes) <= MAX_INLINE_DATA:
+            header["data"] = event.data
     payload = event.payload or b""
     if payload:
         header["payload_length"] = len(payload)
@@ -126,9 +146,14 @@ async def async_read_event(
     """Read one event. Returns None at clean end-of-stream."""
 
     async def _read() -> WyomingEvent | None:
-        line = await reader.readline()
-        if not line:
-            return None
+        for _ in range(MAX_BLANK_LINES + 1):
+            line = await reader.readline()
+            if not line:
+                return None
+            if line.strip():
+                break
+        else:
+            raise WyomingError("peer sent nothing but blank lines")
         header = decode_header(line)
         data: dict[str, Any] = {}
         inline = header.get("data")
@@ -157,6 +182,13 @@ async def async_read_event(
         raise WyomingTimeoutError(f"timed out after {timeout}s waiting for a message") from err
     except (ConnectionError, OSError) as err:
         raise WyomingConnectionError(str(err)) from err
+    except WyomingError:
+        raise
+    except ValueError as err:
+        # StreamReader.readline() raises LimitOverrunError/ValueError when a
+        # header line is longer than the reader's limit. That is a protocol
+        # failure, not a programming error — do not leak it to callers.
+        raise WyomingError(f"oversized Wyoming header line: {err}") from err
 
 
 async def async_write_event(writer: asyncio.StreamWriter, event: WyomingEvent) -> None:
@@ -190,7 +222,8 @@ class WyomingConnection:
     async def connect(self) -> "WyomingConnection":
         try:
             self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), self.connect_timeout
+                asyncio.open_connection(self.host, self.port, limit=READ_LIMIT),
+                self.connect_timeout,
             )
         except (TimeoutError, asyncio.TimeoutError) as err:
             raise WyomingTimeoutError(
@@ -457,11 +490,21 @@ class WyomingWakeClient(_WyomingClient):
         rate: int = DEFAULT_RATE,
         width: int = DEFAULT_WIDTH,
         channels: int = DEFAULT_CHANNELS,
+        timeout: float | None = -1.0,
     ) -> str | None:
-        """Stream audio until the wake word fires. Returns its name, or None."""
+        """Stream audio until the wake word fires. Returns its name, or None.
+
+        ``timeout`` bounds the *whole* call, streaming included — a satellite
+        that keeps pushing audio into a service that never answers must not
+        pin this coroutine forever. Pass ``None`` to listen indefinitely.
+        """
         request: dict[str, Any] = {}
         if self.model:
             request["names"] = [self.model]
+
+        deadline = self.timeout if timeout == -1.0 else timeout
+        if deadline is not None and deadline <= 0:
+            deadline = None
 
         async with self.connection() as conn:
             await conn.write(WyomingEvent(TYPE_DETECT, request))
@@ -469,28 +512,48 @@ class WyomingWakeClient(_WyomingClient):
 
             waiter = asyncio.ensure_future(self._wait_for_detection(conn))
             try:
-                samples = 0
-                async for chunk in _aiter_audio(audio_iter):
-                    if waiter.done():
-                        break
-                    timestamp = int(samples * 1000 / max(rate * width * channels, 1))
-                    await conn.write_audio_chunk(chunk, rate, width, channels, timestamp)
-                    samples += len(chunk)
-                if not waiter.done():
-                    with contextlib.suppress(WyomingError):
-                        await conn.write_audio_stop(
-                            int(samples * 1000 / max(rate * width * channels, 1))
-                        )
-                return await asyncio.wait_for(waiter, self.timeout)
+                if deadline is None:
+                    return await self._stream_until_detected(
+                        conn, waiter, audio_iter, rate, width, channels
+                    )
+                return await asyncio.wait_for(
+                    self._stream_until_detected(
+                        conn, waiter, audio_iter, rate, width, channels
+                    ),
+                    deadline,
+                )
             except (TimeoutError, asyncio.TimeoutError) as err:
                 raise WyomingTimeoutError("timed out waiting for wake word") from err
             finally:
                 if not waiter.done():
                     waiter.cancel()
-                    with contextlib.suppress(
-                        asyncio.CancelledError, WyomingError, Exception
-                    ):
-                        await waiter
+                # gather(return_exceptions=True) collects the reader's outcome
+                # so asyncio does not log "exception was never retrieved"; an
+                # *outer* cancellation still propagates from here, as it must.
+                await asyncio.gather(waiter, return_exceptions=True)
+
+    async def _stream_until_detected(
+        self,
+        conn: WyomingConnection,
+        waiter: "asyncio.Future[str | None]",
+        audio_iter: AudioSource,
+        rate: int,
+        width: int,
+        channels: int,
+    ) -> str | None:
+        samples = 0
+        async for chunk in _aiter_audio(audio_iter):
+            if waiter.done():
+                break
+            timestamp = int(samples * 1000 / max(rate * width * channels, 1))
+            await conn.write_audio_chunk(chunk, rate, width, channels, timestamp)
+            samples += len(chunk)
+        if not waiter.done():
+            with contextlib.suppress(WyomingError):
+                await conn.write_audio_stop(
+                    int(samples * 1000 / max(rate * width * channels, 1))
+                )
+        return await waiter
 
     @staticmethod
     async def _wait_for_detection(conn: WyomingConnection) -> str | None:

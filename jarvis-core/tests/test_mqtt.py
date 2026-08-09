@@ -815,3 +815,453 @@ async def test_client_factory_injection(tmp_path):
     assert await mqtt_integration.async_setup(jarvis, {"broker": "brokerhost"}) is True
     assert made and jarvis.data["mqtt"] is made[0]
     assert made[0].broker == "brokerhost"
+
+
+# ===========================================================================
+# Regression tests for the verify pass. Each one fails against the code as it
+# stood before the corresponding fix.
+# ===========================================================================
+import pytest  # noqa: E402
+
+from jarvis.integrations.mqtt import entity as mqtt_entity  # noqa: E402
+
+
+class FailingClient(FakeMqttClient):
+    """A broker that refuses every publish."""
+
+    async def _backend_publish(self, topic, payload, retain, qos):
+        raise ConnectionResetError("broker gone")
+
+
+class RecordingClient(FakeMqttClient):
+    """Records the qos each backend subscribe was issued with."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.backend_subscribes: list[tuple[str, int]] = []
+
+    async def _backend_subscribe(self, topic, qos):
+        self.backend_subscribes.append((topic, qos))
+
+
+async def setup_with_client(tmp_path, config, client):
+    jarvis = Jarvis(tmp_path)
+    jarvis.data["mqtt"] = client
+    assert await mqtt_integration.async_setup(jarvis, config) is True
+    return jarvis, client
+
+
+# --- template sandbox (arbitrary code execution) ----------------------------
+def test_value_template_cannot_reach_python_internals():
+    """A discovery payload is attacker-reachable input; it must not be able to
+    walk out of the template into the interpreter."""
+    payload = json.dumps({"v": 1})
+    for hostile in (
+        "{{ ''.__class__.__mro__[1].__name__ }}",
+        "{{ ''.__class__.__mro__[1].__subclasses__()|length }}",
+        "{{ value_json.__class__ }}",
+        "{{ self.__init__.__globals__ }}",
+        "{{ cycler.__init__.__globals__.os.popen('id').read() }}",
+    ):
+        assert render_value_template(hostile, payload, default="BLOCKED") == "BLOCKED", (
+            f"template escaped the sandbox: {hostile}"
+        )
+    # ...while ordinary templates keep working
+    assert render_value_template("{{ value_json.v }}", payload) == "1"
+
+
+async def test_hostile_discovery_template_cannot_execute_code(tmp_path):
+    marker = Path(tmp_path) / "PWNED"
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    evil = (
+        "{% for c in ''.__class__.__mro__[1].__subclasses__() %}"
+        "{% if c.__name__ == 'catch_warnings' %}"
+        "{{ c()._module.__builtins__['__import__']('os').system('touch MARKER') }}"
+        "{% endif %}{% endfor %}"
+    ).replace("MARKER", str(marker))
+
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/sensor/pwn/config",
+        json.dumps({"name": "Pwn", "state_topic": "s/pwn", "value_template": evil}),
+    )
+    await client.feed("s/pwn", "x")
+
+    assert not marker.exists(), "MQTT discovery payload executed arbitrary code"
+    assert state_of(jarvis, "sensor.pwn").state == "unknown"
+
+
+def test_fallback_renderer_refuses_dunder_walking():
+    """The jinja2-less fallback path must not become the soft underbelly."""
+    rendered = mqtt_entity._fallback_render(
+        "{{ value.__class__ }}", {"value": "abc"}
+    )
+    assert "class" not in rendered.lower()
+    assert mqtt_entity._fallback_render("{{ value }}", {"value": "abc"}) == "abc"
+
+
+def test_template_cache_is_bounded():
+    """A hostile broker can mint endless distinct templates."""
+    mqtt_entity._TEMPLATE_CACHE.clear()
+    for index in range(mqtt_entity._TEMPLATE_CACHE_MAX + 50):
+        render_value_template("{{ value }}" + " " * index, "v")
+    assert len(mqtt_entity._TEMPLATE_CACHE) <= mqtt_entity._TEMPLATE_CACHE_MAX
+
+
+# --- publish failures must not be swallowed ---------------------------------
+async def test_publish_service_surfaces_broker_failure(tmp_path):
+    jarvis, _ = await setup_with_client(
+        tmp_path, {"discovery": False}, FailingClient()
+    )
+    with pytest.raises(RuntimeError):
+        await jarvis.async_call_service("mqtt", "publish", {"topic": "t", "payload": "P"})
+
+
+async def test_failed_publish_does_not_write_optimistic_state(tmp_path):
+    """Reporting a device as on when the command never left is worse than an
+    error: the UI, automations and the voice layer all believe it."""
+    jarvis, client = await setup_with_client(
+        tmp_path,
+        {
+            "discovery": False,
+            "switch": [{"name": "Pump", "command_topic": "pump/set"}],
+            "light": [{"name": "Lamp", "command_topic": "lamp/set"}],
+            "cover": [{"name": "Blind", "command_topic": "blind/set"}],
+            "lock": [{"name": "Gate", "command_topic": "gate/set"}],
+        },
+        FailingClient(),
+    )
+    await jarvis.entity_object("switch.pump").async_turn_on()
+    assert state_of(jarvis, "switch.pump").state == "unknown"
+
+    await jarvis.entity_object("light.lamp").async_turn_on(brightness=200)
+    lamp = state_of(jarvis, "light.lamp")
+    assert lamp.state == "unknown"
+    assert "brightness" not in lamp.attributes
+
+    await jarvis.entity_object("cover.blind").async_open_cover()
+    assert state_of(jarvis, "cover.blind").state == "unknown"
+
+    await jarvis.entity_object("lock.gate").async_lock()
+    assert state_of(jarvis, "lock.gate").state == "unknown"
+
+    assert client.publish_failures == 4
+
+
+async def test_successful_publish_still_writes_optimistic_state(tmp_path):
+    """The guard above must not silently disable optimistic mode."""
+    jarvis, _ = await setup_mqtt(
+        tmp_path,
+        {
+            "discovery": False,
+            "switch": [{"name": "Pump", "command_topic": "pump/set"}],
+            "lock": [{"name": "Gate", "command_topic": "gate/set"}],
+        },
+    )
+    await jarvis.entity_object("switch.pump").async_turn_on()
+    assert state_of(jarvis, "switch.pump").state == "on"
+    await jarvis.entity_object("lock.gate").async_lock()
+    assert state_of(jarvis, "lock.gate").state == "locked"
+    await jarvis.entity_object("lock.gate").async_unlock()
+    assert state_of(jarvis, "lock.gate").state == "unlocked"
+
+
+# --- discovery cannot hijack an entity --------------------------------------
+async def test_discovery_cannot_hijack_an_existing_unique_id(tmp_path):
+    """unique_id is resolved per-platform, ignoring the domain, so a second
+    config quoting someone else's unique_id would inherit their entity_id and
+    with it their command topic."""
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/lock/front/config",
+        json.dumps(
+            {
+                "name": "Front door",
+                "unique_id": "shared-id",
+                "command_topic": "real/lock/set",
+                "state_topic": "real/lock",
+            }
+        ),
+    )
+    assert "lock.front_door" in jarvis.states.entity_ids()
+
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/switch/evil/config",
+        json.dumps(
+            {"name": "Evil", "unique_id": "shared-id", "command_topic": "attacker/set"}
+        ),
+    )
+
+    discovery = jarvis.data["mqtt_data"].discovery
+    assert discovery.discovered_ids == ["lock_front"]
+    assert jarvis.states.entity_ids() == ["lock.front_door"]
+
+    lock = jarvis.entity_object("lock.front_door")
+    await lock.async_lock()
+    assert client.last_publish().topic == "real/lock/set"
+    assert client.payloads_for("attacker/set") == []
+
+
+async def test_discovery_cannot_hijack_a_yaml_entity(tmp_path):
+    jarvis, client = await setup_mqtt(
+        tmp_path,
+        {
+            "discovery": True,
+            "switch": [
+                {
+                    "name": "Boiler",
+                    "unique_id": "boiler-1",
+                    "command_topic": "boiler/set",
+                }
+            ],
+        },
+    )
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/switch/evil/config",
+        json.dumps(
+            {"name": "Evil", "unique_id": "boiler-1", "command_topic": "attacker/set"}
+        ),
+    )
+    assert jarvis.data["mqtt_data"].discovery.discovered_ids == []
+    await jarvis.entity_object("switch.boiler").async_turn_on()
+    assert client.last_publish().topic == "boiler/set"
+
+
+async def test_unique_id_is_released_when_discovery_is_removed(tmp_path):
+    """The ownership guard must not permanently poison a unique_id."""
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    config = json.dumps(
+        {"name": "Thing", "unique_id": "u1", "state_topic": "t/state"}
+    )
+    await client.feed(f"{DISCOVERY_PREFIX}/sensor/a/config", config)
+    assert "sensor.thing" in jarvis.states.entity_ids()
+
+    await client.feed(f"{DISCOVERY_PREFIX}/sensor/a/config", "")
+    assert jarvis.states.entity_ids() == []
+
+    # a different discovery topic may now claim the freed unique_id
+    await client.feed(f"{DISCOVERY_PREFIX}/sensor/b/config", config)
+    assert jarvis.data["mqtt_data"].discovery.discovered_ids == ["sensor_b"]
+    assert "sensor.thing" in jarvis.states.entity_ids()
+
+
+async def test_reconfiguring_the_same_topic_keeps_working(tmp_path):
+    """The hijack guard must leave legitimate re-publishes alone."""
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    base = {"name": "Lamp", "unique_id": "u9", "command_topic": "l/set",
+            "state_topic": "l/state"}
+    await client.feed(f"{DISCOVERY_PREFIX}/switch/lamp/config", json.dumps(base))
+    entity_id = "switch.lamp"
+    assert entity_id in jarvis.states.entity_ids()
+
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/switch/lamp/config",
+        json.dumps({**base, "payload_on": "1", "state_topic": "l/state2"}),
+    )
+    assert jarvis.states.entity_ids() == [entity_id]
+    await jarvis.entity_object(entity_id).async_turn_on()
+    assert client.last_publish("l/set").payload == "1"
+    await client.feed("l/state2", "1")
+    assert state_of(jarvis, entity_id).state == "on"
+
+
+async def test_device_bundle_component_can_change_platform(tmp_path):
+    """A bundle keys components by name, so a re-publish can move one from
+    switch to light -- the entity_id has to follow it."""
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    topic = f"{DISCOVERY_PREFIX}/device/box/config"
+    device = {"identifiers": ["box1"], "name": "Box"}
+
+    await client.feed(
+        topic,
+        json.dumps(
+            {
+                "device": device,
+                "origin": {"name": "boxfw"},
+                "components": {
+                    "main": {
+                        "platform": "switch",
+                        "unique_id": "box_main",
+                        "command_topic": "box/set",
+                        "state_topic": "box/state",
+                    }
+                },
+            }
+        ),
+    )
+    assert "switch.box" in jarvis.states.entity_ids()
+
+    await client.feed(
+        topic,
+        json.dumps(
+            {
+                "device": device,
+                "origin": {"name": "boxfw"},
+                "components": {
+                    "main": {
+                        "platform": "light",
+                        "unique_id": "box_main",
+                        "command_topic": "box/set",
+                        "state_topic": "box/state",
+                    }
+                },
+            }
+        ),
+    )
+    ids = jarvis.states.entity_ids()
+    assert "light.box" in ids, ids
+    assert "switch.box" not in ids
+
+
+# --- cover position must not be sent on the OPEN/CLOSE topic ----------------
+async def test_cover_without_set_position_topic_refuses(tmp_path):
+    jarvis, client = await setup_mqtt(
+        tmp_path,
+        {"discovery": False, "cover": [{"name": "Blind", "command_topic": "blind/cmd"}]},
+    )
+    with pytest.raises(ValueError):
+        await jarvis.entity_object("cover.blind").async_set_cover_position(50)
+    # crucially, nothing bogus went out on the OPEN/CLOSE/STOP topic
+    assert client.payloads_for("blind/cmd") == []
+
+
+# --- client bookkeeping -----------------------------------------------------
+async def test_subscription_qos_survives_a_reconnect(tmp_path):
+    client = RecordingClient()
+    await client.async_connect()
+    await client.async_subscribe("a/high", lambda m: None, qos=2)
+    await client.async_subscribe("a/low", lambda m: None, qos=0)
+    assert ("a/high", 2) in client.backend_subscribes
+
+    client.backend_subscribes.clear()
+    await client.async_disconnect()
+    await client.async_connect()
+    assert sorted(client.backend_subscribes) == [("a/high", 2), ("a/low", 0)]
+
+
+async def test_second_subscriber_upgrades_the_topic_qos():
+    client = RecordingClient()
+    await client.async_connect()
+    await client.async_subscribe("t", lambda m: None, qos=0)
+    await client.async_subscribe("t", lambda m: None, qos=1)
+    assert ("t", 1) in client.backend_subscribes
+
+
+async def test_dump_seconds_is_clamped(tmp_path, monkeypatch):
+    """An unbounded `seconds` pins the service call open for the process life."""
+    monkeypatch.setattr(mqtt_integration, "MAX_DUMP_SECONDS", 0.05)
+    jarvis, _ = await setup_mqtt(tmp_path, {"discovery": False})
+    response = await asyncio.wait_for(
+        jarvis.async_call_service(
+            "mqtt", "dump", {"topic": "#", "seconds": 10**9}, return_response=True
+        ),
+        timeout=5,
+    )
+    assert response["count"] == 0
+
+
+async def test_unique_id_ownership_holds_without_the_registry_check(tmp_path):
+    """Two independent layers refuse a hijack: the entity-registry lookup and
+    discovery's own unique_id ledger. `entity_objects` is a plain dict shared
+    by every platform, so the ledger is what still holds if that bookkeeping
+    is rebuilt underneath us."""
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/lock/front/config",
+        json.dumps(
+            {"name": "Front door", "unique_id": "dup", "command_topic": "real/lock/set"}
+        ),
+    )
+    assert "lock.front_door" in jarvis.states.entity_ids()
+
+    # simulate the shared entity_objects map being rebuilt by something else
+    jarvis.data["entity_objects"] = {}
+
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/switch/evil/config",
+        json.dumps({"name": "Evil", "unique_id": "dup", "command_topic": "attacker/set"}),
+    )
+    assert jarvis.data["mqtt_data"].discovery.discovered_ids == ["lock_front"]
+    assert client.payloads_for("attacker/set") == []
+
+
+async def test_json_attributes_cannot_shadow_core_attributes(tmp_path):
+    """`json_attributes_topic` is a device data channel. Letting it rewrite
+    friendly_name hands a cheap plug the name the voice layer resolves against."""
+    jarvis, client = await setup_mqtt(tmp_path, {"discovery": True})
+    await client.feed(
+        f"{DISCOVERY_PREFIX}/lock/rogue/config",
+        json.dumps(
+            {
+                "name": "Cheap plug",
+                "unique_id": "r1",
+                "command_topic": "r/set",
+                "json_attributes_topic": "r/attrs",
+            }
+        ),
+    )
+    await client.feed(
+        "r/attrs",
+        json.dumps(
+            {
+                "friendly_name": "Front Door Lock",
+                "device_class": "door",
+                "supported_features": 999,
+                "icon": "mdi:evil",
+                "battery": 87,
+            }
+        ),
+    )
+    state = state_of(jarvis, "lock.cheap_plug")
+    assert state.attributes["friendly_name"] == "Cheap plug"
+    assert state.attributes.get("supported_features") != 999
+    assert state.attributes.get("icon") != "mdi:evil"
+    assert state.attributes.get("device_class") != "door"
+    # genuine device data still lands
+    assert state.attributes["battery"] == 87
+
+
+async def test_availability_all_mode_tolerates_a_repeated_topic(tmp_path):
+    jarvis, client = await setup_mqtt(
+        tmp_path,
+        {
+            "discovery": False,
+            "sensor": [
+                {
+                    "name": "S",
+                    "state_topic": "s/v",
+                    "availability_mode": "all",
+                    "availability": [
+                        {"topic": "a/1"},
+                        {"topic": "a/1", "payload_available": "online"},
+                    ],
+                }
+            ],
+        },
+    )
+    await client.feed("a/1", "online")
+    assert state_of(jarvis, "sensor.s").state != "unavailable"
+    await client.feed("a/1", "offline")
+    assert state_of(jarvis, "sensor.s").state == "unavailable"
+
+
+async def test_availability_all_mode_still_needs_every_distinct_topic(tmp_path):
+    jarvis, client = await setup_mqtt(
+        tmp_path,
+        {
+            "discovery": False,
+            "sensor": [
+                {
+                    "name": "S",
+                    "state_topic": "s/v",
+                    "availability_mode": "all",
+                    "availability": [{"topic": "a/1"}, {"topic": "a/2"}],
+                }
+            ],
+        },
+    )
+    await client.feed("a/1", "online")
+    assert state_of(jarvis, "sensor.s").state == "unavailable"
+    await client.feed("a/2", "online")
+    assert state_of(jarvis, "sensor.s").state != "unavailable"
+    await client.feed("a/2", "offline")
+    assert state_of(jarvis, "sensor.s").state == "unavailable"

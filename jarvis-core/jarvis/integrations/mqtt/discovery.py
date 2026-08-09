@@ -121,6 +121,8 @@ class MqttDiscovery:
         self.entities: dict[str, MqttEntity] = {}
         self._children: dict[str, list[str]] = {}
         self._unsubs: list[Any] = []
+        # unique_id -> the discovery_id allowed to use it.
+        self._owners: dict[str, str] = {}
 
     @property
     def discovered_ids(self) -> list[str]:
@@ -221,12 +223,53 @@ class MqttDiscovery:
             return False
 
         existing = self.entities.get(discovery_id)
-        if existing is not None:
-            if existing.config == config:
-                return True  # retained duplicate: nothing changed
-            await self._async_drop(discovery_id, purge_registry=False)
+        # The component is part of the identity, not of `config`: a device
+        # bundle carries it in a `platform` key that is popped before the
+        # config is stored, so comparing configs alone would read a
+        # switch -> light change as an unchanged retained re-publish.
+        if (
+            existing is not None
+            and existing.mqtt_domain == component
+            and existing.config == config
+        ):
+            return True  # retained duplicate: nothing changed
 
-        unique_id = config.get("unique_id") or f"mqtt_{discovery_id}"
+        unique_id = str(config.get("unique_id") or f"mqtt_{discovery_id}")
+
+        # SECURITY: unique_id is what binds a config to an entity_id, and the
+        # entity registry looks it up per-platform, ignoring the domain. A
+        # config that borrows a unique_id already in use would therefore land
+        # on the *other* entity's entity_id and quietly take over its command
+        # topics -- publish `lock.front_door`'s unique_id and you own the lock.
+        # Only the discovery_id that first claimed a unique_id may keep it.
+        owner = self._owners.get(unique_id)
+        if owner is not None and owner != discovery_id:
+            _LOGGER.error(
+                "Ignoring MQTT discovery %s: unique_id %r is already owned by %s",
+                discovery_id, unique_id, owner,
+            )
+            return False
+        entry = self.jarvis.entities.get_by_unique_id("mqtt", unique_id)
+        live = (
+            self.jarvis.data.get("entity_objects", {}).get(entry.entity_id)
+            if entry
+            else None
+        )
+        if live is not None and live is not existing:
+            _LOGGER.error(
+                "Ignoring MQTT discovery %s: unique_id %r already belongs to %s",
+                discovery_id, unique_id, entry.entity_id,
+            )
+            return False
+
+        if existing is not None:
+            # A component change (switch -> light) has to surrender the registry
+            # entry too, otherwise get_by_unique_id hands back the old
+            # `switch.foo` id and the light ends up living in the switch domain.
+            await self._async_drop(
+                discovery_id, purge_registry=existing.mqtt_domain != component
+            )
+
         entity = create_entity(
             component, self.client, config, unique_id=unique_id, discovery_id=discovery_id
         )
@@ -234,6 +277,7 @@ class MqttDiscovery:
             return False
         await self.platforms.async_add(component, entity)
         self.entities[discovery_id] = entity
+        self._owners[unique_id] = discovery_id
         _LOGGER.info(
             "Discovered %s -> %s (%s)", discovery_id, entity.entity_id, component
         )
@@ -253,6 +297,11 @@ class MqttDiscovery:
             return False
         entity_id = entity.entity_id
         await self.platforms.async_remove(entity.mqtt_domain, entity_id)
+        if purge_registry:
+            # A genuinely removed entity releases its unique_id; a replacement
+            # (purge_registry=False) keeps the claim so the id survives.
+            if self._owners.get(str(entity.unique_id)) == discovery_id:
+                self._owners.pop(str(entity.unique_id), None)
         if purge_registry and entity_id:
             await self.jarvis.entities.remove(entity_id)
             _LOGGER.info("Removed discovered entity %s (%s)", entity_id, discovery_id)

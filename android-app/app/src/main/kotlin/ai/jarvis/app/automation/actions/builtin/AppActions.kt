@@ -6,10 +6,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import ai.jarvis.app.automation.actions.ActionEnv
 import ai.jarvis.app.automation.actions.ActionResult
 import ai.jarvis.app.automation.actions.JarvisAction
 import ai.jarvis.app.automation.actions.SsrfGuard
 import ai.jarvis.app.automation.actions.json
+import ai.jarvis.app.automation.actions.markUntrusted
 import ai.jarvis.app.automation.actions.str
 import ai.jarvis.app.automation.policy.ActionTier
 import kotlinx.coroutines.Dispatchers
@@ -85,7 +87,17 @@ object LaunchApp : JarvisAction {
     }
 }
 
-/** Tier 1 — opening a page only shows it; anything that submits a form is Tier 3 UI automation. */
+/**
+ * Tier 1 for a public page — opening one only shows it, and anything that
+ * submits a form is Tier 3 UI automation.
+ *
+ * **Raised to Tier 3 when the URL points inside the trust boundary.** The
+ * browser makes that request from the user's LAN carrying the user's cookies,
+ * which is exactly the reach a prompt-injected server does not have on its own:
+ * `http://192.168.1.1/reboot`, `http://localhost:8080/admin?wipe=1` and
+ * `http://169.254.169.254/…` are all GETs that change something. They are still
+ * possible — the user may well want their router page — but never silently.
+ */
 object OpenUrl : JarvisAction {
     override val id = "open_url"
     override val tier = ActionTier.AUTO
@@ -93,14 +105,35 @@ object OpenUrl : JarvisAction {
     override val paramsSchema = mapOf("url" to "string: http:// or https:// URL")
     override val capability = "apps"
 
+    /**
+     * Literal inspection only — no DNS. This runs on the dispatch path before
+     * any decision is made, so it must not block on the network, and a name
+     * that resolves privately is the browser's problem rather than a silent
+     * bypass of a Tier-1 gate. Returning a HIGHER tier is the only thing
+     * `tierFor` can do; the dispatcher folds it in with `max()`.
+     */
+    override fun tierFor(params: JSONObject): ActionTier {
+        val url = params.str("url") ?: return tier
+        return if (SsrfGuard.isInsideTrustBoundary(url, ActionEnv.allowedHttpHosts())) {
+            ActionTier.CONFIRM
+        } else {
+            tier
+        }
+    }
+
     override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
         val url = params.str("url") ?: return ActionResult.error("url is required")
         // Only ever http(s). `intent:`, `file:`, `content:` and friends can
         // launch arbitrary components or leak private files, so they are out —
         // this is a scheme allowlist, not a blocklist.
-        val scheme = SsrfGuard.check(url).scheme
-        if (scheme != "http" && scheme != "https") {
-            return ActionResult.error("only http and https URLs can be opened")
+        val check = SsrfGuard.check(url, ActionEnv.allowedHttpHosts())
+        if (check.scheme != "http" && check.scheme != "https") {
+            return ActionResult.error(
+                "only http and https URLs can be opened (${check.reason ?: "bad scheme"})"
+            )
+        }
+        if (check.host.isNullOrEmpty()) {
+            return ActionResult.error("that URL has no host: ${check.reason ?: "malformed url"}")
         }
         return startActivity(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)), url)
     }
@@ -229,6 +262,9 @@ object ListInstalledApps : JarvisAction {
     override val id = "list_installed_apps"
     override val tier = ActionTier.AUTO
     override val description = "List launchable apps installed on this phone."
+
+    /** An app label is text a third-party developer chose. It is content. */
+    override val untrustedOutput = true
     override val paramsSchema = mapOf(
         "query" to "string (optional): only apps whose name or package contains this",
         "limit" to "int: maximum results (default 100)"
@@ -260,7 +296,7 @@ object ListInstalledApps : JarvisAction {
                     "apps" to apps,
                     "count" to count,
                     "note" to "only apps visible to Jarvis under Android 11+ package visibility rules"
-                )
+                ).markUntrusted()
             )
         }
 }

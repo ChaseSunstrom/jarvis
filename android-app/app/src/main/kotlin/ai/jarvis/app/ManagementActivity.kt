@@ -1,0 +1,281 @@
+package ai.jarvis.app
+
+import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.Origin
+import ai.jarvis.app.config.ServerUrl
+import ai.jarvis.app.ui.JarvisUi
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.net.http.SslError
+import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
+import android.webkit.HttpAuthHandler
+import android.webkit.PermissionRequest
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import java.io.ByteArrayInputStream
+
+/**
+ * jarvis-core serves its own management UI; this is a window onto it, pinned to
+ * that one origin.
+ *
+ * The WebView is the one place in this app where remote content executes, so it
+ * is fenced in:
+ *
+ *  * **One origin, enforced twice.** [WebViewClient.shouldOverrideUrlLoading]
+ *    blocks navigation elsewhere, and [WebViewClient.shouldInterceptRequest]
+ *    blocks sub-resources too — iframes and XHR never reach the navigation
+ *    callback, so origin-checking there alone would be theatre.
+ *  * **No bridge.** `addJavascriptInterface` is never called. There is no path
+ *    from page JavaScript into the action dispatcher: whatever the page does,
+ *    it does inside the WebView, and a Tier-3 action still has to go through
+ *    [ai.jarvis.app.ui.ApprovalBridge] and a human.
+ *  * **No file access.** `allowFileAccess`/`allowContentAccess` are off, so the
+ *    file-URL escalation settings are moot and are left at their `false`
+ *    defaults rather than being touched at all.
+ *  * **No mixed content, no third-party cookies, no geolocation, no camera or
+ *    mic** — the page gets none of them.
+ *
+ * The bearer token rides an `Authorization` header on the initial load only,
+ * which is all the platform offers: WebView does not attach `additionalHeaders`
+ * to sub-resources or later navigations. jarvis-core is expected to turn that
+ * first authenticated request into a session of its own.
+ */
+class ManagementActivity : Activity() {
+
+    private lateinit var config: JarvisConfig
+    private var webView: WebView? = null
+    private var serverOrigin: Origin? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        config = JarvisConfig(this)
+
+        val url = config.serverUrl
+        val origin = ServerUrl.originOf(url)
+        if (url.isEmpty() || origin == null) {
+            Toast.makeText(this, "Set a valid server URL first", Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this, SettingsActivity::class.java))
+            finish()
+            return
+        }
+        serverOrigin = origin
+
+        val view = WebView(this)
+        webView = view
+        configure(view)
+        setContentView(buildUi(view))
+
+        // Headers apply to this request only — see the class comment.
+        view.loadUrl(url, mapOf("Authorization" to "Bearer ${config.token}"))
+    }
+
+    private fun buildUi(view: WebView): ViewGroup {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(JarvisUi.BG)
+        }
+
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val p = JarvisUi.dp(this@ManagementActivity, 12)
+            setPadding(p, p, p, p)
+        }
+        bar.addView(
+            TextView(this).apply {
+                text = "MANAGEMENT · ${serverOrigin?.host ?: ""}"
+                setTextColor(JarvisUi.ACCENT)
+                textSize = 12f
+                letterSpacing = 0.16f
+                typeface = android.graphics.Typeface.MONOSPACE
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        bar.addView(JarvisUi.ghost(this, "RELOAD") { reload() })
+        root.addView(
+            bar,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        root.addView(
+            view,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+        return root
+    }
+
+    private fun reload() {
+        // Re-issue the authenticated first request rather than WebView.reload(),
+        // which would replay whatever the last navigation was without the header.
+        webView?.loadUrl(config.serverUrl, mapOf("Authorization" to "Bearer ${config.token}"))
+    }
+
+    private fun configure(view: WebView) {
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+
+        view.settings.apply {
+            // The management UI is a real web app; it needs these two.
+            javaScriptEnabled = true
+            domStorageEnabled = true
+
+            // Everything else is denied.
+            allowFileAccess = false
+            allowContentAccess = false
+            javaScriptCanOpenWindowsAutomatically = false
+            setSupportMultipleWindows(false)
+            mediaPlaybackRequiresUserGesture = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            setGeolocationEnabled(false)
+            builtInZoomControls = true
+            displayZoomControls = false
+            userAgentString = USER_AGENT
+        }
+
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(view, false)
+        }
+
+        view.isVerticalScrollBarEnabled = true
+        view.setBackgroundColor(JarvisUi.BG)
+        view.webViewClient = originLockedClient()
+        view.webChromeClient = lockedChromeClient()
+        // Deliberately absent: view.addJavascriptInterface(...). Do not add one.
+    }
+
+    private fun originLockedClient() = object : WebViewClient() {
+
+        override fun shouldOverrideUrlLoading(
+            view: WebView,
+            request: WebResourceRequest,
+        ): Boolean {
+            if (isAllowed(request.url)) return false
+            blocked(request.url)
+            return true
+        }
+
+        override fun shouldInterceptRequest(
+            view: WebView,
+            request: WebResourceRequest,
+        ): WebResourceResponse? {
+            if (isAllowed(request.url)) return null
+            // Empty 200 rather than an error page: a blocked tracker or CDN
+            // font should not turn into a broken-looking management UI. A fresh
+            // stream each call — a shared one would be exhausted after the first.
+            return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+        }
+
+        override fun onReceivedSslError(
+            view: WebView,
+            handler: SslErrorHandler,
+            error: SslError,
+        ) {
+            // Never proceed. A private CA belongs in the user trust anchors of
+            // res/xml/network_security_config.xml, not in a "continue anyway".
+            handler.cancel()
+            toast("TLS error from the server; connection refused")
+        }
+
+        override fun onReceivedHttpAuthRequest(
+            view: WebView,
+            handler: HttpAuthHandler,
+            host: String?,
+            realm: String?,
+        ) {
+            handler.cancel()
+        }
+    }
+
+    private fun lockedChromeClient() = object : WebChromeClient() {
+
+        override fun onPermissionRequest(request: PermissionRequest) {
+            // The page never gets the camera or the microphone. Voice goes
+            // through the native assist path, which the user can see running.
+            request.deny()
+        }
+
+        override fun onGeolocationPermissionsShowPrompt(
+            origin: String?,
+            callback: GeolocationPermissions.Callback?,
+        ) {
+            callback?.invoke(origin, false, false)
+        }
+    }
+
+    /**
+     * Same scheme, host and port as the configured server, and nothing else.
+     *
+     * Compared component-by-component off the [Uri] the WebView handed us
+     * rather than by re-parsing its string form: a sub-resource URL with an
+     * unescaped character parses fine here but would throw in a strict
+     * java.net.URI, and "the parser choked" must not become "allowed".
+     */
+    private fun isAllowed(uri: Uri): Boolean {
+        val expected = serverOrigin ?: return false
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase() ?: return false
+        val port = when {
+            uri.port >= 0 -> uri.port
+            scheme == "https" -> 443
+            else -> 80
+        }
+        return scheme == expected.scheme && host == expected.host && port == expected.port
+    }
+
+    private fun blocked(uri: Uri) {
+        toast("Blocked: ${uri.host ?: uri.scheme} is not your Jarvis server")
+    }
+
+    private fun toast(message: String) =
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
+    @Deprecated("Predictive back is disabled in the manifest, so this is the back path.")
+    override fun onBackPressed() {
+        val view = webView
+        if (view != null && view.canGoBack()) {
+            view.goBack()
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
+    }
+
+    override fun onDestroy() {
+        webView?.let { view ->
+            view.stopLoading()
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.webChromeClient = null
+            view.destroy()
+        }
+        webView = null
+        super.onDestroy()
+    }
+
+    companion object {
+        /**
+         * Identifies this app to jarvis-core without advertising the device
+         * model, the Android version, or anything else a fingerprinter enjoys.
+         */
+        private val USER_AGENT =
+            "JarvisAndroid/${BuildConfig.VERSION_NAME} (ai.jarvis.app; management)"
+    }
+}

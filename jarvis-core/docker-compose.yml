@@ -1,0 +1,217 @@
+# jarvis-core — the full standalone stack. One `docker compose up -d`.
+#
+# This file REPLACES the `homeassistant` service in your existing compose and
+# keeps everything else. The four Wyoming/photon services below are reproduced
+# from that stack unchanged, so you can point at this file and delete the old
+# one rather than running both.
+#
+#   jarvis-core             :8080   automation engine + REST/WS API + HUD
+#   wyoming-openwakeword    :10400  wake word ("hey jarvis")
+#   wyoming-whisper         :10300  speech to text
+#   wyoming-piper           :10200  text to speech
+#   photon                  :2322   offline geocoder
+#   ollama                  :11434  the model (commented — usually on the host)
+#
+# Everything is `network_mode: host`, matching the existing stack. Under host
+# mode `ports:` is ignored: the port a service binds is what is reachable, and
+# ufw is what decides who may reach it (scripts/apply-firewall.sh in the parent
+# repo). Nothing here should ever be port-forwarded from the internet — see
+# docs/security.md.
+#
+# Model/flag defaults come from environment variables so you can keep whatever
+# your host already runs without editing this file:
+#
+#   WHISPER_MODEL=... PIPER_VOICE=... WAKE_WORD=... docker compose up -d
+#
+# or put them in a .env next to this file.
+
+services:
+  # --- Jarvis Core --------------------------------------------------------
+  # The whole platform: state machine, service registry, automations, scripts,
+  # scenes, MQTT discovery, recorder, the voice pipeline and the LLM agent.
+  jarvis-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jarvis-core:local
+    container_name: jarvis-core
+    restart: unless-stopped
+    # Host networking is load-bearing, not laziness. Jarvis has to reach the
+    # Wyoming sockets and Ollama on 127.0.0.1, and MQTT/mDNS discovery of
+    # Zigbee2MQTT, ESPHome, Shelly and WLED devices needs to be on the LAN
+    # broadcast domain rather than behind a NAT bridge.
+    network_mode: host
+    environment:
+      # Named zone for time-of-day triggers and the sun integration. Keep this
+      # in step with `jarvis: time_zone:` in config/configuration.yaml.
+      - TZ=${TZ:-UTC}
+      # Optional. Unset (the normal case) means Jarvis mints a token on first
+      # run and prints it in a banner — see the README quickstart. Set it to
+      # pin a known token instead, e.g. when rebuilding from scratch often.
+      - JARVIS_TOKEN=${JARVIS_TOKEN:-}
+    volumes:
+      # Your entire installation. Config in, and Jarvis writes .storage/
+      # (entity/device/area registries, access tokens) plus the recorder
+      # database back out. Back this directory up; nothing else here is state.
+      - ./config:/config
+      # Lets glibc resolve the named zone even when the image's best-effort
+      # tzdata install was skipped (blocked apt mirror at build time).
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt: [no-new-privileges:true]
+    # Jarvis does not need to escalate, mount, or touch raw devices. If you add
+    # an integration that talks to a USB radio (Zigbee coordinator, Z-Wave
+    # stick), add the device here explicitly:
+    #   devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]
+    cap_drop: [ALL]
+
+  # --- Wyoming: wake word -------------------------------------------------
+  # Streams audio in, says "the wake word fired" out. `hey_jarvis` ships with
+  # the image; custom models trained per docs/wake-word-training.md go in
+  # ./openwakeword and are picked up by --custom-model-dir.
+  wyoming-openwakeword:
+    image: rhasspy/wyoming-openwakeword:latest
+    container_name: wyoming-openwakeword
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --uri tcp://0.0.0.0:10400
+      --preload-model ${WAKE_WORD:-hey_jarvis}
+      --custom-model-dir /custom
+    volumes:
+      - ./wyoming/openwakeword:/custom
+    environment:
+      - TZ=${TZ:-UTC}
+
+  # --- Wyoming: speech to text -------------------------------------------
+  # The streaming sherpa model your host already runs. If you are on
+  # faster-whisper instead, set WHISPER_MODEL to one of its names
+  # (tiny-int8, base-int8, small-int8, ...) — jarvis-core does not care which
+  # engine answers on 10300, only that something speaks Wyoming there.
+  wyoming-whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: wyoming-whisper
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --uri tcp://0.0.0.0:10300
+      --model ${WHISPER_MODEL:-sherpa-onnx-streaming-en}
+      --language ${VOICE_LANGUAGE:-en}
+      --data-dir /data
+      --download-dir /data
+    volumes:
+      - ./wyoming/whisper:/data
+    environment:
+      - TZ=${TZ:-UTC}
+
+  # --- Wyoming: text to speech -------------------------------------------
+  # Piper. en_US-lessac-medium is the stack default; en_GB-alan-medium is the
+  # voice the Jarvis persona is written for, if you would rather he sounded the
+  # part. Downloaded on first use into ./wyoming/piper.
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: wyoming-piper
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --uri tcp://0.0.0.0:10200
+      --voice ${PIPER_VOICE:-en_US-lessac-medium}
+      --data-dir /data
+      --download-dir /data
+    volumes:
+      - ./wyoming/piper:/data
+    environment:
+      - TZ=${TZ:-UTC}
+
+  # --- Offline geocoder ---------------------------------------------------
+  # Place lookups ("how long to the hardware shop?") without calling Google.
+  # First start downloads a sizeable planet/country index into ./photon —
+  # expect it to sit there a while before it answers.
+  photon:
+    image: rtuszik/photon-docker:latest
+    container_name: photon
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TZ=${TZ:-UTC}
+      # Country extract instead of the full planet index. Unset = planet.
+      - REGION=${PHOTON_REGION:-}
+      - UPDATE_STRATEGY=${PHOTON_UPDATE_STRATEGY:-PARALLEL}
+    volumes:
+      - ./photon:/photon/photon_data
+
+  # --- Ollama (usually already on the host) -------------------------------
+  # Uncomment only if you are NOT running Ollama natively. Jarvis talks to
+  # whatever answers on 11434 — see `llm: url:` in config/configuration.yaml.
+  # GPU users need the NVIDIA container toolkit for the `deploy` block.
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   volumes:
+  #     - ./ollama:/root/.ollama
+  #   environment:
+  #     - TZ=${TZ:-UTC}
+  #     - OLLAMA_HOST=127.0.0.1:11434   # never 0.0.0.0 — Ollama has no auth
+  #     - OLLAMA_KEEP_ALIVE=30m
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+
+  # --- Agent fan-out and the execution jail (optional) --------------------
+  # These already exist in the parent repo and are unchanged by the move to
+  # standalone: the orchestrator does multi-agent delegation and OpenCode
+  # coding jobs, the sandbox runs approval-gated commands with no network at
+  # all. They are commented out because most installations do not need them,
+  # and because the build contexts sit one directory up.
+  #
+  # Fill ORCHESTRATOR_TOKEN and APPROVAL_SECRET in .env first (see
+  # ../.env.example), then uncomment. The sandbox's `network_mode: none` is a
+  # security boundary, not a default — it runs LLM-proposed commands and must
+  # never be given host or LAN networking.
+  #
+  # jarvis-orchestrator:
+  #   build: ../jarvis-orchestrator
+  #   container_name: jarvis-orchestrator
+  #   restart: unless-stopped
+  #   network_mode: host              # binds :8188; ufw allows this host only
+  #   environment:
+  #     - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+  #     - PLANNER_MODEL=${PLANNER_MODEL:-qwen3:8b}
+  #     - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
+  #     - WORKSPACE=/workspace
+  #     - ORCHESTRATOR_TOKEN=${ORCHESTRATOR_TOKEN}
+  #     - APPROVAL_SECRET=${APPROVAL_SECRET}
+  #   volumes:
+  #     - ../jarvis-workspace:/workspace
+  #   read_only: true
+  #   tmpfs: [/tmp]
+  #   cap_drop: [ALL]
+  #   security_opt: [no-new-privileges:true]
+  #
+  # jarvis-sandbox:
+  #   build: ../jarvis-sandbox
+  #   container_name: jarvis-sandbox
+  #   restart: unless-stopped
+  #   network_mode: none              # the boundary. Do not "fix" this.
+  #   user: "10001:10001"
+  #   read_only: true
+  #   cap_drop: [ALL]
+  #   security_opt: [no-new-privileges:true]
+  #   mem_limit: 1g
+  #   pids_limit: 128
+  #   tmpfs:
+  #     - /tmp:size=256m,mode=1777
+  #   volumes:
+  #     - ../jarvis-workspace:/workspace   # the only writable crossover

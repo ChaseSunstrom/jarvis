@@ -154,24 +154,36 @@ class HueBridge:
 
     # -- discovery / polling ----------------------------------------------
     async def async_detect_version(self) -> int:
+        """Probe for a v2 bridge, falling back to v1.
+
+        The v1 answer is deliberately *not* cached here. A single flaky v2
+        probe (bridge rebooting, Wi-Fi blip) used to pin the bridge to v1 for
+        the lifetime of the process, permanently downgrading a v2 bridge to
+        the legacy API. Only a version that actually served a fetch is
+        remembered — see :meth:`async_fetch`.
+        """
         if self.version in (1, 2):
             return self.version
         try:
             await self._request(
                 "GET", f"{self._v2_base}/clip/v2/resource/light", headers=self._v2_headers()
             )
-            self.version = 2
         except (HueError, httpx.HTTPError):
-            _LOGGER.debug("Hue v2 unavailable on %s; falling back to v1", self.host)
-            self.version = 1
-        return self.version
+            _LOGGER.debug("Hue v2 unavailable on %s; trying v1", self.host)
+            return 1
+        self.version = 2
+        return 2
 
     async def async_fetch(self) -> dict[str, dict[str, Any]]:
         """Refresh every light/group. Returns the normalised device map."""
         version = self.version or await self.async_detect_version()
-        devices = (
-            await self._fetch_v2() if version == 2 else await self._fetch_v1()
-        )
+        if version == 2:
+            devices = await self._fetch_v2()
+        else:
+            devices = await self._fetch_v1()
+        # A fetch that worked is proof of the API version; pin it only now, so
+        # a transient failure leaves the next call free to re-probe.
+        self.version = version
         self.devices = devices
         return devices
 
@@ -202,7 +214,11 @@ class HueBridge:
             _LOGGER.debug("Hue v2 groups unavailable: %s", exc)
             return devices
 
-        by_id = {item.get("id"): item for item in grouped.get("data", []) or []}
+        by_id = {
+            item.get("id"): item
+            for item in grouped.get("data", []) or []
+            if isinstance(item, dict) and item.get("id")
+        }
         for room in rooms.get("data", []) or []:
             name = (room.get("metadata") or {}).get("name")
             for service in room.get("services", []) or []:
@@ -211,8 +227,10 @@ class HueBridge:
                 group = by_id.get(service.get("rid"))
                 if group is None:
                     continue
-                key = f"group:{group['id']}"
-                devices[key] = _normalise_v2_group(group, name or f"Group {group['id']}")
+                group_id = group.get("id")
+                devices[f"group:{group_id}"] = _normalise_v2_group(
+                    group, name or f"Group {group_id}"
+                )
         return devices
 
     async def _fetch_v1(self) -> dict[str, dict[str, Any]]:
@@ -284,7 +302,10 @@ def _normalise_v2_light(item: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
         "reachable": True,
-        "model": item.get("product_data", {}).get("product_name") or metadata.get("archetype"),
+        # `product_data` is optional and real bridges send it as null on some
+        # resources — `.get("product_data", {})` returns None in that case.
+        "model": (item.get("product_data") or {}).get("product_name")
+        or metadata.get("archetype"),
     }
     return device
 
@@ -417,7 +438,18 @@ class HueLight(Entity):
 
     async def async_update(self) -> None:
         """Only the first entity of a bridge polls; it refreshes the rest."""
-        devices = await self._bridge.async_fetch()
+        try:
+            devices = await self._bridge.async_fetch()
+        except Exception:
+            # Nothing else on this bridge polls, so without this every other
+            # light would keep publishing its last known state as if the
+            # bridge were still answering.
+            for entity in self._bridge.subscribers:
+                if entity is self:
+                    continue
+                entity._attr_available = False
+                entity.async_write_state()
+            raise
         for entity in self._bridge.subscribers:
             device = devices.get(entity._key)
             if device is None:
@@ -465,23 +497,48 @@ class HueLight(Entity):
 # ---------------------------------------------------------------------------
 # setup
 # ---------------------------------------------------------------------------
-def create_client(jarvis: "Jarvis", timeout: float = DEFAULT_TIMEOUT) -> httpx.AsyncClient:
-    """Shared client; honours an injected `client`/`transport` for tests."""
+def create_client(
+    jarvis: "Jarvis", timeout: float = DEFAULT_TIMEOUT, verify_ssl: bool = False
+) -> httpx.AsyncClient:
+    """Shared client; honours an injected `client`/`transport` for tests.
+
+    `verify_ssl` defaults to False because a Hue bridge presents a
+    self-signed certificate for its v2 API and would otherwise be
+    unreachable. Setting ``verify_ssl: true`` on the bridge block turns
+    verification back on for installs that pin the bridge CA.
+    """
     store = jarvis.data.setdefault(DOMAIN, {})
-    client = store.get("client")
-    if client is not None:
+    injected = store.get("client")
+    if injected is not None:
         store.setdefault("owns_client", False)
+        return injected
+
+    # One client per verification setting, so a bridge that pins its CA does
+    # not force the setting onto a second bridge that cannot use it (and vice
+    # versa).
+    clients: dict[bool, httpx.AsyncClient] = store.setdefault("clients", {})
+    key = bool(verify_ssl)
+    client = clients.get(key)
+    if client is not None:
         return client
+
     transport = store.get("transport")
     client = httpx.AsyncClient(
         transport=transport,
         timeout=httpx.Timeout(timeout),
-        # Hue v2 serves a self-signed bridge certificate.
-        verify=False if transport is None else True,
+        verify=key if transport is None else True,
     )
-    store["client"] = client
+    clients[key] = client
     store["owns_client"] = True
     return client
+
+
+async def async_close_clients(jarvis: "Jarvis") -> None:
+    """Close every client this integration opened."""
+    store = jarvis.data.get(DOMAIN) or {}
+    for client in list((store.get("clients") or {}).values()):
+        await client.aclose()
+    store.get("clients", {}).clear()
 
 
 def _as_bridges(config: Any) -> list[dict[str, Any]]:
@@ -500,11 +557,6 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         return True
 
     store = jarvis.data.setdefault(DOMAIN, {})
-    client = create_client(jarvis)
-    if store.get("owns_client", True) and not store.get("shutdown_registered"):
-        store["shutdown_registered"] = True
-        jarvis.register_shutdown(client.aclose)
-
     bridges: list[HueBridge] = store.setdefault("bridges", [])
     platforms: dict[str, EntityPlatform] = store.setdefault("platforms", {})
 
@@ -513,6 +565,14 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         if not host:
             _LOGGER.error("hue: a bridge needs a 'host'")
             continue
+        client = create_client(
+            jarvis,
+            timeout=float(block.get("timeout", DEFAULT_TIMEOUT)),
+            verify_ssl=bool(block.get("verify_ssl", False)),
+        )
+        if store.get("owns_client", True) and not store.get("shutdown_registered"):
+            store["shutdown_registered"] = True
+            jarvis.register_shutdown(lambda: async_close_clients(jarvis))
         bridge = HueBridge(
             jarvis,
             client,

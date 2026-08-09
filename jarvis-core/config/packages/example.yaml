@@ -1,0 +1,119 @@
+# A package: one feature, one file, every piece of it in the same place.
+#
+# `packages: !include_dir_named packages` in configuration.yaml merges every
+# packages/*.yaml into the TOP LEVEL of the configuration. So the keys here are
+# the same top-level keys you would otherwise write in configuration.yaml —
+# `automation:`, `script:`, `template:`, `input_boolean:` and so on — and they
+# are combined with whatever is already there:
+#
+#   lists (automation, template, scene, rest)   are concatenated
+#   dicts (script, input_*)                     are merged key by key
+#   a key defined twice with the same name      is an error, on purpose
+#
+# That last rule is the point. A package cannot silently override the main
+# configuration; a collision stops startup with the offending name, so you find
+# out at boot instead of wondering why an automation stopped firing.
+#
+# Delete this file and the whole "laundry" feature below disappears — helper,
+# automation, script and all. That is why packages beat scattering related
+# config across four files.
+
+# ---------------------------------------------------------------------------
+# Feature: laundry nag.
+#
+# The washing machine has no smart anything. It does have a power draw that
+# drops to near zero when the cycle ends, which is enough. This package turns
+# that into a state machine and nags until someone empties it.
+# ---------------------------------------------------------------------------
+
+input_boolean:
+  laundry_waiting:
+    name: Laundry waiting
+    icon: mdi:washing-machine
+    initial: off
+
+input_datetime:
+  laundry_finished_at:
+    name: Laundry finished at
+    has_date: true
+    has_time: true
+
+template:
+  - binary_sensor:
+      - name: Washing Machine Running
+        # Standby draw is a few watts; a cycle is hundreds. 15 W is comfortably
+        # above the former and below the latter.
+        state: "{{ states('sensor.power_consumption') | float(0) > 15 }}"
+        device_class: running
+
+automation:
+  - id: laundry_finished
+    alias: Laundry finished
+    description: >-
+      Fires when the draw stays low for three minutes — long enough to ignore
+      the pauses between a cycle's phases, which is what makes a naive
+      "power dropped" trigger announce the wash four times.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.washing_machine_running
+        to: "off"
+        for: "00:03:00"
+    condition:
+      - condition: state
+        entity_id: input_boolean.laundry_waiting
+        state: "off"
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.laundry_waiting
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.laundry_finished_at
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      - service: script.announce
+        data:
+          message: The washing machine has finished, Sir.
+
+  - id: laundry_nag
+    alias: Laundry nag
+    description: Mention it again every hour, but only while someone is home and awake.
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/60"
+    condition:
+      - condition: state
+        entity_id: input_boolean.laundry_waiting
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.anyone_home
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.chris_awake
+        state: "on"
+      - condition: template
+        value_template: >-
+          {{ (now() - states('input_datetime.laundry_finished_at') | as_datetime).total_seconds() > 3600 }}
+    action:
+      - service: script.announce
+        data:
+          message: >-
+            The laundry is still sitting in the machine. It has been there
+            {{ ((now() - (states('input_datetime.laundry_finished_at') | as_datetime)).total_seconds() / 3600) | round(0) | int }}
+            hours now.
+
+script:
+  laundry_emptied:
+    alias: Laundry emptied
+    description: Clear the laundry reminder. Call when the user says they have emptied the machine.
+    mode: single
+    sequence:
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.laundry_waiting
+      - service: logbook.log
+        data:
+          name: Laundry
+          message: Machine emptied.

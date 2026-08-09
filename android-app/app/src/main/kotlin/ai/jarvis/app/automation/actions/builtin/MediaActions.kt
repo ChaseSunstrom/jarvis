@@ -100,23 +100,23 @@ object SetMediaVolume : JarvisAction {
 
 /** The transport set, built once. */
 object MediaActions {
-    val play = MediaKeyAction(
+    val play: JarvisAction = MediaKeyAction(
         "media_play", "Resume media playback.", KeyEvent.KEYCODE_MEDIA_PLAY
     ) { it.play() }
 
-    val pause = MediaKeyAction(
+    val pause: JarvisAction = MediaKeyAction(
         "media_pause", "Pause media playback.", KeyEvent.KEYCODE_MEDIA_PAUSE
     ) { it.pause() }
 
-    val next = MediaKeyAction(
+    val next: JarvisAction = MediaKeyAction(
         "media_next", "Skip to the next track.", KeyEvent.KEYCODE_MEDIA_NEXT
     ) { it.skipToNext() }
 
-    val previous = MediaKeyAction(
+    val previous: JarvisAction = MediaKeyAction(
         "media_previous", "Go back to the previous track.", KeyEvent.KEYCODE_MEDIA_PREVIOUS
     ) { it.skipToPrevious() }
 
-    val stop = MediaKeyAction(
+    val stop: JarvisAction = MediaKeyAction(
         "media_stop", "Stop media playback.", KeyEvent.KEYCODE_MEDIA_STOP
     ) { it.stop() }
 

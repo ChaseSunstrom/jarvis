@@ -63,26 +63,46 @@ PLATFORM_KEYS = ("sensor", "binary_sensor", "switch")
 # HTTP plumbing
 # ---------------------------------------------------------------------------
 def create_client(jarvis: "Jarvis", verify_ssl: bool = True, timeout: float = DEFAULT_TIMEOUT):
-    """Build the shared AsyncClient, honouring test injection.
+    """Return the AsyncClient for this `verify_ssl` setting.
+
+    One client is kept *per TLS-verification setting*, never one client for
+    the whole integration: a single block saying ``verify_ssl: false`` must
+    not silently switch certificate checking off for every other endpoint in
+    the configuration.
 
     Tests seed ``jarvis.data["rest"] = {"transport": httpx.MockTransport(...)}``
     (or a ready-made ``"client"``) before calling ``async_setup``.
     """
     store = jarvis.data.setdefault(DOMAIN, {})
-    client = store.get("client")
-    if client is not None:
+    injected = store.get("client")
+    if injected is not None:
         store.setdefault("owns_client", False)
+        return injected
+
+    clients: dict[bool, httpx.AsyncClient] = store.setdefault("clients", {})
+    key = bool(verify_ssl)
+    client = clients.get(key)
+    if client is not None:
         return client
+
     transport = store.get("transport")
     client = httpx.AsyncClient(
         transport=transport,
         timeout=httpx.Timeout(timeout),
-        verify=verify_ssl if transport is None else True,
+        verify=key if transport is None else True,
         follow_redirects=True,
     )
-    store["client"] = client
+    clients[key] = client
     store["owns_client"] = True
     return client
+
+
+async def async_close_clients(jarvis: "Jarvis") -> None:
+    """Close every client this integration opened."""
+    store = jarvis.data.get(DOMAIN) or {}
+    for client in list((store.get("clients") or {}).values()):
+        await client.aclose()
+    store.get("clients", {}).clear()
 
 
 class RestData:
@@ -129,6 +149,19 @@ class RestData:
             entity.apply_data()
             entity.async_write_state()
 
+    def notify_failure(self, exclude: "RestEntity | None" = None) -> None:
+        """The shared fetch failed — every rider of this endpoint is stale.
+
+        Siblings have ``should_poll`` False (only the first entity fetches),
+        so nothing else would ever notice the endpoint had gone away: they
+        would keep publishing the last good payload as if it were live.
+        """
+        for entity in self.subscribers:
+            if entity is exclude:
+                continue
+            entity._attr_available = False
+            entity.async_write_state()
+
     # -- fetching ----------------------------------------------------------
     def _url(self) -> str:
         if is_template(self.resource):
@@ -154,7 +187,9 @@ class RestData:
                 kwargs["content"] = str(body)
 
         try:
-            response = await self.client.request(self.method, self._url(), **kwargs)
+            response = await self.client.request(
+                self.method, self._url(), timeout=self.timeout, **kwargs
+            )
         except httpx.HTTPError as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             raise
@@ -248,7 +283,12 @@ class RestEntity(Entity):
     async def async_update(self) -> None:
         """Fetch (poller only) and recompute; siblings ride the same payload."""
         if self._is_poller or self._rest.data is None:
-            await self._rest.async_update()
+            try:
+                await self._rest.async_update()
+            except Exception:
+                # Take the whole block down, not just the entity that polls.
+                self._rest.notify_failure(exclude=self)
+                raise
             self.apply_data()
             self._rest.notify_subscribers(exclude=self)
         else:
@@ -289,9 +329,11 @@ class RestSwitch(RestEntity):
         command_method: str,
         headers: dict[str, str] | None,
         auth: Any,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         super().__init__(jarvis, rest, config)
         self._client = client
+        self._timeout = timeout
         self._command_resource = command_resource
         self._command_method = (command_method or DEFAULT_SWITCH_METHOD).upper()
         self._headers = dict(headers or {})
@@ -322,7 +364,9 @@ class RestSwitch(RestEntity):
                 kwargs["json"] = body
             else:
                 kwargs["content"] = str(body)
-        response = await self._client.request(self._command_method, url, **kwargs)
+        response = await self._client.request(
+            self._command_method, url, timeout=self._timeout, **kwargs
+        )
         if response.status_code >= 400:
             raise httpx.HTTPStatusError(
                 f"HTTP {response.status_code}", request=response.request, response=response
@@ -380,16 +424,20 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     platforms: dict[str, EntityPlatform] = store.setdefault("platforms", {})
     resources: list[RestData] = store.setdefault("resources", [])
 
-    verify_ssl = all(block.get("verify_ssl", True) for block in blocks)
-    timeout = max(float(block.get("timeout", DEFAULT_TIMEOUT)) for block in blocks)
-    client = create_client(jarvis, verify_ssl=verify_ssl, timeout=timeout)
-
-    if store.get("owns_client", True) and not store.get("shutdown_registered"):
-        store["shutdown_registered"] = True
-        jarvis.register_shutdown(client.aclose)
-
     total = 0
     for index, block in enumerate(blocks):
+        # Per block, never merged: TLS verification and timeouts are safety
+        # settings and one lax block must not relax the others.
+        block_timeout = float(block.get("timeout", DEFAULT_TIMEOUT))
+        client = create_client(
+            jarvis,
+            verify_ssl=bool(block.get("verify_ssl", True)),
+            timeout=block_timeout,
+        )
+        if store.get("owns_client", True) and not store.get("shutdown_registered"):
+            store["shutdown_registered"] = True
+            jarvis.register_shutdown(lambda: async_close_clients(jarvis))
+
         resource = block.get("resource")
         if not resource and not any(
             entry.get("resource")
@@ -402,7 +450,6 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         scan_interval = float(block.get("scan_interval", DEFAULT_SCAN_INTERVAL))
         headers = block.get("headers") or {}
         auth = _auth_from(block)
-        block_timeout = float(block.get("timeout", DEFAULT_TIMEOUT))
 
         shared: RestData | None = None
         if resource:
@@ -490,6 +537,7 @@ def _build_entity(
             entry.get("method", DEFAULT_SWITCH_METHOD),
             headers,
             auth,
+            timeout,
         )
 
     if own_resource and own_resource != block.get("resource"):

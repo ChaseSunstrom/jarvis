@@ -66,6 +66,7 @@ SERVICE_DUMP = "dump"
 DEFAULT_BIRTH_PAYLOAD = "online"
 DEFAULT_WILL_PAYLOAD = "offline"
 DUMP_FILENAME = "mqtt_dump.txt"
+MAX_DUMP_SECONDS = 300.0
 
 __all__ = [
     "DOMAIN",
@@ -230,16 +231,22 @@ def _register_services(jarvis: "Jarvis", data: MqttData) -> None:
             from .entity import render_value_template
 
             payload = render_value_template(template, str(payload), default="")
-        await data.client.async_publish(
+        sent = await data.client.async_publish(
             str(topic),
             payload,
             bool(call.get("retain", False)),
             int(call.get("qos", 0) or 0),
         )
+        if sent is False:
+            # The client logs the cause; the caller has to learn that the
+            # message never left, or automations silently no-op.
+            raise RuntimeError(f"mqtt.publish to {topic!r} failed (see log)")
 
     async def _dump(call: Any) -> dict[str, Any]:
         topic = str(call.get("topic", "#"))
-        seconds = float(call.get("seconds", 5) or 5)
+        # Clamped: this is a debugging aid, and an unbounded value pins a
+        # service call (and its subscription) open for the life of the process.
+        seconds = min(max(float(call.get("seconds", 5) or 5), 0.0), MAX_DUMP_SECONDS)
         collected: list[dict[str, Any]] = []
 
         def _collect(message: MqttMessage) -> None:
@@ -288,7 +295,7 @@ def _register_services(jarvis: "Jarvis", data: MqttData) -> None:
         description="Record messages on a topic filter for N seconds (debugging).",
         fields={
             "topic": {"default": "#", "example": "zigbee2mqtt/#"},
-            "seconds": {"default": 5},
+            "seconds": {"default": 5, "description": f"Capped at {MAX_DUMP_SECONDS:.0f}s."},
         },
         supports_response=True,
     )

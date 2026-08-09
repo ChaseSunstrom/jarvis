@@ -26,8 +26,11 @@ command makes its entity unavailable rather than raising.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
+import signal
 from typing import TYPE_CHECKING, Any
 
 from ...const import STATE_OFF, STATE_ON, STATE_UNKNOWN
@@ -44,6 +47,11 @@ DOMAIN = "command_line"
 DEFAULT_TIMEOUT = 15.0
 DEFAULT_SCAN_INTERVAL = 60.0
 
+# How long to wait for a killed process to actually go away before giving up
+# on collecting its output. SIGKILL is not refusable, so this only covers the
+# time it takes the kernel to tear the pipes down.
+KILL_GRACE = 5.0
+
 PLATFORM_KEYS = ("sensor", "binary_sensor", "switch")
 
 
@@ -51,26 +59,62 @@ class CommandFailed(Exception):
     """A command timed out or could not be spawned."""
 
 
+def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    """SIGKILL the command *and* anything it forked.
+
+    The process is spawned with ``start_new_session=True``, so its pgid equals
+    its pid and one ``killpg`` reaps the shell plus every grandchild. Killing
+    only the shell (``process.kill()``) leaves pipeline members and background
+    jobs alive, holding the stdout pipe open forever.
+    """
+    if hasattr(os, "killpg"):
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError, OSError):
+        process.kill()
+
+
 async def async_run_command(command: str, timeout: float = DEFAULT_TIMEOUT) -> tuple[int, str]:
-    """Run `command` through the shell. Returns (returncode, stdout)."""
+    """Run `command` through the shell. Returns (returncode, stdout).
+
+    Raises :class:`CommandFailed` if the command cannot be spawned or does not
+    finish within `timeout` seconds.
+    """
     try:
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # Own session so a timeout can kill the whole process group.
+            start_new_session=True,
         )
     except OSError as exc:
         raise CommandFailed(f"could not run {command!r}: {exc}") from exc
 
+    # NOTE: deliberately *not* asyncio.wait_for(). Cancelling communicate()
+    # tears down its pipe readers mid-flight, after which the subprocess
+    # transport never reports the pipes as disconnected and process.wait()
+    # blocks until the command exits on its own — i.e. the timeout would not
+    # be a timeout at all. asyncio.wait() leaves the task running instead, so
+    # after killing the process group it settles normally.
+    task = asyncio.ensure_future(process.communicate())
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+
+    if not done:
+        _kill_process_tree(process)
+        finished, _ = await asyncio.wait({task}, timeout=KILL_GRACE)
+        if not finished:  # pragma: no cover - the kernel did not free the pipes
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        else:
+            task.exception()  # retrieve so asyncio does not log it
+        raise CommandFailed(f"{command!r} timed out after {timeout}s")
+
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
-    except (asyncio.TimeoutError, TimeoutError) as exc:
-        try:
-            process.kill()
-        except ProcessLookupError:  # pragma: no cover - race with exit
-            pass
-        await process.wait()
-        raise CommandFailed(f"{command!r} timed out after {timeout}s") from exc
+        stdout, stderr = task.result()
+    except OSError as exc:  # pragma: no cover - pipe died under us
+        raise CommandFailed(f"could not read output of {command!r}: {exc}") from exc
 
     if stderr:
         _LOGGER.debug("%s stderr: %s", command, stderr.decode(errors="replace").strip())

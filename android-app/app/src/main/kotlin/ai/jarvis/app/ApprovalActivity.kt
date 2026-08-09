@@ -1,8 +1,10 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.ui.ApprovalBridge
+import ai.jarvis.app.ui.ConsentGate
 import ai.jarvis.app.ui.JarvisUi
 import android.app.Activity
+import android.app.KeyguardManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
@@ -28,13 +30,26 @@ import org.json.JSONObject
  *
  *  * It shows the action id, the VERBATIM parameters and the server's reason.
  *    No summarising, no truncation — long payloads scroll, and RAW flips to the
- *    exact bytes that were handed to [ApprovalBridge].
+ *    exact text that was handed to [ApprovalBridge].
+ *  * The action's own description and the server's reason are shown separately
+ *    and labelled differently. One comes from the device-local action table and
+ *    is trustworthy; the other is remote text that may have been written by a
+ *    web page the model read. Blending them would hide exactly that difference.
  *  * There is no "remember this" affordance. Tier 3 asks every single time.
- *  * Doing nothing denies: a 60 s countdown auto-denies, Back denies, being
+ *  * Doing nothing denies: the countdown auto-denies, Back denies, being
  *    destroyed for any reason denies. Only the APPROVE button approves.
- *  * APPROVE is inert for [ARM_MS] after the prompt appears and refuses touches
- *    that pass through another window, so an overlay or a stray tap landing
- *    exactly where the button appears cannot approve anything.
+ *  * **The keyguard is part of the gate.** The prompt shows over a locked
+ *    screen so the phone lights up and the question is not missed, but while
+ *    the keyguard is up the parameters stay hidden and APPROVE is inert; the
+ *    activity asks the system to dismiss the keyguard and only opens up once
+ *    the real user is through it. Otherwise "a human approved it" would mean
+ *    "whoever was holding the phone approved it", and a stranger could read an
+ *    SMS body or a shell command off the lock screen. DENY stays live
+ *    throughout — refusing is safe from anywhere.
+ *  * APPROVE is inert for [ConsentGate.ARM_MS] after the prompt becomes
+ *    readable and refuses touches that pass through another window, so an
+ *    overlay or a stray tap landing exactly where the button appears cannot
+ *    approve anything.
  *  * FLAG_SECURE keeps the parameters out of screenshots and off the screen
  *    recorder — including this app's own accessibility path.
  */
@@ -46,11 +61,28 @@ class ApprovalActivity : Activity() {
 
     private lateinit var countdownView: TextView
     private lateinit var approveButton: Button
+    private lateinit var denyButton: Button
     private lateinit var paramsView: TextView
+    private lateinit var gateNoteView: TextView
 
     private var rawParams: String = ""
     private var prettyParams: String = ""
     private var showingRaw = false
+    private var timeoutMs: Long = ApprovalBridge.TIMEOUT_MS
+
+    /** Keyguard state, re-read on every resume rather than cached at create. */
+    private var locked = false
+
+    /** True once the prompt has been readable (i.e. unlocked) for ARM_MS. */
+    private var armed = false
+
+    /** Set while a dismiss request is outstanding, so we ask exactly once. */
+    private var dismissRequested = false
+
+    private val armRunnable = Runnable {
+        armed = true
+        refreshGate()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,30 +107,132 @@ class ApprovalActivity : Activity() {
 
         val actionId = intent?.getStringExtra(ApprovalBridge.EXTRA_ACTION_ID).orEmpty()
         val reason = intent?.getStringExtra(ApprovalBridge.EXTRA_REASON).orEmpty()
+        val description = intent?.getStringExtra(ApprovalBridge.EXTRA_DESCRIPTION).orEmpty()
+        val commandId = intent?.getStringExtra(ApprovalBridge.EXTRA_COMMAND_ID).orEmpty()
+        val tierLabel = intent?.getStringExtra(ApprovalBridge.EXTRA_TIER_LABEL)
+            ?.takeIf { it.isNotEmpty() }
+            ?: "TIER 3 · CONFIRMATION REQUIRED"
+        timeoutMs = ApprovalBridge.clampTimeout(
+            intent?.getLongExtra(ApprovalBridge.EXTRA_TIMEOUT_MS, ApprovalBridge.TIMEOUT_MS)
+                ?: ApprovalBridge.TIMEOUT_MS
+        )
+
         rawParams = intent?.getStringExtra(ApprovalBridge.EXTRA_PARAMS).orEmpty()
         prettyParams = prettyPrint(rawParams)
 
-        setContentView(buildUi(actionId, reason))
+        setContentView(buildUi(actionId, description, reason, commandId, tierLabel))
+        refreshGate()
         startCountdown()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The user may have unlocked by any route — this activity's dismiss
+        // request, the power button, a fingerprint. Re-read, do not assume.
+        refreshGate()
+    }
+
+    // --- the keyguard half of the gate --------------------------------------
+
+    private fun isLocked(): Boolean =
+        getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    /**
+     * Recompute the lock state and apply [ConsentGate] to the UI.
+     *
+     * Called at create, on resume, when the arm timer fires and when the
+     * keyguard reports itself dismissed. Every path lands here, so there is one
+     * place where "may this button do anything" is decided.
+     */
+    private fun refreshGate() {
+        // onCreate can bail out before the views exist (no request id).
+        if (!::approveButton.isInitialized) return
+        if (answered) return
+        val wasLocked = locked
+        locked = isLocked()
+
+        if (locked) {
+            // Arming restarts once the prompt is actually readable.
+            armed = false
+            approveButton.removeCallbacks(armRunnable)
+            requestUnlock()
+        } else if (wasLocked || !armed) {
+            // Freshly readable: start (or restart) the arming delay once.
+            approveButton.removeCallbacks(armRunnable)
+            approveButton.postDelayed(armRunnable, ConsentGate.ARM_MS)
+        }
+
+        paramsView.text = ConsentGate.paramsText(
+            locked,
+            if (showingRaw) rawParams else prettyParams
+        )
+        paramsView.isEnabled = ConsentGate.paramsVisible(locked)
+
+        val approve = ConsentGate.approveEnabled(locked, armed, answered)
+        approveButton.isEnabled = approve
+        approveButton.alpha = if (approve) 1f else 0.4f
+
+        val deny = ConsentGate.denyEnabled(answered)
+        denyButton.isEnabled = deny
+        denyButton.alpha = if (deny) 1f else 0.4f
+
+        val note = ConsentGate.blockedReason(locked, armed)
+        gateNoteView.text = note.orEmpty()
+        gateNoteView.visibility = if (note == null) View.GONE else View.VISIBLE
+    }
+
+    /** Ask the system to take the user through the keyguard. Once per prompt. */
+    private fun requestUnlock() {
+        if (dismissRequested) return
+        val km = getSystemService(KeyguardManager::class.java) ?: return
+        dismissRequested = true
+        try {
+            km.requestDismissKeyguard(
+                this,
+                object : KeyguardManager.KeyguardDismissCallback() {
+                    override fun onDismissSucceeded() {
+                        dismissRequested = false
+                        runOnUiThread { refreshGate() }
+                    }
+
+                    override fun onDismissError() {
+                        dismissRequested = false
+                    }
+
+                    override fun onDismissCancelled() {
+                        // The user chose not to unlock. Nothing opens up; the
+                        // countdown will auto-deny. Allow another attempt.
+                        dismissRequested = false
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            // Never let a keyguard quirk take the prompt down with it: the
+            // parameters stay hidden and APPROVE stays inert either way.
+            dismissRequested = false
+        }
     }
 
     // --- UI -----------------------------------------------------------------
 
-    private fun buildUi(actionId: String, reason: String): ViewGroup {
+    private fun buildUi(
+        actionId: String,
+        description: String,
+        reason: String,
+        commandId: String,
+        tierLabel: String,
+    ): ViewGroup {
         val ctx = this
         val root = FrameLayout(ctx).apply { setBackgroundColor(0xF204070C.toInt()) }
-
         val column = JarvisUi.column(ctx, padDp = 24)
 
         column.addView(
             TextView(ctx).apply {
-                text = "TIER 3 · CONFIRMATION REQUIRED"
+                text = tierLabel
                 setTextColor(JarvisUi.DENY)
                 textSize = 12f
                 letterSpacing = 0.24f
-                typeface = android.graphics.Typeface.create(
-                    android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD
-                )
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 gravity = Gravity.CENTER
             }
         )
@@ -119,17 +253,26 @@ class ApprovalActivity : Activity() {
                 text = actionId.ifEmpty { "(no action id)" }
                 setTextColor(Color.WHITE)
                 textSize = 19f
-                typeface = android.graphics.Typeface.create(
-                    android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD
-                )
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 setTextIsSelectable(true)
             }
         )
+        if (description.isNotEmpty()) {
+            column.addView(
+                TextView(ctx).apply {
+                    // From the device-local action table: this text is ours.
+                    text = description
+                    setTextColor(JarvisUi.DIM)
+                    textSize = 14f
+                    setPadding(0, JarvisUi.dp(ctx, 4), 0, 0)
+                }
+            )
+        }
 
-        column.addView(JarvisUi.label(ctx, "Why"))
+        column.addView(JarvisUi.label(ctx, "Why the server says so"))
         column.addView(
             TextView(ctx).apply {
-                // The server's own words, rendered as text and nothing else.
+                // Remote text. Rendered as text and nothing else.
                 text = reason.ifEmpty { "(no reason given — treat that as suspicious)" }
                 setTextColor(if (reason.isEmpty()) JarvisUi.DENY else Color.WHITE)
                 textSize = 15f
@@ -146,17 +289,17 @@ class ApprovalActivity : Activity() {
             JarvisUi.label(ctx, "Exactly what will run"),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        val rawToggle = JarvisUi.ghost(ctx, "RAW") { toggleRaw() }
-        paramsHeader.addView(rawToggle)
+        paramsHeader.addView(JarvisUi.ghost(ctx, "RAW") { toggleRaw() })
         column.addView(paramsHeader)
 
-        paramsView = JarvisUi.mono(ctx, prettyParams.ifEmpty { "(no parameters)" })
+        // Starts hidden; refreshGate() fills it in once the device is unlocked.
+        paramsView = JarvisUi.mono(ctx, ConsentGate.LOCKED_PARAMS)
         column.addView(paramsView)
 
         countdownView = TextView(ctx).apply {
             setTextColor(JarvisUi.FAINT)
             textSize = 12f
-            typeface = android.graphics.Typeface.MONOSPACE
+            typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
             setPadding(0, JarvisUi.dp(ctx, 16), 0, JarvisUi.dp(ctx, 8))
         }
@@ -166,39 +309,36 @@ class ApprovalActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val deny = JarvisUi.consentButton(ctx, "DENY", JarvisUi.DENY) { answer(false) }
-        approveButton = JarvisUi.consentButton(ctx, "APPROVE", JarvisUi.APPROVE) { answer(true) }
-        // Armed only after the prompt has been on screen long enough to read.
+        denyButton = JarvisUi.consentButton(ctx, "DENY", JarvisUi.DENY) { answer(false) }
+        approveButton = JarvisUi.consentButton(ctx, "APPROVE", JarvisUi.APPROVE) {
+            // Belt and braces: the enabled state is the gate, and this is the
+            // same question asked again at the moment of the tap.
+            if (ConsentGate.approveEnabled(isLocked(), armed, answered)) answer(true)
+        }
+        // Both start inert; refreshGate() is the only thing that opens them.
         approveButton.isEnabled = false
         approveButton.alpha = 0.4f
-        approveButton.postDelayed({
-            if (!answered) {
-                approveButton.isEnabled = true
-                approveButton.alpha = 1f
-            }
-        }, ARM_MS)
 
         buttons.addView(
-            deny,
+            denyButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        buttons.addView(
-            View(ctx),
-            LinearLayout.LayoutParams(JarvisUi.dp(ctx, 14), 1)
-        )
+        buttons.addView(View(ctx), LinearLayout.LayoutParams(JarvisUi.dp(ctx, 14), 1))
         buttons.addView(
             approveButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
         column.addView(buttons)
 
-        column.addView(
-            JarvisUi.hint(
-                ctx,
-                "Tier 3 is asked every time — this answer is not remembered. " +
-                    "If you did not just ask for this, deny it."
-            )
+        gateNoteView = JarvisUi.hint(ctx, "").apply { gravity = Gravity.CENTER }
+        column.addView(gateNoteView)
+
+        val footer = StringBuilder(
+            "Tier 3 is asked every time — this answer is not remembered. " +
+                "If you did not just ask for this, deny it."
         )
+        if (commandId.isNotEmpty()) footer.append("\nCommand ").append(commandId)
+        column.addView(JarvisUi.hint(ctx, footer.toString()))
 
         val scroll = ScrollView(ctx).apply {
             isFillViewport = true
@@ -229,10 +369,9 @@ class ApprovalActivity : Activity() {
 
     private fun toggleRaw() {
         showingRaw = !showingRaw
-        paramsView.text = when {
-            showingRaw -> rawParams.ifEmpty { "(no parameters)" }
-            else -> prettyParams.ifEmpty { "(no parameters)" }
-        }
+        // Through the gate, so RAW cannot be used to reveal the parameters
+        // while the keyguard is still up.
+        refreshGate()
     }
 
     /**
@@ -258,7 +397,7 @@ class ApprovalActivity : Activity() {
 
     private fun startCountdown() {
         countdown?.cancel()
-        countdown = object : CountDownTimer(ApprovalBridge.TIMEOUT_MS, 1000L) {
+        countdown = object : CountDownTimer(timeoutMs, 1000L) {
             override fun onTick(millisUntilFinished: Long) {
                 val seconds = (millisUntilFinished / 1000L).coerceAtLeast(0L)
                 countdownView.text = "AUTO-DENY IN ${seconds}s"
@@ -266,27 +405,35 @@ class ApprovalActivity : Activity() {
 
             override fun onFinish() {
                 countdownView.text = "AUTO-DENIED"
-                answer(false)
+                answer(approved = false, timedOut = true)
             }
         }.also { it.start() }
     }
 
     // --- answering ----------------------------------------------------------
 
-    private fun answer(approved: Boolean) {
+    private fun answer(approved: Boolean, timedOut: Boolean = false) {
         if (answered) return
+        // The last line of defence: an APPROVE that reaches here without the
+        // gate open is turned into a denial rather than trusted.
+        if (approved && !ConsentGate.approveEnabled(isLocked(), armed, false)) return
         answered = true
+        if (::approveButton.isInitialized) approveButton.removeCallbacks(armRunnable)
         countdown?.cancel()
         countdown = null
-        requestId?.let { ApprovalBridge.deliver(it, approved) }
+        requestId?.let { id ->
+            if (timedOut) ApprovalBridge.deliverTimeout(id)
+            else ApprovalBridge.deliver(id, approved)
+        }
         finish()
     }
 
-    @Deprecated("Back must deny; the predictive-back callback is disabled in the manifest.")
+    @Deprecated("Back must deny. Predictive back is disabled in the manifest, so this is the path.")
     override fun onBackPressed() {
+        // Deliberately does not call super: answer() finishes the activity, and
+        // the one thing Back must never do here is fall through to a default
+        // that leaves the request unanswered.
         answer(false)
-        @Suppress("DEPRECATION")
-        super.onBackPressed()
     }
 
     override fun onDestroy() {
@@ -294,15 +441,11 @@ class ApprovalActivity : Activity() {
         // denial. This is the last line of the fail-closed guarantee.
         countdown?.cancel()
         countdown = null
+        if (::approveButton.isInitialized) approveButton.removeCallbacks(armRunnable)
         if (!answered) {
             answered = true
             requestId?.let { ApprovalBridge.deliver(it, false) }
         }
         super.onDestroy()
-    }
-
-    companion object {
-        /** How long APPROVE stays inert after the prompt appears. */
-        private const val ARM_MS = 700L
     }
 }

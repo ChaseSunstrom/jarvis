@@ -59,6 +59,18 @@ class ActionRegistry(
 
     fun size(): Int = actions.size
 
+    /**
+     * True when this action returns content written by somebody other than the
+     * user — a web page, a file, the clipboard, another app's screen text.
+     *
+     * The task runner uses this to taint the variable a `store_as` fills, so a
+     * later step that interpolates it dispatches [TrustLevel.UNTRUSTED] and can
+     * never be auto-allowed. An unknown id answers `true`: if we do not know
+     * what an action returns, we must assume the worst.
+     */
+    fun producesUntrustedOutput(actionId: String): Boolean =
+        actions[actionId]?.untrustedOutput ?: true
+
     // --- what we advertise to jarvis-core -----------------------------------
 
     /**
@@ -68,7 +80,7 @@ class ActionRegistry(
      */
     fun capabilities(): List<String> = actions.values
         .asSequence()
-        .filter { !it.unsupported && it.isAvailable(appContext) }
+        .filter { !safeUnsupported(it) && safeAvailable(it) }
         .map { it.capability }
         .distinct()
         .sorted()
@@ -83,6 +95,7 @@ class ActionRegistry(
         for (action in actions.values) {
             val params = JSONObject()
             for ((name, desc) in action.paramsSchema) params.put(name, desc)
+            val unsupported = safeUnsupported(action)
             val entry = JSONObject()
                 .put("id", action.id)
                 .put("tier", action.tier.wire)
@@ -90,13 +103,16 @@ class ActionRegistry(
                 .put("description", action.description)
                 .put("params", params)
                 .put("capability", action.capability)
-                .put("available", !action.unsupported && action.isAvailable(appContext))
+                .put("available", !unsupported && safeAvailable(action))
                 .put("delegated", action.delegated)
                 .put("requires_confirmation", action.tier == ActionTier.CONFIRM)
+                // So the server knows which results are third-party content and
+                // must stay out of its instruction channel.
+                .put("untrusted_output", action.untrustedOutput)
             if (action.requiredPermissions.isNotEmpty()) {
                 entry.put("android_permissions", action.requiredPermissions.toJsonArray())
             }
-            if (action.unsupported) {
+            if (unsupported) {
                 entry.put("unsupported", true)
                 action.unsupportedReason?.let { entry.put("unsupported_reason", it) }
             }
@@ -188,7 +204,7 @@ class ActionRegistry(
             )
 
         // Honest "no" before any policy work, so these never prompt.
-        if (action.unsupported) {
+        if (safeUnsupported(action)) {
             return finish(
                 ActionResult.unsupported(action.unsupportedReason ?: "not supported on this device"),
                 action.tier,
@@ -196,9 +212,12 @@ class ActionRegistry(
                 "action is declared unsupported"
             )
         }
-        if (!action.isAvailable(appContext)) {
+        if (!safeAvailable(action)) {
             return finish(
-                ActionResult.unsupported("${action.id} is not available on this device right now"),
+                ActionResult.unsupported(
+                    action.unsupportedReason
+                        ?: "${action.id} is not available on this device right now"
+                ),
                 action.tier,
                 Decision.DENY,
                 "action reported unavailable"
@@ -257,6 +276,25 @@ class ActionRegistry(
                     runCatching { policy.remember(actionId, UserPolicy.ALLOW_ALWAYS, effective) }
                         .onFailure { Log.w(TAG, "could not persist allow-always for $actionId", it) }
                 }
+
+                // A consent prompt can sit on screen for a minute, and the user
+                // may spend that minute hitting panic, killing the master
+                // switch, or blocking this action outright. Re-read the store
+                // and refuse if anything now says no — an approval is consent
+                // to run, not a licence that outlives the kill switch.
+                val fresh = request.copy(
+                    userPolicy = policy.policyFor(actionId),
+                    automationEnabled = policy.automationEnabled,
+                    panic = policy.panic
+                )
+                if (PolicyEngine.decide(fresh) == Decision.DENY) {
+                    return finish(
+                        ActionResult.denied(denyMessage(fresh)),
+                        effective,
+                        Decision.DENY,
+                        "$explanation, revoked while the prompt was up"
+                    )
+                }
             }
 
             Decision.ALLOW -> Unit
@@ -298,6 +336,30 @@ class ActionRegistry(
             ActionTier.CONFIRM
         }
 
+    /**
+     * `isAvailable` reaches out to PackageManager, to Shizuku over reflection
+     * and — for the delegated UI actions — into an accessibility service owned
+     * by another module. Any of those can throw, and a throw here would escape
+     * [dispatch] before the audit line is written. Fail closed: an action we
+     * cannot ask about is not available.
+     */
+    private fun safeAvailable(action: JarvisAction): Boolean =
+        try {
+            action.isAvailable(appContext)
+        } catch (t: Throwable) {
+            Log.w(TAG, "isAvailable threw for ${action.id}; treating it as unavailable", t)
+            false
+        }
+
+    /** Same reasoning as [safeAvailable]; a throwing flag means "do not run it". */
+    private fun safeUnsupported(action: JarvisAction): Boolean =
+        try {
+            action.unsupported
+        } catch (t: Throwable) {
+            Log.w(TAG, "unsupported threw for ${action.id}; treating it as unsupported", t)
+            true
+        }
+
     private fun denyMessage(request: PolicyRequest): String = when {
         request.panic -> "automation is in panic mode on this device"
         !request.automationEnabled -> "automation is switched off on this device"
@@ -308,6 +370,11 @@ class ActionRegistry(
 
     companion object {
         private const val TAG = "JarvisActions"
-        private const val APPROVAL_GRACE_MS = 5_000L
+        /**
+         * Outer watchdog slack. `ApprovalBridge` already applies its own
+         * timeout plus a delivery grace; this only catches a gateway that
+         * hangs forever, so it must be the looser of the two.
+         */
+        private const val APPROVAL_GRACE_MS = 10_000L
     }
 }

@@ -3,7 +3,8 @@
 /local.properties
 /.idea/
 .DS_Store
-/build
+# Unanchored: the real output dir is app/build, not just ./build.
+build/
 /captures
 .externalNativeBuild
 .cxx
@@ -19,3 +20,7 @@ gradlew.bat
 *.jks
 *.keystore
 keystore.properties
+
+# The executable specs under tools/ are run with python3/pytest.
+__pycache__/
+.pytest_cache/

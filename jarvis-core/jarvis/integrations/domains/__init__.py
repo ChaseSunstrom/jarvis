@@ -71,12 +71,17 @@ TARGET_KEYS = frozenset({"entity_id", "entity", "area_id", "area", "device_id", 
 
 ALL_TARGETS = frozenset({"all", "*"})
 
+# Domain-specific states that have no const entry yet.
+STATE_CLEANING = "cleaning"
+STATE_RETURNING = "returning"
+
 # States that count as "currently on" when deciding what `toggle` should do.
 ON_STATES: dict[str, frozenset[str]] = {
     DOMAIN_COVER: frozenset({STATE_OPEN, "opening"}),
     DOMAIN_MEDIA_PLAYER: frozenset(
         {STATE_PLAYING, STATE_PAUSED, STATE_IDLE, STATE_ON, "buffering"}
     ),
+    DOMAIN_VACUUM: frozenset({STATE_CLEANING, STATE_RETURNING, STATE_ON}),
 }
 DEFAULT_ON_STATES = frozenset({STATE_ON})
 
@@ -336,6 +341,18 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
             "Move a cover to a position.",
         ),
     ]
+    # Generic verbs for covers. Callers that dispatch uniformly (`<domain>.turn_on`
+    # for whatever the user named) must not fall off a cliff on covers.
+    specs += [
+        ServiceSpec(
+            DOMAIN_COVER, "turn_on", "async_open_cover", (), _v_const(STATE_OPEN),
+            "Open a cover (alias of open_cover).",
+        ),
+        ServiceSpec(
+            DOMAIN_COVER, "turn_off", "async_close_cover", (), _v_const(STATE_CLOSED),
+            "Close a cover (alias of close_cover).",
+        ),
+    ]
     toggles.append(
         ToggleSpec(
             DOMAIN_COVER, cover_open, cover_close, ON_STATES[DOMAIN_COVER], "Open or close a cover."
@@ -448,6 +465,15 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
             "Play a specific piece of media.",
         ),
     ]
+    toggles.append(
+        ToggleSpec(
+            DOMAIN_MEDIA_PLAYER,
+            mp_on,
+            mp_off,
+            ON_STATES[DOMAIN_MEDIA_PLAYER],
+            "Turn a media player on or off.",
+        )
+    )
 
     # --- number / text / select / button / vacuum -------------------------
     specs += [
@@ -476,18 +502,41 @@ def build_specs() -> tuple[list[ServiceSpec], list[ToggleSpec]]:
             "Choose an option on a select entity.",
         ),
         ServiceSpec(DOMAIN_BUTTON, "press", "async_press", (), _v_press, "Press a button."),
+    ]
+
+    # --- vacuum -----------------------------------------------------------
+    vacuum_start = ServiceSpec(
+        DOMAIN_VACUUM, "start", "async_start", (), _v_const(STATE_CLEANING), "Start cleaning."
+    )
+    vacuum_dock = ServiceSpec(
+        DOMAIN_VACUUM,
+        "return_to_base",
+        "async_return_to_base",
+        (),
+        _v_const(STATE_RETURNING),
+        "Send the vacuum back to its dock.",
+    )
+    specs += [
+        vacuum_start,
+        vacuum_dock,
         ServiceSpec(
-            DOMAIN_VACUUM, "start", "async_start", (), _v_const("cleaning"), "Start cleaning."
+            DOMAIN_VACUUM, "turn_on", "async_start", (), _v_const(STATE_CLEANING),
+            "Start cleaning (alias of start).",
         ),
         ServiceSpec(
-            DOMAIN_VACUUM,
-            "return_to_base",
-            "async_return_to_base",
-            (),
-            _v_const("returning"),
-            "Send the vacuum back to its dock.",
+            DOMAIN_VACUUM, "turn_off", "async_return_to_base", (), _v_const(STATE_RETURNING),
+            "Send the vacuum back to its dock (alias of return_to_base).",
         ),
     ]
+    toggles.append(
+        ToggleSpec(
+            DOMAIN_VACUUM,
+            vacuum_start,
+            vacuum_dock,
+            ON_STATES[DOMAIN_VACUUM],
+            "Start the vacuum, or send it home if it is already out.",
+        )
+    )
 
     return specs, toggles
 
@@ -508,10 +557,21 @@ def _as_list(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _is_disabled(jarvis: "Jarvis", entity_id: str) -> bool:
+    entry = jarvis.entities.get(entity_id)
+    return entry is not None and entry.disabled
+
+
 def _known_entity_ids(jarvis: "Jarvis", domain: str | None) -> list[str]:
-    """Every entity we know about, states first (they're definitely live)."""
+    """Every entity we know about, states first (they're definitely live).
+
+    A disabled registry entry is skipped even when it still has a state —
+    a stale state must not make `entity_id: all` reach a disabled entity.
+    """
     seen: dict[str, None] = {}
     for state in jarvis.states.all(domain):
+        if _is_disabled(jarvis, state.entity_id):
+            continue
         seen[state.entity_id] = None
     for entity_id, entry in jarvis.entities.entities.items():
         if entry.disabled:
@@ -538,6 +598,11 @@ def _entity_exists(jarvis: "Jarvis", entity_id: str) -> bool:
         or jarvis.entities.get(entity_id) is not None
         or jarvis.entity_object(entity_id) is not None
     )
+
+
+def has_target_keys(data: dict[str, Any]) -> bool:
+    """True when the caller actually named something to act on."""
+    return any(_as_list(data.get(key)) for key in TARGET_KEYS)
 
 
 def resolve_targets(
@@ -608,6 +673,11 @@ def resolve_targets(
         if not matched and item not in jarvis.devices.devices:
             result.failed[f"device_id:{item}"] = f"unknown device {item!r}"
 
+    # A call with no targeting keys at all is a caller mistake, not a no-op:
+    # say so instead of returning an empty, indistinguishable success.
+    if not result.entity_ids and not result.failed and not has_target_keys(data):
+        result.failed["target"] = "no entity_id, area_id or device_id given"
+
     return result
 
 
@@ -645,7 +715,10 @@ def _apply_virtual(
         new_state = current.state if current is not None else STATE_UNKNOWN
     attributes = dict(current.attributes) if current is not None else {}
     attributes.update({k: v for k, v in extra.items() if v is not None})
-    jarvis.states.set(entity_id, new_state, attributes, force_update=True, context=context)
+    # NOT force_update: re-sending the state a virtual entity already has must
+    # not fire state_changed, or every no-op call spams bare state triggers,
+    # the logbook and the recorder.
+    jarvis.states.set(entity_id, new_state, attributes, context=context)
     return None
 
 
@@ -678,7 +751,12 @@ async def _apply_to_entity(
         await result
     write = getattr(entity, "async_write_state", None)
     if callable(write):
-        write()
+        written = write()
+        # The base Entity.async_write_state is sync, but an integration may
+        # have overridden it with a coroutine; dropping it on the floor would
+        # silently lose the state write.
+        if inspect.isawaitable(written):
+            await written
     return None
 
 
@@ -734,6 +812,15 @@ def make_handler(jarvis: "Jarvis", spec: ServiceSpec) -> Callable[[ServiceCall],
 
 def make_toggle_handler(jarvis: "Jarvis", spec: ToggleSpec) -> Callable[[ServiceCall], Any]:
     async def handler(call: ServiceCall) -> dict[str, Any]:
+        # `light.toggle` advertises the same fields as `light.turn_on`
+        # (brightness, colour, transition), so it has to forward them.
+        # Both sides are extracted up front: an invalid value must raise
+        # before any entity is touched, exactly like the plain services.
+        kwargs_for: dict[str, dict[str, Any]] = {}
+        for branch in (spec.on, spec.off):
+            data = branch.prepare(call.data) if branch.prepare else call.data
+            kwargs_for[branch.key] = _extract_kwargs(branch, data)
+
         targets = resolve_targets(jarvis, call.data, spec.domain)
         changed: list[str] = []
         failed: dict[str, str] = dict(targets.failed)
@@ -742,7 +829,12 @@ def make_toggle_handler(jarvis: "Jarvis", spec: ToggleSpec) -> Callable[[Service
             currently_on = state is not None and state.state in spec.on_states
             chosen = spec.off if currently_on else spec.on
             part_changed, part_failed = await _run(
-                jarvis, chosen, [entity_id], {}, call.context, toggle_fallback=True
+                jarvis,
+                chosen,
+                [entity_id],
+                kwargs_for[chosen.key],
+                call.context,
+                toggle_fallback=True,
             )
             changed.extend(part_changed)
             failed.update(part_failed)

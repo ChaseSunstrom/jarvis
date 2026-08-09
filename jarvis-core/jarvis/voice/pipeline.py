@@ -37,6 +37,7 @@ import asyncio
 import inspect
 import itertools
 import logging
+import math
 import secrets
 import time
 import uuid
@@ -80,6 +81,10 @@ TTS_MIME_TYPE = "audio/wav"
 MAX_CACHED_TTS = 64
 
 DEFAULT_TIMEOUT = 300.0
+# `assist_pipeline/run` lets a websocket client name its own timeout, so this
+# is a trust boundary: nothing a client sends may produce a run with no
+# deadline at all (a run holds a Wyoming connection and a driver task open).
+MAX_TIMEOUT = 3600.0
 DEFAULT_VAD_THRESHOLD = 200.0
 DEFAULT_VAD_SILENCE_MS = 900
 
@@ -113,6 +118,21 @@ class PipelineEvent:
 
     def as_dict(self) -> dict[str, Any]:
         return {"type": self.type, "data": self.data, "timestamp": self.timestamp}
+
+
+def _sane_timeout(timeout: Any) -> float:
+    """Clamp a caller-supplied run timeout into something bounded.
+
+    Zero, negative, NaN and nonsense values fall back to the default rather
+    than disabling the deadline: every run must end.
+    """
+    try:
+        value = float(timeout)
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_TIMEOUT
+    return min(value, MAX_TIMEOUT)
 
 
 def store_tts_audio(
@@ -184,7 +204,7 @@ class PipelineRun:
         self.end_stage = end_stage
         self.run_id = run_id or uuid.uuid4().hex
         self.conversation_id = conversation_id or uuid.uuid4().hex
-        self.timeout = float(timeout)
+        self.timeout = _sane_timeout(timeout)
         self.binary_handler_id = (
             int(binary_handler_id) if binary_handler_id is not None else next(_HANDLER_IDS)
         )
@@ -327,6 +347,12 @@ class PipelineRun:
             detected = await self.wake.detect(self._audio_stream(audio_queue, vad=False))
         except PipelineError:
             raise
+        except TimeoutError as err:
+            # The wake service has its own deadline; a client waiting for the
+            # wake word wants "nobody said it", not a generic stream failure.
+            raise PipelineError(
+                "wake-word-timeout", str(err) or "wake word was not detected"
+            ) from err
         except Exception as err:
             raise PipelineError("wake-stream-failed", str(err) or type(err).__name__) from err
         if not detected:

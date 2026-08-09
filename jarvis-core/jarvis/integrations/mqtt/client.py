@@ -124,9 +124,17 @@ class MqttClientBase:
 
         self.connected = False
         self.publish_count = 0
+        self.publish_failures = 0
         self.message_count = 0
         self._subscriptions: list[_Subscription] = []
         self._broker_subs: dict[str, int] = {}
+        # Highest qos any live subscriber asked for, per topic filter. Needed
+        # so a reconnect re-subscribes at the qos the caller wanted instead of
+        # silently downgrading every subscription to 0.
+        self._broker_qos: dict[str, int] = {}
+        # asyncio only holds weak references to tasks, so a fire-and-forget
+        # task can be garbage-collected mid-flight. Keep strong refs.
+        self._background: set[asyncio.Task] = set()
 
     # --- public API -------------------------------------------------------
     async def async_connect(self) -> bool:
@@ -139,8 +147,10 @@ class MqttClientBase:
             return False
         self.connected = ok is not False
         if self.connected:
-            for topic, _count in list(self._broker_subs.items()):
-                await self._safe_backend_subscribe(topic, DEFAULT_QOS)
+            for topic in list(self._broker_subs):
+                await self._safe_backend_subscribe(
+                    topic, self._broker_qos.get(topic, DEFAULT_QOS)
+                )
         return self.connected
 
     async def async_disconnect(self) -> None:
@@ -162,8 +172,10 @@ class MqttClientBase:
         self._subscriptions.append(sub)
         first = self._broker_subs.get(topic, 0) == 0
         self._broker_subs[topic] = self._broker_subs.get(topic, 0) + 1
-        if first and self.connected:
-            await self._safe_backend_subscribe(topic, sub.qos)
+        upgraded = sub.qos > self._broker_qos.get(topic, -1)
+        self._broker_qos[topic] = max(self._broker_qos.get(topic, 0), sub.qos)
+        if (first or upgraded) and self.connected:
+            await self._safe_backend_subscribe(topic, self._broker_qos[topic])
 
         def _unsub() -> None:
             try:
@@ -173,12 +185,15 @@ class MqttClientBase:
             remaining = self._broker_subs.get(topic, 1) - 1
             if remaining <= 0:
                 self._broker_subs.pop(topic, None)
+                self._broker_qos.pop(topic, None)
                 if self.connected:
                     task = self._backend_unsubscribe(topic)
                     if asyncio.iscoroutine(task):
                         try:
-                            asyncio.get_running_loop().create_task(
-                                _guard(task, f"unsubscribe {topic}")
+                            self._track(
+                                asyncio.get_running_loop().create_task(
+                                    _guard(task, f"unsubscribe {topic}")
+                                )
                             )
                         except RuntimeError:  # no loop: nothing to clean up
                             task.close()
@@ -193,13 +208,22 @@ class MqttClientBase:
         payload: Any = "",
         retain: bool = False,
         qos: int = DEFAULT_QOS,
-    ) -> None:
+    ) -> bool:
+        """Publish, returning whether the message actually reached the backend.
+
+        A dropped publish must be visible to the caller: an entity that assumes
+        success writes an optimistic state and the UI then shows a lamp as on
+        that never received the command.
+        """
         data = normalize_payload(payload)
         self.publish_count += 1
         try:
             await self._backend_publish(topic, data, bool(retain), int(qos or 0))
         except Exception:
             _LOGGER.exception("Failed publishing to %s", topic)
+            self.publish_failures += 1
+            return False
+        return True
 
     # Short aliases (connect/subscribe/publish/disconnect).
     connect = async_connect
@@ -227,12 +251,20 @@ class MqttClientBase:
                     "Error in MQTT callback for %s (sub %s)", message.topic, sub.topic
                 )
 
+    def _track(self, task: asyncio.Task) -> asyncio.Task:
+        """Hold a strong reference until the task finishes."""
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
+
     def dispatch_threadsafe(
         self, loop: asyncio.AbstractEventLoop, message: MqttMessage
     ) -> None:
         """Hand a message from a backend thread back to the event loop."""
         loop.call_soon_threadsafe(
-            lambda: loop.create_task(_guard(self.async_dispatch(message), message.topic))
+            lambda: self._track(
+                loop.create_task(_guard(self.async_dispatch(message), message.topic))
+            )
         )
 
     # --- backend hooks ----------------------------------------------------
@@ -435,19 +467,28 @@ class AiomqttClient(MqttClientBase):
         self, topic: str, payload: str, retain: bool, qos: int
     ) -> None:
         if self._client is None:
-            _LOGGER.warning("Dropping publish to %s: not connected", topic)
-            return
+            # Raise rather than return: async_publish turns this into a False,
+            # which is what stops callers writing optimistic state for a
+            # command that never left the box.
+            raise ConnectionError(f"not connected to {self.broker}:{self.port}")
         await self._client.publish(topic, payload=payload, qos=qos, retain=retain)
 
     async def _backend_disconnect(self) -> None:  # pragma: no cover
         self._closing = True
         if self._task is not None:
-            self._task.cancel()
+            task, self._task = self._task, None
+            task.cancel()
             try:
-                await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._task = None
+                await task
+            except asyncio.CancelledError:
+                # Only swallow the runner's own cancellation. If *we* were the
+                # ones cancelled, that has to keep propagating (3.11 uncancel
+                # bookkeeping tells the two apart).
+                current = asyncio.current_task()
+                if current is not None and current.cancelling() > 0:
+                    raise
+            except Exception:
+                _LOGGER.debug("MQTT runner ended with an error", exc_info=True)
 
 
 class PahoMqttClient(MqttClientBase):
@@ -518,7 +559,7 @@ class PahoMqttClient(MqttClientBase):
         self, topic: str, payload: str, retain: bool, qos: int
     ) -> None:
         if self._client is None:
-            return
+            raise ConnectionError(f"not connected to {self.broker}:{self.port}")
         self._client.publish(topic, payload=payload, qos=qos, retain=retain)
 
     async def _backend_disconnect(self) -> None:  # pragma: no cover

@@ -1,0 +1,25 @@
+# Keep the build context to what the Dockerfile actually COPYs: requirements
+# and the jarvis package. The main reason is not image size (nothing else is
+# copied in anyway) but that ./config holds secrets.yaml and the recorder
+# database, and there is no reason to hand those to the build daemon.
+config/
+tests/
+docs/
+*.md
+
+.git/
+.github/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Runtime state, if anyone ever runs Jarvis from the repo root.
+.storage/
+*.db
+*.db-journal
+*.log
+.env

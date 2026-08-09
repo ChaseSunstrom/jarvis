@@ -91,9 +91,19 @@ class Pipeline:
         return cls(extra=extra, **normalised)
 
     def merged_with(self, data: dict[str, Any]) -> "Pipeline":
-        """A copy with `data` applied on top (aliases honoured)."""
+        """A copy with `data` applied on top (aliases honoured).
+
+        An explicit ``extra`` mapping in `data` is merged into the existing
+        one — dropping it would make ``PipelineStore.async_update`` silently
+        ignore extra-field edits.
+        """
         merged = self.as_dict()
+        extra = dict(merged.get("extra") or {})
+        incoming_extra = data.get("extra")
+        if isinstance(incoming_extra, dict):
+            extra.update(incoming_extra)
         merged.update({k: v for k, v in data.items() if k != "extra"})
+        merged["extra"] = extra
         return Pipeline.from_dict(merged, pipeline_id=self.id)
 
 

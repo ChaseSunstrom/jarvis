@@ -92,6 +92,33 @@ object PolicyEngine {
     fun canRemember(effectiveTier: ActionTier, trust: TrustLevel = TrustLevel.TRUSTED): Boolean =
         effectiveTier != ActionTier.CONFIRM && trust == TrustLevel.TRUSTED
 
+    /**
+     * May this standing answer be written to the policy store at all?
+     *
+     * The rule [canRemember] states, made usable by a store that is handed an
+     * action id rather than a tier. `ASK` and `NEVER` are always storable —
+     * they can only ever make things stricter. `ALLOW_ALWAYS` is storable only
+     * for a tier we know is not [ActionTier.CONFIRM].
+     *
+     * **An unknown tier is treated as CONFIRM.** That is the whole point: the
+     * previous shape took an optional tier and skipped the check when it was
+     * absent, which made "caller forgot to pass the tier" indistinguishable
+     * from "this action is safe to remember".
+     *
+     * @param explicitTier the tier the caller enforced for this invocation, if
+     *   it has one (the dispatcher does).
+     * @param tableTier the local action table's tier for this id, if the store
+     *   was given the table.
+     */
+    fun mayStore(
+        policy: UserPolicy,
+        explicitTier: ActionTier?,
+        tableTier: ActionTier? = null
+    ): Boolean {
+        if (policy != UserPolicy.ALLOW_ALWAYS) return true
+        return canRemember(explicitTier ?: tableTier ?: ActionTier.CONFIRM)
+    }
+
     /** One-line human-readable reason, for the audit log and the consent UI. */
     fun explain(request: PolicyRequest, decision: Decision): String {
         val effective = effectiveTier(request.localTier, request.requestedTier)
@@ -160,7 +187,7 @@ class InMemoryPolicyProvider(
     override fun policyFor(actionId: String): UserPolicy = map[actionId] ?: UserPolicy.ASK
 
     override fun remember(actionId: String, policy: UserPolicy, effectiveTier: ActionTier) {
-        if (policy == UserPolicy.ALLOW_ALWAYS && !PolicyEngine.canRemember(effectiveTier)) return
+        if (!PolicyEngine.mayStore(policy, effectiveTier)) return
         map[actionId] = policy
     }
 

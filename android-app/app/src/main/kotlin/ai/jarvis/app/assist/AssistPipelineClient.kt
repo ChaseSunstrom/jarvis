@@ -1,5 +1,6 @@
 package ai.jarvis.app.assist
 
+import ai.jarvis.app.config.ServerUrl
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -213,7 +214,15 @@ class AssistPipelineClient(
             "tts-start" -> post { callbacks.onState(State.SPEAKING) }
             "tts-end" -> {
                 val url = data?.optJSONObject("tts_output")?.optString("url").orEmpty()
-                if (url.isNotEmpty()) post { callbacks.onTtsUrl(absolute(url)) }
+                if (url.isNotEmpty()) {
+                    val resolved = absolute(url)
+                    if (resolved == null) {
+                        Log.w(TAG, "refusing an off-origin tts url")
+                        post { callbacks.onError("refused a TTS URL that is not on your server") }
+                    } else {
+                        post { callbacks.onTtsUrl(resolved) }
+                    }
+                }
             }
             "run-end" -> post { callbacks.onRunEnd() }
             "error" -> {
@@ -224,8 +233,17 @@ class AssistPipelineClient(
         }
     }
 
-    private fun absolute(pathOrUrl: String): String =
-        if (pathOrUrl.startsWith("http")) pathOrUrl else serverUrl.trimEnd('/') + pathOrUrl
+    /**
+     * Resolve a URL the server handed back, or null to refuse it.
+     *
+     * This used to be `if (startsWith("http")) it else serverUrl + it`, which
+     * meant the server could name ANY host and the phone would then fetch it
+     * with the bearer token attached (see [TtsPlayer]). The server is exactly
+     * the component the threat model says may be prompt-injected, so the URL is
+     * pinned to the configured origin instead.
+     */
+    private fun absolute(pathOrUrl: String): String? =
+        ServerUrl.resolveOnServer(serverUrl, pathOrUrl)
 
     private fun post(block: () -> Unit) = main.post(block)
 

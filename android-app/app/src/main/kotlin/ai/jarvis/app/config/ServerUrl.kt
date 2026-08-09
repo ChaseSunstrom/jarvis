@@ -75,6 +75,57 @@ object ServerUrl {
         return oa == ob
     }
 
+    /** Anything of the form `scheme:` at the very start. */
+    private val SCHEME_PREFIX = Regex("^[A-Za-z][A-Za-z0-9+.\\-]*:")
+
+    /**
+     * Resolve a URL the SERVER handed us against the configured server, and
+     * return it only if it stays on that origin. Null means "refuse it".
+     *
+     * The pipeline hands back URLs — `tts_output.url` above all — and the phone
+     * then fetches them **with the bearer token attached**. The server is the
+     * component this project explicitly assumes can be wrong or prompt-injected,
+     * so "it told us to fetch this" is not a reason to send the key to the house
+     * to an arbitrary host. Concretely, this refuses:
+     *
+     *  * an absolute URL on any other scheme/host/port (`http://evil.test/x.mp3`),
+     *  * a scheme-relative `//evil.test/x.mp3`, which inherits our scheme and
+     *    would otherwise look "relative",
+     *  * embedded credentials, control characters, and non-http(s) schemes
+     *    (`file:`, `content:`, `javascript:`),
+     *  * a path-relative value, because there is no page context here to resolve
+     *    one against and guessing is how you end up somewhere unintended.
+     *
+     * An absolute-path value (`/api/tts_proxy/x.mp3`) is appended to [base]
+     * verbatim, which preserves any reverse-proxy path prefix the user typed.
+     */
+    fun resolveOnServer(base: String, urlOrPath: String?): String? {
+        val serverOrigin = originOf(base) ?: return null
+        val raw = urlOrPath?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        if (raw.any { it.isISOControl() }) return null
+        if (raw.contains('\\')) return null
+
+        // `//host/path` has no scheme of its own but is absolute all the same.
+        val candidate = if (raw.startsWith("//")) "${serverOrigin.scheme}:$raw" else raw
+
+        if (!SCHEME_PREFIX.containsMatchIn(candidate)) {
+            if (!candidate.startsWith("/")) return null
+            return normalize(base) + candidate
+        }
+
+        val uri = try {
+            URI.create(candidate)
+        } catch (e: IllegalArgumentException) {
+            return null
+        }
+        if (uri.userInfo != null) return null
+        val origin = originOf(candidate) ?: return null
+        if (origin.scheme != "http" && origin.scheme != "https") return null
+        if (origin != serverOrigin) return null
+        return candidate
+    }
+
     /**
      * The WebSocket URL for a given base URL: http -> ws, https -> wss, with
      * [path] appended. Returns null when [base] is not a usable URL, so a

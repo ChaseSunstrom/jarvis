@@ -1,13 +1,21 @@
-// Mock Home Assistant server for jarvis-web tests.
+// Mock backend for jarvis-web tests.
 //
-// Implements just enough of the HA WebSocket contract:
+// jarvis-core and Home Assistant expose the same websocket contract, so one
+// mock covers both. Implements:
 //   - auth handshake (auth_required -> auth -> auth_ok / auth_invalid)
 //   - assist_pipeline/pipeline/list
 //   - assist_pipeline/run (stt -> tts) emitting the full event sequence
 //   - binary stt frames: 1 prefix byte (handler id) + Int16LE PCM;
 //     a 1-byte frame means end-of-audio
+//   - the management commands: get_states, get_config, get_services,
+//     call_service (which really mutates state and pushes state_changed),
+//     subscribe_events / unsubscribe_events and the three registries
 // and serves a real WAV file at /api/tts_proxy/test.mp3 over HTTP
-// (Authorization: Bearer <token> required, like HA).
+// (Authorization: Bearer <token> required).
+//
+// Commands it deliberately does NOT know (jarvis/tools/list) answer
+// unknown_command, which is what the client's graceful-degradation path
+// expects to see.
 //
 // Usage:  node mock-ha.mjs [port]         (standalone)
 //         import { startMockHA } from './mock-ha.mjs'
@@ -49,8 +57,268 @@ export function makeWav(seconds = 0.25, rate = 16000, freq = 330) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const nowIso = () => new Date().toISOString();
+
+/** A state object in the wire shape both backends use. */
+function mkState(entity_id, state, attributes = {}) {
+	return {
+		entity_id,
+		state,
+		attributes,
+		last_changed: nowIso(),
+		last_updated: nowIso(),
+		context: { id: 'ctx-mock', parent_id: null, user_id: null }
+	};
+}
+
+/** Areas, devices, entity registry entries and states, as a fresh world. */
+export function makeWorld() {
+	const areas = [
+		{ id: 'lab', name: 'Lab', aliases: [] },
+		{ id: 'living_room', name: 'Living Room', aliases: [] },
+		{ id: 'garage', name: 'Garage', aliases: [] }
+	];
+	const devices = [
+		{
+			id: 'dev-lab-1',
+			name: 'Lab Controller',
+			manufacturer: 'Stark',
+			model: 'MK1',
+			area_id: 'lab',
+			platform: 'demo',
+			identifiers: ['demo:lab'],
+			connections: [],
+			disabled: false
+		}
+	];
+	const states = new Map(
+		[
+			mkState('light.lab_lights', 'off', {
+				friendly_name: 'Lab Lights',
+				brightness: 0,
+				supported_color_modes: ['brightness']
+			}),
+			mkState('switch.desk_fan', 'off', { friendly_name: 'Desk Fan' }),
+			mkState('sensor.lab_temperature', '21.4', {
+				friendly_name: 'Lab Temperature',
+				unit_of_measurement: '°C',
+				device_class: 'temperature'
+			}),
+			mkState('cover.garage_door', 'closed', {
+				friendly_name: 'Garage Door',
+				current_position: 0
+			}),
+			mkState('climate.thermostat', 'heat', {
+				friendly_name: 'Thermostat',
+				temperature: 20,
+				current_temperature: 19.2,
+				hvac_modes: ['off', 'heat', 'cool']
+			}),
+			mkState('media_player.speaker', 'idle', {
+				friendly_name: 'Speaker',
+				volume_level: 0.4,
+				media_title: 'nothing'
+			}),
+			mkState('automation.night_mode', 'on', {
+				friendly_name: 'Night Mode',
+				last_triggered: '2026-01-02T03:04:05+00:00'
+			}),
+			mkState('automation.morning_lights', 'off', {
+				friendly_name: 'Morning Lights',
+				last_triggered: null
+			})
+		].map((s) => [s.entity_id, s])
+	);
+	const entities = [
+		['light.lab_lights', 'lab', 'dev-lab-1'],
+		['switch.desk_fan', 'lab', 'dev-lab-1'],
+		['sensor.lab_temperature', null, 'dev-lab-1'],
+		['cover.garage_door', 'garage', null],
+		['climate.thermostat', 'living_room', null],
+		['media_player.speaker', 'living_room', null],
+		['automation.night_mode', null, null],
+		['automation.morning_lights', null, null]
+	].map(([entity_id, area_id, device_id]) => ({
+		entity_id,
+		unique_id: `mock-${entity_id}`,
+		platform: 'demo',
+		name: null,
+		original_name: states.get(entity_id).attributes.friendly_name,
+		device_id,
+		area_id,
+		aliases: [],
+		icon: null,
+		disabled: false,
+		hidden: false,
+		exposed: true,
+		capabilities: {}
+	}));
+
+	return { areas, devices, entities, states, calls: [] };
+}
+
+const SERVICES = {
+	light: {
+		turn_on: { description: 'Turn on a light.', fields: { brightness: {} }, supports_response: false },
+		turn_off: { description: 'Turn off a light.', fields: {}, supports_response: false },
+		toggle: { description: 'Toggle a light.', fields: {}, supports_response: false }
+	},
+	switch: {
+		turn_on: { description: 'Turn on a switch.', fields: {}, supports_response: false },
+		turn_off: { description: 'Turn off a switch.', fields: {}, supports_response: false },
+		toggle: { description: 'Toggle a switch.', fields: {}, supports_response: false }
+	},
+	cover: {
+		open_cover: { description: 'Open a cover.', fields: {}, supports_response: false },
+		close_cover: { description: 'Close a cover.', fields: {}, supports_response: false },
+		stop_cover: { description: 'Stop a cover.', fields: {}, supports_response: false },
+		set_cover_position: {
+			description: 'Move a cover to a position.',
+			fields: { position: {} },
+			supports_response: false
+		}
+	},
+	climate: {
+		set_temperature: {
+			description: "Set a thermostat's target temperature.",
+			fields: { temperature: {} },
+			supports_response: false
+		},
+		set_hvac_mode: {
+			description: "Set a thermostat's HVAC mode.",
+			fields: { hvac_mode: {} },
+			supports_response: false
+		}
+	},
+	media_player: {
+		media_play: { description: 'Resume playback.', fields: {}, supports_response: false },
+		media_pause: { description: 'Pause playback.', fields: {}, supports_response: false },
+		media_stop: { description: 'Stop playback.', fields: {}, supports_response: false },
+		media_next_track: { description: 'Next track.', fields: {}, supports_response: false },
+		media_previous_track: { description: 'Previous track.', fields: {}, supports_response: false },
+		volume_set: {
+			description: 'Set the volume.',
+			fields: { volume_level: {} },
+			supports_response: false
+		}
+	},
+	automation: {
+		turn_on: { description: 'Enable an automation.', fields: {}, supports_response: false },
+		turn_off: { description: 'Disable an automation.', fields: {}, supports_response: false },
+		toggle: { description: 'Toggle an automation.', fields: {}, supports_response: false },
+		trigger: { description: "Run an automation's actions.", fields: {}, supports_response: false }
+	}
+};
+
+/**
+ * Apply a service call to one entity, returning the new state (or null when
+ * the call does not move it).
+ */
+function applyService(current, domain, service, data) {
+	const attrs = { ...current.attributes };
+	const on = ['on', 'open', 'playing', 'heat', 'cool'].includes(current.state);
+	switch (service) {
+		case 'turn_on':
+			if (domain === 'light' && data.brightness !== undefined) {
+				attrs.brightness = Number(data.brightness);
+			} else if (domain === 'light') {
+				attrs.brightness = 255;
+			}
+			return { state: 'on', attrs };
+		case 'turn_off':
+			if (domain === 'light') attrs.brightness = 0;
+			return { state: 'off', attrs };
+		case 'toggle':
+			if (domain === 'light') attrs.brightness = on ? 0 : 255;
+			return { state: on ? 'off' : 'on', attrs };
+		case 'open_cover':
+			attrs.current_position = 100;
+			return { state: 'open', attrs };
+		case 'close_cover':
+			attrs.current_position = 0;
+			return { state: 'closed', attrs };
+		case 'stop_cover':
+			return { state: current.state, attrs };
+		case 'set_cover_position':
+			attrs.current_position = Number(data.position ?? 0);
+			return { state: attrs.current_position > 0 ? 'open' : 'closed', attrs };
+		case 'set_temperature':
+			attrs.temperature = Number(data.temperature);
+			return { state: current.state, attrs };
+		case 'set_hvac_mode':
+			return { state: String(data.hvac_mode), attrs };
+		case 'media_play':
+			return { state: 'playing', attrs };
+		case 'media_pause':
+			return { state: 'paused', attrs };
+		case 'media_stop':
+			return { state: 'idle', attrs };
+		case 'media_next_track':
+			attrs.media_title = 'next track';
+			return { state: current.state, attrs };
+		case 'media_previous_track':
+			attrs.media_title = 'previous track';
+			return { state: current.state, attrs };
+		case 'volume_set':
+			attrs.volume_level = Number(data.volume_level ?? 0);
+			return { state: current.state, attrs };
+		case 'trigger':
+			attrs.last_triggered = nowIso();
+			return { state: current.state, attrs };
+		default:
+			return null;
+	}
+}
+
 export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {}) {
 	const wav = makeWav();
+	const world = makeWorld();
+	/** @type {Set<{socket: any, id: number, eventType: string|null}>} */
+	const subscriptions = new Set();
+
+	const broadcast = (eventType, data) => {
+		const event = {
+			event_type: eventType,
+			data,
+			origin: 'LOCAL',
+			time_fired: nowIso(),
+			context: { id: 'ctx-mock', parent_id: null, user_id: null }
+		};
+		for (const sub of subscriptions) {
+			if (sub.eventType && sub.eventType !== eventType) continue;
+			if (sub.socket.readyState !== 1) continue;
+			sub.socket.send(JSON.stringify({ id: sub.id, type: 'event', event }));
+		}
+	};
+
+	/** Run a service against every targeted entity; returns changed states. */
+	const callService = (domain, service, data) => {
+		world.calls.push({ domain, service, data, at: nowIso() });
+		const targets = []
+			.concat(data.entity_id ?? [])
+			.flatMap((id) => (world.states.has(id) ? [id] : []));
+		const changed = [];
+		for (const entityId of targets) {
+			const current = world.states.get(entityId);
+			const next = applyService(current, domain, service, data);
+			if (!next) continue;
+			const updated = {
+				...current,
+				state: next.state,
+				attributes: next.attrs,
+				last_changed: nowIso(),
+				last_updated: nowIso()
+			};
+			world.states.set(entityId, updated);
+			changed.push(updated);
+			broadcast('state_changed', {
+				entity_id: entityId,
+				old_state: current,
+				new_state: updated
+			});
+		}
+		return changed;
+	};
 
 	const server = http.createServer((req, res) => {
 		const url = new URL(req.url, 'http://internal');
@@ -62,6 +330,26 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			}
 			res.writeHead(200, { 'content-type': 'audio/wav' });
 			res.end(wav);
+			return;
+		}
+		// Test-only introspection: what service calls has the mock seen?
+		if (url.pathname === '/_test/calls') {
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify(world.calls));
+			return;
+		}
+		// Stands in for the token-protected REST surface a real backend has
+		// (/api/states, /api/config, ...). Nothing but the /api/tts_proxy/ media
+		// paths should ever be reachable through jarvis-web's /api/tts proxy, so
+		// the e2e suite tries to reach this and asserts that it cannot.
+		if (url.pathname === '/_test/protected') {
+			if (req.headers.authorization !== `Bearer ${token}`) {
+				res.writeHead(401);
+				res.end('unauthorized');
+				return;
+			}
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ secret: 'admin-only-payload' }));
 			return;
 		}
 		res.writeHead(404);
@@ -76,6 +364,20 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 
 		/** @type {null | {id:number, handlerId:number, audioBytes:number, done:boolean}} */
 		let run = null;
+
+		const mySubs = new Map();
+		socket.on('close', () => {
+			for (const sub of mySubs.values()) subscriptions.delete(sub);
+			mySubs.clear();
+		});
+
+		const ok = (id, result = null) =>
+			socket.send(JSON.stringify({ id, type: 'result', success: true, result }));
+		const fail = (id, code, message) =>
+			socket.send(
+				JSON.stringify({ id, type: 'result', success: false, error: { code, message } })
+			);
+		const findArea = (areaId) => world.areas.find((a) => a.id === areaId);
 
 		const event = (id, type, data = {}) =>
 			socket.send(
@@ -148,6 +450,149 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			}
 
 			switch (msg.type) {
+				case 'ping':
+					socket.send(JSON.stringify({ id: msg.id, type: 'pong' }));
+					break;
+
+				case 'get_states':
+					ok(msg.id, [...world.states.values()]);
+					break;
+
+				case 'get_services':
+					ok(msg.id, SERVICES);
+					break;
+
+				case 'get_config':
+					ok(msg.id, {
+						location_name: 'Mock',
+						version: '0.1.0',
+						ha_version: 'jarvis-0.1.0',
+						state: 'RUNNING',
+						areas: world.areas
+					});
+					break;
+
+				case 'call_service': {
+					const domain = msg.domain;
+					const service = msg.service;
+					if (!SERVICES[domain]?.[service]) {
+						fail(msg.id, 'service_not_found', `unknown service ${domain}.${service}`);
+						break;
+					}
+					const data = { ...(msg.service_data ?? {}), ...(msg.target ?? {}) };
+					const changed = callService(domain, service, data);
+					ok(msg.id, { context: { id: 'ctx-mock' }, changed_states: changed });
+					break;
+				}
+
+				case 'subscribe_events': {
+					const sub = { socket, id: msg.id, eventType: msg.event_type ?? null };
+					subscriptions.add(sub);
+					mySubs.set(msg.id, sub);
+					ok(msg.id, null);
+					break;
+				}
+
+				case 'unsubscribe_events': {
+					const sub = mySubs.get(msg.subscription);
+					if (!sub) {
+						fail(msg.id, 'not_found', `no subscription ${msg.subscription}`);
+						break;
+					}
+					subscriptions.delete(sub);
+					mySubs.delete(msg.subscription);
+					ok(msg.id, null);
+					break;
+				}
+
+				case 'config/area_registry/list':
+					ok(msg.id, world.areas);
+					break;
+
+				case 'config/area_registry/create': {
+					const name = String(msg.name ?? '').trim();
+					if (!name) {
+						fail(msg.id, 'invalid_format', 'name is required');
+						break;
+					}
+					const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+					const existing = findArea(id);
+					if (existing) {
+						ok(msg.id, existing);
+						break;
+					}
+					const area = { id, name, aliases: msg.aliases ?? [] };
+					world.areas.push(area);
+					broadcast('area_registry_updated', { action: 'create', area_id: id });
+					ok(msg.id, area);
+					break;
+				}
+
+				case 'config/area_registry/update': {
+					const area = findArea(msg.area_id);
+					if (!area) {
+						fail(msg.id, 'not_found', `unknown area ${msg.area_id}`);
+						break;
+					}
+					if (msg.name != null) area.name = msg.name;
+					if (msg.aliases != null) area.aliases = msg.aliases;
+					broadcast('area_registry_updated', { action: 'update', area_id: area.id });
+					ok(msg.id, area);
+					break;
+				}
+
+				case 'config/area_registry/delete': {
+					const index = world.areas.findIndex((a) => a.id === msg.area_id);
+					if (index < 0) {
+						fail(msg.id, 'not_found', `unknown area ${msg.area_id}`);
+						break;
+					}
+					world.areas.splice(index, 1);
+					for (const entry of world.entities) {
+						if (entry.area_id === msg.area_id) entry.area_id = null;
+					}
+					broadcast('area_registry_updated', { action: 'remove', area_id: msg.area_id });
+					ok(msg.id, { area_id: msg.area_id, deleted: true });
+					break;
+				}
+
+				case 'config/entity_registry/list':
+					ok(msg.id, world.entities);
+					break;
+
+				case 'config/entity_registry/update': {
+					const entry = world.entities.find((e) => e.entity_id === msg.entity_id);
+					if (!entry) {
+						fail(msg.id, 'not_found', `unknown entity ${msg.entity_id}`);
+						break;
+					}
+					// Matches jarvis-core: null-valued fields are skipped, so '' is
+					// how a client clears an assignment.
+					for (const field of ['name', 'icon', 'area_id', 'device_id', 'aliases', 'disabled', 'hidden', 'exposed']) {
+						if (msg[field] !== undefined && msg[field] !== null) entry[field] = msg[field];
+					}
+					broadcast('entity_registry_updated', { action: 'update', entity_id: entry.entity_id });
+					ok(msg.id, { entity_entry: entry });
+					break;
+				}
+
+				case 'config/device_registry/list':
+					ok(msg.id, world.devices);
+					break;
+
+				case 'config/device_registry/update': {
+					const device = world.devices.find((d) => d.id === msg.device_id);
+					if (!device) {
+						fail(msg.id, 'not_found', `unknown device ${msg.device_id}`);
+						break;
+					}
+					for (const field of ['name', 'area_id', 'disabled', 'manufacturer', 'model']) {
+						if (msg[field] !== undefined && msg[field] !== null) device[field] = msg[field];
+					}
+					ok(msg.id, device);
+					break;
+				}
+
 				case 'assist_pipeline/pipeline/list':
 					socket.send(
 						JSON.stringify({
@@ -197,6 +642,8 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			resolve({
 				port: actualPort,
 				url: `http://127.0.0.1:${actualPort}`,
+				/** Live registries, states and the recorded service calls. */
+				world,
 				close: () =>
 					new Promise((r) => {
 						for (const c of wss.clients) c.terminate();

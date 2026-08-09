@@ -15,8 +15,14 @@ const child = spawn(process.execPath, ['build'], {
 		...process.env,
 		PORT: process.env.PORT ?? '8199',
 		HOST: '127.0.0.1',
-		HA_URL: mock.url,
-		HA_TOKEN: MOCK_TOKEN,
+		// Exercise the jarvis-core path: JARVIS_* must win over HA_*, so the
+		// deliberately-wrong HA vars below double as a precedence regression test
+		// — if resolveBackend picked them, every e2e test would fail to connect.
+		JARVIS_BACKEND: 'core',
+		JARVIS_URL: mock.url,
+		JARVIS_TOKEN: MOCK_TOKEN,
+		HA_URL: 'http://127.0.0.1:1',
+		HA_TOKEN: 'wrong-token',
 		JARVIS_PIPELINE: 'Jarvis',
 		JARVIS_TTS_VOICE: 'en_GB-alan-medium'
 	}

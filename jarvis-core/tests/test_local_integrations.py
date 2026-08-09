@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -27,9 +28,12 @@ from jarvis.integrations.command_line import (  # noqa: E402
 from jarvis.integrations.command_line import async_setup as command_line_setup  # noqa: E402
 from jarvis.integrations.demo import async_setup as demo_setup  # noqa: E402
 from jarvis.integrations.domains import async_setup as domains_setup  # noqa: E402
+from jarvis.integrations.hue import HueBridge, _normalise_v2_light  # noqa: E402
 from jarvis.integrations.hue import async_setup as hue_setup  # noqa: E402
+from jarvis.integrations.hue import create_client as hue_client  # noqa: E402
 from jarvis.integrations.hue import kelvin_to_mirek, rgb_to_xy  # noqa: E402
 from jarvis.integrations.rest import async_setup as rest_setup  # noqa: E402
+from jarvis.integrations.rest import create_client as rest_client  # noqa: E402
 from jarvis.integrations.template import async_setup as template_setup  # noqa: E402
 from jarvis.integrations.wled import async_setup as wled_setup  # noqa: E402
 
@@ -833,6 +837,328 @@ async def test_demo_unsupported_action_reports_clearly(tmp_path):
     )
     assert result["changed"] == []
     assert "sensor.outside_temperature" in result["failed"]
+    await shutdown(jarvis)
+
+
+# ===========================================================================
+# regression tests for defects found in verification
+# ===========================================================================
+async def test_command_timeout_actually_stops_the_command():
+    """`command_timeout` must bound wall-clock time, not just report on it.
+
+    Regression: the old implementation cancelled `communicate()` via
+    `wait_for`, which leaves the subprocess pipe transports half-torn-down;
+    the following `process.wait()` then blocked until the command exited on
+    its own. `async_run_command("sleep 30", timeout=0.3)` never returned, so
+    one slow command wedged its EntityPlatform poll loop permanently. The
+    old test used `sleep 5`, which always eventually returned — it could not
+    tell a real timeout from waiting the command out.
+    """
+    started = time.monotonic()
+    with pytest.raises(CommandFailed):
+        await async_run_command("sleep 30", timeout=0.3)
+    elapsed = time.monotonic() - started
+    assert elapsed < 5, f"timeout took {elapsed:.1f}s; the command was not stopped"
+
+
+async def test_command_timeout_kills_forked_children():
+    """A shell that backgrounds a child must not keep the call alive.
+
+    `process.kill()` only signals the shell. The backgrounded `sleep` inherits
+    stdout, so the pipe stays open and output collection never finishes;
+    killing the whole process group is what actually ends it.
+    """
+    started = time.monotonic()
+    with pytest.raises(CommandFailed):
+        await async_run_command("sleep 30 & sleep 30", timeout=0.3)
+    elapsed = time.monotonic() - started
+    assert elapsed < 5, f"orphaned child held the call open for {elapsed:.1f}s"
+
+
+async def test_command_timeout_does_not_swallow_fast_commands():
+    """The kill path must not cost anything on the happy path."""
+    code, output = await async_run_command("echo quick", timeout=10)
+    assert (code, output) == (0, "quick")
+
+
+async def test_template_environment_is_sandboxed(tmp_path):
+    """Templates must not be able to reach the Python runtime.
+
+    Regression: the shared environment was a plain `jinja2.Environment`, so
+    `{{ cycler.__init__.__globals__.os.popen('...').read() }}` executed shell
+    commands and `{{ ''.__class__.__mro__ }}` walked to every loaded class.
+    """
+    jarvis = await make_jarvis(tmp_path)
+
+    # Reaching the interpreter must be refused outright.
+    for attack in (
+        "{{ ''.__class__.__mro__[1].__subclasses__() | length }}",
+        "{{ cycler.__init__.__globals__.os.popen('echo pwned').read() }}",
+        "{{ ''.__class__.__base__.__subclasses__() }}",
+    ):
+        with pytest.raises(tpl.TemplateError):
+            tpl.render(jarvis, attack)
+
+    # Anything else that pokes at dunders must at minimum leak nothing.
+    for probe in (
+        "{{ ''.__class__ }}",
+        "{{ namespace.__init__.__globals__ }}",
+        "{{ lipsum.__globals__ }}",
+        "{{ ''.__class__.__mro__ }}",
+    ):
+        assert tpl.render(jarvis, probe) == "", f"{probe} leaked runtime internals"
+
+    # The environment is the *immutable* sandbox: templates cannot mutate the
+    # objects they are handed either.
+    assert tpl.render(jarvis, "{{ [].append }}") == ""
+
+    # ...while ordinary attribute access still works.
+    jarvis.states.set("light.bed", "on", {"brightness": 200})
+    assert tpl.render(jarvis, "{{ states.light.bed.state }}") == "on"
+    assert tpl.render(jarvis, "{{ value_json.a.b }}", {"value": '{"a": {"b": 1}}'}) == "1"
+
+
+async def test_rest_verify_ssl_is_per_block(tmp_path):
+    """One block opting out of TLS checks must not disarm the others.
+
+    Regression: `verify_ssl` was folded across every block with `all(...)` and
+    a single shared client, so `verify_ssl: false` on a lab endpoint silently
+    turned certificate verification off for every other REST endpoint too.
+    """
+    import ssl
+
+    jarvis = await make_jarvis(tmp_path)
+    strict = rest_client(jarvis, verify_ssl=True)
+    lax = rest_client(jarvis, verify_ssl=False)
+    try:
+        assert strict is not lax, "strict and lax blocks shared one client"
+        # asking twice for the same setting reuses the connection pool
+        assert rest_client(jarvis, verify_ssl=True) is strict
+
+        def ssl_context(client):
+            context = getattr(getattr(client._transport, "_pool", None), "_ssl_context", None)
+            assert context is not None, "could not read httpx's SSL context"
+            return context
+
+        assert ssl_context(strict).verify_mode == ssl.CERT_REQUIRED
+        assert ssl_context(strict).check_hostname is True
+        assert ssl_context(lax).verify_mode == ssl.CERT_NONE
+    finally:
+        await strict.aclose()
+        await lax.aclose()
+
+
+async def test_rest_block_siblings_go_unavailable_together(tmp_path):
+    """Entities riding a shared fetch must not keep serving stale values.
+
+    Regression: only the first entity of a block polls; when its fetch failed
+    the siblings kept publishing the last good payload and stayed `available`
+    forever, because nothing ever told them the endpoint had gone away.
+    """
+    jarvis = await make_jarvis(tmp_path)
+    fail = {"now": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if fail["now"]:
+            return httpx.Response(500, text="boom")
+        return httpx.Response(200, json={"power": 100, "grid": "up"})
+
+    jarvis.data["rest"] = {"transport": httpx.MockTransport(handler)}
+    await rest_setup(
+        jarvis,
+        {
+            "resource": "http://x.test/s",
+            "sensor": [{"name": "Shared Power", "value_template": "{{ value_json.power }}"}],
+            "binary_sensor": [
+                {"name": "Shared Grid", "value_template": "{{ value_json.grid == 'up' }}"}
+            ],
+        },
+    )
+    assert jarvis.states.get("sensor.shared_power").state == "100"
+    assert jarvis.states.get("binary_sensor.shared_grid").state == "on"
+
+    fail["now"] = True
+    await jarvis.entity_object("sensor.shared_power").async_update_state()
+    assert jarvis.states.get("sensor.shared_power").state == "unavailable"
+    assert jarvis.states.get("binary_sensor.shared_grid").state == "unavailable"
+
+    # and they recover together
+    fail["now"] = False
+    await jarvis.entity_object("sensor.shared_power").async_update_state()
+    assert jarvis.states.get("sensor.shared_power").state == "100"
+    assert jarvis.states.get("binary_sensor.shared_grid").state == "on"
+    await shutdown(jarvis)
+
+
+async def test_rest_uses_each_blocks_own_timeout(tmp_path):
+    """Regression: every request used max(timeout) across all blocks."""
+    jarvis = await make_jarvis(tmp_path)
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.host] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"v": 1})
+
+    jarvis.data["rest"] = {"transport": httpx.MockTransport(handler)}
+    await rest_setup(
+        jarvis,
+        [
+            {"resource": "http://slow.test/a", "timeout": 90, "sensor": [{"name": "Slow One"}]},
+            {"resource": "http://fast.test/b", "timeout": 1, "sensor": [{"name": "Fast One"}]},
+        ],
+    )
+    assert seen["slow.test"]["read"] == 90.0
+    assert seen["fast.test"]["read"] == 1.0, "the fast block inherited another block's timeout"
+    await shutdown(jarvis)
+
+
+async def test_hue_bridge_failure_marks_every_light_unavailable(tmp_path):
+    """Regression: only the polling light noticed the bridge was gone."""
+    jarvis = await make_jarvis(tmp_path, with_domains=True)
+    fail = {"now": False}
+    lights = {
+        "data": [
+            {"id": "l1", "metadata": {"name": "Alpha Lamp"}, "on": {"on": True}},
+            {"id": "l2", "metadata": {"name": "Beta Lamp"}, "on": {"on": True}},
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if fail["now"]:
+            return httpx.Response(500, json={})
+        if request.url.path == "/clip/v2/resource/light":
+            return httpx.Response(200, json=lights)
+        return httpx.Response(200, json={"data": []})
+
+    jarvis.data["hue"] = {"transport": httpx.MockTransport(handler)}
+    await hue_setup(jarvis, {"host": "b.test", "api_key": "K", "version": 2})
+    assert jarvis.states.get("light.alpha_lamp").state == "on"
+    assert jarvis.states.get("light.beta_lamp").state == "on"
+
+    fail["now"] = True
+    await jarvis.entity_object("light.alpha_lamp").async_update_state()
+    assert jarvis.states.get("light.alpha_lamp").state == "unavailable"
+    assert jarvis.states.get("light.beta_lamp").state == "unavailable"
+    await shutdown(jarvis)
+
+
+async def test_hue_transient_v2_failure_does_not_pin_v1(tmp_path):
+    """A flaky probe must not downgrade a v2 bridge for the whole session.
+
+    Regression: `async_detect_version` cached `version = 1` on any v2 error,
+    including a timeout, so a bridge that blipped once spoke the legacy API
+    until Jarvis restarted.
+    """
+    jarvis = await make_jarvis(tmp_path)
+    v2_down = {"yes": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/clip/v2/"):
+            if v2_down["yes"]:
+                raise httpx.ConnectTimeout("transient", request=request)
+            return httpx.Response(200, json={"data": [
+                {"id": "l1", "metadata": {"name": "Recovered"}, "on": {"on": True}}
+            ]})
+        return httpx.Response(404, json=[])
+
+    jarvis.data["hue"] = {"transport": httpx.MockTransport(handler)}
+    client = hue_client(jarvis)
+    bridge = HueBridge(jarvis, client, "b.test", "K", include_groups=False)
+    try:
+        with pytest.raises(Exception):
+            await bridge.async_fetch()  # v2 blip, then v1 404s too
+        assert bridge.version is None, "a failed probe must not pin an API version"
+
+        v2_down["yes"] = False
+        devices = await bridge.async_fetch()
+        assert bridge.version == 2
+        assert "light:l1" in devices
+    finally:
+        await client.aclose()
+    await shutdown(jarvis)
+
+
+def test_hue_v2_light_without_product_data():
+    """Regression: `product_data: null` raised AttributeError mid-fetch,
+    taking every other light on the bridge down with it."""
+    device = _normalise_v2_light(
+        {"id": "x", "metadata": {"name": "L", "archetype": "bulb"},
+         "on": {"on": True}, "product_data": None}
+    )
+    assert device["name"] == "L"
+    assert device["model"] == "bulb"
+
+
+async def test_wled_controller_failure_takes_the_effect_select_down(tmp_path):
+    """Regression: only the light polls, so the select stayed 'live' forever."""
+    jarvis = await make_jarvis(tmp_path, with_domains=True)
+    calls: list[tuple[str, dict]] = []
+    inner = _wled_transport(calls)
+    fail = {"now": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if fail["now"]:
+            return httpx.Response(503, json={})
+        return inner.handler(request)
+
+    jarvis.data["wled"] = {"transport": httpx.MockTransport(handler)}
+    await wled_setup(jarvis, [{"host": "wled.test"}])
+    assert jarvis.states.get("select.desk_strip_effect").state == "Solid"
+
+    fail["now"] = True
+    await jarvis.entity_object("light.desk_strip").async_update_state()
+    assert jarvis.states.get("light.desk_strip").state == "unavailable"
+    assert jarvis.states.get("select.desk_strip_effect").state == "unavailable"
+    await shutdown(jarvis)
+
+
+async def test_template_entities_converge_across_dependencies(tmp_path):
+    """A template entity reading another template entity must keep up.
+
+    Regression: `render_all` made one ordered pass and suppressed re-renders
+    triggered by template entities' own writes, so an entity declared before
+    the one it depends on was stuck at its old value permanently.
+    """
+    jarvis = await make_jarvis(tmp_path)
+    jarvis.states.set("sensor.raw", "5")
+    await template_setup(
+        jarvis,
+        [
+            {
+                "sensor": [
+                    # deliberately declared BEFORE the entity it reads
+                    {"name": "Z Downstream", "state": "{{ states('sensor.a_upstream') }}"},
+                    {"name": "A Upstream", "state": "{{ states('sensor.raw') }}"},
+                ]
+            }
+        ],
+    )
+    assert jarvis.states.get("sensor.a_upstream").state == "5"
+    assert jarvis.states.get("sensor.z_downstream").state == "5"
+
+    jarvis.states.set("sensor.raw", "99")
+    assert jarvis.states.get("sensor.a_upstream").state == "99"
+    assert jarvis.states.get("sensor.z_downstream").state == "99"
+    await shutdown(jarvis)
+
+
+async def test_template_cycle_does_not_hang(tmp_path):
+    """Two entities defined in terms of each other must not spin forever."""
+    jarvis = await make_jarvis(tmp_path)
+    await template_setup(
+        jarvis,
+        [
+            {
+                "sensor": [
+                    {"name": "Ping", "state": "{{ states('sensor.pong') | int(0) + 1 }}"},
+                    {"name": "Pong", "state": "{{ states('sensor.ping') | int(0) + 1 }}"},
+                ]
+            }
+        ],
+    )
+    jarvis.states.set("sensor.trigger", "1")
+    assert jarvis.states.get("sensor.ping") is not None
+    assert jarvis.states.get("sensor.pong") is not None
     await shutdown(jarvis)
 
 

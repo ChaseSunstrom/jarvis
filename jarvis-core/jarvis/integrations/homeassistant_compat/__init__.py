@@ -64,10 +64,21 @@ def _passthrough(data: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in data.items() if k not in TARGET_KEYS}
 
 
-def _merge(into: dict[str, Any], result: Any) -> None:
-    if isinstance(result, dict):
+def _merge(into: dict[str, Any], result: Any, entity_ids: list[str]) -> None:
+    """Fold one domain service's answer into the combined response.
+
+    Only the `domains` layer speaks `{"changed": [...], "failed": {...}}`.
+    Plenty of other integrations register `<domain>.turn_on` and return
+    None (script, scene, automation, input_boolean...). Treating that as
+    "nothing changed" made `homeassistant.turn_on` on a script report a
+    failure after actually running it, so a non-conforming answer counts
+    every dispatched entity as changed instead.
+    """
+    if isinstance(result, dict) and ("changed" in result or "failed" in result):
         into["changed"].extend(result.get("changed", []))
         into["failed"].update(result.get("failed", {}))
+        return
+    into["changed"].extend(entity_ids)
 
 
 async def _call_domain(
@@ -88,15 +99,25 @@ async def _call_domain(
             if entity_id in explicit:
                 out["failed"][entity_id] = f"domain {domain!r} does not support {service}"
         return
-    result = await jarvis.services.async_call(
-        domain,
-        service,
-        {**extra, "entity_id": entity_ids},
-        blocking=True,
-        context=call.context,
-        return_response=True,
-    )
-    _merge(out, result)
+    try:
+        result = await jarvis.services.async_call(
+            domain,
+            service,
+            {**extra, "entity_id": entity_ids},
+            blocking=True,
+            context=call.context,
+            return_response=True,
+        )
+    except Exception as exc:
+        # One domain rejecting the data (a bad brightness, a missing field)
+        # must not abandon the domains that have already run and throw the
+        # whole report away.
+        _LOGGER.exception("compat dispatch to %s.%s failed", domain, service)
+        reason = f"{type(exc).__name__}: {exc}"
+        for entity_id in entity_ids:
+            out["failed"][entity_id] = reason
+        return
+    _merge(out, result, entity_ids)
 
 
 async def _dispatch(jarvis: "Jarvis", call: ServiceCall, action: str) -> dict[str, Any]:
@@ -200,11 +221,18 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
 
     async def handle_notification_create(call: ServiceCall) -> dict[str, Any]:
         store: dict[str, Any] = jarvis.data.setdefault(NOTIFICATIONS_KEY, {})
+        message = call.get("message")
+        if message is None or str(message) == "":
+            # `message` is advertised as required — enforce it rather than
+            # storing a blank notification the UI can only render as noise.
+            raise ValueError(
+                f"{NOTIFY_DOMAIN}.create: missing required field 'message'"
+            )
         notification_id = str(call.get("notification_id") or uuid.uuid4().hex[:12])
         notification = {
             "notification_id": notification_id,
             "title": call.get("title"),
-            "message": str(call.get("message") or ""),
+            "message": str(message),
             "created_at": time.time(),
         }
         store[notification_id] = notification

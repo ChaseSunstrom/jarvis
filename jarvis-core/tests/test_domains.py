@@ -4,7 +4,9 @@ Fake entities record every call they receive, so these tests assert the
 whole path: service data -> target resolution -> entity method -> state.
 """
 
+import gc
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -227,6 +229,9 @@ EXPECTED_SERVICES = [
     ("siren", "turn_on"), ("siren", "turn_off"), ("siren", "toggle"),
     ("cover", "open_cover"), ("cover", "close_cover"), ("cover", "stop_cover"),
     ("cover", "set_cover_position"), ("cover", "toggle"),
+    ("cover", "turn_on"), ("cover", "turn_off"),
+    ("media_player", "toggle"), ("vacuum", "toggle"),
+    ("vacuum", "turn_on"), ("vacuum", "turn_off"),
     ("climate", "set_temperature"), ("climate", "set_hvac_mode"), ("climate", "set_fan_mode"),
     ("lock", "lock"), ("lock", "unlock"),
     ("media_player", "media_play"), ("media_player", "media_pause"),
@@ -876,3 +881,267 @@ async def test_core_setup_registers_the_layer(tmp_path):
     assert jarvis.services.has_service("light", "turn_on")
     assert jarvis.services.has_service("homeassistant", "toggle")
     assert jarvis.services.has_service("persistent_notification", "create")
+
+
+# ---------------------------------------------------------------------------
+# regressions
+# ---------------------------------------------------------------------------
+async def test_toggle_forwards_the_fields_it_advertises(tmp_path):
+    """`light.toggle` advertises brightness/colour — it must actually use them.
+
+    The handler used to call the chosen branch with an empty kwargs dict, so
+    every field in its own published schema was silently discarded.
+    """
+    jarvis = await make_jarvis(tmp_path)
+    off_light = FakeLight("Off Light", "l1", state="off")
+    on_light = FakeLight("On Light", "l2", state="on")
+    await add(jarvis, "light", off_light, on_light)
+
+    fields = jarvis.services.services["light"]["toggle"].fields
+    assert "brightness" in fields  # the promise...
+
+    await jarvis.async_call_service(
+        "light",
+        "toggle",
+        {
+            "entity_id": ["light.off_light", "light.on_light"],
+            "brightness_pct": 40,
+            "rgb_color": "0,255,0",
+            "transition": 3,
+        },
+    )
+    # ...and the delivery: the branch that turns on gets the full kwargs.
+    assert off_light.calls == [
+        ("turn_on", {"brightness": 102, "rgb_color": (0, 255, 0), "transition": 3.0}),
+    ]
+    # the branch that turns off only takes what turn_off accepts
+    assert on_light.calls == [("turn_off", {"transition": 3.0})]
+    assert jarvis.states.get("light.off_light").attributes["brightness"] == 102
+
+
+async def test_toggle_rejects_bad_values_before_touching_anything(tmp_path):
+    jarvis = await make_jarvis(tmp_path)
+    light = FakeLight("Lamp", "l1", state="off")
+    await add(jarvis, "light", light)
+
+    with pytest.raises(ValueError):
+        await jarvis.async_call_service(
+            "light", "toggle", {"entity_id": "light.lamp", "brightness": "very"}
+        )
+    assert light.calls == []
+
+
+async def test_coroutine_write_state_is_awaited(tmp_path):
+    """An entity may override async_write_state as a coroutine; dropping the
+    returned coroutine would silently lose the state write."""
+    jarvis = await make_jarvis(tmp_path)
+
+    class AsyncWriteLight(FakeLight):
+        wrote = False
+
+        async def async_write_state(self):
+            type(self).wrote = True
+            self.jarvis.states.set(self.entity_id, self.state, {})
+
+    # Registered by hand: EntityPlatform.async_add_entities also calls
+    # async_write_state() synchronously, and that core path is out of scope
+    # here (see the report note on jarvis/entity.py:192).
+    light = AsyncWriteLight("Slow Lamp", "l1", state="off")
+    light.jarvis = jarvis
+    light.entity_id = "light.slow_lamp"
+    jarvis.data.setdefault("entity_objects", {})["light.slow_lamp"] = light
+    jarvis.states.set("light.slow_lamp", "off")
+    AsyncWriteLight.wrote = False
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await jarvis.async_call_service(
+            "light", "turn_on", {"entity_id": "light.slow_lamp"}
+        )
+        gc.collect()
+
+    assert AsyncWriteLight.wrote is True
+    never_awaited = [
+        w for w in caught
+        if issubclass(w.category, RuntimeWarning)
+        and "never awaited" in str(w.message)
+        and "domains" in str(w.filename)
+    ]
+    assert never_awaited == []
+
+
+async def test_entity_id_all_skips_disabled_entities_with_a_stale_state(tmp_path):
+    """`all` expansion walked the state machine first, so a disabled entity
+    that still had a state got actuated anyway."""
+    jarvis = await make_jarvis(tmp_path)
+    live = FakeLight("Live", "l1")
+    dead = FakeLight("Dead", "l2")
+    await add(jarvis, "light", live, dead)
+    await jarvis.entities.update("light.dead", disabled=True)
+    assert jarvis.states.get("light.dead") is not None  # stale state still there
+
+    result = await jarvis.async_call_service(
+        "light", "turn_on", {"entity_id": "all"}, return_response=True
+    )
+    assert result["changed"] == ["light.live"]
+    assert dead.calls == []
+
+    # naming it explicitly still works — the operator asked for it by name
+    explicit = await jarvis.async_call_service(
+        "light", "turn_on", {"entity_id": "light.dead"}, return_response=True
+    )
+    assert explicit["changed"] == ["light.dead"]
+
+
+async def test_repeat_calls_on_a_virtual_entity_do_not_spam_state_changed(tmp_path):
+    """Virtual writes used force_update=True, so every no-op service call
+    fired state_changed — waking bare state triggers, logbook and recorder."""
+    jarvis = await make_jarvis(tmp_path)
+    jarvis.states.set("light.ghost", "off")
+
+    events = []
+    jarvis.bus.listen("state_changed", lambda event: events.append(event.data["entity_id"]))
+
+    for _ in range(3):
+        await jarvis.async_call_service(
+            "light", "turn_on", {"entity_id": "light.ghost", "brightness": 5}
+        )
+    assert events == ["light.ghost"]
+
+    # a real change still fires
+    await jarvis.async_call_service("light", "turn_off", {"entity_id": "light.ghost"})
+    assert len(events) == 2
+
+
+async def test_call_with_no_target_is_reported_not_silently_ignored(tmp_path):
+    jarvis = await make_jarvis(tmp_path)
+    await add(jarvis, "light", FakeLight("Lamp", "l1"))
+
+    result = await jarvis.async_call_service(
+        "light", "turn_on", {}, return_response=True
+    )
+    assert result["changed"] == []
+    assert "target" in result["failed"]
+
+    # an empty area is a real (if fruitless) target: no bogus complaint
+    await jarvis.areas.create("Empty Room")
+    empty = await jarvis.async_call_service(
+        "light", "turn_on", {"area_id": "empty_room"}, return_response=True
+    )
+    assert empty == {"changed": [], "failed": {}}
+
+
+async def test_cover_and_vacuum_answer_the_generic_verbs(tmp_path):
+    """Callers that dispatch uniformly (`<domain>.turn_on` for whatever the
+    user named) must not hit ServiceNotFound on covers and vacuums."""
+    jarvis = await make_jarvis(tmp_path)
+    cover = FakeCover("Blind", "c1", state="closed")
+    vacuum = FakeVacuum("Roomba", "v1", state="docked")
+    await add(jarvis, "cover", cover)
+    await add(jarvis, "vacuum", vacuum)
+
+    await jarvis.async_call_service("cover", "turn_on", {"entity_id": "cover.blind"})
+    await jarvis.async_call_service("cover", "turn_off", {"entity_id": "cover.blind"})
+    await jarvis.async_call_service("vacuum", "turn_on", {"entity_id": "vacuum.roomba"})
+    await jarvis.async_call_service("vacuum", "turn_off", {"entity_id": "vacuum.roomba"})
+
+    assert cover.actions == ["open_cover", "close_cover"]
+    assert vacuum.actions == ["start", "return_to_base"]
+
+
+async def test_media_player_and_vacuum_toggle(tmp_path):
+    jarvis = await make_jarvis(tmp_path)
+    player = FakeMediaPlayer("Speaker", "m1", state="playing")
+    vacuum = FakeVacuum("Roomba", "v1", state="docked")
+    await add(jarvis, "media_player", player)
+    await add(jarvis, "vacuum", vacuum)
+
+    await jarvis.async_call_service(
+        "media_player", "toggle", {"entity_id": "media_player.speaker"}
+    )
+    await jarvis.async_call_service(
+        "media_player", "toggle", {"entity_id": "media_player.speaker"}
+    )
+    assert player.actions == ["turn_off", "turn_on"]
+
+    await jarvis.async_call_service("vacuum", "toggle", {"entity_id": "vacuum.roomba"})
+    await jarvis.async_call_service("vacuum", "toggle", {"entity_id": "vacuum.roomba"})
+    assert vacuum.actions == ["start", "return_to_base"]
+
+
+async def test_compat_counts_services_that_return_no_report(tmp_path):
+    """script/scene/automation register `turn_on` and return None. The compat
+    layer used to drop that, reporting `changed: []` for an action that ran —
+    which the LLM tool layer renders as an outright failure."""
+    jarvis = await make_jarvis(tmp_path)
+    ran = []
+
+    async def script_turn_on(call):
+        ran.append(call.data.get("entity_id"))
+
+    jarvis.services.register("script", "turn_on", script_turn_on)
+    jarvis.states.set("script.bedtime", "off")
+
+    result = await jarvis.async_call_service(
+        "homeassistant", "turn_on", {"entity_id": "script.bedtime"}, return_response=True
+    )
+    assert ran == [["script.bedtime"]]
+    assert result == {"changed": ["script.bedtime"], "failed": {}}
+
+
+async def test_compat_one_bad_domain_does_not_sink_the_rest(tmp_path):
+    """A rejected value in one domain used to raise straight out of
+    `homeassistant.turn_on`, discarding the report for domains that had
+    already been actuated."""
+    jarvis = await make_jarvis(tmp_path)
+    plug = FakeSwitch("Plug", "s1", state="off")
+    light = FakeLight("Lamp", "l1", state="off")
+    await add(jarvis, "switch", plug)
+    await add(jarvis, "light", light)
+
+    result = await jarvis.async_call_service(
+        "homeassistant",
+        "turn_on",
+        {"entity_id": ["switch.plug", "light.lamp"], "brightness": "nope"},
+        return_response=True,
+    )
+    assert result["changed"] == ["switch.plug"]
+    assert "light.lamp" in result["failed"]
+    assert "brightness" in result["failed"]["light.lamp"]
+    assert plug.actions == ["turn_on"]
+    assert light.calls == []
+
+
+async def test_compat_never_reaches_a_lock(tmp_path):
+    """Locks are a gated (Tier-3) domain: no generic verb may operate one,
+    including the blunt `entity_id: all` fan-out."""
+    jarvis = await make_jarvis(tmp_path)
+    lock = FakeLock("Front Door", "k1", state="locked")
+    light = FakeLight("Lamp", "l1", state="off")
+    await add(jarvis, "lock", lock)
+    await add(jarvis, "light", light)
+
+    for action in ("turn_on", "turn_off", "toggle"):
+        await jarvis.async_call_service(
+            "homeassistant", action, {"entity_id": "all"}, return_response=True
+        )
+        await jarvis.async_call_service(
+            "homeassistant", action, {"entity_id": "lock.front_door"}, return_response=True
+        )
+    assert lock.calls == []
+    assert jarvis.states.get("lock.front_door").state == "locked"
+    # and no domain-level lock toggle exists to sneak through either
+    assert not jarvis.services.has_service("lock", "toggle")
+    assert not jarvis.services.has_service("lock", "turn_on")
+    assert not jarvis.services.has_service("lock", "turn_off")
+
+
+async def test_notification_requires_a_message(tmp_path):
+    jarvis = await make_jarvis(tmp_path)
+    with pytest.raises(ValueError):
+        await jarvis.async_call_service("persistent_notification", "create", {})
+    with pytest.raises(ValueError):
+        await jarvis.async_call_service(
+            "persistent_notification", "create", {"title": "Empty"}
+        )
+    assert jarvis.data["persistent_notifications"] == {}

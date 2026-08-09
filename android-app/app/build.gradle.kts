@@ -53,8 +53,20 @@ android {
         buildConfig = true
     }
 
-    // Additive: keeps src/main/kotlin compiled regardless of plugin defaults.
+    // Additive: keeps src/{main,test}/kotlin compiled regardless of plugin
+    // defaults. The unit tests are plain JVM tests over the pure-logic classes
+    // (policy, tiering, parsing, URL/origin handling) — no device required.
     sourceSets.getByName("main").java.srcDir("src/main/kotlin")
+    sourceSets.getByName("test").java.srcDir("src/test/kotlin")
+
+    testOptions {
+        unitTests {
+            // Stubbed android.jar methods return 0/null instead of throwing, so
+            // a test that brushes against an Android type fails on its own
+            // assertion rather than on "not mocked".
+            isReturnDefaultValues = true
+        }
+    }
 
     lint {
         // AndroidManifest.xml declares the automation module's components
@@ -84,4 +96,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

@@ -1,0 +1,14 @@
+# Runtime. Pins match the rest of the Jarvis stack (jarvis-orchestrator).
+fastapi==0.115.6
+uvicorn==0.34.0
+httpx==0.28.1
+pydantic>=2.9,<3
+
+# Playwright's pip package version MUST match the browser revision installed
+# in the image (the Dockerfile runs `playwright install chromium` at this
+# same version). The service imports it lazily, so the API and the whole
+# test suite still work if it is absent.
+playwright==1.49.1
+
+# Tests only (no network, no playwright needed):
+#   pytest>=8  anyio>=4

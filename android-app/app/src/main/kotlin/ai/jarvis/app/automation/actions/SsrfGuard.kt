@@ -94,6 +94,26 @@ object SsrfGuard {
         return Check(true, null, scheme, rawHost, port, exempt = false, needsDnsCheck = true)
     }
 
+    /**
+     * True when [rawUrl] names a real host that [check] refuses — loopback, the
+     * LAN, link-local, CGNAT, a cloud metadata endpoint.
+     *
+     * Separate from [check] because two callers want two different answers
+     * about the same fact. `http_request` refuses to make the request at all.
+     * `open_url` hands the URL to the browser, which is a different act with a
+     * different risk: the browser is on the user's LAN and carries the user's
+     * cookies, so a private target is not forbidden, it is Tier 3 — shown to
+     * the user with the URL in front of them.
+     *
+     * A malformed URL, a missing scheme or embedded credentials give no host,
+     * so this is false for them: they are rejected on their own merits rather
+     * than turned into a pointless consent prompt.
+     */
+    fun isInsideTrustBoundary(rawUrl: String?, allowedHosts: Set<String> = emptySet()): Boolean {
+        val result = check(rawUrl, allowedHosts)
+        return !result.allowed && result.host != null
+    }
+
     /** Names that never legitimately appear in an LLM-chosen URL. */
     fun isBlockedHostName(host: String): Boolean {
         val h = host.trimEnd('.').lowercase()
@@ -156,7 +176,10 @@ object SsrfGuard {
     }
 
     private fun parseIpv4Part(part: String): Long? {
-        if (part.isEmpty() || part.length > 11) return null
+        // Long.toLong() throws on anything wider than 64 bits, and the callers
+        // bound every value, so the only job of this length cap is to stop
+        // pathological input from being parsed at all.
+        if (part.isEmpty() || part.length > 20) return null
         return try {
             when {
                 part.startsWith("0x") || part.startsWith("0X") ->

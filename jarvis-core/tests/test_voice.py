@@ -247,6 +247,93 @@ def test_decode_header_rejects_garbage():
         decode_header(b'{"no": "type"}')
 
 
+def test_encode_event_inlines_only_small_data():
+    """Small data is duplicated inline; a big block must not bloat the header.
+
+    The peer reads the header with a single ``readline()`` — asyncio's default
+    limit is 64 KiB — so a long `synthesize` request whose text is echoed into
+    the header line is physically unreadable by the server.
+    """
+    small = encode_event(WyomingEvent("synthesize", {"text": "hello"}))
+    assert decode_header(small.split(b"\n", 1)[0])["data"] == {"text": "hello"}
+
+    long_text = "hello " * 20_000  # ~120 KB
+    raw = encode_event(WyomingEvent("synthesize", {"text": long_text}))
+    line, rest = raw.split(b"\n", 1)
+    header = decode_header(line)
+    assert len(line) < 65536, f"header line is {len(line)} bytes, peer cannot readline() it"
+    assert "data" not in header
+    # ...but the text still arrives, in the length-prefixed block.
+    assert json.loads(rest[: header["data_length"]]) == {"text": long_text}
+
+
+async def test_read_event_wraps_oversized_header_as_wyoming_error():
+    """A header past the reader's limit is a protocol failure, not a ValueError."""
+    from jarvis.voice.wyoming import async_read_event
+
+    big = json.dumps({"type": "info", "data": {"x": "y" * 200_000}}).encode() + b"\n"
+
+    async def handle(reader, writer):
+        await reader.readline()
+        writer.write(big)
+        await writer.drain()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)  # default 64 KiB
+        writer.write(encode_event(WyomingEvent("describe")))
+        await writer.drain()
+        with pytest.raises(WyomingError):
+            await async_read_event(reader, 5.0)
+        writer.close()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_info_with_huge_inline_data_is_readable():
+    """piper answering `describe` with hundreds of voices, inline form."""
+    payload = {"tts": [{"name": f"voice_{i}", "description": "x" * 200} for i in range(500)]}
+    line = json.dumps({"type": "info", "version": "1.5.0", "data": payload}).encode() + b"\n"
+    assert len(line) > 65536  # would blow a default StreamReader
+
+    async def handle(reader, writer):
+        await reader.readline()
+        writer.write(line)
+        await writer.drain()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        assert await wyoming_info("127.0.0.1", port, timeout=5.0) == payload
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_read_event_skips_blank_keepalive_lines():
+    from jarvis.voice.wyoming import async_read_event
+
+    async def handle(reader, writer):
+        await reader.readline()
+        writer.write(b"\n\n" + frame("info", {"ok": True}))
+        await writer.drain()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(encode_event(WyomingEvent("describe")))
+        await writer.drain()
+        event = await async_read_event(reader, 5.0)
+        assert event is not None and event.type == "info" and event.data == {"ok": True}
+        writer.close()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 # ---------------------------------------------------------------------------
 # wyoming clients against the fake server
 # ---------------------------------------------------------------------------
@@ -342,6 +429,51 @@ async def test_wake_not_detected():
         assert await client.detect([sine_pcm(20)]) is None
     finally:
         await fake.stop()
+
+
+async def test_wake_detect_deadline_covers_the_whole_stream():
+    """A satellite streaming forever into a mute service must not pin us.
+
+    The client's `timeout` has to bound the streaming loop too — not just the
+    wait that happens after the audio ends, which an endless microphone never
+    reaches.
+    """
+
+    async def handle(reader, writer):
+        # Reads everything, answers nothing (a wake service whose model died).
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                header = json.loads(line)
+                if header.get("data_length"):
+                    await reader.readexactly(int(header["data_length"]))
+                if header.get("payload_length"):
+                    await reader.readexactly(int(header["payload_length"]))
+        except (asyncio.IncompleteReadError, ConnectionResetError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    async def endless_microphone():
+        while True:
+            yield silence_pcm(20)
+            await asyncio.sleep(0.001)
+
+    try:
+        client = WyomingWakeClient("127.0.0.1", port, timeout=0.4)
+        started = asyncio.get_running_loop().time()
+        # WyomingError first: WyomingTimeoutError also subclasses TimeoutError.
+        with pytest.raises(WyomingError):
+            await asyncio.wait_for(client.detect(endless_microphone()), 5.0)
+        assert asyncio.get_running_loop().time() - started < 3.0
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +880,96 @@ async def test_pipeline_accepts_dict_deltas(tmp_path):
     assert run.response_text == "Kitchen light on."
 
 
+async def test_pipeline_timeout_from_a_client_is_always_bounded(tmp_path):
+    """`assist_pipeline/run` lets a websocket client name the timeout.
+
+    Nothing it sends may produce a run with no deadline: a run holds a Wyoming
+    connection and a driver task open for as long as it lasts.
+    """
+    from jarvis.voice.pipeline import DEFAULT_TIMEOUT, MAX_TIMEOUT
+
+    for hostile in (0, -1, -1e9, float("inf"), float("nan"), None, "nonsense"):
+        run = PipelineRun(Jarvis(tmp_path), tts_cache={}, timeout=hostile)
+        assert run.timeout == DEFAULT_TIMEOUT, f"timeout={hostile!r} escaped the clamp"
+
+    assert PipelineRun(None, tts_cache={}, timeout=10**9).timeout == MAX_TIMEOUT
+    assert PipelineRun(None, tts_cache={}, timeout=12.5).timeout == 12.5
+
+    # ...and the clamped value is what the run actually enforces.
+    class Hanging:
+        async def transcribe(self, audio_iter, rate=16000):
+            async for _ in audio_iter:
+                pass
+            await asyncio.sleep(30)
+
+    run = PipelineRun(Jarvis(tmp_path), stt=Hanging(), tts_cache={}, timeout=0)
+    run.timeout = 0.1  # stand in for the default, without waiting 300 s
+    events, event_cb = collector()
+    await run.execute(await queue_of(silence_pcm(20)), event_cb)
+    assert [data for kind, data in events if kind == "error"][0]["code"] == "timeout"
+
+
+async def test_pipeline_events_are_mirrored_on_the_bus(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    seen = []
+    jarvis.bus.listen("voice_pipeline_event", lambda event: seen.append(event.data))
+
+    run = PipelineRun(
+        jarvis, stt=FakeStt("hi"), tts=FakeTts(), converse=make_converse("ok")
+    )
+    await run.execute(await queue_of(sine_pcm(20)))
+
+    assert [item["type"] for item in seen] == run.event_types
+    assert {item["run_id"] for item in seen} == {run.run_id}
+    assert seen[0]["data"]["pipeline"] == run.pipeline_id
+
+
+async def test_wake_and_stt_share_one_queue_without_losing_audio(tmp_path):
+    """The wake stage must hand the rest of the stream to STT, not eat it."""
+    stt = FakeStt()
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=stt,
+        tts=FakeTts(),
+        wake=FakeWake(),  # detects on the 2nd chunk
+        converse=make_converse("yes?"),
+        start_stage="wake",
+    )
+    chunks = [bytes([index]) * 640 for index in range(6)]
+    queue = await queue_of(*chunks)
+    await run.execute(queue)
+
+    assert run.error is None
+    assert run.detected_wake_word == "hey_jarvis"
+    # Everything after the wake word reaches STT, in order and exactly once.
+    assert stt.received == b"".join(chunks[2:])
+    assert queue.empty()
+
+
+async def test_wake_service_timeout_is_reported_as_wake_word_timeout(tmp_path):
+    class MuteWake:
+        async def detect(self, audio_iter):
+            async for _ in audio_iter:
+                pass
+            raise WyomingError("timed out waiting for wake word")
+
+    class SlowWake(MuteWake):
+        async def detect(self, audio_iter):
+            async for _ in audio_iter:
+                pass
+            raise TimeoutError("timed out waiting for wake word")
+
+    run = PipelineRun(Jarvis(tmp_path), wake=SlowWake(), stt=FakeStt(), start_stage="wake")
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+    assert [d for k, d in events if k == "error"][0]["code"] == "wake-word-timeout"
+
+    run = PipelineRun(Jarvis(tmp_path), wake=MuteWake(), stt=FakeStt(), start_stage="wake")
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(20)), event_cb)
+    assert [d for k, d in events if k == "error"][0]["code"] == "wake-stream-failed"
+
+
 def test_pipeline_rejects_bad_stages(tmp_path):
     with pytest.raises(ValueError):
         PipelineRun(None, start_stage="nonsense")
@@ -840,6 +1062,30 @@ async def test_pipeline_store_persists(tmp_path):
     assert await reloaded.async_delete(created.id) is True
     assert reloaded.get(created.id) is None
     assert await reloaded.async_delete("jarvis") is False  # never delete the last one
+
+
+async def test_tts_cache_is_capped(tmp_path):
+    from jarvis.voice.pipeline import MAX_CACHED_TTS, store_tts_audio
+
+    jarvis = Jarvis(tmp_path)
+    tokens = [store_tts_audio(jarvis, bytes([index % 256]))[0] for index in range(MAX_CACHED_TTS + 20)]
+    cache = jarvis.data["tts_cache"]
+    assert len(cache) == MAX_CACHED_TTS
+    assert tokens[-1] in cache  # newest kept
+    assert tokens[0] not in cache  # oldest evicted
+
+
+async def test_pipeline_store_update_keeps_extra_fields(tmp_path):
+    store = PipelineStore(store=Store(tmp_path, "voice_pipelines"))
+    await store.async_load()
+    created = await store.async_create({"name": "Study", "satellite": "esp32-study"})
+    assert created.extra == {"satellite": "esp32-study"}
+
+    updated = await store.async_update(created.id, {"extra": {"room": "study"}})
+    assert updated.extra == {"satellite": "esp32-study", "room": "study"}
+    updated = await store.async_update(created.id, {"voice": "en_US-amy-low"})
+    assert updated.tts_voice == "en_US-amy-low"
+    assert updated.extra == {"satellite": "esp32-study", "room": "study"}
 
 
 def test_pipeline_from_dict_aliases():
@@ -958,6 +1204,69 @@ async def test_voice_say_plays_on_media_player(tmp_path):
     assert calls and calls[0]["entity_id"] == "media_player.kitchen"
     assert calls[0]["media_id"].startswith("/api/tts_proxy/")
     assert calls[0]["media_type"] == "music"
+
+
+async def test_voice_say_splits_comma_separated_targets(tmp_path):
+    jarvis = await setup_voice(tmp_path, {}, tts=FakeTts())
+    played = []
+
+    async def _play_media(call):
+        played.append(call.data["entity_id"])
+
+    jarvis.services.register("media_player", "play_media", _play_media)
+    result = await jarvis.async_call_service(
+        "voice",
+        "say",
+        {"text": "hello", "entity_id": "media_player.kitchen, media_player.study"},
+        return_response=True,
+    )
+    assert played == ["media_player.kitchen", "media_player.study"]
+    assert result["entity_id"] == ["media_player.kitchen", "media_player.study"]
+    assert result["failed"] == {}
+
+
+async def test_voice_say_reports_playback_failures(tmp_path):
+    """A dead speaker must not be reported to the caller as a success."""
+    jarvis = await setup_voice(tmp_path, {}, tts=FakeTts())
+    played = []
+
+    async def _play_media(call):
+        entity_id = call.data["entity_id"]
+        if entity_id.endswith("broken"):
+            raise RuntimeError("amp offline")
+        played.append(entity_id)
+
+    jarvis.services.register("media_player", "play_media", _play_media)
+    result = await jarvis.async_call_service(
+        "voice",
+        "say",
+        {"text": "hi", "entity_id": ["media_player.a", "media_player.broken", "media_player.b"]},
+        return_response=True,
+    )
+    # one bad target does not stop the others...
+    assert played == ["media_player.a", "media_player.b"]
+    assert result["played"] == ["media_player.a", "media_player.b"]
+    # ...but the caller is told about it
+    assert "media_player.broken" in result["failed"]
+    assert "amp offline" in result["failed"]["media_player.broken"]
+
+
+async def test_voice_say_reports_missing_media_player(tmp_path):
+    jarvis = await setup_voice(tmp_path, {}, tts=FakeTts())
+    result = await jarvis.async_call_service(
+        "voice", "say", {"text": "hi", "entity_id": "media_player.kitchen"}, return_response=True
+    )
+    assert result["played"] == []
+    assert "media_player.kitchen" in result["failed"]
+    assert result["url"].startswith("/api/tts_proxy/")  # audio is still cached
+
+
+async def test_voice_say_without_target_reports_nothing_failed(tmp_path):
+    jarvis = await setup_voice(tmp_path, {}, tts=FakeTts())
+    result = await jarvis.async_call_service(
+        "voice", "say", {"text": "hi"}, return_response=True
+    )
+    assert result["entity_id"] == [] and result["failed"] == {} and result["played"] == []
 
 
 async def test_get_pipelines_service(tmp_path):

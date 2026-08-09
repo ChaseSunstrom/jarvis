@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 from jinja2 import ChainableUndefined, Environment, Template, pass_context
 from jinja2 import TemplateError as _JinjaTemplateError
 from jinja2 import Undefined
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from ..state import slugify as _slugify
 from ..state import split_entity_id
@@ -575,7 +576,13 @@ def _filter_area_entities(ctx: Any, area: Any) -> list[str]:
 # environment
 # ---------------------------------------------------------------------------
 def _build_environment() -> Environment:
-    env = Environment(
+    # SANDBOXED, not a plain Environment. A plain jinja2.Environment hands any
+    # template author a Python interpreter — `{{ cycler.__init__.__globals__ }}`
+    # reaches `os` and from there `popen`. Templates arrive from YAML today,
+    # but they also flow in from automations, scripts and (indirectly) the LLM
+    # tool layer, so the renderer must not be the thing standing between a
+    # config string and arbitrary code execution.
+    env = ImmutableSandboxedEnvironment(
         undefined=ChainableUndefined,
         autoescape=False,  # templates render config values, not HTML
         trim_blocks=False,

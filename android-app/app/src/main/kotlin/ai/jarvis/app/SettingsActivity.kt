@@ -1,0 +1,416 @@
+package ai.jarvis.app
+
+import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.ServerUrl
+import ai.jarvis.app.ui.JarvisScreens
+import ai.jarvis.app.ui.JarvisUi
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import android.text.InputType
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
+
+/**
+ * Connection and behaviour settings.
+ *
+ * Everything here is programmatic for the same reason the rest of the app is:
+ * one visual language, no layout XML to drift. The screen is deliberately
+ * plain-spoken about what it is asking for — the token it stores is the key to
+ * the whole house.
+ */
+class SettingsActivity : Activity() {
+
+    private lateinit var config: JarvisConfig
+
+    private lateinit var urlField: EditText
+    private lateinit var tokenField: EditText
+    private lateinit var pipelineField: EditText
+    private lateinit var deviceNameField: EditText
+
+    private lateinit var wakeEnabled: Switch
+    private lateinit var wakeInCar: Switch
+    private lateinit var wakeAtHome: Switch
+    private lateinit var wakeStartField: EditText
+    private lateinit var wakeEndField: EditText
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        config = JarvisConfig(this)
+        setContentView(buildUi())
+    }
+
+    private fun buildUi(): ViewGroup {
+        val ctx = this
+        val root = FrameLayout(ctx).apply { setBackgroundColor(JarvisUi.BG) }
+        val col = JarvisUi.column(ctx, padDp = 20)
+
+        col.addView(JarvisUi.title(ctx, "JARVIS"))
+        col.addView(
+            TextView(ctx).apply {
+                text = "SETTINGS"
+                setTextColor(JarvisUi.DIM)
+                textSize = 11f
+                letterSpacing = 0.3f
+                gravity = Gravity.CENTER
+            }
+        )
+
+        // --- server ---------------------------------------------------------
+
+        col.addView(JarvisUi.label(ctx, "Server URL"))
+        urlField = JarvisUi.field(ctx, "http://192.168.2.10:8123", config.serverUrl)
+        col.addView(urlField, matchWidth())
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "The address you reach jarvis-core on over LAN or WireGuard. Plain http is " +
+                    "accepted only for private addresses, and only for the hosts listed in " +
+                    "res/xml/network_security_config.xml."
+            )
+        )
+
+        col.addView(JarvisUi.label(ctx, "Access token"))
+        tokenField = JarvisUi.field(ctx, "long-lived access token", config.token, secret = true)
+        col.addView(tokenField, matchWidth())
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "PASTE") { pasteToken() },
+                JarvisUi.ghost(ctx, "SCAN QR") { scanToken() },
+            )
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Create it in the Jarvis management UI. It is stored on this device only, is " +
+                    "excluded from backups, and is never sent anywhere but your server."
+            )
+        )
+
+        col.addView(JarvisUi.label(ctx, "Pipeline name"))
+        pipelineField = JarvisUi.field(ctx, JarvisConfig.DEFAULT_PIPELINE, config.pipeline)
+        col.addView(pipelineField, matchWidth())
+
+        col.addView(JarvisUi.label(ctx, "Device name"))
+        deviceNameField = JarvisUi.field(ctx, "This phone", config.deviceName)
+        col.addView(deviceNameField, matchWidth())
+        col.addView(
+            JarvisUi.hint(ctx, "Shown on the server when this device registers. Device id: ${config.deviceId}")
+        )
+
+        // --- wake word ------------------------------------------------------
+
+        col.addView(JarvisUi.label(ctx, "Wake word"))
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Android gives third-party apps no low-power hotword path, so always-on " +
+                    "detection means a genuinely open mic and real battery cost. These options " +
+                    "limit when that happens."
+            )
+        )
+        wakeEnabled = switchRow(ctx, "Listen for \"Hey Jarvis\"", config.wakeWordEnabled)
+        col.addView(wakeEnabled, matchWidth())
+        wakeInCar = switchRow(ctx, "…while car Bluetooth is connected", config.wakeInCar)
+        col.addView(wakeInCar, matchWidth())
+        wakeAtHome = switchRow(ctx, "…while at home, during waking hours", config.wakeAtHome)
+        col.addView(wakeAtHome, matchWidth())
+
+        val hours = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        wakeStartField = hourField(config.wakingHourStart)
+        wakeEndField = hourField(config.wakingHourEnd)
+        hours.addView(
+            TextView(ctx).apply {
+                text = "Waking hours"
+                setTextColor(JarvisUi.DIM)
+                textSize = 14f
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        hours.addView(wakeStartField, LinearLayout.LayoutParams(JarvisUi.dp(ctx, 64), ViewGroup.LayoutParams.WRAP_CONTENT))
+        hours.addView(
+            TextView(ctx).apply {
+                text = " to "
+                setTextColor(JarvisUi.FAINT)
+                textSize = 14f
+            }
+        )
+        hours.addView(wakeEndField, LinearLayout.LayoutParams(JarvisUi.dp(ctx, 64), ViewGroup.LayoutParams.WRAP_CONTENT))
+        col.addView(hours, matchWidth())
+        col.addView(JarvisUi.hint(ctx, "Hours are 0-23 for the start and 0-24 for the end; a window that wraps midnight (22 to 6) is fine."))
+
+        // --- other screens --------------------------------------------------
+
+        col.addView(JarvisUi.label(ctx, "More"))
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "AUTOMATIONS") {
+                    JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Automations")
+                },
+                JarvisUi.ghost(ctx, "AUDIT LOG") {
+                    JarvisScreens.open(this, JarvisScreens.AUDIT_LOG, "The audit log")
+                },
+            )
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "The audit log records every action this device actually executed, with its " +
+                    "tier and how it was authorised. It is local and yours."
+            )
+        )
+
+        // --- system access --------------------------------------------------
+
+        col.addView(JarvisUi.label(ctx, "System access"))
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Each of these is off until you turn it on, and none of them changes what tier " +
+                    "an action is — they only decide whether it is possible at all."
+            )
+        )
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "ASSISTANT") { openSetting(Settings.ACTION_VOICE_INPUT_SETTINGS) },
+                JarvisUi.ghost(ctx, "ACCESSIBILITY") { openSetting(Settings.ACTION_ACCESSIBILITY_SETTINGS) },
+            )
+        )
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "NOTIFICATIONS") {
+                    openSetting(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                },
+                JarvisUi.ghost(ctx, "OVERLAY") { openOverlaySetting() },
+            )
+        )
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "BATTERY") {
+                    openSetting(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                },
+                JarvisUi.ghost(ctx, "APP INFO") { openAppInfo() },
+            )
+        )
+
+        // --- save -----------------------------------------------------------
+
+        col.addView(JarvisUi.spacer(ctx, 16))
+        col.addView(
+            JarvisUi.pill(ctx, "SAVE") { save() },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        col.addView(JarvisUi.spacer(ctx, 24))
+
+        val scroll = ScrollView(ctx).apply {
+            isFillViewport = true
+            addView(
+                col,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+        root.addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        return root
+    }
+
+    // --- persistence --------------------------------------------------------
+
+    private fun save() {
+        val check = ServerUrl.check(urlField.text.toString())
+        if (!check.isValid) {
+            toast(check.error ?: "Invalid server URL")
+            return
+        }
+        val token = tokenField.text.toString().trim()
+        if (token.isEmpty()) {
+            toast("An access token is required")
+            return
+        }
+
+        config.serverUrl = check.normalized
+        config.token = token
+        config.pipeline = pipelineField.text.toString()
+        config.deviceName = deviceNameField.text.toString()
+
+        config.wakeWordEnabled = wakeEnabled.isChecked
+        config.wakeInCar = wakeInCar.isChecked
+        config.wakeAtHome = wakeAtHome.isChecked
+        config.wakingHourStart = wakeStartField.text.toString().trim().toIntOrNull()
+            ?: config.wakingHourStart
+        config.wakingHourEnd = wakeEndField.text.toString().trim().toIntOrNull()
+            ?: config.wakingHourEnd
+
+        check.warning?.let { toast(it) }
+        toast("Saved")
+        finish()
+    }
+
+    // --- token entry --------------------------------------------------------
+
+    private fun pasteToken() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val text = clipboard?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(this)
+            ?.toString()
+            ?.trim()
+        if (text.isNullOrEmpty()) {
+            toast("Clipboard is empty")
+            return
+        }
+        tokenField.setText(text)
+        toast("Pasted ${text.length} characters")
+    }
+
+    /**
+     * Hands off to whatever barcode scanner the user installed. Jarvis bundles
+     * no scanner: every offline decoder worth using is a large dependency, and
+     * the Google ones are exactly what a degoogled phone is avoiding. Binary Eye
+     * and QR Scanner (both F-Droid) answer this intent.
+     */
+    private fun scanToken() {
+        val intent = Intent(ZXING_SCAN)
+            .putExtra("SCAN_MODE", "QR_CODE_MODE")
+            .putExtra("SAVE_HISTORY", false)
+        try {
+            startActivityForResult(intent, REQ_SCAN)
+        } catch (e: ActivityNotFoundException) {
+            toast("No QR scanner installed. Install Binary Eye from F-Droid, or use PASTE.")
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_SCAN || resultCode != RESULT_OK) return
+        val scanned = data?.getStringExtra("SCAN_RESULT")?.trim()
+        if (scanned.isNullOrEmpty()) {
+            toast("Nothing scanned")
+            return
+        }
+        tokenField.setText(scanned)
+        toast("Scanned ${scanned.length} characters")
+    }
+
+    // --- system settings deep links ----------------------------------------
+
+    private fun openSetting(action: String) {
+        try {
+            startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            toast("This device has no screen for that setting")
+        }
+    }
+
+    private fun openOverlaySetting() {
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: ActivityNotFoundException) {
+            toast("This device has no screen for that setting")
+        }
+    }
+
+    private fun openAppInfo() {
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: ActivityNotFoundException) {
+            toast("This device has no screen for that setting")
+        }
+    }
+
+    // --- small builders -----------------------------------------------------
+
+    private fun matchWidth() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+
+    private fun row(vararg children: android.view.View): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, JarvisUi.dp(this@SettingsActivity, 8), 0, 0)
+            children.forEachIndexed { index, child ->
+                if (index > 0) {
+                    addView(
+                        android.view.View(this@SettingsActivity),
+                        LinearLayout.LayoutParams(JarvisUi.dp(this@SettingsActivity, 10), 1)
+                    )
+                }
+                addView(
+                    child,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                )
+            }
+        }
+
+    private fun switchRow(ctx: Context, label: String, checked: Boolean): Switch =
+        Switch(ctx).apply {
+            text = label
+            isChecked = checked
+            setTextColor(JarvisUi.DIM)
+            textSize = 14f
+            setPadding(0, JarvisUi.dp(ctx, 10), 0, JarvisUi.dp(ctx, 2))
+        }
+
+    private fun hourField(value: Int): EditText = EditText(this).apply {
+        setText(value.toString())
+        inputType = InputType.TYPE_CLASS_NUMBER
+        setSingleLine(true)
+        gravity = Gravity.CENTER
+        setTextColor(android.graphics.Color.WHITE)
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
+        background = JarvisUi.panel(this@SettingsActivity, fill = 0xFF080D13.toInt())
+        setPadding(
+            JarvisUi.dp(this@SettingsActivity, 8), JarvisUi.dp(this@SettingsActivity, 10),
+            JarvisUi.dp(this@SettingsActivity, 8), JarvisUi.dp(this@SettingsActivity, 10)
+        )
+    }
+
+    private fun toast(message: String) =
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
+    companion object {
+        private const val REQ_SCAN = 5001
+
+        /** The de-facto standard scan intent; F-Droid scanners answer it. */
+        private const val ZXING_SCAN = "com.google.zxing.client.android.SCAN"
+    }
+}
