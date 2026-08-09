@@ -513,10 +513,50 @@ def _browse_result(outcome: ActOutcome, session_id: str, *, approved: bool) -> d
         "session_id": session_id,
         "final_url": final_url,
         "title": sanitize_untrusted(str(payload.get("title") or ""))[:300],
-        "results": payload.get("results") or [],
+        "results": _fenced_results(payload.get("results"), source=final_url),
         "content_is_untrusted": True,
         "text": ensure_fenced(str(payload.get("text") or ""), source=final_url),
     }
+
+
+def _fenced_results(results: Any, *, source: str) -> list[dict[str, Any]]:
+    """Fence the per-step ``value`` of an ``act`` batch.
+
+    An ``extract`` step returns page content — ``inner_text()`` of a selector,
+    or the whole document when there is no selector — and jarvis-browser
+    applies no sanitiser to it, unlike every other remote field it returns. It
+    was being copied into the tool result verbatim, next to a correctly fenced
+    copy of the same page in ``text``. That is two separate defects:
+
+    1. **The fence could be forged.** The raw value is json-dumped straight
+       into a ``role: tool`` message, and JSON escaping does not touch ``<``
+       or ``>``. A page containing the literal text ``</untrusted_web_content>``
+       followed by instructions put a closing marker into the prompt with no
+       opening marker before it, so the instructions read as trusted,
+       post-fence text.
+
+    2. **It laundered page text past the fetch->act tripwire**, which is the
+       worse half. :func:`steps_carry_fenced_content` and jarvis-browser's
+       ``_reject_fenced`` stop the model pasting page content into a
+       subsequent step by looking for fence *markers*. Text taken from
+       ``text`` carries them and is refused; text taken from ``results[i]
+       .value`` carried none, so the same content flowed into a ``type`` or
+       ``goto`` step and both tripwires passed. Fencing here is what puts the
+       markers back and makes that path detectable.
+
+    Non-``extract`` steps have no ``value`` and are passed through untouched —
+    their fields are server-authored (``action``, ``ok``, ``error``).
+    """
+    out: list[dict[str, Any]] = []
+    for item in results or []:
+        if not isinstance(item, dict):
+            continue
+        entry = dict(item)
+        value = entry.get("value")
+        if isinstance(value, str) and value:
+            entry["value"] = ensure_fenced(value, source=source)
+        out.append(entry)
+    return out
 
 
 # ---------------------------------------------------------------------------
