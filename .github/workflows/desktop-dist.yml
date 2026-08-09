@@ -1,0 +1,122 @@
+name: Build jarvis-desktop
+
+# The desktop agent's counterpart to android-apk.yml.
+#
+# There is no app bundle to build: jarvis-desktop is a plain Python package with
+# a `jarvis-desktop` console script, and freezing it (PyInstaller and friends)
+# would fight the optional-dependency design — pyautogui, psutil, pyperclip and
+# tkinter are all meant to be absent, with the agent degrading rather than
+# failing. So the artifact is a wheel and an sdist.
+#
+# What this catches that `ci.yml` does not. The python matrix job installs the
+# package with `pip install -e . || pip install .`, and that `||` is the
+# problem: an editable install that fails for any reason silently falls back,
+# so a broken `[project]` table, a package missing from `packages.find`, or a
+# dead entry point never turns a job red. Nor does an editable install prove
+# the *built* artifact works — it runs from the source tree either way.
+#
+# So this builds the real distributions, checks their metadata, installs the
+# WHEEL into a clean venv on all three target platforms, and runs the console
+# script. That is the first thing in this repo that proves a user who types
+# `pip install jarvis_desktop-*.whl` gets a working `jarvis-desktop` command.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "jarvis-desktop/**"
+      - ".github/workflows/desktop-dist.yml"
+  release:
+    types: [published]
+
+concurrency:
+  group: desktop-dist-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: wheel + sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build
+        working-directory: jarvis-desktop
+        run: python -m build
+
+      - name: Check the metadata
+        working-directory: jarvis-desktop
+        run: python -m twine check dist/*
+
+      - name: Summarise
+        working-directory: jarvis-desktop
+        run: |
+          set -eu
+          {
+            echo '### jarvis-desktop distributions'
+            echo ''
+            echo '| file | size |'
+            echo '|---|---:|'
+            for f in dist/*; do
+              printf '| `%s` | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-desktop-dist
+          path: jarvis-desktop/dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  install:
+    name: install the wheel · ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The three platforms the package claims to support. Windows and macOS
+        # are where a path assumption or a platform-only import would show up,
+        # and nothing else in CI runs on either.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: jarvis-desktop-dist
+          path: dist
+
+      # A clean venv, and the wheel by filename — no source tree in sight, so a
+      # module that only imports because the repo happens to be the working
+      # directory fails here.
+      - name: Install the wheel and run the console script
+        shell: bash
+        run: |
+          set -eu
+          python -m venv .venv
+          if [ -d .venv/bin ]; then VENV_BIN=.venv/bin; else VENV_BIN=.venv/Scripts; fi
+          "$VENV_BIN/python" -m pip install --upgrade pip
+          wheel=$(ls dist/*.whl)
+          "$VENV_BIN/python" -m pip install "$wheel"
+
+          # The entry point pyproject declares. `--version` is argparse's own
+          # action, so this exercises import of the whole module graph and then
+          # exits 0 without touching a socket, a config file or a microphone.
+          "$VENV_BIN/jarvis-desktop" --version
+          "$VENV_BIN/jarvis-desktop" --help > /dev/null
+
+          # And importable under its distribution name, not just runnable.
+          "$VENV_BIN/python" -c "import jarvis_desktop; print(jarvis_desktop.__name__, 'ok')"
