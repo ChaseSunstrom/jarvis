@@ -1679,3 +1679,80 @@ def test_images_that_drop_privileges_keep_the_caps_to_do_it(
             f"it needs {sorted(needed)}"
         )
         assert "no-new-privileges:true" in service["security_opt"]
+
+
+def test_every_documented_env_var_is_actually_read_by_something(
+    compose: dict[str, Any]
+) -> None:
+    """The other direction, and the one that had no test.
+
+    `test_compose_passes_jarvis_core_every_env_var_its_config_reads` catches a
+    variable the config reads but compose withholds. It cannot catch a variable
+    we DOCUMENT and nobody reads — which is what happened to OLLAMA_URL. It sat
+    in .env.example looking like the way to point Jarvis at Ollama, while
+    configuration.yaml hardcoded `url: http://127.0.0.1:11434`, so setting it
+    changed nothing and the log reported loopback regardless. Someone running
+    Ollama in an LXC container had no way to tell the knob was disconnected.
+
+    "Read" means the name appears in the compose file (which interpolates it)
+    or in configuration.yaml (via !env_var). Anything else is a lie in the
+    documentation.
+    """
+    env_example = ROOT.joinpath(".env.example").read_text(encoding="utf-8")
+    documented = {
+        line.split("=", 1)[0].strip()
+        for line in env_example.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line
+    }
+    compose_text = ROOT.joinpath("docker-compose.yml").read_text(encoding="utf-8")
+    config_text = CONFIG.joinpath("configuration.yaml").read_text(encoding="utf-8")
+
+    dead = sorted(
+        name for name in documented
+        if name not in compose_text and name not in config_text
+    )
+    assert not dead, (
+        "documented in .env.example but mentioned nowhere — setting these does "
+        f"nothing at all: {dead}"
+    )
+
+    # And the sharper half. Handing a variable to a container is NOT the same
+    # as reading it: `- OLLAMA_URL=${OLLAMA_URL}` in jarvis-core's environment
+    # accomplishes exactly nothing unless configuration.yaml pulls it back out
+    # with `!env_var`. That gap is what made OLLAMA_URL look wired while
+    # `llm.url` stayed hardcoded to loopback, so the passthrough existing is
+    # the very thing that makes the disconnection convincing.
+    core_env = compose["services"]["jarvis-core"].get("environment") or []
+    passed = {
+        entry.split("=", 1)[0].strip()
+        for entry in core_env
+        if "=" in entry
+    }
+    read_by_config = {
+        match.group(1)
+        for line in config_text.splitlines()
+        if not line.lstrip().startswith("#")
+        for match in [re.search(r"!env_var\s+([A-Z][A-Z0-9_]*)", line)]
+        if match
+    }
+    # Some names are read by the application directly rather than through the
+    # config file — `auth.py` takes JARVIS_TOKEN straight from os.environ — so
+    # scan the source too. The question is "does anything read this", not "does
+    # configuration.yaml read this".
+    source = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in ROOT.joinpath("jarvis").rglob("*.py")
+    )
+    # TZ is read by the C library, not by us.
+    runtime_only = {"TZ"}
+    unread = sorted(
+        name for name in passed
+        if name not in read_by_config
+        and name not in runtime_only
+        and f'"{name}"' not in source
+        and f"'{name}'" not in source
+    )
+    assert not unread, (
+        "handed to jarvis-core but never read by configuration.yaml, so the "
+        f"setting has no effect: {unread}"
+    )
