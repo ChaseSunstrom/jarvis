@@ -767,3 +767,53 @@ async def test_the_transport_accepts_a_handshake_with_the_host_we_asked_for(monk
 
     assert transport is not None
     assert connection.closed is False
+
+
+async def test_allow_plaintext_ws_is_actually_enforced(config):
+    """It was parsed from the config file and then never read — a switch that
+    silently does nothing is worse than no switch, because someone trusts it."""
+    import dataclasses
+
+    from jarvis_desktop.actions.builtins import build_registry
+    from jarvis_desktop.audit import AuditLog
+    from jarvis_desktop.policy import PolicyStore
+
+    def channel_for(cfg):
+        registry = build_registry(cfg, PolicyStore(cfg.policy_path), AuditLog(cfg.audit_path))
+        return DeviceChannel(cfg, registry)
+
+    permissive = channel_for(config)
+    assert permissive.check_host("ws://jarvis.lan:8080/api/websocket") is None
+
+    strict = channel_for(dataclasses.replace(config, allow_plaintext_ws=False))
+    refusal = strict.check_host("ws://jarvis.lan:8080/api/websocket")
+    assert refusal and "plaintext" in refusal
+    assert strict.check_host("wss://jarvis.lan:8443/api/websocket") is None
+
+
+async def test_a_connection_refused_by_the_host_check_never_reaches_the_server(config):
+    """`run_forever` must not dial a URL `check_host` refused."""
+    import dataclasses
+
+    from jarvis_desktop.actions.builtins import build_registry
+    from jarvis_desktop.audit import AuditLog
+    from jarvis_desktop.policy import PolicyStore
+
+    cfg = dataclasses.replace(config, pinned_host="jarvis.lan", server_url="ws://evil.example/api/websocket")
+    registry = build_registry(cfg, PolicyStore(cfg.policy_path), AuditLog(cfg.audit_path))
+    channel = DeviceChannel(cfg, registry, clock=lambda: 0.0, rng=lambda: 0.0)
+    dialled: list[str] = []
+
+    async def connector(url):  # pragma: no cover - must never be called
+        dialled.append(url)
+        raise AssertionError("dialled a refused host")
+
+    async def stop_soon():
+        await asyncio.sleep(0)
+        await channel.stop()
+
+    asyncio.ensure_future(stop_soon())
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(channel.run_forever(connect=connector, max_sessions=1), timeout=5)
+
+    assert dialled == []

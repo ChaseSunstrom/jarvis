@@ -77,7 +77,9 @@ class HttpRequest(Action):
     description = "Fetch a URL over http(s) and return the response body."
     params_schema = {
         "url": "string: an http:// or https:// URL",
-        "method": "string (optional): GET | HEAD | POST | PUT | PATCH | DELETE (default GET)",
+        "method": "string (optional): GET | HEAD | POST | PUT | PATCH | DELETE "
+        "(default GET). Anything other than GET/HEAD makes this a Tier 3 action "
+        "that asks every time.",
         "headers": "object (optional): header name -> value",
         "body": "string (optional): request body for POST/PUT/PATCH",
         "json": "object (optional): sent as a JSON body, sets Content-Type",

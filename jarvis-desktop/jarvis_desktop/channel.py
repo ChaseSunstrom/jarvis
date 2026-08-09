@@ -547,19 +547,29 @@ class DeviceChannel:
     # --- connect loop -------------------------------------------------------
 
     def check_host(self, url: str) -> str | None:
-        """Refuse a URL that does not match the pin. Returns a reason or None.
+        """Refuse a URL we should not dial. Returns a reason, or None to proceed.
 
-        Host pinning means a rewritten config file or a redirect cannot quietly
-        move the agent onto someone else's server while it still holds a valid
-        token.
+        Host pinning means a rewritten config file cannot quietly move the agent
+        onto someone else's server while it still holds a valid token. (The
+        other half of that promise is enforced after the socket comes up, in
+        :meth:`WebsocketTransport.connect`, because the handshake can be
+        redirected.)
         """
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return "malformed server url"
+        host = (parsed.hostname or "").lower()
+
+        if not self.config.allow_plaintext_ws and (parsed.scheme or "").lower() == "ws":
+            return (
+                f"refusing plaintext ws:// to {host!r}: allow_plaintext_ws is off "
+                "in this machine's config"
+            )
+
         pinned = (self.config.pinned_host or "").strip().lower()
         if not pinned:
             return None
-        try:
-            host = (urlparse(url).hostname or "").lower()
-        except ValueError:
-            return "malformed server url"
         if host != pinned:
             return f"server host {host!r} does not match the pinned host {pinned!r}"
         return None

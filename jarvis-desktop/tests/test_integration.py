@@ -368,6 +368,29 @@ async def test_launching_an_app_by_name_still_runs_without_a_prompt(make_registr
     assert "no program called" in (outcome.result.error or "")
 
 
+async def test_a_remembered_yes_for_launch_app_does_not_cover_the_argument_form(
+    make_registry, policy, tmp_path
+):
+    """`launch_app` is Tier 1, so a user may legitimately answer "always allow".
+    That standing yes must not become a standing yes for arbitrary exec."""
+    from jarvis_desktop.actions.apps import LaunchApp
+    from jarvis_desktop.policy import UserPolicy
+
+    policy.set_policy("launch_app", UserPolicy.ALLOW_ALWAYS, ActionTier.AUTO)
+    marker = tmp_path / "PWNED"
+    consent = ScriptedConsent(default=ApprovalVerdict.DENIED)
+    registry = make_registry([LaunchApp()], consent=consent)
+
+    outcome = await registry.dispatch(
+        "launch_app", {"app": "sh", "args": ["-c", f"touch {marker}"]}, None, "why"
+    )
+
+    assert not marker.exists()
+    assert outcome.result.status == Status.DENIED
+    assert len(consent.seen) == 1, "allow_always skipped the prompt"
+    assert consent.seen[0].rememberable is False
+
+
 @pytest.mark.parametrize(
     "app", ["sh", "bash", "PowerShell.exe", "python3", "sudo", "poweroff", "rundll32", "env"]
 )

@@ -103,6 +103,11 @@ The config file lives at `~/.config/jarvis-desktop/config.json`
 }
 ```
 
+`allow_plaintext_ws` defaults to true, because the intended deployment is a LAN
+or a WireGuard link. Set it to false and the agent refuses to dial `ws://` at
+all, which is what you want the moment the server is reachable over anything
+less private.
+
 Environment variables: `JARVIS_SERVER`, `JARVIS_TOKEN`, `JARVIS_TOKEN_FILE`,
 `JARVIS_STATE_DIR`, `JARVIS_FILE_ROOTS`, `JARVIS_DEVICE_NAME`,
 `JARVIS_PINNED_HOST`, `JARVIS_SHELL_ENABLED`, `JARVIS_INPUT_ENABLED`,
@@ -544,7 +549,7 @@ cd jarvis-desktop
 python3 -m pytest tests -q
 ```
 
-626 tests, no network, no display, no hardware. The ones that carry weight:
+630 tests, no network, no display, no hardware. The ones that carry weight:
 
 * `test_policy.py` — the truth table, every combination of tier × requested tier
   × policy × switches × trust. Copied case for case from
