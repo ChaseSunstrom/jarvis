@@ -150,6 +150,43 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
 
+      # This job needs more of the runner's disk than the runner has spare, and
+      # only found out once the AVD cache started hitting. Run 31310950948 was a
+      # cache MISS: it created the AVD in-place, so `system-images;android-30`
+      # was already unpacked by the time the suite ran, and it passed. Run
+      # 31324326040 was the first ever cache HIT — it restored a 1.19 GB AVD
+      # archive AND then had to install the system image from scratch, and the
+      # emulator step died inside sdkmanager with
+      #
+      #   You are running out of disk space. Free space left: 0 MB
+      #   An error occurred while preparing SDK package Google APIs Intel
+      #   x86_64 Atom System Image: No space left on device.
+      #
+      # before a single instrumented test started. That is not a flake that a
+      # re-run clears: every run from here on hits the cache, so every run needs
+      # this headroom. Nothing removed below is used by this build — android-app
+      # is all Kotlin, with no externalNativeBuild, no CMakeLists.txt and no
+      # jniLibs, so the SDK's bundled NDK (the largest single item) is dead
+      # weight. Runs before the toolchain steps so the reclaim cannot race them.
+      #
+      # `df -h /` on both sides on purpose: this failure cost an hour to
+      # diagnose precisely because no step ever recorded the free space.
+      - name: Reclaim disk before the emulator
+        run: |
+          set -uo pipefail
+          echo '----- free space before -----'
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android/sdk/ndk \
+            /usr/share/dotnet \
+            /usr/local/.ghcup \
+            /opt/ghc \
+            /usr/local/share/powershell \
+            /opt/hostedtoolcache/CodeQL || true
+          docker image prune --all --force >/dev/null 2>&1 || true
+          echo '----- free space after -----'
+          df -h /
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
