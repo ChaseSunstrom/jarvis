@@ -1,0 +1,140 @@
+package ai.jarvis.app.audio
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The earpiece routing rules. Mirrored by `tools/audio_route_test.py`; if you
+ * change a rule here, change it there.
+ */
+class AudioRouteTest {
+
+    // --- opt-in ------------------------------------------------------------
+
+    @Test
+    fun `a headset does nothing until the user turns headset mode on`() {
+        for (kind in HeadsetKind.values()) {
+            val route = AudioRoute(kind = kind, headsetModeEnabled = false)
+            assertFalse(
+                "$kind captured through the headset without the user opting in",
+                route.capturesThroughHeadset
+            )
+            assertFalse("$kind offered warm-link without opt-in", route.warmLinkEligible)
+        }
+    }
+
+    @Test
+    fun `plugging in headphones never silently moves the microphone`() {
+        // The output-only devices: Jarvis will play through them, but the mic
+        // must stay on the phone because they have none.
+        for (kind in listOf(HeadsetKind.WIRED_HEADPHONES, HeadsetKind.BLUETOOTH_A2DP)) {
+            val route = AudioRoute(kind = kind, headsetModeEnabled = true)
+            assertFalse("$kind claimed a microphone", route.capturesThroughHeadset)
+            assertFalse(kind.hasMic)
+            assertTrue("$kind should still be an output", kind.isExternalOutput)
+        }
+    }
+
+    // --- the echo loop -----------------------------------------------------
+
+    @Test
+    fun `an ear-worn headset gets echo cancellation`() {
+        for (kind in listOf(
+            HeadsetKind.BLUETOOTH_SCO,
+            HeadsetKind.BLE_HEADSET,
+            HeadsetKind.WIRED_HEADSET,
+            HeadsetKind.USB_HEADSET
+        )) {
+            val route = AudioRoute(kind = kind, headsetModeEnabled = true)
+            assertTrue("$kind should have an echo loop", route.hasEchoLoop)
+            val profile = CaptureProfile.forRoute(route)
+            assertTrue(
+                "$kind must capture through VOICE_COMMUNICATION or Jarvis hears itself",
+                profile.useVoiceCommunication
+            )
+            assertTrue(profile.requestCommunicationDevice)
+        }
+    }
+
+    @Test
+    fun `the phone microphone keeps the accuracy-preserving source`() {
+        val profile = CaptureProfile.forRoute(AudioRoute())
+        assertFalse(
+            "the phone mic has no echo loop, so it must not pay the AEC accuracy cost",
+            profile.useVoiceCommunication
+        )
+        assertFalse(profile.requestCommunicationDevice)
+    }
+
+    @Test
+    fun `headphones with the user opted in still use the raw source`() {
+        // Output-only device: playback moves, capture does not, so there is no
+        // shared device and no loop.
+        val route = AudioRoute(kind = HeadsetKind.WIRED_HEADPHONES, headsetModeEnabled = true)
+        val profile = CaptureProfile.forRoute(route)
+        assertFalse(profile.useVoiceCommunication)
+        assertFalse(profile.requestCommunicationDevice)
+    }
+
+    // --- the SCO link ------------------------------------------------------
+
+    @Test
+    fun `a bluetooth headset whose call profile is unavailable falls back to the phone`() {
+        val route = AudioRoute(
+            kind = HeadsetKind.BLUETOOTH_SCO,
+            headsetModeEnabled = true,
+            scoAvailable = false
+        )
+        assertFalse(
+            "capturing over an unavailable SCO link returns silence",
+            route.capturesThroughHeadset
+        )
+        assertFalse(route.warmLinkEligible)
+        assertFalse(CaptureProfile.forRoute(route).useVoiceCommunication)
+    }
+
+    @Test
+    fun `wired headsets do not depend on an SCO link`() {
+        val route = AudioRoute(
+            kind = HeadsetKind.WIRED_HEADSET,
+            headsetModeEnabled = true,
+            scoAvailable = false
+        )
+        assertTrue(
+            "a cable has no SCO link to be unavailable",
+            route.capturesThroughHeadset
+        )
+    }
+
+    // --- warm link ---------------------------------------------------------
+
+    @Test
+    fun `warm-link is offered only where echo cancellation is active`() {
+        for (kind in HeadsetKind.values()) {
+            val route = AudioRoute(kind = kind, headsetModeEnabled = true)
+            assertEquals(
+                "warm-link without AEC is a feedback loop, not a feature ($kind)",
+                route.hasEchoLoop,
+                route.warmLinkEligible
+            )
+        }
+    }
+
+    // --- every branch is reachable and distinct ----------------------------
+
+    @Test
+    fun `each capture profile branch is reachable and explains itself`() {
+        val phone = CaptureProfile.forRoute(AudioRoute())
+        val worn = CaptureProfile.forRoute(
+            AudioRoute(kind = HeadsetKind.BLUETOOTH_SCO, headsetModeEnabled = true)
+        )
+        val headphones = CaptureProfile.forRoute(
+            AudioRoute(kind = HeadsetKind.WIRED_HEADPHONES, headsetModeEnabled = true)
+        )
+        val reasons = listOf(phone, worn, headphones).map { it.reason }
+        assertEquals("each branch should give its own reason", 3, reasons.toSet().size)
+        for (r in reasons) assertTrue("a reason should be human-readable", r.length > 20)
+    }
+}

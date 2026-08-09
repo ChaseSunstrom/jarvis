@@ -3,6 +3,8 @@ package ai.jarvis.app.assist
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import ai.jarvis.app.audio.CaptureProfile
+import ai.jarvis.app.audio.HeadsetMonitor
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 
@@ -41,6 +43,16 @@ class JarvisConversation(
     private var mic: MicStreamer? = null
     private var tts: TtsPlayer? = null
 
+    /**
+     * Headset discovery. Started with the conversation and stopped with it, so
+     * Jarvis is not registered for audio-device callbacks while idle.
+     */
+    private val headsets = HeadsetMonitor(context) { /* re-read on next turn */ }
+        .also { it.headsetModeEnabled = config.headsetMode }
+
+    /** True while [HeadsetMonitor.clearCommunicationRoute] is owed. */
+    private var routeApplied = false
+
     private var state = AssistPipelineClient.State.IDLE
     private var running = false
 
@@ -58,13 +70,28 @@ class JarvisConversation(
         if (running) return
         running = true
         responseBuffer = StringBuilder()
-        tts = TtsPlayer(context, config.token, config.serverUrl)
+
+        // Resolve the audio route once per conversation. A headset connected
+        // mid-turn takes effect on the next one rather than tearing this one
+        // down under the user.
+        headsets.headsetModeEnabled = config.headsetMode
+        headsets.start()
+        val route = headsets.route
+        val profile = CaptureProfile.forRoute(route)
+        routeApplied = headsets.applyCommunicationRoute(profile)
+
+        tts = TtsPlayer(context, config.token, config.serverUrl).also {
+            // Capture source and playback usage are one decision: an AEC with
+            // no reference signal cancels nothing. See TtsPlayer.communicationRoute.
+            it.communicationRoute = profile.useVoiceCommunication
+        }
         client = AssistPipelineClient(config.serverUrl, config.token, this).also {
             it.connect(config.pipeline)
         }
         mic = MicStreamer(
             onPcm = { buf, len -> client?.sendAudio(buf, len) },
             onLevel = ::onMicLevel,
+            captureProfile = { profile },
         ).also { it.start() }
         // LISTENING is signalled once the pipeline run starts (onState).
     }
@@ -78,6 +105,15 @@ class JarvisConversation(
         mic?.stop(); mic = null
         tts?.stop(); tts = null
         client?.close(); client = null
+        // Unconditionally, and before anything that could throw: on API < 31 a
+        // leaked SCO link holds the headset in call mode, which silences music
+        // system-wide until something else tears it down. Releasing a route we
+        // never applied is a no-op, so the asymmetric case is safe too.
+        if (routeApplied) {
+            headsets.clearCommunicationRoute()
+            routeApplied = false
+        }
+        headsets.stop()
         state = AssistPipelineClient.State.IDLE
         if (idle) main.post { ui.onIdle() }
     }

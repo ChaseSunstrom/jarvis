@@ -122,6 +122,36 @@ class JarvisConfig(context: Context) {
     /** A gate built from the current settings. */
     fun wakeWordGate(): WakeWordGate = WakeWordGate(wakingHourStart, wakingHourEnd)
 
+    // --- headset / earpiece ------------------------------------------------
+    //
+    // See [ai.jarvis.app.audio.AudioRoute]. Defaults to OFF: plugging in a
+    // headset must never silently move the microphone off the phone. The user
+    // opts in once, and only then does Jarvis capture through worn hardware,
+    // take over the headset button, or offer warm-link.
+
+    /** Capture through a connected headset rather than the phone microphone. */
+    var headsetMode: Boolean
+        get() = prefs.getBoolean(KEY_HEADSET_MODE, false)
+        set(v) = prefs.edit().putBoolean(KEY_HEADSET_MODE, v).apply()
+
+    /**
+     * Keep listening after a reply while a worn headset is connected, so a
+     * follow-up needs no wake word.
+     *
+     * Requires [headsetMode] AND an echo-cancelled route — `AudioRoute
+     * .warmLinkEligible` is the authority and this flag can only ever narrow
+     * it, never widen it. Without cancellation an open mic hears the tail of
+     * Jarvis's own reply and starts a turn against itself.
+     */
+    var warmLink: Boolean
+        get() = headsetMode && prefs.getBoolean(KEY_WARM_LINK, false)
+        set(v) = prefs.edit().putBoolean(KEY_WARM_LINK, v).apply()
+
+    /** Let the headset's button summon Jarvis. See [ai.jarvis.app.audio.MediaButtonGate]. */
+    var headsetButton: Boolean
+        get() = headsetMode && prefs.getBoolean(KEY_HEADSET_BUTTON, true)
+        set(v) = prefs.edit().putBoolean(KEY_HEADSET_BUTTON, v).apply()
+
     private fun defaultDeviceName(): String {
         val model = (Build.MODEL ?: "").trim()
         return if (model.isEmpty()) "Android device" else model
@@ -139,6 +169,9 @@ class JarvisConfig(context: Context) {
         private const val KEY_WAKE_AT_HOME = "wake_at_home"
         private const val KEY_WAKE_HOUR_START = "wake_hour_start"
         private const val KEY_WAKE_HOUR_END = "wake_hour_end"
+        private const val KEY_HEADSET_MODE = "headset_mode"
+        private const val KEY_WARM_LINK = "headset_warm_link"
+        private const val KEY_HEADSET_BUTTON = "headset_button"
         private const val KEY_ACTION_COUNT = "last_action_count"
 
         const val DEFAULT_PIPELINE = "Jarvis"

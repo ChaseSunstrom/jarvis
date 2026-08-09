@@ -29,6 +29,21 @@ class TtsPlayer(
 
     private var player: MediaPlayer? = null
 
+    /**
+     * True while capture is pinned to a worn headset, i.e. while the echo
+     * canceller is doing the work that keeps Jarvis from hearing itself.
+     *
+     * Set by the conversation controller from
+     * [ai.jarvis.app.audio.AudioRoute.hasEchoLoop]. It changes only the
+     * `AudioAttributes` usage, because AEC is defined against the
+     * *communication* stream: playing the reply as `USAGE_ASSISTANT` while
+     * capturing as `VOICE_COMMUNICATION` gives the canceller no reference
+     * signal for the audio it is supposed to be subtracting, and the echo comes
+     * straight back. The two settings are one decision and have to agree.
+     */
+    @Volatile
+    var communicationRoute: Boolean = false
+
     fun play(url: String, onDone: () -> Unit) {
         stop()
         if (ServerUrl.resolveOnServer(serverUrl, url) != url) {
@@ -40,7 +55,13 @@ class TtsPlayer(
         player = mp
         mp.setAudioAttributes(
             AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                .setUsage(
+                    if (communicationRoute) {
+                        AudioAttributes.USAGE_VOICE_COMMUNICATION
+                    } else {
+                        AudioAttributes.USAGE_ASSISTANT
+                    }
+                )
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
         )

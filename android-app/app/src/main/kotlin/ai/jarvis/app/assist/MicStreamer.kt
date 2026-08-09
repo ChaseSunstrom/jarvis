@@ -1,6 +1,8 @@
 package ai.jarvis.app.assist
 
 import ai.jarvis.app.BuildConfig
+import ai.jarvis.app.audio.AudioRoute
+import ai.jarvis.app.audio.CaptureProfile
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -21,7 +23,18 @@ import kotlin.math.sqrt
  */
 class MicStreamer(
     private val onPcm: (ByteArray, Int) -> Unit,
-    private val onLevel: (Float) -> Unit
+    private val onLevel: (Float) -> Unit,
+    /**
+     * How to open the mic, from [ai.jarvis.app.audio.CaptureProfile]. Read once
+     * per [start] so a headset connected mid-conversation takes effect on the
+     * next turn rather than tearing down the current one.
+     *
+     * Defaults to the phone-mic profile, which is the behaviour every existing
+     * caller had before headsets existed.
+     */
+    private val captureProfile: () -> CaptureProfile = {
+        CaptureProfile.forRoute(AudioRoute())
+    }
 ) {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var running = false
@@ -41,11 +54,25 @@ class MicStreamer(
             Log.e(TAG, "invalid min buffer size: $minBuf")
             return
         }
+        // VOICE_COMMUNICATION when the reply would otherwise be heard as a new
+        // question (worn headset), VOICE_RECOGNITION otherwise because it is
+        // unprocessed and the STT model scores better on it. The choice is
+        // AudioRoute's; this class only obeys it. See CaptureProfile.forRoute.
+        val profile = try {
+            captureProfile()
+        } catch (t: Throwable) {
+            Log.w(TAG, "capture profile lookup failed; using the phone mic", t)
+            CaptureProfile.forRoute(AudioRoute())
+        }
+        val source = if (profile.useVoiceCommunication) {
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        } else {
+            MediaRecorder.AudioSource.VOICE_RECOGNITION
+        }
+        Log.i(TAG, "capture source=${if (profile.useVoiceCommunication) "VOICE_COMMUNICATION" else "VOICE_RECOGNITION"}: ${profile.reason}")
+
         val rec = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                SAMPLE_RATE, CHANNEL, ENCODING, minBuf * 2
-            )
+            AudioRecord(source, SAMPLE_RATE, CHANNEL, ENCODING, minBuf * 2)
         } catch (e: Exception) {
             Log.e(TAG, "AudioRecord init failed", e); return
         }
