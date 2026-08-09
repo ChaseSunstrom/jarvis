@@ -71,6 +71,22 @@ USER_SILENT = "user_silent"
 NO_CHANNEL = "no_channel"
 RATE_LIMITED = "rate_limited"
 UNKNOWN_CAMERA = "unknown_camera"
+FENCED_QUESTION = "fenced_question"
+
+#: The camera field on a record for a look that never named a real camera.
+#: Fixed on purpose: it is the coalescing key too, and a caller must not be
+#: able to mint a new audit row per made-up name.
+NO_CAMERA = "(unknown)"
+
+#: Refusals that cost nothing to produce — no prompt, no fetch, no model call,
+#: and (for `never` and a fenced question) not even a rate-limit slot. A caller
+#: can emit them in a tight loop, so they are folded into one row each rather
+#: than being allowed to push real looks out of a bounded trail. Without this
+#: a hundred calls at a `consent: never` camera erase the record of every look
+#: that did happen, which is the one thing an audit trail may not permit.
+COALESCED_DECISIONS = frozenset(
+    {POLICY_NEVER, RATE_LIMITED, UNKNOWN_CAMERA, FENCED_QUESTION}
+)
 
 _DENIAL_TEXT = {
     POLICY_NEVER: (
@@ -96,6 +112,11 @@ _DENIAL_TEXT = {
         "limited per camera; wait and try again."
     ),
     UNKNOWN_CAMERA: "No such camera.",
+    FENCED_QUESTION: (
+        "That question carries fenced, untrusted content, so no frame was "
+        "fetched. Text taken off a web page or out of an earlier camera "
+        "description may never be routed back in as an instruction to look."
+    ),
 }
 
 
@@ -161,13 +182,20 @@ class LookRecord:
     allowed: bool = False
     outcome: str = "pending"      # pending | ok | denied | camera_error | model_error
     error: str = ""
+    #: When this last happened. A coalesced row moves its ``at`` forward and
+    #: keeps ``first_at`` where it started, so "denied 87 times since 09:14"
+    #: is readable off one entry.
     at: float = field(default_factory=time.time)
+    first_at: float = 0.0
+    repeats: int = 1
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "at": self.at,
+            "first_at": self.first_at or self.at,
+            "repeats": self.repeats,
             "camera": self.camera,
             "entity_id": self.entity_id,
             "action": self.action,
@@ -182,19 +210,58 @@ class LookRecord:
 
 
 class AuditTrail:
-    """The last N looks, newest last. In memory, bounded, never on disk."""
+    """The last N looks, newest last. In memory, bounded, never on disk.
+
+    Bounded means evictable, and evictable means a caller who can produce a
+    free refusal can erase history by producing a few hundred of them. A
+    ``consent: never`` camera answers without a prompt, without a fetch and
+    without spending a rate-limit slot, so a loop of denied looks used to walk
+    every real record out of the deque in well under a second.
+
+    So the cheap refusals in :data:`COALESCED_DECISIONS` fold: a repeat of one
+    already in the trail bumps its ``repeats`` and its timestamp instead of
+    taking a new slot. What a caller can occupy is therefore bounded by the
+    configuration — cameras times actions times decisions — rather than by how
+    many times they are willing to ask. Every occurrence still reaches the
+    ``jarvis.vision.audit`` logger individually; folding is about what the
+    bounded in-memory view can be made to forget.
+    """
 
     def __init__(self, size: int = DEFAULT_TRAIL_SIZE) -> None:
         self._records: deque[LookRecord] = deque(maxlen=max(1, int(size)))
 
     def add(self, record: LookRecord) -> LookRecord:
-        self._records.append(record)
+        existing = self._fold_into(record)
+        if existing is not None:
+            existing.repeats += 1
+            existing.first_at = existing.first_at or existing.at
+            existing.at = record.at
+            existing.reason = record.reason
+            existing.error = record.error
+            record = existing
+        else:
+            self._records.append(record)
         _AUDIT.info(
             "vision %s camera=%s allowed=%s decision=%s requester=%s reason=%s",
             record.action, record.camera, record.allowed, record.decision,
             record.requester, record.reason or "(none given)",
         )
         return record
+
+    def _fold_into(self, record: LookRecord) -> LookRecord | None:
+        """The row ``record`` is a repeat of, if it is a cheap refusal."""
+        if record.allowed or record.decision not in COALESCED_DECISIONS:
+            return None
+        for existing in reversed(self._records):
+            if (
+                existing.decision == record.decision
+                and existing.camera == record.camera
+                and existing.action == record.action
+                and existing.requester == record.requester
+                and not existing.allowed
+            ):
+                return existing
+        return None
 
     def all(self) -> list[LookRecord]:
         return list(self._records)
@@ -207,7 +274,11 @@ class AuditTrail:
                 r for r in records
                 if wanted in (r.camera.lower(), r.entity_id.lower())
             ]
-        records.reverse()  # newest first is what a reviewer wants
+        # Newest first is what a reviewer wants. Sorting rather than simply
+        # reversing, because a folded row's slot is where it first appeared
+        # while its time is when it last happened; reversing first keeps
+        # insertion order as the tie-break when timestamps collide.
+        records = sorted(reversed(records), key=lambda r: r.at, reverse=True)
         if limit is not None and limit >= 0:
             records = records[:limit]
         return [r.as_dict() for r in records]
@@ -281,16 +352,19 @@ class ConsentBroker:
 __all__ = [
     "AFFIRMATIVE",
     "ALLOW_OPTION",
+    "COALESCED_DECISIONS",
     "CONSENT_ALWAYS",
     "CONSENT_ASK",
     "CONSENT_MODES",
     "CONSENT_NEVER",
     "DEFAULT_CONSENT",
     "DENY_OPTION",
+    "FENCED_QUESTION",
     "AuditTrail",
     "ConsentBroker",
     "Decision",
     "LookRecord",
+    "NO_CAMERA",
     "NO_CHANNEL",
     "POLICY_ALWAYS",
     "POLICY_NEVER",

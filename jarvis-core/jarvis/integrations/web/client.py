@@ -12,6 +12,7 @@ hands the bytes on; :mod:`.fence` is what makes them safe to show a model.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -30,10 +31,34 @@ DEFAULT_SAFE_SEARCH = 1
 DEFAULT_LANGUAGE = "en"
 DEFAULT_LIMIT = 8
 MAX_LIMIT = 25
+
+#: jarvis-browser's own BROWSER_APPROVAL_TTL default — how long it will hold a
+#: gated step before releasing it.
+BROWSER_APPROVAL_TTL_DEFAULT = 300.0
+
 #: How long to hold a browse step waiting for the human to answer.
-DEFAULT_APPROVAL_TIMEOUT = 180.0
+#:
+#: This is NOT a free number. ``companion.ask`` escalates once, waiting the
+#: full timeout on each device, so the wall-clock wait is *twice* this — and
+#: if that overruns the browser's TTL above, the human says yes to a request
+#: that has already been released and gets a bare HTTP 409 for their trouble.
+#: 120 leaves four minutes of answering time inside a five-minute window.
+DEFAULT_APPROVAL_TIMEOUT = 120.0
+
+#: /approve statuses that mean "the held request is gone", not "you got the
+#: secret wrong". Nothing ran in either case; only one of them is worth
+#: re-asking about.
+STALE_APPROVAL_STATUSES = frozenset({404, 409, 410})
 
 RESULT_SCHEMES = frozenset({"http", "https"})
+
+#: jarvis-browser mints session ids as ``uuid4().hex``. The id the model hands
+#: back is interpolated straight into a request path, so it is checked against
+#: that shape before it goes anywhere: a value carrying ``/``, ``?``, ``#`` or
+#: a percent-escape is a caller trying to steer the request at a different
+#: endpoint, and it should be refused here with a sentence rather than
+#: bounced off the far end as an unexplained 404.
+SESSION_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 
 MAX_TITLE_CHARS = 300
 MAX_SNIPPET_CHARS = 600
@@ -70,7 +95,11 @@ class BrowserNotConfigured(WebError):
 
 
 class BrowserFailed(WebError):
-    pass
+    """A call to jarvis-browser did not work. ``status`` is its HTTP code."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +143,7 @@ def _as_float(value: Any, default: float) -> float:
         return default
 
 
-def _as_int(value: Any, default: int) -> int:
+def as_int(value: Any, default: int) -> int:
     try:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -167,7 +196,7 @@ class WebConfig:
                 or options.get("approval_secret")
             ),
             act_allowlist=_as_tuple(options.get("act_allowlist")),
-            safe_search=min(2, max(0, _as_int(options.get("safe_search"), DEFAULT_SAFE_SEARCH))),
+            safe_search=min(2, max(0, as_int(options.get("safe_search"), DEFAULT_SAFE_SEARCH))),
             language=str(options.get("language") or DEFAULT_LANGUAGE),
             engines=_as_tuple(options.get("engines")),
             categories=_as_tuple(options.get("categories")),
@@ -175,7 +204,7 @@ class WebConfig:
             connect_timeout=_as_float(
                 options.get("connect_timeout"), DEFAULT_CONNECT_TIMEOUT
             ),
-            default_limit=max(1, min(MAX_LIMIT, _as_int(options.get("limit"), DEFAULT_LIMIT))),
+            default_limit=max(1, min(MAX_LIMIT, as_int(options.get("limit"), DEFAULT_LIMIT))),
             approval_timeout=_as_float(
                 options.get("approval_timeout"), DEFAULT_APPROVAL_TIMEOUT
             ),
@@ -217,6 +246,22 @@ def _result_url(value: Any) -> str:
     return url if scheme in RESULT_SCHEMES else ""
 
 
+def _dedupe_key(url: str) -> str:
+    """Same page reached twice (two engines, one trailing slash) -> one row.
+
+    Host and scheme are case-insensitive; the path is NOT. Lowercasing the
+    whole URL collapses ``/Downloads`` and ``/downloads`` into one row, and on
+    the many servers where those are different pages that silently throws a
+    result away — the one the user was looking for, half the time.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # pragma: no cover - _result_url already parsed it
+        return url
+    path = parts.path.rstrip("/") or "/"
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}{path}?{parts.query}"
+
+
 def parse_results(payload: Any, limit: int) -> list[dict[str, str]]:
     """SearXNG JSON -> ``[{title, url, snippet}]``, deduplicated and capped.
 
@@ -224,7 +269,7 @@ def parse_results(payload: Any, limit: int) -> list[dict[str, str]]:
     URLs SearXNG also returns are noise in a model's context window, and
     every extra field is another string an attacker gets to choose.
     """
-    limit = max(0, min(_as_int(limit, 0), MAX_LIMIT))
+    limit = max(0, min(as_int(limit, 0), MAX_LIMIT))
     if limit == 0 or not isinstance(payload, dict):
         return []
     rows = payload.get("results")
@@ -241,7 +286,7 @@ def parse_results(payload: Any, limit: int) -> list[dict[str, str]]:
         url = _result_url(item.get("url"))
         if not url:
             continue
-        key = url.rstrip("/").lower()
+        key = _dedupe_key(url)
         if key in seen:
             continue
         seen.add(key)
@@ -287,7 +332,7 @@ class SearxngClient:
         query = (query or "").strip()
         if not query:
             raise SearchFailed("web.search needs a query")
-        limit = max(0, min(_as_int(limit, cfg.default_limit) or cfg.default_limit, MAX_LIMIT))
+        limit = max(0, min(as_int(limit, cfg.default_limit) or cfg.default_limit, MAX_LIMIT))
         if limit == 0:
             return []
 
@@ -413,12 +458,14 @@ class BrowserClient:
         if response.status_code == 401:
             raise BrowserFailed(
                 "jarvis-browser rejected the bearer token (401). Check that "
-                "web: browser_token: matches JARVIS_BROWSER_TOKEN."
+                "web: browser_token: matches JARVIS_BROWSER_TOKEN.",
+                401,
             )
         if response.status_code >= 400:
             raise BrowserFailed(
                 f"jarvis-browser returned HTTP {response.status_code} on "
-                f"{path}: {_detail(response)}"
+                f"{path}: {_detail(response)}",
+                response.status_code,
             )
         try:
             body = response.json()
@@ -442,11 +489,21 @@ class BrowserClient:
     async def create_session(self) -> str:
         body = await self._post("/session", {})
         session_id = str(body.get("session_id") or "")
-        if not session_id:
-            raise BrowserFailed("jarvis-browser did not return a session id")
+        if not SESSION_ID_RE.match(session_id):
+            raise BrowserFailed(
+                f"jarvis-browser returned {session_id!r} as a session id; "
+                "that is not one, and it is about to be pasted into a request "
+                "path."
+            )
         return session_id
 
     async def act(self, session_id: str, steps: list[dict[str, Any]]) -> ActOutcome:
+        if not SESSION_ID_RE.match(session_id or ""):
+            raise BrowserFailed(
+                f"{session_id!r} is not a jarvis-browser session id. Session "
+                "ids are opaque hex handed back by web.browse; omit the field "
+                "to open a new session."
+            )
         body = await self._post(f"/session/{session_id}/act", {"steps": steps})
         return ActOutcome(executed=bool(body.get("executed")), payload=body)
 
@@ -463,11 +520,26 @@ class BrowserClient:
                 "(BROWSER_APPROVAL_SECRET) — it must differ from the API "
                 "token. Nothing was executed."
             )
-        body = await self._post(
-            "/approve",
-            {"request_id": request_id, "approved": bool(approved)},
-            headers={"X-Approval-Secret": self.config.approval_secret},
-        )
+        try:
+            body = await self._post(
+                "/approve",
+                {"request_id": request_id, "approved": bool(approved)},
+                headers={"X-Approval-Secret": self.config.approval_secret},
+            )
+        except BrowserFailed as exc:
+            if exc.status in STALE_APPROVAL_STATUSES:
+                # The held request aged out or was already consumed while the
+                # question sat on somebody's lock screen. Nothing ran, and the
+                # bare status code says none of that.
+                raise BrowserFailed(
+                    "That approval is no longer valid — jarvis-browser had "
+                    f"already released it (HTTP {exc.status}). Nothing ran. "
+                    "Ask again if you still want it; approvals expire after "
+                    f"{BROWSER_APPROVAL_TTL_DEFAULT:g}s by default "
+                    "(BROWSER_APPROVAL_TTL) and are single-use.",
+                    exc.status,
+                ) from exc
+            raise
         return ActOutcome(executed=bool(body.get("executed")), payload=body)
 
 

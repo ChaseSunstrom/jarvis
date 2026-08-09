@@ -140,8 +140,6 @@ def _install_signal_handlers(stop: Any) -> Any:
 
 
 async def async_run(args: argparse.Namespace) -> int:
-    import uvicorn  # imported here so --create-token works without a server
-
     config_dir = Path(args.config).expanduser().resolve()
     try:
         config = load_config(config_dir)
@@ -160,6 +158,10 @@ async def async_run(args: argparse.Namespace) -> int:
         _info, secret = await jarvis.data["auth"].create_token(args.create_token)
         print(secret)  # noqa: T201 - printing it is the point of the flag
         return 0
+
+    # Below the --create-token return on purpose: minting a token is a config-
+    # directory operation and must not need a working ASGI server installed.
+    import uvicorn
 
     _LOGGER.info("Jarvis %s starting from %s", VERSION, config_dir)
 

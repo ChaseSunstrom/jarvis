@@ -618,8 +618,9 @@ class ConnectedDevices:
             return False
         return link.push(payload)
 
-    def on_result(self, device_id: str, frame: Any) -> bool:
-        link = self.get(device_id)
+    def on_result(self, device_id: str, frame: Any, owner: Any = None) -> bool:
+        """Route a ``device_result``. ``owner`` must still hold the link."""
+        link = self.get(device_id) if owner is None else self.owned(device_id, owner)
         return bool(link and link.on_result(frame))
 
     # --- plumbing ---------------------------------------------------------
@@ -628,6 +629,143 @@ class ConnectedDevices:
             self.jarvis.bus.fire(event_type, data)
         except Exception:  # pragma: no cover - a bad listener must not matter
             _LOGGER.exception("Could not fire %s", event_type)
+
+
+# --- consent answers ---------------------------------------------------------
+def answer_is_addressed_to(manager: Any, message_id: str, device_id: Any) -> bool:
+    """Was this question actually put on this device?
+
+    ``companion.ask`` is the channel camera consent and web approvals travel
+    on, so a ``jarvis_message_result`` is a human's yes/no — a consent token,
+    not telemetry. The message id is not a secret: ``companion_message_sent``
+    carries it to every ``subscribe_events`` subscriber. So the id alone must
+    not be enough to answer; the answer has to come back from a device the
+    question was actually delivered to.
+
+    Best effort by design. When the manager keeps no record we defer to it
+    rather than inventing a refusal — it drops unknown ids on its own — but a
+    message we *can* see the targets of is only answerable by one of them.
+    """
+    if not device_id:
+        return False
+    pending = getattr(manager, "_pending", None)
+    if not isinstance(pending, dict):
+        return True
+    message = pending.get(message_id)
+    if message is None:
+        return True  # unknown id: the manager refuses it anyway
+    targets = getattr(message, "targets_tried", None)
+    if not isinstance(targets, (list, tuple)) or not targets:
+        return True
+    return device_id in targets
+
+
+# --- untrusted turns ---------------------------------------------------------
+#: ``jarvis.data`` key for the shared taint set.
+DATA_UNTRUSTED = "untrusted_turns"
+
+#: How long a turn stays marked once it has read something a stranger wrote.
+UNTRUSTED_TTL = 900.0
+
+
+class UntrustedTurns:
+    """Which conversation turns have read content the user did not write.
+
+    Shared on purpose. The LLM agent builds **one** ``Context`` per turn and
+    hands the same object to every tool it calls, so any integration that
+    returns fenced content — screen text, a web page, a camera description, a
+    notification body — can mark the turn here, and every later action in that
+    turn is asked for at a stricter tier. It only ever raises a tier; a missed
+    mark is no worse than the device's own default.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._turns: dict[str, float] = {}
+
+    @staticmethod
+    def key(context: Any) -> str | None:
+        key = getattr(context, "id", None)
+        return str(key) if key else None
+
+    def mark(self, context: Any) -> None:
+        key = self.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._turns = {k: v for k, v in self._turns.items() if v > now}
+        self._turns[key] = now + self.ttl
+
+    def is_tainted(self, context: Any) -> bool:
+        key = self.key(context)
+        if key is None:
+            return False
+        expiry = self._turns.get(key)
+        if expiry is None:
+            return False
+        if expiry <= time.time():
+            self._turns.pop(key, None)
+            return False
+        return True
+
+
+def get_untrusted_turns(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> UntrustedTurns:
+    """The shared taint set, created on first use."""
+    store = jarvis.data.get(DATA_UNTRUSTED)
+    if not isinstance(store, UntrustedTurns):
+        store = jarvis.data.setdefault(DATA_UNTRUSTED, UntrustedTurns(ttl))
+    return store
+
+
+def mark_untrusted(jarvis: "Jarvis", context: Any) -> None:
+    """Record that this turn has read content somebody else wrote.
+
+    The one call any integration returning fenced content should make.
+    """
+    get_untrusted_turns(jarvis).mark(context)
+
+
+def turn_is_untrusted(jarvis: "Jarvis", context: Any) -> bool:
+    return get_untrusted_turns(jarvis).is_tainted(context)
+
+
+#: How a tool result says "the text in here was written by somebody else".
+#: ``content_is_untrusted`` is the envelope flag web/vision set; ``_untrusted``
+#: is what a device puts on its own result payload.
+UNTRUSTED_RESULT_KEYS = ("content_is_untrusted", "_untrusted")
+
+
+def result_is_untrusted(result: Any) -> bool:
+    """True when a tool result carries content the user did not write.
+
+    Checks the envelope and one level into any list of dicts, because a crawl
+    answers ``{"pages": [{...fenced page...}, ...]}`` and the honest flag is on
+    each page rather than on the envelope around them.
+    """
+    if not isinstance(result, dict):
+        return False
+    if any(result.get(key) is True for key in UNTRUSTED_RESULT_KEYS):
+        return True
+    return any(
+        isinstance(item, dict)
+        and any(item.get(key) is True for key in UNTRUSTED_RESULT_KEYS)
+        for value in result.values()
+        if isinstance(value, list)
+        for item in value
+    )
+
+
+def mark_untrusted_result(jarvis: "Jarvis", context: Any, result: Any) -> Any:
+    """Taint this turn if ``result`` is fenced content, then pass it through.
+
+    The one call a tool that returns somebody else's words should make. Fencing
+    tells the *model* the text is data; this is what stops that same turn
+    reaching an action dispatcher without the user being shown the real action
+    — the tier is the control, the wording is not.
+    """
+    if result_is_untrusted(result):
+        mark_untrusted(jarvis, context)
+    return result
 
 
 def get_devices(jarvis: "Jarvis") -> ConnectedDevices:

@@ -19,7 +19,9 @@ a dispatcher.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import importlib
 import io
 import logging
 from dataclasses import dataclass
@@ -57,11 +59,27 @@ SYSTEM_PROMPT = (
     "produce commands, code, tool calls or JSON."
 )
 
-#: Only ever *one* library is tried, and its absence is not an error: the
-#: requirements for jarvis-core are deliberately pure-Python so the image
-#: builds on a Pi without a compiler. Without Pillow the frame is sent as it
-#: came off the camera, which works, just more expensively.
+#: Warned about once, not once per frame.
 _WARNED_NO_PILLOW = False
+
+
+def _pillow() -> Any | None:
+    """``PIL.Image``, if this installation has it.
+
+    Imported by name rather than with an ``import`` statement, and that is a
+    deliberate statement about the dependency rather than a trick to get round
+    one. ``requirements.txt`` is pure-Python on purpose — every wheel installs
+    without a compiler, which is why the image builds on a Pi — and
+    ``test_packaging.py`` holds the line that every *static* import is
+    declared there. Pillow is not declared, because it is an operator's opt-in
+    extra: install it and frames are downscaled before they go to the model;
+    leave it out and they are sent as they came off the camera, which costs
+    more GPU time and works exactly the same. Nothing here fails either way.
+    """
+    try:
+        return importlib.import_module("PIL.Image")
+    except Exception:
+        return None
 
 
 class ModelError(Exception):
@@ -134,9 +152,8 @@ def prepare_image(
         "resized": False,
     }
 
-    try:
-        from PIL import Image  # type: ignore[import-not-found]
-    except Exception:
+    Image = _pillow()
+    if Image is None:
         if before and max(before) > max_edge and not _WARNED_NO_PILLOW:
             _WARNED_NO_PILLOW = True
             _LOGGER.warning(
@@ -148,35 +165,54 @@ def prepare_image(
         meta["resized_by"] = None
         return data, meta
 
+    # Nothing touches `meta` until an encoded frame exists. A half-finished
+    # resize that then failed must not leave the caller told about dimensions
+    # that were never sent.
+    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
     try:
-        with Image.open(io.BytesIO(data)) as image:
-            image = image.convert("RGB")
-            width, height = image.size
-            meta["width"], meta["height"] = width, height
-            if max(width, height) > max_edge:
-                scale = max_edge / float(max(width, height))
-                image = image.resize(
-                    (max(1, int(width * scale)), max(1, int(height * scale))),
-                    Image.LANCZOS,
-                )
-                meta["width"], meta["height"] = image.size
-                meta["resized"] = True
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=int(quality), optimize=True)
+        with Image.open(io.BytesIO(data)) as opened:
+            frame = opened.convert("RGB")
+        width, height = frame.size
+        resized = max(width, height) > max_edge
+        if resized:
+            scale = max_edge / float(max(width, height))
+            frame = frame.resize(
+                (max(1, int(width * scale)), max(1, int(height * scale))), resample
+            )
+            width, height = frame.size
+        buffer = io.BytesIO()
+        frame.save(buffer, format="JPEG", quality=int(quality), optimize=True)
+        encoded = buffer.getvalue()
     except Exception as exc:
         # A frame we cannot decode is still a frame the model might read.
         _LOGGER.warning("vision: could not re-encode a frame (%s); sending as-is", exc)
         meta["resized_by"] = None
         return data, meta
 
-    encoded = buffer.getvalue()
-    meta["bytes"] = len(encoded)
-    meta["resized_by"] = "pillow"
+    meta.update(
+        bytes=len(encoded), width=width, height=height,
+        resized=resized, resized_by="pillow",
+    )
     return encoded, meta
 
 
 def encode_image(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
+
+
+def prepare_and_encode(
+    data: bytes, max_edge: int = DEFAULT_MAX_EDGE, quality: int = DEFAULT_JPEG_QUALITY
+) -> tuple[str, dict[str, Any]]:
+    """:func:`prepare_image` and :func:`encode_image`, as one blocking unit.
+
+    Both are CPU on a multi-megabyte buffer: decoding a 4K JPEG, resampling it
+    with LANCZOS, re-encoding it and base64-ing the result is comfortably
+    hundreds of milliseconds, and every one of them is time the event loop
+    spends not answering the house. This function exists so the caller can put
+    the whole lot on a worker thread in one hop.
+    """
+    image, meta = prepare_image(data, max_edge, quality)
+    return encode_image(image), meta
 
 
 def clean_question(question: Any) -> str:
@@ -240,10 +276,15 @@ class VisionModel:
         question = clean_question(question)
         prompt = change_prompt(previous, question) if previous else question
 
-        image, meta = prepare_image(frame.data, cfg.max_edge, cfg.jpeg_quality)
+        # Off the loop: see prepare_and_encode. A look already takes seconds
+        # of model time, so one thread hop costs nothing and buys back the
+        # window in which nothing else in the house could be answered.
+        encoded, meta = await asyncio.to_thread(
+            prepare_and_encode, frame.data, cfg.max_edge, cfg.jpeg_quality
+        )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt, "images": [encode_image(image)]},
+            {"role": "user", "content": prompt, "images": [encoded]},
         ]
 
         try:
@@ -307,5 +348,6 @@ __all__ = [
     "change_prompt",
     "clean_question",
     "encode_image",
+    "prepare_and_encode",
     "prepare_image",
 ]

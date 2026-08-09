@@ -158,7 +158,16 @@ class JarvisChannel(
      * interacted — which is BACKGROUND. Without this the phone can be sent a
      * notification and never a question.
      */
-    val presence = PresenceReporter(appContext, { event, data -> sendEvent(event, data) })
+    val presence = PresenceReporter(
+        appContext,
+        emit = { event, data -> sendEvent(event, data) },
+        // Only while there is a live registered socket. `sendEvent` answers
+        // true when it merely queues a frame offline, and an hour of queued
+        // hourly-stale snapshots would evict the trigger events that queue
+        // exists for — as well as costing four binder calls every five seconds
+        // on a phone with nowhere to send them.
+        reportable = { isRegistered },
+    )
 
     private val gate = CommandGate()
     private val backoff = Backoff()

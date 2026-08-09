@@ -136,7 +136,18 @@ Source: https://example.com/article
 ```
 
 Search snippets, page text, every crawled page. The response also carries
-`content_is_untrusted: true` for anything reading it programmatically.
+`content_is_untrusted: true` for anything reading it programmatically — the
+web UI, an automation, and the taint marker described below.
+
+One honest caveat. Alongside the fenced `text` blob, `web.search` returns
+`results: [{title, url, snippet}]` and `web.fetch`/`web.crawl` return a
+`title`, because a caller that is not a language model needs the fields
+separately. Those strings are attacker-chosen too. They are length-capped and
+run through the same sanitiser, so they cannot close a fence — but they are
+not themselves wrapped, and a model reading the raw tool payload sees that
+copy as well as the fenced one. What stops it mattering is not the label: it
+is that the turn is marked untrusted the moment any of this comes back, which
+raises every following device action to CONFIRM.
 
 This matters because a search result is text an attacker *chose*. Ranking for
 "how do I reset my thermostat" is a marketing problem, not a hacking one, and a
@@ -285,7 +296,16 @@ either direction.
 | `act_allowlist` | `[]` | domains where clicking/typing is permitted |
 | `timeout` | `20` | seconds, overall |
 | `connect_timeout` | `5` | seconds; clamped to `timeout` |
-| `approval_timeout` | `180` | how long a gated step waits for you |
+| `approval_timeout` | `120` | how long a gated step waits for you, per device |
+
+`approval_timeout` is not a free number. `companion.ask` escalates once — it
+waits the full timeout on the device you are probably at, then tries the next
+one and waits again — so the wall-clock wait is **twice** this. That total has
+to stay inside jarvis-browser's `BROWSER_APPROVAL_TTL` (300s), because a
+request that ages out there is gone: you say yes to a prompt that is no longer
+attached to anything, nothing runs, and the only explanation without this
+being thought about is an HTTP 409. 120 leaves four minutes of answering time
+inside a five-minute window. Raise one and you must raise the other.
 
 The split timeout is not fussiness: a container that is *down* fails on connect
 in milliseconds, while a slow upstream engine legitimately needs seconds of
@@ -321,6 +341,21 @@ the instance. Turn it off for LAN use.
 
 **`web.fetch` returns "rejected the bearer token (401)".** `browser_token` and
 `JARVIS_BROWSER_TOKEN` disagree.
+
+**`web.fetch` says "not configured" while `jarvis-browser` is up and healthy.**
+The token is in `.env` but never reached `jarvis-core`. `configuration.yaml`
+resolves `!env_var JARVIS_BROWSER_TOKEN` at load time, inside the container, so
+the variable has to be in that container's `environment:` list — being in
+`.env` only gets it as far as compose. The shipped `docker-compose.yml` passes
+all five names the config reads (`SEARXNG_URL`, the two browser secrets, the
+two orchestrator ones) and `tests/test_packaging.py` fails the build if the two
+files drift apart, but a hand-edited compose can still lose them.
+
+**A gated step you approved comes back "that approval is no longer valid".**
+You answered after jarvis-browser had already released the request. Nothing
+ran. See `approval_timeout` above — the wait and `BROWSER_APPROVAL_TTL` are
+chosen together, and a raised timeout without a raised TTL produces exactly
+this.
 
 **Every `click` is refused with "not on the act allowlist".** That is the
 default. Add the domain to `BROWSER_ACT_ALLOWLIST` *and* `web: act_allowlist:`.

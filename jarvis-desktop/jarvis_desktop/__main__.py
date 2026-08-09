@@ -31,7 +31,7 @@ from .actions.builtins import build_context, build_registry
 from .audit import AuditLog
 from .channel import DeviceChannel
 from .companion import CompanionHandler, build_asker
-from .config import Config, default_config_path, load_config, normalize_server_url
+from .config import Config, load_config, normalize_server_url
 from .consent import build_gateway
 from .policy import ActionTier, PolicyStore, UserPolicy
 from .presence import PresenceReporter

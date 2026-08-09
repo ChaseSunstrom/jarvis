@@ -1,20 +1,35 @@
-# Jarvis server stack. Builds ON TOP of the existing Home Assistant + Ollama +
-# Wyoming + SearXNG stack — it does not replace it. One `docker compose up -d`.
+# Jarvis companion services — the HUD, the orchestrator, and the sandbox.
 #
-# Security posture (see docs/security.md):
+# This is NOT the main stack. `jarvis-core/docker-compose.yml` is: it runs
+# jarvis-core itself plus Wyoming STT/TTS/wake, photon and jarvis-browser.
+# Start that first. This file adds the three things that live outside it:
+#
+#   jarvis-web           the browser HUD, on :8199
+#   jarvis-orchestrator  multi-agent fan-out, coding jobs, the command broker
+#   jarvis-sandbox       the network-less jail those commands actually run in
+#
+#   cd jarvis-core && docker compose up -d      # the assistant
+#   cd ..           && docker compose up -d     # the HUD and, optionally, these
+#
+# Security posture (see docs/security.md and jarvis-core/docs/security.md):
 #   - jarvis-web:          host networking; binds :8199. LAN/WireGuard only (ufw).
-#   - jarvis-orchestrator: host networking; binds :8188. Reachable from HA
-#                          host only; no LAN inbound (ufw).
+#   - jarvis-orchestrator: host networking; binds :8188. Reachable from the
+#                          jarvis-core host only; no LAN inbound (ufw).
 #   - jarvis-sandbox:      network_mode: none, non-root, read-only rootfs,
 #                          cap_drop ALL, no-new-privileges, tight limits.
 #                          The ONLY crossover is ./jarvis-workspace. This stays
 #                          isolated by design — it runs LLM-proposed commands,
 #                          so it must NEVER get host/LAN networking.
 #
+# The orchestrator and sandbox are reached from jarvis-core through its
+# `orchestrator:` config block, which needs ORCHESTRATOR_TOKEN and
+# APPROVAL_SECRET set in .env. Those two must be DIFFERENT values: holding the
+# API token must not be enough to execute a command.
+#
 # NOTE: web + orchestrator use host networking so their 127.0.0.1 defaults
-# reach HA (8123) and Ollama (11434) on the host. Under host mode `ports:` is
-# ignored — the app's own bind port (PORT/8199, uvicorn/8188) is what's
-# exposed, and ufw is what limits who can reach it.
+# reach jarvis-core (8080) and Ollama (11434) on the host. Under host mode
+# `ports:` is ignored — the app's own bind port (PORT/8199, uvicorn/8188) is
+# what's exposed, and ufw is what limits who can reach it.
 
 services:
   # One-shot: create the shared workspace queue dirs with perms both non-root
@@ -49,8 +64,11 @@ services:
     restart: unless-stopped
     network_mode: "host"
     environment:
-      - HA_URL=${HA_URL:-http://127.0.0.1:8123}
-      - HA_TOKEN=${JARVIS_HA_TOKEN}
+      # Points at jarvis-core. The HUD also supports JARVIS_BACKEND=ha with
+      # HA_URL/HA_TOKEN if you still run Home Assistant alongside; see
+      # jarvis-web/README.md.
+      - JARVIS_URL=${JARVIS_URL:-http://127.0.0.1:8080}
+      - JARVIS_TOKEN=${JARVIS_TOKEN}
       - PORT=8199
       - JARVIS_PIPELINE=${JARVIS_PIPELINE:-Jarvis}
       - JARVIS_TTS_VOICE=${JARVIS_TTS_VOICE:-en_GB-alan-medium}
@@ -67,12 +85,14 @@ services:
     depends_on:
       jarvis-init:
         condition: service_completed_successfully
-    network_mode: "host"           # binds :8188; ufw allows the HA host only
+    network_mode: "host"           # binds :8188; ufw allows the core host only
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
       - PLANNER_MODEL=${PLANNER_MODEL:-qwen3:8b}
       - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
       - WORKSPACE=/workspace
+      # Two secrets, deliberately distinct. The service refuses to start if
+      # either is unset.
       - ORCHESTRATOR_TOKEN=${ORCHESTRATOR_TOKEN}
       - APPROVAL_SECRET=${APPROVAL_SECRET}
     volumes:
@@ -111,4 +131,4 @@ services:
       - /tmp:size=256m,mode=1777
     volumes:
       - ./jarvis-workspace:/workspace   # the ONLY writable crossover
-    # No HA config, no Docker socket, no host mounts, no secrets, no LAN.
+    # No config, no Docker socket, no host mounts, no secrets, no LAN.

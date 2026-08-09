@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""P0 gate: scripted client does a full stt→tts round trip through HA's
-assist_pipeline/run, proving the 'Jarvis' pipeline and Wyoming services are
-reachable before any HUD exists.
+"""Full stt→tts round trip through `assist_pipeline/run` on a live jarvis-core.
 
-Env: HA_URL (http://127.0.0.1:8123), HA_TOKEN, JARVIS_PIPELINE (Jarvis).
-Streams a synthetic 1s 16kHz sine tone and asserts we receive stt-end,
-intent output, and tts-end (a playable URL). Prints measured latencies.
+This is the one check that actually pushes *audio* through the stack. The
+broader `scripts/e2e-smoke.sh` boots a throwaway server and exercises REST,
+the websocket and a conversation turn, but it only proves the Wyoming ports
+are open — it deliberately skips transcription because that needs real audio.
+This script supplies it: a synthetic 1s 16kHz sine tone, streamed with the
+binary framing every client uses (one handler-id byte, then Int16LE PCM; a
+lone id byte ends the audio), asserting stt-end, intent output and tts-end
+come back. It is the same protocol the HUD and the Android app speak, so a
+pass here means a real client will work.
+
+Env: JARVIS_URL (http://127.0.0.1:8080), JARVIS_TOKEN, JARVIS_PIPELINE.
+Prints measured latencies.
 
 Requires: pip install websockets. Skips gracefully (exit 0 with SKIP) only
-if HA_TOKEN is unset — a real P0 run must set it.
+if JARVIS_TOKEN is unset — a real run must set it.
 """
 
 from __future__ import annotations
@@ -21,13 +28,16 @@ import struct
 import sys
 import time
 
-HA_URL = os.environ.get("HA_URL", "http://127.0.0.1:8123")
-TOKEN = os.environ.get("HA_TOKEN", "")
+JARVIS_URL = os.environ.get("JARVIS_URL", "http://127.0.0.1:8080")
+TOKEN = os.environ.get("JARVIS_TOKEN", "")
 PIPELINE = os.environ.get("JARVIS_PIPELINE", "Jarvis")
 
 
 def ws_url() -> str:
-    return HA_URL.replace("http://", "ws://").replace("https://", "wss://").rstrip("/") + "/api/websocket"
+    return (
+        JARVIS_URL.replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
+        + "/api/websocket"
+    )
 
 
 def sine_pcm(seconds=1.0, rate=16000, freq=220) -> bytes:
@@ -126,13 +136,13 @@ async def run() -> int:
         print("tts url:   ", got["tts"])
         print("latencies(s):", {k: round(v, 3) for k, v in marks.items()})
         ok = got["tts"] is not None and got["intent"] is not None
-        print("P0 SMOKE:", "PASS" if ok else "FAIL")
+        print("PIPELINE SMOKE:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
 
 
 def main() -> int:
     if not TOKEN:
-        print("SKIP: HA_TOKEN unset — set it to run the real P0 smoke test.")
+        print("SKIP: JARVIS_TOKEN unset — set it to run the real pipeline smoke test.")
         return 0
     try:
         import websockets  # noqa

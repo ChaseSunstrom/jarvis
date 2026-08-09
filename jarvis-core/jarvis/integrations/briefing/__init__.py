@@ -30,6 +30,18 @@ Services
     ``briefing.deliver``  (kind, include, device_id) → the companion result
 
 LLM tool: ``get_briefing``.
+
+What the model sees is not what you see
+---------------------------------------
+The scheduled briefing and the ``briefing.*`` services are *yours* — they read
+the whole house, because it is your house and the digest is going to your own
+device.
+
+``get_briefing`` is the model's, and it is built through the same exposure
+filter as every other tool. Otherwise a briefing would be a way to read out
+the friendly names and states of entities the user deliberately hid — "3 lights
+still on" and their names, an unlocked lock, a thing that went offline — via a
+tool that never has to name a target and so never trips the usual check.
 """
 
 from __future__ import annotations
@@ -39,7 +51,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from ...automation.util import get_clock, next_time_of_day, parse_time
 from ...bus import Context
@@ -155,6 +167,11 @@ class Section:
 # ---------------------------------------------------------------------------
 # the builder
 # ---------------------------------------------------------------------------
+#: Reads the state machine for one section. Takes a domain (or None for
+#: everything) and answers the states that briefing is allowed to mention.
+StateReader = Callable[..., list["State"]]
+
+
 class BriefingBuilder:
     """Turns live state into a digest. No I/O; every input is the state machine."""
 
@@ -171,11 +188,36 @@ class BriefingBuilder:
         self.max_chars = max(80, int(max_chars or DEFAULT_MAX_CHARS))
         self.last_delivered: dict[str, float] = {}
 
+    def _reader(self, visible: Callable[[str], bool] | None) -> StateReader:
+        """The one place a briefing reads state, so a filter cannot be missed."""
+        if visible is None:
+            return self.jarvis.states.all
+
+        def read(domain: str | None = None) -> list["State"]:
+            out = []
+            for state in self.jarvis.states.all(domain):
+                try:
+                    allowed = visible(state.entity_id)
+                except Exception:  # pragma: no cover - fail closed
+                    _LOGGER.exception("briefing: visibility check failed")
+                    allowed = False
+                if allowed:
+                    out.append(state)
+            return out
+
+        return read
+
     # --- entry point ------------------------------------------------------
-    def build(self, kind: str = "now", include: Iterable[str] | None = None) -> dict[str, Any]:
+    def build(
+        self,
+        kind: str = "now",
+        include: Iterable[str] | None = None,
+        visible: Callable[[str], bool] | None = None,
+    ) -> dict[str, Any]:
         kind = str(kind or "now").strip().lower()
         wanted = [str(s).strip().lower() for s in include] if include else list(self.include)
         now = get_clock(self.jarvis).now()
+        states = self._reader(visible)
 
         builders = {
             "weather": self._weather,
@@ -192,7 +234,7 @@ class BriefingBuilder:
                 _LOGGER.warning("briefing: unknown section %r (ignored)", key)
                 continue
             try:
-                section = builder(kind, now)
+                section = builder(kind, now, states)
             except Exception:  # pragma: no cover - one bad section must not kill the rest
                 _LOGGER.exception("briefing: section %s failed", key)
                 continue
@@ -245,9 +287,9 @@ class BriefingBuilder:
         return " ".join(parts), dropped
 
     # --- sections ---------------------------------------------------------
-    def _weather(self, kind: str, now: datetime) -> Section | None:
+    def _weather(self, kind: str, now: datetime, states: StateReader) -> Section | None:
         section = Section("weather")
-        for state in sorted(self.jarvis.states.all("weather"), key=lambda s: s.entity_id):
+        for state in sorted(states("weather"), key=lambda s: s.entity_id):
             if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
                 continue
             condition = str(state.state).replace("-", " ").replace("_", " ")
@@ -270,11 +312,11 @@ class BriefingBuilder:
             break  # one weather entity is a briefing; five is a forecast service
         return section
 
-    def _calendar(self, kind: str, now: datetime) -> Section | None:
+    def _calendar(self, kind: str, now: datetime, states: StateReader) -> Section | None:
         target: date = (now + timedelta(days=1)).date() if kind == "evening" else now.date()
         events: list[tuple[datetime | None, str]] = []
 
-        for state in sorted(self.jarvis.states.all("calendar"), key=lambda s: s.entity_id):
+        for state in sorted(states("calendar"), key=lambda s: s.entity_id):
             for event in self._events_of(state):
                 summary = str(
                     event.get("summary") or event.get("message") or event.get("title") or ""
@@ -315,11 +357,11 @@ class BriefingBuilder:
             return [dict(state.attributes)]
         return []
 
-    def _tasks(self, kind: str, now: datetime) -> Section | None:
+    def _tasks(self, kind: str, now: datetime, states: StateReader) -> Section | None:
         section = Section("tasks")
         outstanding: list[str] = []
         total = 0
-        for state in sorted(self.jarvis.states.all("todo"), key=lambda s: s.entity_id):
+        for state in sorted(states("todo"), key=lambda s: s.entity_id):
             items = state.attributes.get("items")
             names: list[str] = []
             if isinstance(items, (list, tuple)):
@@ -349,13 +391,13 @@ class BriefingBuilder:
         section.lines.append(f"{'; '.join(outstanding[: self.max_items])}.")
         return section
 
-    def _house(self, kind: str, now: datetime) -> Section | None:
+    def _house(self, kind: str, now: datetime, states: StateReader) -> Section | None:
         section = Section("house")
         cutoff = time.time() - OVERNIGHT_HOURS * 3600
 
         unlocked = [
             friendly_name(s)
-            for s in self.jarvis.states.all("lock")
+            for s in states("lock")
             if s.state == "unlocked"
         ]
         if unlocked:
@@ -366,11 +408,11 @@ class BriefingBuilder:
 
         open_things = [
             friendly_name(s)
-            for s in self.jarvis.states.all("cover")
+            for s in states("cover")
             if s.state == "open"
         ] + [
             friendly_name(s)
-            for s in self.jarvis.states.all("binary_sensor")
+            for s in states("binary_sensor")
             if s.state == STATE_ON
             and str(s.attributes.get("device_class") or "") in DOOR_CLASSES
         ]
@@ -379,7 +421,7 @@ class BriefingBuilder:
 
         if kind == "evening":
             lights_on = [
-                friendly_name(s) for s in self.jarvis.states.all("light") if s.state == STATE_ON
+                friendly_name(s) for s in states("light") if s.state == STATE_ON
             ]
             if lights_on:
                 section.lines.append(
@@ -388,7 +430,7 @@ class BriefingBuilder:
                 )
 
         low_batteries = []
-        for state in self.jarvis.states.all("sensor"):
+        for state in states("sensor"):
             if str(state.attributes.get("device_class") or "") != "battery":
                 continue
             level = _number(state.state)
@@ -400,7 +442,7 @@ class BriefingBuilder:
         if kind == "morning":
             overnight = [
                 friendly_name(s)
-                for s in self.jarvis.states.all("binary_sensor")
+                for s in states("binary_sensor")
                 if s.last_changed >= cutoff
                 and str(s.attributes.get("device_class") or "") in DOOR_CLASSES
                 and s.state == STATE_OFF
@@ -412,10 +454,10 @@ class BriefingBuilder:
 
         return section
 
-    def _unavailable(self, kind: str, now: datetime) -> Section | None:
+    def _unavailable(self, kind: str, now: datetime, states: StateReader) -> Section | None:
         broken = [
             friendly_name(s)
-            for s in self.jarvis.states.all()
+            for s in states()
             if s.state == STATE_UNAVAILABLE
         ]
         if not broken:
@@ -459,9 +501,18 @@ class BriefingManager:
         self._task: asyncio.Task | None = None
 
     # --- generate / deliver ----------------------------------------------
-    def generate(self, kind: str = "now", include: Iterable[str] | None = None) -> dict[str, Any]:
-        result = self.builder.build(kind, include)
-        self.last = result
+    def generate(
+        self,
+        kind: str = "now",
+        include: Iterable[str] | None = None,
+        visible: Callable[[str], bool] | None = None,
+    ) -> dict[str, Any]:
+        result = self.builder.build(kind, include, visible)
+        if visible is None:
+            # `last` is the user's own briefing. A filtered one built for the
+            # model must not overwrite it, or the console would start showing
+            # the model's narrower view of the house.
+            self.last = result
         return result
 
     async def deliver(
@@ -507,12 +558,17 @@ class BriefingManager:
 
     async def stop(self) -> None:
         task, self._task = self._task, None
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: B014 - shutdown path
-                pass
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # expected — we just cancelled it
+        except Exception:
+            # Anything else got past _run()'s own guard, which means the
+            # schedule died for a reason worth seeing rather than swallowing.
+            _LOGGER.exception("briefing: the schedule did not stop cleanly")
 
     def next_due(self, now: datetime) -> tuple[str, datetime] | None:
         upcoming = [
@@ -610,9 +666,17 @@ def _register_tools(jarvis: "Jarvis", manager: BriefingManager) -> None:
 
     from ...llm.tools import schema_object
 
+    def _visible(entity_id: str) -> bool:
+        exposure = getattr(registry, "exposure", None)
+        if exposure is None:
+            return True
+        return bool(exposure.is_exposed(jarvis, entity_id))
+
     async def tool_get_briefing(args: dict[str, Any], context: Any = None) -> Any:
         briefing = manager.generate(
-            kind=str(args.get("kind") or "now"), include=args.get("include")
+            kind=str(args.get("kind") or "now"),
+            include=args.get("include"),
+            visible=_visible,
         )
         if briefing["empty"]:
             return {

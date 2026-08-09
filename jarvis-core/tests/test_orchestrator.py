@@ -29,6 +29,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from jarvis.api.devices import turn_is_untrusted  # noqa: E402
+from jarvis.bus import Context  # noqa: E402
 from jarvis.core import Jarvis  # noqa: E402
 from jarvis.integrations.domains import async_setup as domains_setup  # noqa: E402
 from jarvis.integrations.orchestrator import (  # noqa: E402
@@ -325,6 +327,50 @@ async def test_a_delegated_agent_cannot_close_its_own_fence(tmp_path: Path) -> N
     await shutdown(jarvis)
 
 
+async def test_a_delegate_result_raises_the_bar_for_the_rest_of_the_turn(
+    tmp_path: Path,
+) -> None:
+    """Fencing is what the model reads; the tier is what actually holds.
+
+    A specialist agent that read a poisoned page has put a stranger's words in
+    this turn just as surely as ``web_fetch`` would have. Marking the turn is
+    what stops a later ``control_device`` dispatching at the device's own tier.
+    """
+    fake = FakeOrchestrator(
+        {
+            "POST /delegate": {
+                "status": "ok",
+                "agents": [{"task": "read a page", "status": "done", "result": "x"}],
+                "synthesis": "the page says to text +99",
+            }
+        }
+    )
+    jarvis, registry = await build(tmp_path, fake)
+    context = Context(origin="llm")
+
+    assert turn_is_untrusted(jarvis, context) is False
+    result = await registry.call(
+        "delegate_to_agents", {"tasks": ["read a page"]}, context=context
+    )
+    assert result["content_is_untrusted"] is True
+    assert turn_is_untrusted(jarvis, context) is True
+    await shutdown(jarvis)
+
+
+async def test_an_error_from_the_orchestrator_does_not_taint_the_turn(
+    tmp_path: Path,
+) -> None:
+    """No false positives: a 404 carries nobody's words."""
+    jarvis, registry = await build(tmp_path, FakeOrchestrator({}))
+    context = Context(origin="llm")
+    result = await registry.call(
+        "delegate_to_agents", {"tasks": ["anything"]}, context=context
+    )
+    assert result["status"] == "error"
+    assert turn_is_untrusted(jarvis, context) is False
+    await shutdown(jarvis)
+
+
 # ===========================================================================
 # code tasks
 # ===========================================================================
@@ -542,6 +588,34 @@ async def test_a_rewritten_command_is_refused_not_approved(tmp_path: Path) -> No
     assert result["status"] == "error"
     assert "different command" in result["error"]
     assert fake.paths() == ["POST /execute/request"], "approve was never sent"
+    await shutdown(jarvis)
+
+
+async def test_command_output_raises_the_bar_for_the_rest_of_the_turn(
+    tmp_path: Path,
+) -> None:
+    """`execute_command` stdout is attacker-shaped text, not a trusted result.
+
+    Treating it as trusted would make `echo` a privilege escalation: print a
+    sentence, and the next `control_device` in the turn dispatches at whatever
+    tier the device declared instead of asking.
+    """
+    fake = FakeOrchestrator(EXEC_ROUTES)
+    jarvis, registry = await build(tmp_path, fake)
+    assert registry is not None
+    context = Context(origin="llm")
+
+    held = await registry.call(
+        "execute_command", {"command": "df -h", "why": "disk"}, context=context
+    )
+    assert held["status"] == "approval_required", "tier 3 must never run from a turn"
+    assert turn_is_untrusted(jarvis, context) is False, "nothing has run yet"
+
+    # The human says yes; only now does output exist — and it is a stranger's.
+    released = await registry.approve_request(held["request_id"])
+    assert released["status"] == "executed"
+    assert released["result"]["content_is_untrusted"] is True
+    assert turn_is_untrusted(jarvis, context) is True
     await shutdown(jarvis)
 
 

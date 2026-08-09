@@ -49,13 +49,14 @@ surface.
 
 ### Server-side: wyoming-openwakeword (primary)
 
-The HA add-on / container `wyoming-openwakeword` listens on **tcp/10400**
-and comes with `ok_nabu`, `hey_jarvis`, `hey_mycroft`, etc. preinstalled.
+The `wyoming-openwakeword` container listens on **tcp/10400** and comes with
+`ok_nabu`, `hey_jarvis`, `hey_mycroft`, etc. preinstalled. It is part of
+`jarvis-core/docker-compose.yml`, and `voice: wake:` in
+`jarvis-core/config/configuration.yaml` points at it.
 
-- Custom models: drop the trained `.tflite` into the add-on's
-  `--custom-model-dir` (add-on config: "Custom model directory",
-  typically `/share/openwakeword`), restart, select the model on the
-  Wyoming satellite / Assist pipeline.
+- Custom models: drop the trained `.tflite` into the container's
+  `--custom-model-dir`, restart it, and name the model in the `voice:` block
+  (or on the pipeline that should use it).
 - This is where wake word runs for **satellite hardware** (Voice PE etc. can
   offload wake word to the server, though Voice PE normally runs
   microWakeWord on-device).
@@ -92,6 +93,6 @@ listening".
 
 | Surface | Engine | Model file | Where it runs |
 |---|---|---|---|
-| HA satellites / server | openWakeWord | `.tflite` (OWW) | wyoming-openwakeword, port 10400 |
-| Android companion (jarvis flavor) | microWakeWord | `.tflite`/`.json` (mWW) | foreground service on the phone |
+| jarvis-core / satellites | openWakeWord | `.tflite` (OWW) | wyoming-openwakeword, port 10400 |
+| Android app (`ai.jarvis.app`) | microWakeWord | `.tflite`/`.json` (mWW) | foreground service on the phone |
 | Web HUD | none yet (PTT + VAD) | — | OWW-WASM plug-in point reserved |

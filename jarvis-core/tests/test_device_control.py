@@ -21,10 +21,19 @@ from jarvis.api.devices import (  # noqa: E402
     TIER_CONFIRM,
     TIER_NOTIFY,
     get_devices,
+    mark_untrusted,
+    turn_is_untrusted,
 )
 from jarvis.bus import Context  # noqa: E402
 from jarvis.core import Jarvis  # noqa: E402
-from jarvis.integrations.device_control import DOMAIN, DeviceControl  # noqa: E402
+from jarvis.integrations.device_control import (  # noqa: E402
+    DEFAULT_COMMAND_TIMEOUT,
+    DOMAIN,
+    MAX_DISPATCH_TIMEOUT,
+    MIN_DISPATCH_TIMEOUT,
+    DeviceControl,
+    _clamp_timeout,
+)
 
 PHONE = "phone-1"
 DESK = "desk-1"
@@ -625,3 +634,192 @@ async def test_ask_user_says_so_when_nobody_answers(jarvis):
     # Nothing is connected at all, so it is queued rather than answered.
     assert result["status"] == "queued"
     assert "do not assume" in result["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# untrusted content from anywhere in the turn
+# ---------------------------------------------------------------------------
+async def test_untrusted_content_from_another_integration_raises_the_bar(jarvis, manager, phone):
+    """The taint set is shared, not private to device_control.
+
+    The agent builds one Context per turn and hands the same object to every
+    tool, so a web page or a camera description read earlier in the turn is the
+    same kind of hazard as screen text read through a device — and marking it
+    has to be reachable from wherever it was read.
+    """
+    link, wire = phone
+    context = Context(origin="llm")
+
+    command, _ = await answer(
+        manager.run(PHONE, "get_battery", {}, "checking", context=context), link, wire
+    )
+    assert command["tier"] == TIER_AUTO, "nothing untrusted has happened yet"
+
+    mark_untrusted(jarvis, context)
+
+    command, result = await answer(
+        manager.run(PHONE, "get_battery", {}, "checking again", context=context), link, wire
+    )
+    assert command["tier"] == TIER_CONFIRM, "a turn that read a stranger's words asks first"
+    assert "tier_raised" in result
+    # A different turn is unaffected.
+    fresh, _ = await answer(
+        manager.run(PHONE, "get_battery", {}, "elsewhere", context=Context(origin="llm")),
+        link, wire,
+    )
+    assert fresh["tier"] == TIER_AUTO
+
+
+async def test_device_control_and_the_shared_store_agree(jarvis, manager):
+    context = Context(origin="llm")
+    manager.note_untrusted(context)
+    assert turn_is_untrusted(jarvis, context) is True
+    assert manager.is_tainted(context) is True
+
+
+# ---------------------------------------------------------------------------
+# bounds
+# ---------------------------------------------------------------------------
+def test_a_dispatch_timeout_is_clamped_to_something_survivable():
+    """`device_control.run` takes a timeout from YAML. Unclamped, one typo
+    parks a future — and the service call awaiting it — for years."""
+    assert _clamp_timeout(10**9, 180.0) == MAX_DISPATCH_TIMEOUT
+    assert _clamp_timeout(0.001, 180.0) == MIN_DISPATCH_TIMEOUT
+    for junk in (None, "", "soon", [], float("nan"), float("inf"), -5, 0):
+        assert _clamp_timeout(junk, 180.0) == 180.0, junk
+    assert _clamp_timeout("30", 180.0) == 30.0
+
+
+async def test_a_silly_timeout_does_not_park_the_caller(manager, phone):
+    link, wire = phone
+    task = asyncio.create_task(
+        manager.run(PHONE, "get_battery", {}, "checking", timeout=10**9)
+    )
+    deadline = time.monotonic() + 2
+    while not wire.frames and time.monotonic() < deadline:
+        await asyncio.sleep(0.005)
+    assert wire.frames, "no device_command was sent"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_a_broken_config_still_loads_the_integration(tmp_path):
+    instance = Jarvis(tmp_path)
+    await instance.async_setup({"device_control": {"timeout": "whenever", "taint_ttl": None}})
+    try:
+        manager = instance.data[DOMAIN]
+        assert manager.timeout == DEFAULT_COMMAND_TIMEOUT
+        assert instance.services.has_service(DOMAIN, "run")
+    finally:
+        await instance.async_stop()
+
+
+# ---------------------------------------------------------------------------
+# re-registration
+# ---------------------------------------------------------------------------
+async def test_a_manifest_refresh_does_not_strand_a_command(jarvis, phone):
+    link, wire = phone
+    task = asyncio.create_task(link.dispatch("get_battery", {}, reason="checking", timeout=3))
+    deadline = time.monotonic() + 2
+    while not wire.frames and time.monotonic() < deadline:
+        await asyncio.sleep(0.005)
+    command_id = wire.frames[-1]["command_id"]
+
+    same = get_devices(jarvis).register(
+        PHONE, "Pixel 8", "android", ["device"], PHONE_MANIFEST, wire.sender, owner=wire,
+    )
+    assert same is link, "the same socket keeps its link, and its pending commands with it"
+    assert get_devices(jarvis).on_result(
+        PHONE, {"command_id": command_id, "status": "ok", "result": {"level": 60}}
+    ) is True
+    outcome = await asyncio.wait_for(task, 2)
+    assert outcome["status"] == "ok"
+
+
+async def test_a_new_socket_fails_the_old_sockets_commands(jarvis, phone):
+    link, wire = phone
+    task = asyncio.create_task(link.dispatch("get_battery", {}, reason="checking", timeout=3))
+    deadline = time.monotonic() + 2
+    while not wire.frames and time.monotonic() < deadline:
+        await asyncio.sleep(0.005)
+
+    other = Wire()
+    replacement = get_devices(jarvis).register(
+        PHONE, "Pixel 8", "android", ["device"], PHONE_MANIFEST, other.sender, owner=other,
+    )
+    assert replacement is not link
+
+    outcome = await asyncio.wait_for(task, 2)
+    assert outcome["status"] == "error"
+    assert "reconnected" in outcome["error"]
+
+
+# ---------------------------------------------------------------------------
+# the invariant, checked against the tree rather than against one integration
+# ---------------------------------------------------------------------------
+def test_every_integration_that_fences_content_also_raises_the_tier():
+    """A fence without a mark is wording without a control.
+
+    `content_is_untrusted` is an integration saying "the text in here was
+    written by somebody else". Saying it to the model is only half the job:
+    unless the same integration marks the turn, the next `control_device` in
+    that turn still dispatches at whatever tier the device declared, and a page
+    that says "now text this number" has reached a dispatcher with nobody
+    asked.
+
+    This walks the source rather than the tools because the failure it guards
+    against is a *new* integration, written months from now, that fences its
+    output and stops there. A behavioural test can only cover the sources that
+    already exist.
+    """
+    root = Path(__file__).resolve().parents[1] / "jarvis"
+    #: An import alone does not count — the mark has to be *called*.
+    calls = ("mark_untrusted_result(", "mark_untrusted(", "note_untrusted(")
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if path.parts[-2:] == ("api", "devices.py"):
+            continue  # the module that defines the mark
+        source = path.read_text(encoding="utf-8")
+        if '"content_is_untrusted": True' not in source:
+            continue
+        if not any(call in source for call in calls):
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, (
+        "these fence their output but never raise the tier for the rest of the "
+        f"turn: {offenders}. Call mark_untrusted_result() on what the tool "
+        "hands back."
+    )
+
+
+async def test_the_known_fenced_sources_are_all_wired_up(tmp_path):
+    """The list in this module's docstring, checked against the real registry.
+
+    Every one of these tools can put a stranger's words into a turn. If one
+    drops off the list the docstring is a lie, and the gap is invisible.
+    """
+    import httpx
+
+    instance = Jarvis(tmp_path)
+    instance.data["web"] = {"transport": httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"results": []})
+    )}
+    instance.data["orchestrator"] = {"transport": httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"status": "ok"})
+    )}
+    await instance.async_setup({
+        "device_control": {},
+        "web": {"searxng_url": "http://127.0.0.1:8888"},
+        "orchestrator": {"url": "http://127.0.0.1:8188", "token": "t", "approval_secret": "s"},
+    })
+    try:
+        registered = set(instance.data["llm_tools"].names())
+        expected = {
+            "web_search", "web_fetch", "web_crawl", "web_browse",
+            "delegate_to_agents", "code_task", "code_task_status",
+            "apply_code_task", "execute_command",
+            "control_device",
+        }
+        assert expected <= registered, expected - registered
+    finally:
+        await instance.async_stop()

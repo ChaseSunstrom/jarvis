@@ -9,9 +9,10 @@ LLM agent — one Python package, one container, one `/config` directory.
 It talks to the same clients Home Assistant did. The REST API is shaped like
 `/api/states`, `/api/services/{domain}/{service}`; the websocket does
 `auth_required` → `auth` → `auth_ok`, `subscribe_events`, `call_service` and
-`assist_pipeline/run` with the same binary audio framing. The browser HUD, the
-Android app and the ESP32 satellites in the parent repo need a URL and a token
-changed, nothing else.
+`assist_pipeline/run` with the same binary audio framing. The browser HUD and
+the Android app in the parent repo needed a URL and a token changed, nothing
+else. An ESP32 Wyoming satellite speaks the same pipeline contract, though no
+firmware for one ships here.
 
 Nothing leaves the house. STT, TTS, wake word, geocoding and the model are all
 containers on the same machine.

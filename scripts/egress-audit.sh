@@ -39,7 +39,7 @@ else
   say "SKIP: jarvis-sandbox container not running (start the stack to audit)"
 fi
 
-# 2) Orchestrator: should reach Ollama + HA only. Report, don't hard-fail
+# 2) Orchestrator: should reach Ollama + jarvis-core only. Report, don't hard-fail
 #    (allowed egress is deployment-specific; firewall enforces the rest).
 if docker inspect jarvis-orchestrator >/dev/null 2>&1; then
   say ""

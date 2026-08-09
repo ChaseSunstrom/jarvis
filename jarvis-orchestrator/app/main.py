@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from .exec_gate import ExecGate, GateError
 from .fanout import fan_out
-from .opencode import CodeJobRunner, safe_repo_dir
+from .opencode import CodeJobRunner
 from .sandbox_queue import SandboxQueue
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")

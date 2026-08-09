@@ -35,9 +35,12 @@ directory changes do not compound:
 
 ```bash
 # Python suites — no hardware, no network
-for d in jarvis-core jarvis-desktop jarvis-browser jarvis-orchestrator; do
+for d in jarvis-core jarvis-desktop jarvis-browser jarvis-orchestrator jarvis-sandbox; do
     ( cd "$d" && echo "== $d" && python3 -m pytest tests -q )
 done
+
+# The routing table and the two places that mirror it
+( cd evals && python3 -m pytest test_routing.py -q )
 
 # The Android logic mirrors (the Kotlin itself cannot be built here — see below)
 ( cd android-app/tools && for f in *.py; do python3 "$f" || echo "FAILED: $f"; done )
@@ -53,32 +56,38 @@ done
 
 | Suite | Tests | Result | Runtime |
 |---|---:|---|---:|
-| `jarvis-core` | 703 | all pass | ~36 s |
-| `jarvis-desktop` | 711 | all pass | ~15 s |
-| `jarvis-browser` | 326 | all pass | ~2 s |
+| `jarvis-core` | 1158 | all pass | ~53 s |
+| `jarvis-desktop` | 722 | all pass | ~16 s |
+| `jarvis-browser` | 328 | all pass | ~2 s |
 | `jarvis-orchestrator` | 17 | all pass | ~1 s |
+| `jarvis-sandbox` | 6 | all pass | ~1 s |
+| `evals` (routing table + its mirrors) | 17 | all pass | <1 s |
 | `jarvis-web` (vitest, 13 files) | 194 | all pass | ~2 s |
-| `jarvis-web` (Playwright, chromium) | 19 | **18 pass, 1 fail** | ~18 s |
-| `android-app/tools` (11 spec files) | 340 checks | all pass | ~3 s |
+| `jarvis-web` (Playwright, chromium) | 20 | all pass | ~18 s |
+| `android-app/tools` (spec files) | all pass | all pass | ~3 s |
 
 Within `jarvis-core`, by file:
 
 | File | Tests | Covers |
 |---|---:|---|
-| `test_api.py` | 93 | REST + websocket wire contract, auth, binary audio frames |
-| `test_web_integration.py` | 80 | `web.search`/`fetch`/`crawl`/`browse`, untrusted-content fencing |
-| `test_packaging.py` | 71 | the shipped `config/` is coherent; compose/YAML agreement |
+| `test_sensors.py` | 171 | the sensor layer and its inference |
+| `test_web_integration.py` | 109 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
+| `test_vision.py` | 105 | camera frames as fenced, untrusted input |
+| `test_api.py` | 94 | REST + websocket wire contract, auth, binary audio frames |
+| `test_features.py` | 84 | the shipped feature set, end to end |
+| `test_packaging.py` | 74 | the shipped `config/` is coherent; compose/YAML agreement |
 | `test_automation.py` | 72 | triggers, conditions, actions, run modes |
 | `test_voice.py` | 67 | pipeline runner, Wyoming protocol framing, pipeline store |
 | `test_mqtt.py` | 50 | discovery, entity mapping, value templates |
 | `test_llm.py` | 48 | agent, tool registry, the approval gate |
 | `test_domains.py` | 47 | every domain service verb |
 | `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
+| `test_orchestrator.py` | 40 | delegation, coding jobs, the double-gated shell path |
+| `test_device_control.py` | 38 | cross-device command dispatch and tiering |
 | `test_local_integrations.py` | 36 | template, rest, command_line, hue, wled, demo |
-| `test_device_control.py` | 29 | cross-device command dispatch and tiering |
-| `test_api_companion.py` | 20 | the device channel over the websocket |
+| `test_api_companion.py` | 28 | the device channel over the websocket |
+| `test_companion.py` | 26 | presence ranking, routing, escalation |
 | `test_core.py` | 17 | bus, state machine, services, registries |
-| `test_companion.py` | 17 | presence ranking, routing, escalation |
 | **`test_e2e.py`** | **12** | **the whole platform booted from a config file** |
 
 ---
@@ -192,6 +201,11 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | Tool tiering and the approval gate | Automated | `test_llm.py`, `test_e2e.py` |
 | `exclude_entities` blast-radius limit | Automated | `test_e2e.py`, `test_packaging.py` |
 | Untrusted web content stays fenced | Automated | `test_web_integration.py` |
+| Delegation / coding jobs / the shell tool reach the orchestrator | Automated *against `httpx.MockTransport`* | `test_orchestrator.py` |
+| `execute_command` is unreachable from a model turn | Automated | `test_orchestrator.py` |
+| The approval secret rides on exactly two request paths | Automated | `test_orchestrator.py` |
+| Agent output, diffs and command stdout are fenced | Automated | `test_orchestrator.py` |
+| The orchestrator against a **real** running service | **Unproven** | Needs the container up; see *Closing the gaps* |
 | MQTT discovery and entity mapping | Automated *with `FakeMqttClient`* | `test_mqtt.py` |
 | MQTT against a **real broker** with real devices | **Unproven** | see *Closing the gaps* |
 | Hue and WLED | Automated *against `httpx.MockTransport`* | `test_local_integrations.py` |
@@ -203,7 +217,7 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | Capability | Level | Proof / command |
 |---|---|---|
 | Component and helper logic | Automated | `npm test` — 194 tests |
-| The built app in a real browser | Automated *against a mock backend* | `npx playwright test` — 18 tests |
+| The built app in a real browser | Automated *against a mock backend* | `npx playwright test` — 20 tests |
 | The HUD driven against a **real jarvis-core** | **Unproven** | The Playwright suite runs the built app against `tests/web/mock-ha.mjs`, a JS stand-in. Nothing in CI points the HUD at an actual server. See *Closing the gaps*. |
 | Microphone capture in the browser | **Unproven** | Playwright runs with `--use-fake-device-for-media-stream`; that proves the code path, not that a real microphone is captured, encoded and streamed. |
 | Audio playback of TTS replies | **Unproven** | `--autoplay-policy=no-user-gesture-required` bypasses the thing most likely to break in a real browser. |
@@ -229,8 +243,8 @@ audio, never drives a browser, and never touches a phone. Those are below.
 
 | Capability | Level | Proof / command |
 |---|---|---|
-| Desktop agent logic | Automated | `cd jarvis-desktop && python3 -m pytest tests -q` — 711 tests |
-| Browser automation service logic | Automated | `cd jarvis-browser && python3 -m pytest tests -q` — 326 tests |
+| Desktop agent logic | Automated | `cd jarvis-desktop && python3 -m pytest tests -q` — 722 tests |
+| Browser automation service logic | Automated | `cd jarvis-browser && python3 -m pytest tests -q` — 328 tests |
 | Orchestrator API and exec gate, including adversarial cases | Automated | `cd jarvis-orchestrator && python3 -m pytest tests -q` — 17 tests |
 | Desktop agent against a **real** desktop session | **Unproven** | Needs a logged-in machine with the agent installed. |
 | Browser service driving a **real** browser | **Unproven** | Needs the container running with a real chromium. |
@@ -245,9 +259,14 @@ audio, never drives a browser, and never touches a phone. Those are below.
 | CONFIRM is never auto-approved or remembered | Automated | `policy_truth_table_test.py` |
 | A gated tool returns `approval_required` and does not run | Automated | `test_llm.py`, `test_e2e.py` |
 | The approval carries verbatim parameters, not the model's paraphrase | Automated | `test_llm.py`, `test_e2e.py` |
-| An approval cannot be replayed | Automated | `test_llm.py` |
+| An approval cannot be replayed | Automated | `test_llm.py`, `test_orchestrator.py` |
+| The shell path is gated twice, in two processes, with two credentials | Automated | `test_orchestrator.py`, `jarvis-orchestrator/tests/test_api.py` |
+| A command rewritten in flight is refused, not approved | Automated | `test_orchestrator.py` |
+| Holding the API token alone cannot execute anything | Automated | `jarvis-orchestrator/tests/test_api.py::test_bearer_token_alone_cannot_approve` |
+| The persona promises no tool that is not registered | Automated | `test_orchestrator.py::test_the_persona_prompts_tools_all_exist` |
 | Refusals fail closed (`"false"` denies) | Automated | `test_llm.py` |
-| Untrusted content cannot reach a dispatcher without fresh approval | Automated | `test_web_integration.py`, `test_device_control.py` |
+| Fetched content is fenced before the model sees it, and cannot close its own fence | Automated | `test_web_integration.py`, `test_vision.py`, `test_orchestrator.py` |
+| Untrusted content cannot reach a dispatcher without fresh approval | Automated | The fence is wording; the control is the tier. Every source that fences also marks the turn, so a later `control_device` is requested at CONFIRM: `test_web_integration.py::test_a_page_read_earlier_in_the_turn_forces_a_device_action_to_confirm`, `test_vision.py::test_looking_at_a_camera_raises_the_bar_for_the_rest_of_the_turn`, `test_orchestrator.py::test_command_output_raises_the_bar_for_the_rest_of_the_turn`, and `test_device_control.py::test_every_integration_that_fences_content_also_raises_the_tier`, which walks the source tree so a *new* integration cannot fence its output and forget the mark. |
 | A device answer is data, not authorisation | Automated | `test_api_companion.py`, `test_e2e.py` |
 | Excluded entities are unreachable by every tool | Automated | `test_e2e.py`, `test_packaging.py` |
 | **The on-device policy engine enforces this in Kotlin** | **Unproven** | Proven only in the Python mirror. See the android-app row above. |
@@ -256,11 +275,12 @@ audio, never drives a browser, and never touches a phone. Those are below.
 
 ## Known failures, as of 2026-08-09
 
-| Where | What | Notes |
-|---|---|---|
-| `tests/web/e2e.spec.ts:166` — "automations page shows last_triggered, toggles and runs now" | Fails on every run: `getByTestId('automation-automation.night_mode')` is never found. | The mock backend in `tests/web/mock-ha.mjs` appears not to serve the `automation.night_mode` entity the test expects. Owned by `jarvis-web`; not in this document's scope to fix. |
+None. The Playwright failure previously recorded here
+(`tests/web/e2e.spec.ts` — "automations page shows last_triggered, toggles and
+runs now", which could not find `automation.night_mode` in the mock backend)
+now passes; all 20 browser tests are green.
 
-Everything else listed in this document passed on the date given.
+Everything listed in this document passed on the date given.
 
 These counts were taken while other work on the repository was still in flight,
 and the web suite in particular moved during the measurement (a phone-width

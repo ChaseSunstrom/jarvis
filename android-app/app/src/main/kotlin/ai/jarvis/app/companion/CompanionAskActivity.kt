@@ -13,6 +13,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -149,6 +150,7 @@ class CompanionAskActivity : Activity() {
         if (mode == CompanionProtocol.MODE_ASK) {
             val settledAs = CompanionMessageHandler.ledger.statusOf(id)
             if (settledAs != null) {
+                Log.i(TAG, "$id was already reported as $settledAs; nothing left to answer")
                 finish()
                 return
             }
@@ -400,7 +402,10 @@ class CompanionAskActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        val mic = JarvisUi.pill(ctx, "HOLD TO ANSWER") { toggleListening() }.apply {
+        // Tap to start, tap again when you have finished — not press-and-hold.
+        // The label used to say HOLD, which is a control this screen does not
+        // have: holding does nothing and the user gets no transcript.
+        val mic = JarvisUi.pill(ctx, MIC_IDLE_LABEL) { toggleListening() }.apply {
             isEnabled = false
             alpha = 0.4f
             filterTouchesWhenObscured = true
@@ -470,7 +475,7 @@ class CompanionAskActivity : Activity() {
             return
         }
         listening = true
-        micButton?.text = "LISTENING — TAP WHEN DONE"
+        micButton?.text = MIC_LISTENING_LABEL
         orb.setMode(JarvisOrbView.Mode.LISTENING)
         val client = CompanionVoiceClient(config.serverUrl, config.token)
         voice = client
@@ -481,7 +486,7 @@ class CompanionAskActivity : Activity() {
                 orb.setAmplitude(0f)
                 orb.setMode(JarvisOrbView.Mode.THINKING)
                 if (text.isNullOrBlank()) {
-                    micButton?.text = "HOLD TO ANSWER"
+                    micButton?.text = MIC_IDLE_LABEL
                     noteView.text = "I did not catch that. Try again, or type it."
                     noteView.visibility = View.VISIBLE
                 } else {
@@ -586,6 +591,10 @@ class CompanionAskActivity : Activity() {
     }
 
     private companion object {
+        private const val TAG = "JarvisCompanionAsk"
         private const val REQ_MIC = 4711
+
+        private const val MIC_IDLE_LABEL = "TAP TO ANSWER"
+        private const val MIC_LISTENING_LABEL = "LISTENING — TAP WHEN DONE"
     }
 }

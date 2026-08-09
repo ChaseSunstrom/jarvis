@@ -4,23 +4,26 @@
 #
 # WHY THIS EXISTS: GrapheneOS clears the `assistant` and
 # `voice_interaction_service` Secure Settings on every app reinstall or
-# update. After each Obtainium update of the Jarvis companion app, run this
-# script (USB debugging enabled) to make the assist gesture / long-press
-# launch Jarvis again. Signature-protected app data survives updates; the
-# role assignment does not.
+# update. After each Obtainium update of the Jarvis app, run this script (USB
+# debugging enabled) to make the assist gesture / power long-press launch
+# Jarvis again. Signature-protected app data survives updates; the role
+# assignment does not.
 #
-# Jarvis ships inside the degoogled `minimal` flavor, so the installed
-# applicationId is io.homeassistant.companion.android.minimal (a debug build
-# adds a further .debug suffix). The Kotlin CLASSES always live in
-# io.homeassistant.companion.android.jarvis.* regardless of applicationId.
+# The app is `android-app/` — a standalone build, not a Home Assistant fork.
+# Debug and release deliberately share one applicationId (ai.jarvis.app) so
+# the commands below are the same either way.
 #
-# The package is auto-detected from what's actually installed; override with
-# `JARVIS_PKG=<id> scripts/adb-jarvis-role.sh` or pass it as the first arg.
-# (The APK build workflow also prints exact commands for its resolved id.)
+# Override the package with `JARVIS_PKG=<id> scripts/adb-jarvis-role.sh`, or
+# pass it as the first argument.
 #
 set -euo pipefail
 
-CLASS_PKG="io.homeassistant.companion.android.jarvis"
+DEFAULT_PKG="ai.jarvis.app"
+# Component names are relative to the package, and the two do NOT share a
+# sub-package: the activity sits at the root, the service under .assist.
+ASSIST_CLASS=".JarvisAssistActivity"
+VIS_CLASS=".assist.JarvisVoiceInteractionService"
+
 err() { echo "ERROR: $*" >&2; exit 1; }
 
 command -v adb >/dev/null 2>&1 || err "adb not found on PATH. Install Android platform-tools."
@@ -29,24 +32,14 @@ STATE0="$(adb get-state 2>/dev/null || true)"
 [ "$STATE0" = "device" ] || err "No device in 'device' state (adb get-state -> '${STATE0:-none}').
 Check: cable connected, USB debugging enabled, this host authorized ('adb devices')."
 
-# Resolve the installed package: explicit override, else the first candidate
-# that adb reports installed.
-PKG="${JARVIS_PKG:-${1:-}}"
-if [ -z "$PKG" ]; then
-    for cand in \
-        io.homeassistant.companion.android.minimal \
-        io.homeassistant.companion.android.minimal.debug \
-        io.homeassistant.companion.android.jarvis \
-        io.homeassistant.companion.android.jarvis.debug \
-        io.homeassistant.companion.android; do
-        if adb shell pm path "$cand" >/dev/null 2>&1; then PKG="$cand"; break; fi
-    done
-fi
-[ -n "$PKG" ] || err "Could not find an installed Home Assistant/Jarvis package. Install the APK first, or set JARVIS_PKG."
+# Resolve the installed package: explicit override, else the default.
+PKG="${JARVIS_PKG:-${1:-$DEFAULT_PKG}}"
+adb shell pm path "$PKG" >/dev/null 2>&1 || err "Package '$PKG' is not installed.
+Build and install the APK first (see android-app/README.md), or set JARVIS_PKG."
 echo "==> Using package: $PKG"
 
-ASSIST_ACTIVITY="$PKG/$CLASS_PKG.JarvisAssistActivity"
-VIS_SERVICE="$PKG/$CLASS_PKG.JarvisVoiceInteractionService"
+ASSIST_ACTIVITY="$PKG/$PKG$ASSIST_CLASS"
+VIS_SERVICE="$PKG/$PKG$VIS_CLASS"
 
 echo "==> Setting assistant Secure Settings..."
 adb shell settings put secure assistant "$ASSIST_ACTIVITY"

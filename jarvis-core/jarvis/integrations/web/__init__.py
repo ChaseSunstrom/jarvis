@@ -44,6 +44,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from ...api.devices import mark_untrusted_result
+from ...bus import Context
 from ...services import ServiceCall
 from .client import (
     MAX_LIMIT,
@@ -56,6 +58,7 @@ from .client import (
     SearxngClient,
     WebConfig,
     WebError,
+    as_int,
 )
 from .fence import ensure_fenced, fence, is_fenced, sanitize_untrusted
 
@@ -387,6 +390,21 @@ async def ask_human(jarvis: "Jarvis", question: str, timeout: float) -> dict[str
     return result if isinstance(result, dict) else {"status": "unknown"}
 
 
+async def _release(browser: BrowserClient, cfg: WebConfig, request_id: str) -> None:
+    """Tell jarvis-browser a held request was refused.
+
+    Called on every denial. Releasing it now rather than letting it age out
+    means a later stray ``/approve`` — a retry, a duplicated queue entry, a
+    second device answering late — cannot find it still waiting.
+    """
+    if not (cfg.can_approve and request_id):
+        return
+    try:
+        await browser.approve(request_id, False)
+    except (BrowserNotConfigured, BrowserFailed) as exc:
+        _LOGGER.warning("could not record the denial: %s", exc)
+
+
 async def async_browse(
     jarvis: "Jarvis",
     browser: BrowserClient,
@@ -417,6 +435,34 @@ async def async_browse(
 
     # --- the gate ---------------------------------------------------------
     request_id = outcome.request_id
+    if not outcome.steps:
+        # A held batch whose steps did not come back cannot be consented to.
+        # The prompt would read "Steps, exactly as they will run:" followed by
+        # nothing, and a "yes" to that would execute a list the human was
+        # never shown — the one failure this whole path exists to prevent.
+        # An older build, a proxy that trimmed the body, a renamed field: the
+        # cause does not matter, the answer is no.
+        _AUDIT.error(
+            "web.browse DENIED session=%s request_id=%s — the gated response "
+            "carried no steps to show the user",
+            session_id, request_id,
+        )
+        await _release(browser, cfg, request_id)
+        return {
+            "status": "denied",
+            "executed": False,
+            "session_id": session_id,
+            "request_id": request_id,
+            "reasons": outcome.reasons,
+            "steps": [],
+            "companion_status": "not_asked",
+            "message": (
+                "Refused: jarvis-browser held this batch for approval but did "
+                "not say which steps it held, so there is nothing to show the "
+                "user and nothing they could meaningfully approve. Nothing "
+                "ran."
+            ),
+        }
     _AUDIT.warning(
         "web.browse gated session=%s request_id=%s reasons=%s",
         session_id, request_id, outcome.reasons,
@@ -442,13 +488,7 @@ async def async_browse(
                 "retry it and do not try another wording."
             ),
         }
-        if cfg.can_approve and request_id:
-            # Release the held request now rather than leaving it to age out,
-            # so a later stray /approve cannot find it waiting.
-            try:
-                await browser.approve(request_id, False)
-            except (BrowserNotConfigured, BrowserFailed) as exc:
-                _LOGGER.warning("could not record the denial: %s", exc)
+        await _release(browser, cfg, request_id)
         return denial
 
     try:
@@ -489,10 +529,14 @@ def _register_services(
     browser: BrowserClient,
 ) -> None:
     async def handle_search(call: ServiceCall) -> dict[str, Any]:
+        # `as_int`, not `int()`: a model that says limit="a few" would
+        # otherwise raise ValueError out of the service registry, which turns
+        # a typo in one argument into an exception the caller has to handle.
+        # Every other failure in this module comes back as an error dict.
         return await async_search(
             searcher,
             str(call.get("query") or ""),
-            int(call.get("limit") or cfg.default_limit),
+            as_int(call.get("limit"), cfg.default_limit),
         )
 
     async def handle_fetch(call: ServiceCall) -> dict[str, Any]:
@@ -572,32 +616,45 @@ def _register_tools(jarvis: "Jarvis") -> None:
 
     from ...llm.tools import TIER_DIRECT, schema_object  # local: keeps import cheap
 
-    async def _call(service: str, args: dict[str, Any]) -> Any:
-        return await jarvis.services.async_call(
-            DOMAIN, service, args, blocking=True, return_response=True
+    async def _call(service: str, args: dict[str, Any], context: Any = None) -> Any:
+        """Call the service, then mark the turn if it brought back a stranger's words.
+
+        Fencing tells the model the text is data. This is the half that binds:
+        every later ``control_device`` in the same turn is asked for at CONFIRM,
+        so a page that says "now text this number" cannot reach a dispatcher
+        without the user seeing the real action first.
+        """
+        result = await jarvis.services.async_call(
+            DOMAIN,
+            service,
+            args,
+            blocking=True,
+            context=context if isinstance(context, Context) else None,
+            return_response=True,
         )
+        return mark_untrusted_result(jarvis, context, result)
 
     async def tool_search(args: dict[str, Any], context: Any = None) -> Any:
         return await _call("search", {
             "query": args.get("query"),
             "limit": args.get("limit"),
-        })
+        }, context)
 
     async def tool_fetch(args: dict[str, Any], context: Any = None) -> Any:
-        return await _call("fetch", {"url": args.get("url")})
+        return await _call("fetch", {"url": args.get("url")}, context)
 
     async def tool_crawl(args: dict[str, Any], context: Any = None) -> Any:
         return await _call("crawl", {
             "start_url": args.get("start_url"),
             "max_pages": args.get("max_pages"),
             "max_depth": args.get("max_depth"),
-        })
+        }, context)
 
     async def tool_browse(args: dict[str, Any], context: Any = None) -> Any:
         return await _call("browse", {
             "steps": args.get("steps"),
             "session_id": args.get("session_id"),
-        })
+        }, context)
 
     registry.register(
         name="web_search",

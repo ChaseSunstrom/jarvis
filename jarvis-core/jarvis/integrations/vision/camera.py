@@ -39,7 +39,7 @@ import httpx
 
 from ...const import STATE_IDLE
 from ...entity import Entity
-from .consent import DEFAULT_CONSENT, normalise_consent
+from .consent import CONSENT_NEVER, DEFAULT_CONSENT, normalise_consent
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...core import Jarvis
@@ -75,8 +75,9 @@ FFMPEG_ARGS = (
 
 FFMPEG_MISSING = (
     "ffmpeg is not installed, so RTSP cameras cannot produce a frame. Install "
-    "it (`apt install ffmpeg`, or use the jarvis-core image which ships it) "
-    "or give this camera a `still:`/`mjpeg:` snapshot URL instead."
+    "it on the host (`apt install ffmpeg`) or add it to the jarvis-core image "
+    "— the shipped image does not include it. Most cameras also offer an HTTP "
+    "snapshot URL, which is faster: use `platform: still` instead."
 )
 
 
@@ -144,6 +145,16 @@ def iso(ts: float | None) -> str | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
 
 
+#: How many steps :func:`jpeg_dimensions` will take before giving up. A real
+#: JPEG reaches its frame header in a handful — the parser hops segment to
+#: segment by declared length. Malformed bytes are what make it crawl a byte
+#: at a time, and eight megabytes of that is a third of a second of pure
+#: Python with the event loop stopped, chosen by whatever answered the camera
+#: URL. Past this budget the answer is simply "no dimensions", which is what
+#: every caller already handles.
+MAX_MARKER_STEPS = 4096
+
+
 def jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
     """(width, height) from a JPEG's SOF marker, without decoding it.
 
@@ -153,8 +164,11 @@ def jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
     """
     if not data[:2] == JPEG_SOI:
         return None
-    index, end = 2, len(data)
+    index, end, steps = 2, len(data), 0
     while index + 9 < end:
+        steps += 1
+        if steps > MAX_MARKER_STEPS:
+            return None
         if data[index] != 0xFF:
             index += 1
             continue
@@ -178,34 +192,83 @@ def jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
     return None
 
 
-def extract_jpeg(buffer: bytes) -> bytes | None:
-    """The first complete JPEG in a byte buffer, or None if it is incomplete.
+class JpegScanner:
+    """Finds one complete JPEG in a buffer that keeps growing.
 
-    This is how one frame is pulled out of an MJPEG stream. Deliberately not a
+    This is how a frame is pulled out of an MJPEG stream. Deliberately not a
     multipart parser: cameras disagree about boundaries, content-length
     headers and line endings, and every one of them agrees about SOI and EOI.
+
+    It remembers where it got to, and that is the whole point. Re-searching
+    the buffer from the beginning for every chunk that arrives is quadratic:
+    eight megabytes of not-quite-MJPEG delivered in eight-kilobyte pieces cost
+    four and a half seconds of pure event-loop CPU before the frame cap
+    stopped it, and the thing choosing the chunk size is the camera. Carrying
+    a cursor makes the same stream linear. The one-byte overlap covers a
+    marker split across two chunks.
     """
-    start = buffer.find(JPEG_SOI)
-    if start < 0:
-        return None
-    end = buffer.find(JPEG_EOI, start + 2)
-    if end < 0:
-        return None
-    return buffer[start:end + 2]
+
+    __slots__ = ("start", "cursor")
+
+    def __init__(self) -> None:
+        self.start = -1   # where SOI was seen; -1 until it has been
+        self.cursor = 0   # everything before this has been searched
+
+    def feed(self, buffer: bytes | bytearray) -> bytes | None:
+        if self.start < 0:
+            found = buffer.find(JPEG_SOI, self.cursor)
+            if found < 0:
+                self.cursor = max(0, len(buffer) - 1)
+                return None
+            self.start = found
+            self.cursor = found + 2
+        end = buffer.find(JPEG_EOI, self.cursor)
+        if end < 0:
+            self.cursor = max(self.start + 2, len(buffer) - 1)
+            return None
+        return bytes(buffer[self.start:end + 2])
 
 
-def decode_payload(payload: Any) -> bytes:
-    """An MQTT payload as image bytes.
+def extract_jpeg(buffer: bytes) -> bytes | None:
+    """The first complete JPEG in a byte buffer, or None if it is incomplete."""
+    return JpegScanner().feed(buffer)
+
+
+def _max_base64_chars(limit: int) -> int:
+    """How long a base64 string may be to decode to at most ``limit`` bytes."""
+    return (limit + 2) // 3 * 4 + 1024  # slack for a data: prefix and padding
+
+
+def decode_payload(payload: Any, limit: int = DEFAULT_MAX_FRAME_BYTES) -> bytes:
+    """An MQTT payload as image bytes, refused before it is decoded if huge.
 
     The MQTT client decodes payloads as UTF-8 text, so a raw JPEG cannot
     survive the trip — publishers send base64 (optionally as a ``data:`` URI),
     which is what this accepts.
+
+    The length is checked against the frame cap on the *encoded* string. MQTT
+    payloads are untrusted by the security model, and decoding first meant one
+    published message could make Jarvis allocate 64 MiB and spend a second and
+    a half of the event loop on base64 before the cap it violates was even
+    looked at. Anything a publisher sends is now refused at its own size.
     """
     if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload)
+        data = bytes(payload)
+        if limit and len(data) > limit:
+            raise CameraError(
+                f"the MQTT payload is {len(data)} bytes, over the "
+                f"{limit}-byte frame cap"
+            )
+        return data
     text = str(payload or "").strip()
     if not text:
         raise CameraError("the MQTT payload was empty")
+    if limit and len(text) > _max_base64_chars(limit):
+        raise CameraError(
+            f"the MQTT payload is {len(text)} characters, more than a "
+            f"{limit}-byte frame can encode to. Nothing was decoded. Publish "
+            "a snapshot rather than a video segment, or raise max_frame_bytes."
+        )
     if text.startswith("data:"):
         _, _, text = text.partition(",")
     text = re.sub(r"\s+", "", text)
@@ -348,12 +411,20 @@ class FrameStore:
         return frame
 
     def get(self, key: str, max_age: float | None = None) -> Frame | None:
+        """A held frame, if one is young enough to still exist.
+
+        ``max_age`` can only ask for something *fresher* than the TTL, never
+        older: the TTL is the promise about how long a frame is kept, and a
+        caller must not be able to talk the store into keeping one longer by
+        asking nicely. Expiry is enforced on read as well as on write, so a
+        store nobody has written to since is not quietly holding an old frame.
+        """
+        self.purge_expired()
         frame = self._frames.get(key)
         if frame is None:
             return None
-        limit = self.ttl if max_age is None else max_age
+        limit = self.ttl if max_age is None else min(self.ttl, max_age)
         if frame.age() > limit:
-            self._frames.pop(key, None)
             return None
         return frame
 
@@ -406,11 +477,22 @@ class CameraSource:
     async def async_setup(self) -> None:
         if self.config.platform != PLATFORM_MQTT or self.jarvis is None:
             return
+        if self.config.consent == CONSENT_NEVER:
+            # `never` says Jarvis does not look through this camera. Staying
+            # subscribed would keep the most recent thing it saw in memory
+            # anyway, which is the same picture arriving by a different road.
+            _LOGGER.info(
+                "vision: %s is `consent: never`, so %r is not subscribed",
+                self.config.name, self.config.topic,
+            )
+            return
         from ..mqtt import async_subscribe  # local: mqtt is optional
 
         async def _on_message(message: Any) -> None:
             try:
-                data = decode_payload(getattr(message, "payload", ""))
+                data = decode_payload(
+                    getattr(message, "payload", ""), self.config.max_frame_bytes
+                )
             except CameraError as exc:
                 _LOGGER.warning("vision: %s on %s", exc, self.config.topic)
                 return
@@ -431,6 +513,16 @@ class CameraSource:
                 "vision: could not subscribe %s to %s",
                 self.config.name, self.config.topic,
             )
+
+    def forget(self) -> None:
+        """Drop the frame this source is holding, if it is holding one.
+
+        Only ``mqtt`` ever is: the others produce a frame on demand and hand
+        it straight to the store, where the TTL applies. A pushed frame has
+        nowhere else to live, so it sits here until the next publish replaces
+        it — which is exactly why something has to be able to clear it.
+        """
+        self._mqtt_frame = None
 
     async def async_shutdown(self) -> None:
         unsub, self._unsubscribe = self._unsubscribe, None
@@ -477,15 +569,93 @@ class CameraSource:
             raise CameraError(f"{self.config.name} returned an empty response")
         return data
 
-    async def _fetch_still(self) -> Frame:
+    def _too_big(self, seen: int) -> CameraError:
+        return CameraError(
+            f"{self.config.name} sent more than the "
+            f"{self.config.max_frame_bytes}-byte frame cap ({seen} bytes read "
+            "before it was cut off). Point this camera at a snapshot URL "
+            "rather than a video stream, or raise max_frame_bytes."
+        )
+
+    async def _within_deadline(self, coro: Any) -> Frame:
+        """A total deadline on producing one frame.
+
+        httpx's timeouts are per read operation, not per request. A camera
+        that dribbles one byte every nine seconds never trips a ten-second
+        read timeout and takes years to reach the frame cap, so the fetch — and
+        the concurrency slot it is holding — waits effectively forever. The
+        rtsp path has always had a real deadline through ``wait_for``; these
+        are the two that did not, which is what made "there is no code here
+        that can wait forever" not quite true.
+
+        ``timeout`` is documented as "seconds to wait for a frame", and this
+        is the reading of it that matches those words.
+        """
         cfg = self.config
         try:
-            response = await self.client.get(
+            return await asyncio.wait_for(coro, cfg.timeout)
+        except asyncio.TimeoutError as exc:
+            raise CameraError(
+                f"{cfg.name} at {cfg.safe_url} did not deliver a complete "
+                f"frame within {cfg.timeout:g}s."
+            ) from exc
+
+    async def _fetch_still(self) -> Frame:
+        return await self._within_deadline(self._read_still())
+
+    async def _fetch_mjpeg(self) -> Frame:
+        return await self._within_deadline(self._read_mjpeg())
+
+    async def _read_still(self) -> Frame:
+        """One HTTP GET, read as a stream so the cap is a cap.
+
+        ``client.get`` would buffer the whole body first and only then compare
+        it to ``max_frame_bytes``, which makes the cap a report rather than a
+        limit: whatever answers the camera URL decides how much memory Jarvis
+        allocates, and a slow drip never trips the read timeout because bytes
+        keep arriving. Reading it in chunks means the connection is dropped at
+        the cap, with nothing beyond it ever held.
+        """
+        cfg = self.config
+        limit = cfg.max_frame_bytes
+        buffer = bytearray()
+        content_type = ""
+        try:
+            async with self.client.stream(
+                "GET",
                 cfg.url,
                 auth=cfg.httpx_auth(),
                 timeout=httpx.Timeout(cfg.timeout, connect=min(5.0, cfg.timeout)),
                 headers={"Accept": "image/jpeg, image/*;q=0.8"},
-            )
+            ) as response:
+                if response.status_code in (401, 403):
+                    raise CameraError(
+                        f"{cfg.name} rejected the credentials (HTTP "
+                        f"{response.status_code}). Check username/password, and "
+                        f"whether the camera wants `auth: digest`."
+                    )
+                if response.status_code >= 400:
+                    raise CameraError(
+                        f"{cfg.name} returned HTTP {response.status_code} for "
+                        f"{cfg.safe_url}."
+                    )
+
+                content_type = (
+                    str(response.headers.get("content-type", ""))
+                    .split(";")[0].strip().lower()
+                )
+                # Checked before a byte of the body is read: a login page is
+                # not worth downloading to find out it is a login page.
+                if content_type and not content_type.startswith("image/"):
+                    raise CameraError(
+                        f"{cfg.name} answered with {content_type!r}, not an "
+                        "image. That URL is usually a login or status page "
+                        "rather than a snapshot endpoint."
+                    )
+                async for chunk in response.aiter_bytes():
+                    buffer.extend(chunk)
+                    if len(buffer) > limit:
+                        raise self._too_big(len(buffer))
         except httpx.TimeoutException as exc:
             raise CameraError(
                 f"{cfg.name} at {cfg.safe_url} timed out after {cfg.timeout:g}s "
@@ -497,31 +667,14 @@ class CameraSource:
                 f"({type(exc).__name__}: {exc})."
             ) from exc
 
-        if response.status_code in (401, 403):
-            raise CameraError(
-                f"{cfg.name} rejected the credentials (HTTP "
-                f"{response.status_code}). Check username/password, and "
-                f"whether the camera wants `auth: digest`."
-            )
-        if response.status_code >= 400:
-            raise CameraError(
-                f"{cfg.name} returned HTTP {response.status_code} for {cfg.safe_url}."
-            )
-
-        content_type = str(response.headers.get("content-type", "")).split(";")[0].strip().lower()
-        data = self._check_size(bytes(response.content))
-        if content_type and not content_type.startswith("image/"):
-            raise CameraError(
-                f"{cfg.name} answered with {content_type!r}, not an image. "
-                "That URL is usually a login or status page rather than a "
-                "snapshot endpoint."
-            )
+        data = self._check_size(bytes(buffer))
         return Frame(data, camera=cfg.name, content_type=content_type or "image/jpeg")
 
-    async def _fetch_mjpeg(self) -> Frame:
+    async def _read_mjpeg(self) -> Frame:
         """Read the stream only until one whole JPEG has gone past."""
         cfg = self.config
         buffer = bytearray()
+        scanner = JpegScanner()
         try:
             async with self.client.stream(
                 "GET",
@@ -536,7 +689,7 @@ class CameraSource:
                     )
                 async for chunk in response.aiter_bytes():
                     buffer.extend(chunk)
-                    frame = extract_jpeg(bytes(buffer))
+                    frame = scanner.feed(buffer)
                     if frame is not None:
                         return Frame(
                             self._check_size(frame),
@@ -646,6 +799,18 @@ def resolve_snapshot_path(jarvis: "Jarvis", filename: str) -> Path:
     return target
 
 
+def write_snapshot_sync(path: Path, data: bytes) -> str:
+    """Create the directory and write the frame. Blocking — call it in a thread.
+
+    Megabytes to a file the operator named, quite possibly on an SD card. Not
+    long, but long enough to be the wrong thing to do on the event loop, and
+    the codebase already puts its file I/O on :func:`asyncio.to_thread`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return str(path)
+
+
 # ---------------------------------------------------------------------------
 # entity
 # ---------------------------------------------------------------------------
@@ -686,15 +851,13 @@ class CameraEntity(Entity):
         self._attr_available = bool(ok)
         self.async_write_state()
 
-    def note_snapshot(self, at: float) -> None:
-        self.source.last_snapshot_at = at
-
 
 __all__ = [
     "CAMERA_DOMAIN",
     "DEFAULT_FRAME_TTL",
     "DEFAULT_MAX_FRAME_BYTES",
     "FFMPEG_MISSING",
+    "MAX_MARKER_STEPS",
     "PLATFORMS",
     "PLATFORM_MJPEG",
     "PLATFORM_MQTT",
@@ -707,10 +870,12 @@ __all__ = [
     "CameraSource",
     "Frame",
     "FrameStore",
+    "JpegScanner",
     "decode_payload",
     "extract_jpeg",
     "iso",
     "jpeg_dimensions",
     "redact_url",
     "resolve_snapshot_path",
+    "write_snapshot_sync",
 ]

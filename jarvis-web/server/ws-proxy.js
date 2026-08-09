@@ -45,10 +45,68 @@ export function resolveBackend(env = {}) {
 	};
 }
 
+// Hand-copy of the origin guard in src/lib/server/backend.ts — see the comment
+// above resolveBackend. wsProxy.test.ts diffs both copies. The rationale for the
+// check lives with the TypeScript original; the short version is that a socket
+// on this relay is an authenticated admin session, and WebSocket upgrades are
+// exempt from the same-origin policy unless the server checks Origin itself.
+
+/** @param {string} host @param {string} protocol */
+function normalizeHost(host, protocol) {
+	const lower = host.trim().toLowerCase();
+	const dflt = protocol === 'https:' || protocol === 'wss:' ? ':443' : ':80';
+	return lower.endsWith(dflt) ? lower.slice(0, -dflt.length) : lower;
+}
+
+/** @param {string|undefined} raw @returns {string[]} */
+export function parseAllowedOrigins(raw) {
+	return String(raw ?? '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean)
+		.map((s) => {
+			try {
+				const u = new URL(s);
+				return `${u.protocol}//${normalizeHost(u.host, u.protocol)}`;
+			} catch {
+				return '';
+			}
+		})
+		.filter(Boolean);
+}
+
+/**
+ * @param {string|undefined|null} origin
+ * @param {string|undefined|null} host
+ * @param {string[]} [allowed]
+ * @returns {boolean}
+ */
+export function isOriginAllowed(origin, host, allowed = []) {
+	if (origin === undefined || origin === null || origin === '') return true;
+	let originUrl;
+	try {
+		originUrl = new URL(String(origin));
+	} catch {
+		return false;
+	}
+	if (!originUrl.host) return false;
+	const originKey = `${originUrl.protocol}//${normalizeHost(originUrl.host, originUrl.protocol)}`;
+	if (allowed.includes(originKey)) return true;
+	if (host) {
+		if (
+			normalizeHost(originUrl.host, originUrl.protocol) ===
+			normalizeHost(String(host), originUrl.protocol)
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /**
  * @param {import('node:http').Server} httpServer
  * @param {{ haUrl?: string, haToken?: string, url?: string, token?: string, path?: string,
- *           env?: Record<string, string|undefined> }} [opts]
+ *           env?: Record<string, string|undefined>, allowedOrigins?: string[] }} [opts]
  */
 export function attachWsProxy(httpServer, opts = {}) {
 	const path = opts.path ?? '/ws';
@@ -63,8 +121,21 @@ export function attachWsProxy(httpServer, opts = {}) {
 			return;
 		}
 		if (pathname !== path) return; // let other handlers (e.g. vite HMR) deal with it
+
 		// Resolved per connection so a restarted backend / changed env is picked up.
-		const backend = resolveBackend(opts.env ?? process.env);
+		const env = opts.env ?? process.env;
+
+		// Refuse the upgrade outright for a foreign origin. Doing it here rather
+		// than inside handleUpgrade means the hostile page never gets a socket at
+		// all, so there is no window in which frames could be relayed.
+		const allowed = opts.allowedOrigins ?? parseAllowedOrigins(env.JARVIS_ALLOWED_ORIGINS);
+		if (!isOriginAllowed(req.headers?.origin, req.headers?.host, allowed)) {
+			socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+			socket.destroy();
+			return;
+		}
+
+		const backend = resolveBackend(env);
 		wss.handleUpgrade(req, socket, head, (client) => {
 			proxyToBackend(client, {
 				// explicit opts win (used by tests); haUrl/haToken kept for compatibility

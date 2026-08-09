@@ -4,7 +4,7 @@
 # "It keeps crashing" is unfixable without the stack trace — this grabs it.
 #
 # Usage:
-#   scripts/collect-crash-logs.sh                    # auto-detect Jarvis/HA packages
+#   scripts/collect-crash-logs.sh                    # auto-detect the Jarvis app
 #   scripts/collect-crash-logs.sh ai.jarvis.app      # a specific package
 #   OUT=/tmp/report scripts/collect-crash-logs.sh
 #
@@ -13,13 +13,11 @@
 set -uo pipefail
 
 OUT="${OUT:-./jarvis-crash-report-$(date +%Y%m%d-%H%M%S)}"
+# The app is android-app/, applicationId ai.jarvis.app. Debug and release
+# share it deliberately; .debug is kept as a candidate for local variants.
 CANDIDATES=(
     "ai.jarvis.app"
     "ai.jarvis.app.debug"
-    "io.homeassistant.companion.android.minimal"
-    "io.homeassistant.companion.android.minimal.debug"
-    "io.homeassistant.companion.android.jarvis"
-    "io.homeassistant.companion.android"
 )
 
 err() { echo "ERROR: $*" >&2; }
@@ -45,7 +43,7 @@ else
     done
 fi
 if [ ${#PKGS[@]} -eq 0 ]; then
-    err "None of the known Jarvis/HA packages are installed. Pass a package name explicitly."
+    err "The Jarvis app is not installed. Pass a package name explicitly, or see android-app/README.md."
     exit 1
 fi
 

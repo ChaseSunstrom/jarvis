@@ -78,6 +78,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from ...api.devices import mark_untrusted_result
 from ...services import ServiceCall
 from ..web.fence import fence
 
@@ -640,20 +641,39 @@ def _register_tools(jarvis: "Jarvis", client: OrchestratorClient) -> None:
         schema_object,
     )
 
+    def _fenced(context: Any, result: Any) -> Any:
+        """Mark the turn when a delegate, a diff or a shell wrote into it.
+
+        "Another model wrote it" is not a trust boundary, and neither is "our
+        own sandbox printed it": a specialist agent that read a poisoned page,
+        or a command whose stdout an attacker controls, has put somebody else's
+        words in this turn. Every later ``control_device`` in it is then asked
+        for at CONFIRM.
+        """
+        return mark_untrusted_result(jarvis, context, result)
+
     async def tool_delegate(args: dict[str, Any], context: Any = None) -> Any:
-        return await async_delegate(client, args.get("tasks"))
+        return _fenced(context, await async_delegate(client, args.get("tasks")))
 
     async def tool_code_task(args: dict[str, Any], context: Any = None) -> Any:
-        return await async_code_task(client, args.get("repo"), args.get("instruction"))
+        return _fenced(
+            context,
+            await async_code_task(client, args.get("repo"), args.get("instruction")),
+        )
 
     async def tool_code_status(args: dict[str, Any], context: Any = None) -> Any:
-        return await async_code_status(client, args.get("job_id"))
+        return _fenced(context, await async_code_status(client, args.get("job_id")))
 
     async def tool_code_apply(args: dict[str, Any], context: Any = None) -> Any:
-        return await async_code_apply(client, args.get("job_id"), args.get("mode"))
+        return _fenced(
+            context,
+            await async_code_apply(client, args.get("job_id"), args.get("mode")),
+        )
 
     async def tool_execute(args: dict[str, Any], context: Any = None) -> Any:
-        return await async_execute(client, args.get("command"), args.get("why"))
+        return _fenced(
+            context, await async_execute(client, args.get("command"), args.get("why"))
+        )
 
     registry.register(
         name="delegate_to_agents",

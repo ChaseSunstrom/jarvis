@@ -103,6 +103,16 @@ Anything but `answered` triggers escalation to the next device.
   can't invent presence.
 - A device answering a question it was never sent is ignored (unknown
   `message_id` → no-op).
+- **Only a human answers a question.** `mode` is a *presentation* hint; it
+  cannot demote a `kind: ask` into something the device acknowledges on the
+  user's behalf. Every device reports `answered` with an empty string to mean
+  "delivered" — there is no fifth status — so a question rendered as a
+  notification would resolve the waiting `companion.ask` with a reply nobody
+  gave *and* stop the escalation that would have reached them. Three
+  independent places refuse it: `presence.route()` never downgrades the mode of
+  a question, the phone and desktop parsers force `kind: ask` back to
+  `mode: ask`, and the manager treats a blank `answered` to an `ask` as a
+  `dismissed`.
 - Proactive messages are **information and questions only**. They cannot
   execute anything: acting on an answer still goes through the normal
   service/tool path, and Tier-3 actions still require their own consent

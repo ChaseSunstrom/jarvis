@@ -902,7 +902,7 @@ async def test_scene_and_script_tools(tmp_path):
 
 async def test_yaml_tool_manifests_load_from_disk(tmp_path):
     jarvis, _ = await build_house(tmp_path)
-    tools_dir = tmp_path / "jarvis_tools"
+    tools_dir = tmp_path / "tools"
     tools_dir.mkdir()
     (tools_dir / "searxng_search.tool.yaml").write_text(
         "name: web_search\n"

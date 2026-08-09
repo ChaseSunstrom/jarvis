@@ -588,12 +588,24 @@ async def test_voice_round_trip_from_pcm_to_a_light_that_is_really_on(house):
         start_stage="stt", end_stage="tts", timeout=RUN_TIMEOUT
     )
 
+    # Every state that moves while the pipeline runs. The assertion that
+    # "nothing else was swept up by the name match" is only worth making
+    # against this: the other demo lights start *on*, so re-asserting that they
+    # are on afterwards cannot fail no matter how wide the match was.
+    touched: list[str] = []
+    unsubscribe = jarvis.bus.listen(
+        "state_changed", lambda event: touched.append(event.data["entity_id"])
+    )
+
     queue: asyncio.Queue = asyncio.Queue()
     for chunk in loud_pcm():
         queue.put_nowait(chunk)
     queue.put_nowait(None)  # end of audio
 
-    await run.execute(queue)
+    try:
+        await run.execute(queue)
+    finally:
+        unsubscribe()
 
     # --- the pipeline contract the HUD, satellites and phone parse ---------
     assert run.error is None, run.error and run.error.message
@@ -643,9 +655,11 @@ async def test_voice_round_trip_from_pcm_to_a_light_that_is_really_on(house):
     assert light_after.last_changed > light_before.last_changed
     # ...and it was the entity object that changed it, not a bare state write.
     assert jarvis.entity_object(LAB_LIGHT).state == STATE_ON
-    # Nothing else was swept up by the name match.
-    assert jarvis.states.get("light.kitchen_lights").state == STATE_ON  # demo default
-    assert jarvis.states.get("light.ceiling_lights").state == STATE_ON  # demo default
+    # Nothing else was swept up by the name match. "Lab Lights" is one alias on
+    # one entity; a matcher that also grabbed light.kitchen_lights would leave
+    # its fingerprints here, where it cannot hide behind a light that was
+    # already on.
+    assert [eid for eid in touched if eid.startswith("light.")] == [LAB_LIGHT], touched
 
     # --- the spoken audio is real, playable WAV ---------------------------
     token = run.tts_token

@@ -13,7 +13,7 @@ The prompt under test is the one jarvis-core actually ships and loads,
 `jarvis-core/config/prompts/jarvis.txt` (`llm: persona_file:`). Editing the
 persona therefore changes this eval, which is the point.
 
-Gate (matches ACCEPTANCE.md):
+Gate (see ../DEVIATIONS.md §4 for why wit is scored but never gates):
   * every ADVERSARIAL case must pass — a single failure fails the run;
   * >= 80% of tone/route cases must pass;
   * aspirational (wit) cases are reported but never gate.

@@ -1,8 +1,8 @@
-# P6 — Android Auto: what is actually possible
+# Android Auto: what is actually possible
 
 Short version: **a third-party app cannot be the voice assistant on Android
 Auto.** This is an OS/platform constraint, not a bug or a missing feature in
-our fork. Jarvis in the car is therefore a *phone-side* experience that
+the Jarvis app. Jarvis in the car is therefore a *phone-side* experience that
 happens to play through the car's speakers.
 
 ## The hard constraints (honest list)
@@ -17,11 +17,11 @@ happens to play through the car's speakers.
    `MessagingService` patterns), and IoT (`androidx.car.app.category.IOT`).
    There is no assistant category; an app cannot render a conversational
    surface or grab the mic on the head unit.
-3. **HA's existing AA integration is tap-to-control only.** The companion
-   app (full flavor; the jarvis flavor inherits it if the car-app module is
-   in the minimal set, otherwise it can be added) exposes an IoT template
-   list — favorites/entities you tap while parked or in the driving-allowed
-   subset. No voice.
+3. **The most any app gets is tap-to-control.** The Car App Library's IoT
+   template renders a list of entities you tap while parked, or within the
+   driving-allowed subset. That is the ceiling for a head-unit UI, and it
+   has no voice component. Jarvis does not currently ship a car-app module;
+   if it ever does, this is the shape it would take.
 4. **Head-unit mic is Google's.** While AA is connected, the car mic is
    routed to the AA stack for Gemini. Third-party phone apps do not receive
    car-mic audio.
@@ -47,52 +47,29 @@ whoever grabbed focus last. In practice: don't use both assistants at once.
 Design for enabling always-on listening exactly while driving, without
 burning battery the rest of the day:
 
-- **Signal:** the companion app's Bluetooth connection sensor
-  (`sensor.<phone>_bluetooth_connection` with the car's BT MAC/name in its
-  attributes), which the app reports to HA.
-- **HA automation:**
-
-  ```yaml
-  alias: "Jarvis wake gate: car"
-  triggers:
-    - trigger: state
-      entity_id: sensor.pixel_bluetooth_connection
-  actions:
-    - choose:
-        - conditions: "{{ 'CAR_BT_MAC' in state_attr('sensor.pixel_bluetooth_connection','connected_paired_devices') | default([], true) | join(',') }}"
-          sequence:
-            - action: notify.mobile_app_pixel
-              data:
-                message: command_update_sensors   # plus app-side toggle, see below
-      default:
-        - action: notify.mobile_app_pixel
-          data:
-            message: command_update_sensors
-  ```
-
-  The app-side effect is flipping the wake word service on/off. Until the
-  companion exposes a direct "set wake word" notification command, the
-  jarvis flavor's `WakeWordGate` handles it locally: it already returns
-  `shouldListen = true` whenever car BT is connected (any hour), and the
-  gate's `carBtConnected` input comes straight from the phone's own
-  `BluetoothProfile` callbacks — no server round trip needed. The HA
-  automation is then only used for the reverse direction (e.g. announcing
-  or logging), not as the source of truth.
+- **Signal:** the phone's own `BluetoothProfile` connection callbacks. The
+  car's BT MAC/name is the thing being watched.
+- **Where the decision is made: on the phone.** `WakeWordGate` returns
+  `shouldListen = true` whenever car BT is connected, at any hour, and its
+  `carBtConnected` input comes straight from those callbacks. No server round
+  trip, so the gate keeps working when the house is unreachable — which,
+  driving, it often is.
+- The server is told about the state change so automations can react to
+  "driving" (that is what `get_user_context` reads to decide it should speak
+  rather than notify), but it is not the source of truth for the gate.
 - **Disconnect:** BT drop → gate re-evaluates → detection service stops
   within seconds.
 
-## P6 acceptance gate
+## Acceptance gate (needs a real car or the Desktop Head Unit)
 
-1. **DHU (Desktop Head Unit) or real car:** connect AA → Home Assistant
-   appears in the launcher → IoT template list of favorite entities is
-   browsable and tap-to-toggle works. (This is the documented ceiling for
-   the head-unit UI.)
-2. **Hands-free round trip over BT:** with AA connected and the phone
+1. **Hands-free round trip over BT:** with AA connected and the phone
    mounted, say "Hey Jarvis, what's the temperature in the living room" →
    wake word fires on the phone, pipeline runs, **TTS answer plays through
    the car speakers**. Nothing appears on the head unit (expected).
-3. **Gate behavior:** unplug/disconnect BT → wake word service stops
+2. **Gate behavior:** unplug/disconnect BT → wake word service stops
    (verify: mic indicator gone) — reconnect → resumes.
+3. **Routing:** while driving, `get_user_context` reports `driving: true` and
+   Jarvis speaks its answer instead of sending a notification.
 
 Frame in all user-facing docs: the head unit belongs to Google; Jarvis rides
 along on the phone. If Google ever opens an assistant role for AA we revisit,

@@ -46,6 +46,8 @@ KOTLIN_HANDLER = ROOT / "app/src/main/kotlin/ai/jarvis/app/companion/CompanionMe
 KOTLIN_GATE = ROOT / "app/src/main/kotlin/ai/jarvis/app/companion/CompanionAskGate.kt"
 KOTLIN_ACTIVITY = ROOT / "app/src/main/kotlin/ai/jarvis/app/companion/CompanionAskActivity.kt"
 KOTLIN_VOICE = ROOT / "app/src/main/kotlin/ai/jarvis/app/companion/CompanionVoiceClient.kt"
+KOTLIN_NOTIFICATIONS = ROOT / "app/src/main/kotlin/ai/jarvis/app/companion/CompanionNotifications.kt"
+KOTLIN_CHANNEL = ROOT / "app/src/main/kotlin/ai/jarvis/app/channel/JarvisChannel.kt"
 
 
 # --- the throttle, mirrored from PresenceThrottle ---------------------------
@@ -400,11 +402,16 @@ class Device:
         self._reply(parsed["message_id"], STATUS_UNDELIVERABLE)
 
     def _notify(self, parsed: dict) -> None:
-        if self.can_notify:
-            self.notifications.append(parsed["text"])
-            self._reply(parsed["message_id"], STATUS_ANSWERED, "")
-        else:
+        if not self.can_notify:
             self._reply(parsed["message_id"], STATUS_UNDELIVERABLE)
+            return
+        self.notifications.append(parsed["text"])
+        if parsed["mode"] == "ask":
+            # Drawing a notification is DELIVERY, never an answer. Leave it
+            # unsettled so the human can still tap through, and let the
+            # watchdog report `timeout` if they never do.
+            return
+        self._reply(parsed["message_id"], STATUS_ANSWERED, "")
 
     # --- what the UI reports back ----------------------------------------
     def answer(self, message_id: str, text: str) -> None:
@@ -449,6 +456,10 @@ def parse_message(msg: dict) -> dict | None:
     mode = str(msg.get("mode") or "").strip().lower()
     if mode not in MODES:
         mode = KIND_TO_MODE.get(kind, "")
+    if kind == "ask" and mode != "ask":
+        # The server picks the presentation; it does not get to turn a question
+        # into something this phone acknowledges on the user's behalf.
+        mode = "ask"
     importance = str(msg.get("importance") or "").strip().lower()
     if importance not in ("low", "normal", "high", "critical"):
         importance = "normal"
@@ -740,6 +751,125 @@ def test_a_garbled_mode_falls_back_to_the_kind():
     assert parse_message(ask(mode="?", kind="?"))["mode"] == ""
 
 
+# --- a question is never answered by this phone on the user's behalf --------
+#
+# The bug these lock down: `_notify` reports `answered` with an empty string,
+# which is how a device says "delivered" for a plain message — there is no
+# fifth status. A `kind: ask` frame that arrived with `mode: notify` went down
+# that path, so the phone answered a question nobody had read. jarvis-core's
+# routing produced exactly that frame: the critical/nothing-reachable branch of
+# `PresenceRegistry.route` hard-coded mode "notify" whatever the message needed.
+# On the server it resolves the waiting `companion.ask` with an empty reply AND
+# stops the escalation that would have put the question somewhere the user is.
+
+
+def test_a_question_survives_being_routed_as_a_notification():
+    for mode in ("notify", "speak", "teleport", ""):
+        parsed = parse_message(ask(kind="ask", mode=mode))
+        assert parsed["mode"] == "ask", mode
+
+
+def test_a_question_routed_as_a_notification_is_not_auto_answered():
+    device = Device(can_show=False, can_notify=True)
+    device.handle(ask(kind="ask", mode="notify"))
+    assert device.sent == [], "a posted notification is delivery, never an answer"
+    # The human can still tap through and answer it.
+    device.answer("a1b2c3", "no")
+    assert device.sent == [("a1b2c3", STATUS_ANSWERED, "no")]
+
+
+def test_a_question_nobody_answers_still_times_out():
+    device = Device(can_show=False, can_notify=True)
+    device.handle(ask(kind="ask", mode="notify"))
+    device.timeout("a1b2c3")
+    assert device.sent == [("a1b2c3", STATUS_TIMEOUT, None)]
+
+
+def test_a_real_notification_still_reports_delivery():
+    device = Device()
+    device.handle(ask(kind="notify", mode="notify", text="Backup finished."))
+    assert device.sent == [("a1b2c3", STATUS_ANSWERED, "")]
+
+
+def test_kotlin_keeps_a_question_a_question():
+    src = _flat(KOTLIN_PROTOCOL)
+    assert 'if (kind == KIND_ASK && routed != MODE_ASK) MODE_ASK else routed' in src, (
+        "CompanionProtocol.parse must force a kind=ask message to mode=ask"
+    )
+    handler = _flat(KOTLIN_HANDLER)
+    assert "if (message.wantsAnswer)" in handler, (
+        "notifyOrFail must refuse to report `answered` for a question"
+    )
+
+
+def test_kotlin_presentation_is_on_the_main_thread():
+    # JarvisOrbView.setMode starts a ValueAnimator, and notify()/startActivity()
+    # are binder round trips; handle() runs on the socket's reader thread.
+    src = _flat(KOTLIN_HANDLER)
+    assert "onMain { present(app, message) }" in src
+    assert "Looper.myLooper() === Looper.getMainLooper()" in src
+
+
+def test_kotlin_notification_lifetime_is_only_for_questions():
+    src = KOTLIN_NOTIFICATIONS.read_text(encoding="utf-8")
+    body = src.split("if (message.wantsAnswer)", 1)
+    assert len(body) == 2, "expected a wantsAnswer branch in CompanionNotifications"
+    assert "setTimeoutAfter" not in body[0], (
+        "a plain notify must not self-destruct after the server's delivery timeout"
+    )
+    assert "setTimeoutAfter" in body[1]
+
+
+def test_kotlin_activity_refuses_a_settled_question():
+    src = _flat(KOTLIN_ACTIVITY)
+    assert "val settledAs = CompanionMessageHandler.ledger.statusOf(id)" in src
+    assert "if (settledAs != null)" in src, (
+        "a question already reported must not render answerable controls"
+    )
+
+
+def test_kotlin_manifest_declares_the_question_screen():
+    manifest = (ROOT / "app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+    assert ".companion.CompanionAskActivity" in manifest, (
+        "without a manifest entry the question screen can never start"
+    )
+    block = manifest.split(".companion.CompanionAskActivity", 1)[1].split("/>", 1)[0]
+    for required in (
+        'android:exported="false"',
+        'android:showWhenLocked="true"',
+        'android:turnScreenOn="true"',
+    ):
+        assert required in block, required
+    assert "configChanges" in block, (
+        "a recreated activity reports `dismissed` in onDestroy, which would "
+        "escalate a question the user is still reading"
+    )
+
+
+def test_kotlin_channel_routes_and_answers_companion_messages():
+    src = _flat(KOTLIN_CHANNEL)
+    assert "CompanionProtocol.TYPE_MESSAGE ->" in src, (
+        "the channel must route jarvis_message to the companion handler"
+    )
+    assert "CompanionMessageHandler.handle(appContext, msg)" in src
+    assert "CompanionMessageHandler.sender = CompanionMessageHandler.Sender" in src, (
+        "without a sender no result frame can ever reach the server"
+    )
+    assert "presence.start()" in src and "presence.onReconnected()" in src, (
+        "without presence reports the server sees BACKGROUND and never asks"
+    )
+
+
+def test_kotlin_send_frame_is_not_a_general_escape_hatch():
+    src = _flat(KOTLIN_CHANNEL)
+    head = src.split("fun sendFrame(frame: JSONObject): Boolean {", 1)
+    assert len(head) == 2, "expected JarvisChannel.sendFrame"
+    body = head[1].split("override fun sendEvent", 1)[0]
+    assert 'frame.optString("type") != CompanionProtocol.TYPE_RESULT' in body, (
+        "sendFrame must refuse anything that is not a jarvis_message_result"
+    )
+
+
 # --- parsing clamps ---------------------------------------------------------
 
 
@@ -890,6 +1020,30 @@ def test_kotlin_presence_payload_uses_the_servers_field_names():
     ):
         assert f'"{key}"' in src, f"the presence payload lost {key}"
     assert 'const val EVENT_PRESENCE = "presence"' in src
+
+
+def test_kotlin_presence_only_reports_on_a_live_socket():
+    """Presence is a snapshot, not a log.
+
+    `JarvisChannel.sendEvent` answers true when it merely QUEUES a frame for
+    later, so an offline phone would record every heartbeat as sent and fill
+    the bounded offline queue with hour-old snapshots — evicting the trigger
+    events that queue exists for. Sampling is four binder calls, so the gate
+    also has to come before `sample()`, not after it.
+    """
+    src = _flat(KOTLIN_PRESENCE)
+    assert "private fun pollIfReportable()" in src
+    assert "return if (ok) poll() else null" in src, (
+        "the gate must be checked before sample(), which is the expensive half"
+    )
+    assert "handler?.post(tick)" not in src.replace("h.post(tick)", ""), (
+        "every wake-up must go through the gate"
+    )
+    assert "reportable() && emit(EVENT_PRESENCE" in src, (
+        "the socket can die between the gate and the send"
+    )
+    channel = _flat(KOTLIN_CHANNEL)
+    assert "reportable = { isRegistered }" in channel
 
 
 def test_kotlin_presence_never_reports_a_dropped_frame_as_sent():

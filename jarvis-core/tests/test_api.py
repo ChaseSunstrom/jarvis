@@ -1220,6 +1220,47 @@ async def test_create_token_flag_mints_and_exits(tmp_path, monkeypatch, capsys):
     assert info is not None and info.name == "phone"
 
 
+async def test_create_token_does_not_need_a_server_to_be_installed(
+    tmp_path, monkeypatch, capsys
+):
+    """The flag is a config-directory operation, so it must not import uvicorn.
+
+    ``--create-token`` is what you run on a box that is about to serve, or on
+    one recovering from a bad install. The comment in ``__main__`` has always
+    claimed the server import is deferred for exactly this; this pins it, by
+    making the import fail and checking the flag still works.
+    """
+    import builtins
+    import logging
+
+    from jarvis.__main__ import async_run, parse_args
+
+    monkeypatch.delenv(ENV_TOKEN, raising=False)
+    (tmp_path / "configuration.yaml").write_text("jarvis:\n  name: Test\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "uvicorn", raising=False)
+
+    real_import = builtins.__import__
+
+    def _no_uvicorn(name, *args, **kwargs):
+        if name == "uvicorn" or name.startswith("uvicorn."):
+            raise ImportError("uvicorn is not installed on this box")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_uvicorn)
+
+    root = logging.getLogger()
+    before = root.level
+    try:
+        code = await async_run(
+            parse_args(["-c", str(tmp_path), "--create-token", "recovery"])
+        )
+    finally:
+        root.setLevel(before)
+
+    assert code == 0
+    assert capsys.readouterr().out.strip(), "no token was printed"
+
+
 def test_ws_frames_never_interleave(client, token):
     """Events fired mid-command keep their order relative to command results."""
     with client.websocket_connect("/api/websocket") as ws:

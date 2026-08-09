@@ -80,6 +80,7 @@ from .devices import (
     TYPE_DEVICE_RESULT,
     TYPE_MESSAGE_RESULT,
     TYPE_REGISTER,
+    answer_is_addressed_to,
     get_devices,
     get_presence,
     presence_signals,
@@ -125,6 +126,24 @@ _STOP = object()
 #: Queued in place of a frame that was not JSON, so the error is still reported
 #: in the order it arrived rather than jumping the commands ahead of it.
 _BAD_JSON = object()
+
+
+def _reject_constant(name: str) -> Any:
+    """``json.loads`` hook that refuses ``NaN``/``Infinity``.
+
+    Python's decoder accepts those three literals even though JSON has no such
+    values, and everything downstream assumes it does not: ``int(nan)`` raises
+    inside the presence filter (taking the whole frame with it), and a
+    non-finite float that reaches the bus is re-emitted by ``json.dumps`` as a
+    bare ``NaN`` — which every strict parser on the other end, the browser HUD
+    included, rejects mid-stream. Refusing at the door keeps one device from
+    corrupting another client's socket.
+    """
+    raise ValueError(f"{name} is not valid JSON")
+
+
+def _loads(raw: Any) -> Any:
+    return json.loads(raw, parse_constant=_reject_constant)
 
 
 def _run_kwargs(msg: dict[str, Any]) -> dict[str, Any]:
@@ -320,7 +339,7 @@ class WebSocketHandler:
             if raw is None:  # binary before auth: ignore, keep waiting
                 continue
             try:
-                msg = json.loads(raw)
+                msg = _loads(raw)
             except (TypeError, ValueError):
                 msg = None
             if not isinstance(msg, dict) or msg.get("type") != TYPE_AUTH:
@@ -373,7 +392,7 @@ class WebSocketHandler:
             if raw is None:
                 continue
             try:
-                msg = json.loads(raw)
+                msg = _loads(raw)
             except (TypeError, ValueError):
                 self._work.put_nowait(_BAD_JSON)
                 continue
@@ -683,10 +702,21 @@ class WebSocketHandler:
         self.send(payload)
         return True
 
+    def _still_holds_device(self) -> bool:
+        """True while this socket is the connection registered for its device.
+
+        A socket that has been superseded — the phone dropped and came back on
+        a new one — keeps its ``device_id`` until teardown finishes. Anything
+        it says in that window is about a device it no longer speaks for.
+        """
+        if self.device_id is None:
+            return False
+        return get_devices(self.jarvis).owned(self.device_id, self) is not None
+
     def _push_device_event(self, msg: dict[str, Any]) -> None:
         """A device reporting something about itself. Never a command."""
-        if self.device_id is None:
-            _LOGGER.debug("Ignoring a device_event from an unregistered socket")
+        if not self._still_holds_device():
+            _LOGGER.debug("Ignoring a device_event from an unregistered or stale socket")
             return
         event = str(msg.get("event") or "").strip()[:64]
         data = msg.get("data")
@@ -713,10 +743,16 @@ class WebSocketHandler:
         )
 
     def _push_device_result(self, msg: dict[str, Any]) -> None:
-        """The answer to one ``device_command`` this device was sent."""
+        """The answer to one ``device_command`` this device was sent.
+
+        ``owner=self`` is the point: only the socket that currently holds the
+        device may report an outcome for it. A superseded connection answering
+        "ok" for a Tier-3 command would tell the model the action ran while the
+        real device is still showing its confirmation prompt.
+        """
         if self.device_id is None:
             return
-        if not get_devices(self.jarvis).on_result(self.device_id, msg):
+        if not get_devices(self.jarvis).on_result(self.device_id, msg, owner=self):
             _LOGGER.debug(
                 "Ignoring a device_result for an unknown command from %s", self.device_id
             )
@@ -724,16 +760,32 @@ class WebSocketHandler:
     def _push_message_result(self, msg: dict[str, Any]) -> None:
         """``jarvis_message_result`` — the answer to a proactive question.
 
-        An answer is *data*. It resolves a waiting ``companion.ask`` and nothing
-        else; there is no path from here to a service call, so "yes" can never
-        be an authorisation token.
+        The answer resolves a waiting ``companion.ask`` and nothing else; there
+        is no path from here to a service call, so "yes" cannot be spent as a
+        capability. It is still a *decision made by a human*, though —
+        ``companion.ask`` is how a camera asks for consent and how a web action
+        gets approved — so it is only taken from the device the question was
+        actually put on. The message id is no help to an eavesdropper here:
+        ``companion_message_sent`` publishes it to every event subscriber, so
+        without this check any socket that subscribes to events could answer a
+        consent prompt the user never saw.
         """
+        if not self._still_holds_device():
+            _LOGGER.debug("Ignoring a message answer from an unregistered or stale socket")
+            return
         manager = self.jarvis.data.get(DATA_COMPANION)
         handler = getattr(manager, "on_device_answer", None)
         if not callable(handler):
             return
         message_id = str(msg.get("message_id") or "").strip()[:MAX_ID]
         if not message_id:
+            return
+        if not answer_is_addressed_to(manager, message_id, self.device_id):
+            _LOGGER.warning(
+                "%s answered %s, which was never put on it; dropping the answer",
+                self.device_id,
+                message_id,
+            )
             return
         answer = msg.get("answer")
         if answer is not None and not isinstance(answer, str):

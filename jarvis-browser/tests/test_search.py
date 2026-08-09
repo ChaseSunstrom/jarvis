@@ -405,3 +405,38 @@ def test_nothing_here_knows_about_a_cloud_engine():
         "api.search.brave.com", "serpapi", "googleapis",
     ):
         assert host not in lowered, f"search.py references {host}"
+
+
+# ===========================================================================
+# regressions found in the adversarial pass
+# ===========================================================================
+def test_engine_and_category_lists_survive_non_strings():
+    """`_csv` filtered on `str(part)` and then called `.strip()` on the original.
+
+    Anything that is not already a string — a tuple of ints out of a config
+    loader, a value YAML parsed as a number — raised AttributeError inside
+    `__init__`, which is startup rather than search time and therefore a
+    service that does not come up at all.
+    """
+    searcher = SearxngSearcher(BASE, categories=[1, "news", " ", None], engines=(2, "brave"))
+    assert searcher.categories == "1,news"
+    assert searcher.engines == "2,brave"
+
+    params = searcher.params("q")
+    assert params["categories"] == "1,news"
+    assert params["engines"] == "2,brave"
+
+
+def test_case_sensitive_paths_are_not_collapsed():
+    """Host and scheme are case-insensitive; the path is not, on most servers.
+
+    `/Downloads` and `/downloads` are frequently different pages, and merging
+    them silently drops the one that was not first.
+    """
+    payload = results(
+        row("https://a.example/Downloads"),
+        row("https://a.example/downloads"),
+    )
+    assert [r.url for r in parse_searxng(payload, 10)] == [
+        "https://a.example/Downloads", "https://a.example/downloads",
+    ]

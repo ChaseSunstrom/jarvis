@@ -30,15 +30,12 @@ LLM tools: ``remember``, ``recall``, ``forget``.
 
 Prompt injection
 ----------------
-The store lands at ``jarvis.data["memory"]``. The LLM agent injects a compact
-block by calling :meth:`MemoryStore.get_context_block`; one line in
-``jarvis/llm/agent.py``'s ``system_prompt()`` does it::
-
-    memory = self.jarvis.data.get("memory")
-    if memory is not None and (block := memory.get_context_block()):
-        parts.append(block)
-
-Nothing here reaches into the agent's files.
+The store lands at ``jarvis.data["memory"]``. The agent reads it from there —
+:meth:`ConversationAgent.remembered_notes` in ``jarvis/llm/agent.py`` calls
+:meth:`MemoryStore.get_context_block` and appends the result to the system
+prompt. The coupling is one dict key in one direction: nothing here imports
+the agent, and the agent duck-types the store, so memory being absent is not
+an error, it is just an empty string.
 
 Privacy
 -------
@@ -53,6 +50,13 @@ Privacy
 * Obvious secrets (API keys, bearer tokens, ``password: ...``, card numbers,
   private keys) are redacted before anything is written, and an entry that is
   nothing *but* a secret is rejected outright.
+* A note is **one line**. :func:`one_line` collapses newlines and control
+  characters on the way in, on the way off disk, and again at render time,
+  because :meth:`MemoryStore.get_context_block` renders notes into the *system
+  prompt* as ``- <text>`` bullets. A note allowed to contain a newline could
+  close the bullet list and forge a prompt section of its own — and unlike a
+  poisoned web page, which is gone at the end of the turn, a note is in every
+  future prompt. The bullet is data; it must not be able to become structure.
 """
 
 from __future__ import annotations
@@ -180,6 +184,24 @@ def looks_fenced(text: str) -> bool:
     return any(marker in lowered for marker in _FENCE_MARKERS)
 
 
+#: Anything that is not printable-and-inline. Newlines, tabs, carriage returns,
+#: the C0/C1 control range, and the Unicode line/paragraph separators — every
+#: character that could end a bullet and start a line the user never wrote.
+_NOT_INLINE = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]+")
+
+
+def one_line(text: str) -> str:
+    """Flatten a note to a single line of ordinary spaces.
+
+    Notes are rendered into the system prompt as ``- <text>``. If a note can
+    contain a newline it can close that list and write its own prompt section,
+    which — because memory is durable — would then be present in *every* future
+    turn. Collapsing here means the worst a note can do is say something odd on
+    one bullet.
+    """
+    return " ".join(_NOT_INLINE.sub(" ", str(text or "")).split())
+
+
 # ---------------------------------------------------------------------------
 # text matching
 # ---------------------------------------------------------------------------
@@ -258,7 +280,10 @@ class MemoryEntry:
     def from_dict(cls, data: Any) -> "MemoryEntry | None":
         if not isinstance(data, dict):
             return None
-        text = str(data.get("text") or "").strip()
+        # Flattened on the way *off* disk too: the file is documented as
+        # hand-editable, so a multi-line note can arrive without ever passing
+        # through async_add().
+        text = one_line(data.get("text"))
         if not text:
             return None
         try:
@@ -377,7 +402,11 @@ class MemoryStore:
                 "reason": "refused: that looks like a credential; secrets are not stored.",
                 "redacted": removed,
             }
-        cleaned = cleaned[:MAX_TEXT_CHARS]
+        # After redaction (the private-key pattern spans lines), before the
+        # length cap (so the cap counts what is actually stored).
+        cleaned = one_line(cleaned)[:MAX_TEXT_CHARS]
+        if not cleaned:
+            return {"stored": False, "reason": "nothing to remember (text was empty)"}
 
         expires_at = _expiry(ttl, expires)
         entry = MemoryEntry(
@@ -475,9 +504,18 @@ class MemoryStore:
 
     # --- reading ----------------------------------------------------------
     def _score(self, query: str, tags: list[str] | None) -> list[tuple[float, MemoryEntry]]:
-        """Relevance-ranked entries. Recency only breaks ties."""
+        """Relevance-ranked entries. Recency only breaks ties.
+
+        The three cases are deliberately distinct, because ``async_forget``
+        deletes what this matches. "No query at all" is a browse and scores
+        everything; "a query that matched nothing" must score *nothing*.
+        A query of pure punctuation used to fall into the first case, so
+        ``memory.forget(query="???", all=true)`` emptied the store.
+        """
         wanted_tags = set(tags or [])
-        query_tokens = tokens(query)
+        text = str(query or "").strip()
+        query_tokens = tokens(text) if text else set()
+        lowered = text.lower()
         now = time.time()
         scored: list[tuple[float, MemoryEntry]] = []
         for entry in self.entries:
@@ -486,14 +524,15 @@ class MemoryStore:
             if wanted_tags and not wanted_tags & set(entry.tags):
                 continue
             score = 0.0
-            if query_tokens:
+            if text:
                 entry_tokens = tokens(entry.text) | set(entry.tags)
                 overlap = query_tokens & entry_tokens
                 if overlap:
                     score = len(overlap) / len(query_tokens)
-                if query.strip().lower() in entry.text.lower():
+                if lowered in entry.text.lower():
                     score = max(score, 0.9)
-                if not overlap and score == 0.0:
+                # A query was asked for and this entry did not answer it.
+                if score == 0.0:
                     continue
             elif wanted_tags:
                 score = 1.0
@@ -550,7 +589,10 @@ class MemoryStore:
         used = len(header)
         for entry in candidates:
             suffix = f"  [{', '.join(entry.tags)}]" if entry.tags else ""
-            line = f"- {entry.text}{suffix}"
+            # Flattened again at render time. This is the line that actually
+            # matters: everything above can be bypassed by editing the JSON,
+            # and this block goes into the system prompt.
+            line = f"- {one_line(entry.text)}{suffix}"
             if used + len(line) + 1 > budget:
                 break
             lines.append(line)
@@ -738,10 +780,25 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         }
 
     async def tool_forget(args: dict[str, Any], context: Any = None) -> Any:
+        # `forget_all` is deliberately never passed on, for the same reason
+        # `remember` never passes `allow_untrusted`: it is not the model's to
+        # grant. With no id and no query it means "delete everything", which is
+        # one hallucinated tool call away from destroying the lot — and unlike
+        # a wrong light, nothing puts memory back.
+        entry_id = args.get("id")
+        query = args.get("query") or args.get("text")
+        if not entry_id and not query:
+            return {
+                "forgotten": [],
+                "count": 0,
+                "reason": (
+                    "say which note to forget — an id from recall, or what it "
+                    "was about. Clearing everything is `memory.forget` with "
+                    "all: true, which only the user can run."
+                ),
+            }
         return await memory.async_forget(
-            entry_id=args.get("id"),
-            query=args.get("query") or args.get("text"),
-            forget_all=bool(args.get("all")),
+            entry_id=entry_id, query=query, forget_all=False
         )
 
     registry.register(
@@ -787,8 +844,11 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
     registry.register(
         name="forget",
         description=(
-            "Delete a remembered note when the user says to forget it. Pass the "
-            "id from recall when you have one."
+            "Delete ONE remembered note when the user says to forget it. Pass "
+            "the id from recall when you have one. If more than one note "
+            "matches you get the candidates back — ask which, do not guess. "
+            "You cannot clear the whole store; if that is what they want, tell "
+            "them to run memory.forget with all: true themselves."
         ),
         parameters=schema_object(
             {

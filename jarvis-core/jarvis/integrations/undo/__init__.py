@@ -34,6 +34,25 @@ Services
     ``undo.clear``            → forget the history
 
 LLM tool: ``undo_last_action``.
+
+The services and the tool are not the same thing
+------------------------------------------------
+The *services* are the trusted path: the API (authenticated), automations, the
+user's own console. They see the whole house.
+
+The *tool* is the model's path, and it carries two extra restrictions the
+services do not, because "put it back" is still a way to move the house:
+
+* **Exposure.** Undo is the only tool that acts on entities it was not asked
+  to name, so it is the one place an unexposed entity could be actuated — and
+  named — by the model. If the action being reversed touched anything the user
+  has not exposed, the whole reversal is refused rather than half-applied, and
+  nothing about those entities is described back.
+* **Untrusted turns.** A turn that has already read a web page, a screen, a
+  notification or an MQTT payload cannot undo. ``control_device`` raises such a
+  turn to CONFIRM; undo cannot do that honestly — "the last action" is resolved
+  at approval time, so what a human approved need not be what runs — so it
+  refuses and tells the user to say it themselves.
 """
 
 from __future__ import annotations
@@ -643,10 +662,59 @@ def _register_tools(jarvis: "Jarvis", recorder: UndoRecorder) -> None:
         _LOGGER.debug("undo: no LLM tool registry; services registered without tools")
         return
 
+    from ...api.devices import turn_is_untrusted
     from ...llm.tools import schema_object
 
+    def _hidden_from_model(entry: UndoEntry) -> list[str]:
+        """Entities in this entry the user has not exposed to the assistant."""
+        exposure = getattr(registry, "exposure", None)
+        if exposure is None:
+            return []
+        hidden = []
+        for entity_id in entry.previous:
+            try:
+                visible = exposure.is_exposed(jarvis, entity_id)
+            except Exception:  # pragma: no cover - fail closed
+                _LOGGER.exception("undo: exposure check for %s failed", entity_id)
+                visible = False
+            if not visible:
+                hidden.append(entity_id)
+        return hidden
+
     async def tool_undo(args: dict[str, Any], context: Any = None) -> Any:
-        return await recorder.async_undo(args.get("entry_id"))
+        if turn_is_untrusted(jarvis, context):
+            return {
+                "status": "refused",
+                "reason": "this turn has read content the user did not write",
+                "message": (
+                    "I won't reverse anything on this turn, Sir — I have been "
+                    "reading something you did not write. Tell me what to put "
+                    "back and I will."
+                ),
+            }
+
+        entry_id = args.get("entry_id")
+        # Resolve the target once, here, so the exposure check below and the
+        # reversal below it are talking about the same action.
+        if entry_id:
+            entry = recorder.get(str(entry_id))
+        else:
+            candidates = recorder.recent(limit=1)
+            entry = candidates[0] if candidates else None
+
+        if entry is not None and _hidden_from_model(entry):
+            # Deliberately vague: naming them would leak exactly what exposure
+            # exists to hide. Fail closed rather than reversing the rest.
+            return {
+                "status": "refused",
+                "reason": "that action touched something you are not exposed to",
+                "message": (
+                    "I can't reverse that one, Sir — it involved something "
+                    "outside what you have given me access to."
+                ),
+            }
+
+        return await recorder.async_undo(entry.id if entry is not None else entry_id)
 
     registry.register(
         name="undo_last_action",

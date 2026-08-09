@@ -56,9 +56,21 @@ week:
 * **Names, never entity ids.** Forty dead sensors read as
   "40 things are unavailable: Shed Sensor, Porch Sensor, Loft Sensor and 37
   more", not forty lines of `sensor.*`.
-* **Length is capped.** When the whole thing would run past `max_chars`,
-  whole sections are dropped from the end — never a sentence cut in half —
-  and the ones dropped are named in `dropped_sections`.
+* **Length is capped.** When the whole thing would run past `max_chars`, a
+  section that does not fit is dropped whole — never a sentence cut in half.
+  Later, shorter sections still get in, so one rambling calendar does not cost
+  you "the front door is unlocked". What was dropped is named in
+  `dropped_sections`, and said out loud too if there is room for the trailer.
+
+### What the model gets is narrower than what you get
+
+`briefing.generate` / `briefing.deliver` and the scheduled briefing read the
+**whole house** — it is your house and the digest is going to your own device.
+
+The `get_briefing` **tool** is built through the same `Exposure` filter as
+every other tool, so an entity you have not exposed is not in it. A digest
+never has to name a target, which would otherwise make it a comfortable way to
+read out the names and states of exactly the things you hid.
 
 ### Delivery
 
@@ -178,6 +190,23 @@ writes directly — carry the context and match exactly.
 LLM tool: **`undo_last_action`** (`entry_id`). The description tells the model
 that a refusal is final and must be relayed, not routed around.
 
+### The tool is not the service
+
+The services are the trusted path — the authenticated API, automations, your
+own console — and they see everything. The tool carries two restrictions they
+do not, because undo is the only tool that acts on a target nobody named:
+
+* **Exposure.** If the action being reversed touched anything you have not
+  exposed, the whole reversal is refused. Not half-applied, and the refusal
+  does not say which entity it was — naming it would leak the thing exposure
+  exists to hide. Undo working backwards from *what moved* is otherwise a way
+  around the check every other tool goes through when it resolves a target.
+* **Untrusted turns.** A turn that has already read a web page, screen text, a
+  notification or an MQTT payload cannot undo at all. `control_device` handles
+  this by raising to CONFIRM; undo cannot do that honestly, because "the last
+  action" is resolved when the reversal runs, so what a human approved need
+  not be what executes. It refuses and asks you to say it yourself.
+
 ---
 
 ## trace
@@ -271,14 +300,26 @@ read, edit or delete without going through Jarvis at all.
 ### Getting it into the prompt
 
 The store registers itself at `jarvis.data["memory"]`. The agent builds its own
-system prompt, so it asks for a block:
+system prompt, so it asks for a block —
+`ConversationAgent.remembered_notes()` in `jarvis/llm/agent.py`:
 
 ```python
-# jarvis/llm/agent.py, in ConversationAgent.system_prompt()
-memory = self.jarvis.data.get("memory")
-if memory is not None and (block := memory.get_context_block()):
-    parts.append(block)
+def remembered_notes(self) -> str:
+    store = self.jarvis.data.get("memory")
+    block = getattr(store, "get_context_block", None)
+    if not callable(block):
+        return ""
+    try:
+        return str(block() or "")
+    except Exception:
+        _LOGGER.exception("Could not read remembered notes")
+        return ""
 ```
+
+The coupling is one dict key in one direction. Memory does not import the
+agent; the agent duck-types the store, so "no memory integration" is an empty
+string rather than an error, and a broken note store costs you the notes, not
+the turn.
 
 `get_context_block(limit=None, query=None, max_entries=None)` returns a
 compact block, or `""` when there is nothing — so it can be appended
@@ -314,6 +355,25 @@ never instructions)", which keeps the injected text framed as data.
 Redaction is deliberately blunt. A false positive costs one note; a false
 negative writes a credential to disk in cleartext.
 
+### A note is one line, and that is a security property
+
+`get_context_block()` renders notes into the **system prompt** as `- <text>`
+bullets. A note that could contain a newline could close that list and write a
+prompt section of its own — and unlike a poisoned page, which is gone at the
+end of the turn, a note is in *every* future prompt. So newlines, tabs, the
+C0/C1 control range and the Unicode line separators are collapsed to single
+spaces on the way in, on the way off disk, and again at render time. The last
+one is the load-bearing pass: `memory.json` is documented as hand-editable, so
+a note can reach the renderer without ever passing through `memory.add`.
+
+### Forgetting matches, or it does nothing
+
+`memory.forget(query=…)` deletes what it matches, so a query that matches
+nothing deletes nothing. A query with no searchable words in it — pure
+punctuation, say — is a failed match, not a wildcard. (It used to share a code
+path with "no query at all", which scores every note equally, so
+`forget(query="???", all=true)` emptied the store.)
+
 ### Services and tools
 
 | Service | Response | Fields |
@@ -331,6 +391,19 @@ preference is not a gated action.
 
 Forgetting by description refuses to guess: if more than one note matches, it
 returns the candidates and asks for an id rather than deleting the wrong one.
+
+Two flags exist on the services and deliberately **not** on the tools, for the
+same reason: they are not the model's to grant. A model can emit any key
+whether or not it is in the schema, so both are dropped in the tool handler
+rather than merely left undocumented.
+
+| flag | service | tool |
+|---|---|---|
+| `allow_untrusted` — store text that came from a page/screen/notification | yes | never |
+| `all` — delete every match, or (with no id/query) the whole store | yes | never |
+
+`forget` from a model deletes one named note or nothing. Clearing the store is
+`memory.forget` with `all: true`, which is the user's call to make.
 
 ---
 

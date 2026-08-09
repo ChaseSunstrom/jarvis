@@ -234,6 +234,33 @@ def test_secrets_example_exists_and_parses() -> None:
     assert isinstance(loaded, dict) and loaded
 
 
+def test_runtime_state_written_into_config_is_ignored_by_git() -> None:
+    """The shipped `config/` is a real config directory, and that is the trap.
+
+    Point the server — or just `--create-token` — at it and it writes
+    `.storage/auth.json` (token hashes), `jarvis.db` (which knows when the
+    house is empty) and, the moment anyone follows the setup steps,
+    `secrets.yaml`. All three land *inside a tracked directory*, so the only
+    thing between them and a commit is .gitignore.
+    """
+    ignore = (ROOT.parent / ".gitignore").read_text(encoding="utf-8")
+    patterns = {
+        line.strip()
+        for line in ignore.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    for needed in (".storage/", "secrets.yaml", "*.db"):
+        assert needed in patterns, f".gitignore does not cover {needed}"
+
+    # And the trap is real: these are the paths the code actually writes.
+    from jarvis.integrations.recorder import DEFAULT_DB_FILE
+    from jarvis.store import Store
+
+    assert Store(CONFIG, "auth").path == CONFIG / ".storage" / "auth.json"
+    assert DEFAULT_DB_FILE == "jarvis.db"
+    assert (CONFIG / "secrets.yaml.example").is_file()
+
+
 def test_packages_are_merged_into_the_top_level(config_copy: Path) -> None:
     config = load_config(config_copy)
     assert "packages" not in config, "packages: should be folded away by the loader"
@@ -1119,6 +1146,57 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "searxng",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
+
+
+def test_compose_passes_jarvis_core_every_env_var_its_config_reads(
+    compose: dict[str, Any],
+) -> None:
+    """`!env_var` in configuration.yaml only works if the variable gets in.
+
+    This is the failure that has no symptom. `config/configuration.yaml` reads
+    JARVIS_BROWSER_TOKEN and BROWSER_APPROVAL_SECRET with `!env_var`; the
+    operator puts both in `.env`; compose hands them to `jarvis-browser`, the
+    container comes up healthy — and `jarvis-core`, which never received
+    them, answers "the jarvis-browser service is not configured" to every
+    fetch, crawl and browse for the rest of its life. Nothing logs an error,
+    because from Jarvis's side nothing went wrong: the variable simply was
+    not there.
+
+    So: every name the shipped config resolves from the environment must
+    appear in the jarvis-core service's `environment:` list.
+    """
+    text = CONFIG.joinpath("configuration.yaml").read_text(encoding="utf-8")
+    wanted = {
+        match.group(1)
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")          # the tag's own doc line
+        for match in [re.search(r"!env_var\s+([A-Z][A-Z0-9_]*)", line)]
+        if match
+    }
+    assert wanted, "no !env_var in configuration.yaml — did this test go stale?"
+
+    passed = {
+        str(entry).split("=", 1)[0]
+        for entry in compose["services"]["jarvis-core"].get("environment") or []
+    }
+    missing = sorted(wanted - passed)
+    assert not missing, (
+        f"configuration.yaml reads {missing} from the environment, but "
+        "docker-compose.yml never passes them into jarvis-core"
+    )
+
+
+def test_compose_searxng_healthcheck_follows_the_configured_port(
+    compose: dict[str, Any],
+) -> None:
+    """Move SEARXNG_PORT and the probe has to move with it.
+
+    Otherwise the container serves happily on the new port and reports itself
+    unhealthy for ever, which `restart: unless-stopped` turns into a boot loop
+    that looks like a broken image.
+    """
+    test = " ".join(compose["services"]["searxng"]["healthcheck"]["test"])
+    assert "${SEARXNG_PORT" in test, f"healthcheck pins a port: {test}"
 
 
 def test_compose_keeps_searxng_behind_the_search_profile(compose: dict[str, Any]) -> None:

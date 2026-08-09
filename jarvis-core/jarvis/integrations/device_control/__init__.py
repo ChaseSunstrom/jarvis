@@ -34,12 +34,36 @@ is ask for something *stricter* than the device would have required, and it
 does exactly that in one case:
 
 **Untrusted content raises the bar for the rest of the turn.** Screen text, a
-clipboard read, a page body — anything an action labelled ``untrusted_output``
-returned, or that came back marked ``_untrusted`` — is content somebody other
-than the user wrote, sitting in the model's context. Once that has happened,
-every further ``control_device`` call in that same turn is requested at CONFIRM,
-so the user sees the real action and the real parameters before anything runs.
-It only ever raises, so a miss is never worse than the device's own default.
+clipboard read — anything an action labelled ``untrusted_output`` returned, or
+that came back marked ``_untrusted`` — is content somebody other than the user
+wrote, sitting in the model's context. Once that has happened, every further
+``control_device`` call in that same turn is requested at CONFIRM, so the user
+sees the real action and the real parameters before anything runs. It only ever
+raises, so a miss is never worse than the device's own default.
+
+The mark lives in :class:`jarvis.api.devices.UntrustedTurns`, keyed on the
+``Context`` the agent builds once per turn and hands to every tool — so it is
+*shared*, not private to this module. Any integration that returns fenced
+content raises the bar for the rest of the turn by calling
+:func:`jarvis.api.devices.mark_untrusted_result` on what it is about to hand
+back. Four do, and between them they cover every fenced source in the tree:
+
+* ``web`` — ``web_search``, ``web_fetch``, ``web_crawl``, ``web_browse``
+* ``vision`` — ``look_at_camera``, ``describe_camera_change``
+* ``orchestrator`` — delegated prose, generated diffs, command stdout/stderr
+* this module — anything an action declared ``untrusted_output``, or that came
+  back flagged ``_untrusted``
+
+Two limits worth knowing, because neither is obvious from the outside:
+
+* **Only sources that mark themselves count.** The list above is the whole of
+  it. A new integration that fences text but forgets the mark leaves a gap the
+  fence itself will not close — wording is not the control, the tier is. There
+  is a test in ``tests/test_device_control.py`` that walks the registered tools
+  and fails when a fenced result does not raise the bar.
+* **The mark is per turn.** It is keyed on ``Context.id``, so it does not
+  survive into the next turn even though the text stays in conversation
+  memory.
 
 **A refusal is final.** A ``denied`` result comes back to the model as a
 refusal carrying ``retryable: false`` and an explicit instruction not to send it
@@ -51,7 +75,7 @@ reads.
 from __future__ import annotations
 
 import logging
-import time
+import math
 from typing import TYPE_CHECKING, Any
 
 from ...api.devices import (
@@ -67,6 +91,7 @@ from ...api.devices import (
     DeviceAction,
     DeviceLink,
     get_devices,
+    get_untrusted_turns,
     parse_tier,
 )
 from ...bus import Context
@@ -95,6 +120,12 @@ DEVICE_MATCH_FLOOR = 0.6
 ASK_MIN_TIMEOUT = 5.0
 ASK_MAX_TIMEOUT = 300.0
 
+#: Bounds on how long one dispatch may hold a caller. ``device_control.run``
+#: takes a timeout from a YAML automation, and an unclamped one parks a future
+#: (and whatever service call is awaiting it) for as long as the number says.
+MIN_DISPATCH_TIMEOUT = 1.0
+MAX_DISPATCH_TIMEOUT = 900.0
+
 MAX_DESCRIPTION_CHARS = 6000
 
 
@@ -115,11 +146,6 @@ def _similarity(query: str, candidate: str) -> float:
     return similarity(query, candidate)
 
 
-def _context_key(context: Any) -> str | None:
-    key = getattr(context, "id", None)
-    return str(key) if key else None
-
-
 class DeviceControl:
     """Resolve a device, resolve an action, dispatch, report honestly."""
 
@@ -130,9 +156,21 @@ class DeviceControl:
         taint_ttl: float = DEFAULT_TAINT_TTL,
     ) -> None:
         self.jarvis = jarvis
-        self.timeout = timeout
-        self.taint_ttl = taint_ttl
-        self._tainted: dict[str, float] = {}
+        self.timeout = _clamp_timeout(timeout, DEFAULT_COMMAND_TIMEOUT)
+        #: Shared with the rest of the server rather than private to this
+        #: object, so any integration that returns fenced content can raise the
+        #: bar for the rest of the turn with one call.
+        self._turns = get_untrusted_turns(jarvis, taint_ttl)
+        self._turns.ttl = taint_ttl
+
+    @property
+    def taint_ttl(self) -> float:
+        """How long a turn stays marked. Lives on the shared store."""
+        return self._turns.ttl
+
+    @taint_ttl.setter
+    def taint_ttl(self, value: float) -> None:
+        self._turns.ttl = value
 
     # --- the live picture -------------------------------------------------
     @property
@@ -208,24 +246,10 @@ class DeviceControl:
 
     # --- untrusted content ------------------------------------------------
     def note_untrusted(self, context: Any) -> None:
-        key = _context_key(context)
-        if key is None:
-            return
-        now = time.time()
-        self._tainted = {k: v for k, v in self._tainted.items() if v > now}
-        self._tainted[key] = now + self.taint_ttl
+        self._turns.mark(context)
 
     def is_tainted(self, context: Any) -> bool:
-        key = _context_key(context)
-        if key is None:
-            return False
-        expiry = self._tainted.get(key)
-        if expiry is None:
-            return False
-        if expiry <= time.time():
-            self._tainted.pop(key, None)
-            return False
-        return True
+        return self._turns.is_tainted(context)
 
     # --- dispatch ---------------------------------------------------------
     async def run(
@@ -294,10 +318,7 @@ class DeviceControl:
             requested = max(requested, TIER_CONFIRM)
             escalated = requested != entry.tier
 
-        try:
-            wait = float(timeout) if timeout else self.timeout
-        except (TypeError, ValueError):
-            wait = self.timeout
+        wait = _clamp_timeout(timeout, self.timeout) if timeout else self.timeout
 
         outcome = await link.dispatch(
             entry.id,
@@ -457,6 +478,17 @@ class DeviceControl:
         }
 
 
+def _clamp_timeout(value: Any, fallback: float) -> float:
+    """A dispatch timeout that is a real, bounded number of seconds."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(seconds) or seconds <= 0:
+        return fallback
+    return max(MIN_DISPATCH_TIMEOUT, min(MAX_DISPATCH_TIMEOUT, seconds))
+
+
 def _requested_tier(value: Any) -> int:
     """A caller's tier as a number that can only ever win a ``max``."""
     return parse_tier(value) or 0
@@ -494,10 +526,12 @@ def _refusal(
 # ===========================================================================
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     options = _as_dict(config)
+    # A typo in configuration.yaml must not stop the integration loading; the
+    # documented default is a better outcome than no device channel at all.
     manager = DeviceControl(
         jarvis,
-        timeout=float(options.get("timeout") or DEFAULT_COMMAND_TIMEOUT),
-        taint_ttl=float(options.get("taint_ttl") or DEFAULT_TAINT_TTL),
+        timeout=_clamp_timeout(options.get("timeout"), DEFAULT_COMMAND_TIMEOUT),
+        taint_ttl=_clamp_timeout(options.get("taint_ttl"), DEFAULT_TAINT_TTL),
     )
     jarvis.data[DOMAIN] = manager
 

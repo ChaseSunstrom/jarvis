@@ -1,94 +1,123 @@
 # Deviations & constraints
 
-The Completion Contract asks that genuine impossibilities be documented with
-their sanctioned fallback, and that anything not yet verified on real
-hardware be called out honestly. This file is that record.
+Where this build knowingly differs from what was planned, where a thing is
+genuinely impossible and what is done instead, and what was never run here.
 
-## 1. Hardware-gated tests are not executed in this build environment
+For the per-capability claims register — what is proven, by which command —
+see [`docs/verification.md`](docs/verification.md). This file is for the
+judgement calls behind it.
 
-This repository was built in a cloud container with **no GPU, no Home
-Assistant instance, no Ollama, no GrapheneOS Pixel, and no Android Auto head
-unit / DHU**, and no Docker daemon. Everything that can be verified without
-those was verified and is green (`make test`: 64 offline tests, plus the HUD's
-16 unit tests + Node smoke + Playwright fake-mic run, all passing). Everything
-that needs the missing hardware is **written, wired, and documented** with an
-exact run procedure, but is marked `NEEDS-HARDWARE` / `NEEDS-MODEL` in
-`ACCEPTANCE.md` and has **not** been run here.
+## 1. Hardware-gated tests were not executed in this environment
 
-This is a deviation from "DO NOT DECLARE COMPLETION until every Phase-9
-acceptance test passes ON REAL HARDWARE." It is not possible to satisfy that
-clause from inside a container without the hardware. What is delivered:
+This repository was built in a cloud container with **no GPU, no Ollama, no
+GrapheneOS Pixel, no Android Auto head unit or DHU**, and no Docker daemon.
 
-* the full implementation of every phase,
-* every test the contract names, runnable by the operator on their hardware
-  via the documented commands,
-* all hardware-independent gates passing now.
+Everything verifiable without those is verified and green. Everything that
+needs the missing hardware is written, wired and documented with an exact run
+procedure, and is marked **Manual** or **Unproven** in
+`docs/verification.md`. It has not been run here, and no row claims otherwise.
 
-**To finish the contract**, the operator runs, on their kit:
-`make smoke` (P0), `make test-web` (P1/P2 on the server), `make eval-persona
-BACKEND=ha` and the background round-trip (P3), the wake-word false-accept
-test (P4), the `docs/android.md` device procedure (P5), the
-`docs/android-auto.md` procedure (P6), the MCP live check (P7),
-`make eval-decomp` + `make egress-audit` (P8), and `make test-e2e` (P9).
+To close the remaining gaps on your own kit:
 
-## 2. Android Auto in-car voice — genuine OS impossibility (documented + fallback)
+```bash
+make smoke              # boots a throwaway jarvis-core against your services
+make pipeline-smoke     # full stt->tts audio round trip through Wyoming
+make test-web           # HUD build + unit + Playwright
+make eval-persona BACKEND=jarvis
+make eval-decomp        # ship/no-ship for tier-3 delegation
+make egress-audit       # sandbox isolation, against the running stack
+```
 
-A custom assistant **cannot** be the Android Auto voice button. Only Google
-Assistant/Gemini can, and Google removed Assistant from AA in March 2026,
-leaving Gemini only. There is no "voice assistant" Car App category for third
-parties, and HA's AA integration is a tap-to-control IoT list with no voice
-entry.
+Then the device procedures in `docs/android.md` and `docs/android-auto.md`.
 
-**Sanctioned fallback (the only viable hands-free path), implemented:**
-phone-side "Hey Jarvis" runs in parallel while AA is connected — mic is the
-phone's, TTS is routed out the car's Bluetooth, never rendered on the head
-unit. Gated by the car-BT wake policy (`WakeWordGate.kt` + an HA car-BT
-automation). Full write-up and P6 gate in `docs/android-auto.md`.
+## 2. Android Auto in-car voice — a genuine OS impossibility
 
-## 3. Tier-3 multi-agent quality at 8B is aspirational (ship gate provided)
+A third-party app **cannot** be the Android Auto voice button. Only Google's
+assistant can, and Google removed Assistant from AA in March 2026 leaving
+Gemini only. There is no "voice assistant" Car App category for third
+parties, and the head-unit mic is routed to the AA stack while connected.
 
-`delegate_to_agents` fan-out and `code_task` are the weakest links on an 8B
-planner, as the plan itself flags. Rather than assert quality we can't verify
-here, the ship decision is a deterministic gate:
-`evals/decomposition_eval.py` (5 three-part requests, keyword-coverage
-scoring, ≥60% to ship Tier-3). **Run it on your model.** If it fails:
+**The fallback, implemented:** phone-side "Hey Jarvis" runs in parallel while
+AA is connected — the mic is the phone's, TTS routes out over the car's
+Bluetooth link, nothing renders on the head unit. The car-BT wake policy
+(`WakeWordGate`) turns detection on for the drive and off afterwards. Full
+write-up in [`docs/android-auto.md`](docs/android-auto.md).
 
-* keep the orchestrator running (it's still used by `run_background_task`
-  reporting and by `code_task`),
-* do **not** expose `script.jarvis_delegate_to_agents` to the agent (remove
-  it from the expose list),
-* Tiers 1 and 2 ship regardless and are fully reliable.
+## 3. Tier-3 multi-agent quality at 8B is aspirational
 
-Coder quality (`code_task`) similarly scales with the model; `CODER_MODEL`
-defaults to `qwen2.5-coder:7b` and can be raised to `:14b`/`:32b` on a GPU.
+`delegate_to_agents` and `code_task` are the weakest links on an 8B planner.
+Rather than assert quality that cannot be verified here, the ship decision is
+a deterministic gate: `evals/decomposition_eval.py` (5 three-part requests,
+keyword-coverage scoring, ≥60% to ship tier 3). **Run it on your model.**
+
+If it fails:
+
+* leave the orchestrator running — `code_task` and the command broker are
+  independent of decomposition quality;
+* drop `delegate_to_agents` from what the model can see, by excluding it in
+  the `llm: expose:` block;
+* tiers 1 and 2 ship regardless and are reliable.
+
+Coder quality scales with the model: `CODER_MODEL` defaults to
+`qwen2.5-coder:7b` and can be raised to `:14b`/`:32b` on a GPU.
 
 ## 4. Persona wit is aspirational; tone is not
 
-Per the plan, 8B gives reliable Sir/ma'am tone but not screenwriter-sharp
-wit. The persona eval separates these: tone/routing cases gate (≥80% + all
-10 adversarial cases must pass), the 5 wit cases are scored and reported but
-never gate. A LoRA or larger model later improves wit; never train on
+8B gives reliable Sir/ma'am tone but not screenwriter-sharp wit. The persona
+eval separates these: tone and routing cases gate (≥80%, and all 10
+adversarial cases must pass), the 5 wit cases are scored and reported but
+never gate. A LoRA or a larger model improves wit later; never train on
 copyrighted scripts.
 
-## 5. Secrets cannot be spliced into strings (generator normalises + warns)
+## 5. Credentials cannot be spliced into a `*.tool.yaml` manifest
 
-HA's `!secret` must be an entire value. A manifest like `Authorization:
-"Token !secret x"` is normalised to a full-value secret and the generator
-warns that the secret itself must contain the full `Token ...` string. See
-`jarvis_tools/README.md`.
+Manifests in `config/tools/` are read with a plain YAML parser, so `!secret`
+and `!env_var` do not work there — a half-resolved credential in a URL is a
+worse failure than an honest one. A tool that needs a credential belongs in
+the inline `llm: tools:` block in `configuration.yaml`, which is loaded with
+the full config loader. This is documented at the point of use, in
+`jarvis-core/config/tools/example.tool.yaml`.
 
-## 6. OpenCode binary may be absent at build time
+## 6. OpenCode may be absent from the orchestrator image
 
-If `opencode` fails to install in the orchestrator image (network policy,
-version pin), `code_task` returns a clear "opencode binary not installed"
-error rather than pretending. Alternatives (Aider, Continue) drop in by
-replacing `build_command` in `app/opencode.py`.
+If `opencode` fails to install (network policy, version pin), `code_task`
+returns a clear "opencode binary not installed" error rather than pretending
+to work. Alternatives (Aider, Continue) drop in by replacing `build_command`
+in `jarvis-orchestrator/app/opencode.py`.
 
-## Licensing notes (carried from the plan, not deviations)
+Likewise, if `apt-get` was unreachable during `docker compose build`, the
+Dockerfiles treat the package step as best-effort and log a `WARN`. The
+orchestrator API and the sandbox work regardless; `code_task` needs `git` and
+will not.
 
-* Piper archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL change).
-* openWakeWord code Apache-2.0; official models CC BY-NC-SA 4.0, English-only
-  (personal use OK). Custom wake words: train your own, don't redistribute
-  the NC models. See `docs/wake-word-training.md`.
-* microWakeWord on Android is experimental (HA 2026.3), battery-heavy
-  (third-party apps get no low-power DSP path) — hence the wake gate.
+## 7. The orchestrator and sandbox are opt-in, and start disabled
+
+They are commented out in `jarvis-core/docker-compose.yml` and their
+credentials default to empty. jarvis-core registers `delegate_to_agents`,
+`code_task` and `execute_command` regardless, so the model is told the truth
+about its toolbox, and they return "not configured" until you set
+`ORCHESTRATOR_TOKEN` and `APPROVAL_SECRET` and start the services.
+
+Those two values must **differ**. If they match, holding the API token is
+enough to execute a command, which defeats the entire two-secret design;
+jarvis-core logs an error at startup when it sees them equal, but it cannot
+refuse on your behalf.
+
+## 8. What the on-device Kotlin policy engine proves, and where
+
+The Android policy engine, geofence, schedule maths and screen pruning are
+mirrored by pure-Python executable specs in `android-app/tools/`, which CI
+runs. The Kotlin itself is **not compiled** in this environment — there is no
+Android SDK here. So "the tier system is enforced on the device" is proven in
+the mirror and unproven in the shipped binary. `docs/verification.md` says so
+in the row where it matters.
+
+## Licensing notes
+
+* Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).
+* openWakeWord code is Apache-2.0; the official models are CC BY-NC-SA 4.0
+  and English-only (personal use fine). Train your own custom wake words and
+  do not redistribute the NC models. See
+  [`docs/wake-word-training.md`](docs/wake-word-training.md).
+* microWakeWord on Android is experimental and battery-heavy — third-party
+  apps get no low-power DSP path, which is why the wake gate exists.

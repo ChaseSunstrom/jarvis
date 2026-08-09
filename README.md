@@ -1,83 +1,153 @@
 # Jarvis
 
-A fully self-hosted, private, cinematic AI assistant that rides **on top of**
-an existing Home Assistant + Ollama + Wyoming + SearXNG stack — it doesn't
-replace it. Nothing goes to the cloud at runtime. A browser HUD, a
-GrapheneOS phone app, and an in-car wake path all speak to HA's Assist
-pipeline; HA stays the single tool-execution hub with an 8B local model
-wearing a dry-witted British-butler persona.
+A fully self-hosted, private, cinematic AI assistant. It runs the house, holds
+a conversation, and does it entirely on hardware you own — STT, TTS, wake
+word, geocoding, search and the model are all containers on the same machine.
+Nothing goes to the cloud at runtime.
 
-End-user experience, by design: **one `docker compose up -d`** for the
-server, **one Obtainium APK** for the phone.
+`jarvis-core` is the hub: automation engine, entity registry, voice pipeline
+and a local 8B model wearing a dry-witted British-butler persona. Everything
+else is a client or a service it calls.
 
 ```
-Browser HUD ─┐
-Phone app    ─┼─► HA assist_pipeline/run ─► Ollama qwen3:8b (persona + tools)
-Car wake     ─┘         ├─ existing scripts/automations
-                        ├─ get_user_context · run_background_task
-                        ├─ delegate_to_agents ─► orchestrator ─► OpenCode
-                        └─ execute_command    ─► sandbox (network: none, approval-gated)
+Browser HUD (SvelteKit) ─┐
+Android app (Kotlin)     ─┼─► jarvis-core ─► Ollama qwen3:8b (persona + tools)
+Desktop agent (Python)   ─┘        │
+                                   ├─► entities, automations, scenes, scripts
+                                   ├─► get_user_context · run_background_task
+                                   ├─► web_search / web_fetch ─► SearXNG, jarvis-browser
+                                   ├─► delegate_to_agents ─► jarvis-orchestrator
+                                   └─► execute_command    ─► jarvis-sandbox (network: none)
+                            Wyoming: whisper 10300 · Piper 10200 · openWakeWord 10400
 ```
 
-See `docs/architecture.md` for the full picture and why HA-as-hub is
-load-bearing.
+Jarvis used to be a layer on top of Home Assistant. It is not any more —
+`jarvis-core` replaced it, and the HA-era pieces have been removed. If you are
+looking for something that used to be here, [`docs/removed.md`](docs/removed.md)
+says where it went.
 
-## Layout
+## The components
 
-| dir | what |
-|---|---|
-| `jarvis-web/` | SvelteKit HUD — WebGL orb, mic capture, streaming, barge-in; HA token stays server-side |
-| `android/` | overlay for a home-assistant/android fork: `jarvis` flavor, ASSIST activity, wake gate |
-| `jarvis_tools/` | `generate_config.py` — custom tools from <10-line `*.tool.yaml` |
-| `ha-config/` | HA packages: persona prompt, context/routing, Tier-3 tools + approval gate, retention |
-| `jarvis-orchestrator/` | FastAPI: agent fan-out, OpenCode coding, approval-gated command broker |
-| `jarvis-sandbox/` | network-less execution jail |
-| `evals/` | routing table, 30-prompt persona eval (10 adversarial), decomposition ship/no-ship gate |
-| `scripts/` | firewall, egress audit, P0 pipeline smoke, adb role |
-| `docs/` | architecture, security, acceptance, android, android-auto, wake-word training |
+| dir | what | tests |
+|---|---|---|
+| [`jarvis-core/`](jarvis-core/) | the assistant: state machine, event bus, service registry, automations, MQTT discovery, voice pipeline, LLM agent, tool registry, approval gate | 932 |
+| [`jarvis-desktop/`](jarvis-desktop/) | desktop agent for Linux/macOS/Windows; device-side policy enforcement | 722 |
+| [`jarvis-browser/`](jarvis-browser/) | fetching, crawling and gated browser automation | 326 |
+| [`jarvis-web/`](jarvis-web/) | SvelteKit HUD — WebGL orb, mic capture, streaming, barge-in; the token stays server-side | 194 + 20 e2e |
+| [`android-app/`](android-app/) | standalone Android app (`ai.jarvis.app`): ASSIST role, lock-screen activation, wake word | executable specs in `tools/` |
+| [`jarvis-orchestrator/`](jarvis-orchestrator/) | FastAPI: agent fan-out, OpenCode coding jobs, the approval-gated command broker | 17 |
+| [`jarvis-sandbox/`](jarvis-sandbox/) | network-less execution jail | 6 |
+| [`evals/`](evals/) | routing table and its mirrors, persona eval, decomposition ship/no-ship gate | 17 |
+| [`scripts/`](scripts/) | firewall, egress audit, e2e smoke, audio pipeline smoke, adb assistant role | — |
+| [`tests/web/`](tests/web/) | mock backend + Playwright e2e the HUD runs against | — |
 
-## Quick start (server)
+## Quick start
+
+Two compose stacks. `jarvis-core` is the assistant and comes first; the root
+stack adds the HUD and, optionally, the orchestrator and sandbox.
 
 ```bash
-cp .env.example .env            # fill HA_TOKEN, ORCHESTRATOR_TOKEN, APPROVAL_SECRET
-python3 jarvis_tools/generate_config.py --secrets /config/secrets.yaml
-# copy ha-config/packages/jarvis + generated/jarvis_tools.yaml into /config,
-# paste the persona prompt into your Ollama agent, create the "Jarvis"
-# pipeline — see ha-config/README.md
-docker compose up -d --build
+# 1. the assistant
+cd jarvis-core
+cp config/secrets.yaml.example config/secrets.yaml
+docker compose up -d
+docker compose logs -f jarvis-core     # the first-run token is printed here
 ```
 
-Then the HUD is at `http://<server>:8199` (over WireGuard/LAN). Phone build:
-`docs/android.md`.
+Copy that token — it is stored as a SHA-256 digest and never shown again.
 
-### Build troubleshooting
+```bash
+# 2. the HUD (and friends)
+cd ..
+cp .env.example .env                   # put the token in JARVIS_TOKEN
+docker compose up -d
+```
 
-**`apt-get`/`apk` "Connection timed out" during `docker compose build`** — this
-is a network problem on the build host, not the code. apt defaults to plain
-HTTP (port 80); many networks block outbound port 80. The Dockerfiles now
-switch apt to HTTPS and treat the package step as best-effort, so the images
-build even when the mirrors are unreachable — but `code_task` needs `git`, so
-if apt was skipped you'll see a `WARN:` in the build log and code tasks won't
-work until outbound HTTPS to the Debian/Alpine mirrors is available. If your
-Docker daemon needs a proxy, configure it in `~/.docker/config.json` (build
-args) or the daemon's `http-proxy`/`https-proxy` service settings and rebuild.
-The core orchestrator API and the sandbox work regardless.
+The HUD is then at `http://<server>:8199` and jarvis-core's own API at
+`:8080`, both over WireGuard/LAN only. For the phone, see
+[`android-app/README.md`](android-app/README.md).
+
+`ORCHESTRATOR_TOKEN` and `APPROVAL_SECRET` must be **different values** if you
+enable the orchestrator — that split is what stops the API token alone from
+being able to run a command.
 
 ## Tests
 
+Every suite runs offline: no network, no hardware, no camera, no model.
+
 ```bash
-make test          # offline suite — 64 python tests + HUD 16 unit + smoke + Playwright
-make help          # all targets
+make test                  # every python suite + the routing eval
+make test-core             # just jarvis-core (the big one)
+make test-web              # HUD build + unit + smoke + Playwright
+make help                  # everything else
 ```
 
-What's green now, what needs your hardware, and every tool mapped to a test:
-**`ACCEPTANCE.md`**. Honest constraints (Android Auto voice, 8B Tier-3
-limits) and what wasn't run in this build environment: **`DEVIATIONS.md`**.
+Against real hardware, once it exists:
+
+```bash
+make smoke                 # boots a throwaway jarvis-core, drives its real APIs
+make pipeline-smoke        # full stt->tts audio round trip through Wyoming
+make egress-audit          # proves the sandbox really has no network
+```
+
+What is proven by which test, and what is still unproven, is in
+[`docs/verification.md`](docs/verification.md).
 
 ## Security
 
-Untrusted web/camera text sits next to unlock/SMS/shell/code-exec, so the
-model is kept out of the loop for anything dangerous: tiered tools, human
-approval gates enforced **outside** the model (plain HA YAML + orchestrator
-HTTP, verified by adversarial tests), a network-less sandbox, LAN/WireGuard
-only, nightly purge. Full model: `docs/security.md`.
+Untrusted web pages, camera frames, MQTT payloads and screen text sit next to
+unlock, messaging, shell and code-exec. So the model is kept out of the loop
+for anything dangerous:
+
+- **Tiered actions**, with the tier decided in code and never by the model. A
+  server may only ever *raise* a tier, never lower one.
+- **Human approval enforced outside the model** for tier 3, and for the shell
+  path enforced twice — once in `jarvis-core`, once in the orchestrator, with
+  different credentials in different processes.
+- **What was approved is what runs**: fuzzy targets are resolved to concrete
+  entity ids before a human is shown the prompt, and commands are stored
+  verbatim.
+- **Everything from outside is fenced** as data before the model sees it, and
+  cannot close its own fence.
+- **A network-less sandbox**, LAN/WireGuard only, nightly purge.
+
+The full model is [`docs/security.md`](docs/security.md).
+
+## Honest limits
+
+- **The head unit belongs to Google.** A third-party app cannot be the voice
+  assistant on Android Auto — no API, no role, no category. Jarvis in the car
+  is a phone-side experience playing through the car speakers.
+  [`docs/android-auto.md`](docs/android-auto.md).
+- **Wake word costs battery on the phone.** The low-power DSP hotword path is
+  reserved for the OEM assistant, so on-device detection is a foreground
+  service holding the mic. The app gates *when* it listens instead.
+- **Multi-agent delegation and coding jobs are aspirational at 8B.** They
+  work; whether the decomposition is any good depends on your model.
+  `make eval-decomp` is the ship/no-ship gate, and failing it is a reason to
+  stay on tier 2.
+- **No dashboards.** There is no Lovelace, no config UI, no add-on store. If
+  your house needs Z-Wave JS, HomeKit, Matter or cloud-tied devices, Home
+  Assistant is still the better tool and can run alongside.
+  [`docs/standalone.md`](docs/standalone.md).
+- **GrapheneOS clears the assistant role on every app update.** Re-run
+  `scripts/adb-jarvis-role.sh` afterwards. This is OS hardening, not a bug,
+  and no app can work around it.
+
+## Docs
+
+| | |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | how the pieces fit, the client protocol, how to add a tool |
+| [`docs/security.md`](docs/security.md) | threat model, tiers, isolation, egress |
+| [`docs/standalone.md`](docs/standalone.md) | why the clients never noticed HA leaving |
+| [`docs/verification.md`](docs/verification.md) | what is proven, what is not |
+| [`docs/removed.md`](docs/removed.md) | what was deleted and why |
+| [`docs/android.md`](docs/android.md) | the phone, and where its docs live |
+| [`docs/grapheneos.md`](docs/grapheneos.md) | why the old fork crashed, what replaced it |
+| [`docs/cross-device.md`](docs/cross-device.md) | one conversation across phone, desktop and HUD |
+| [`docs/wake-word-training.md`](docs/wake-word-training.md) | training `hey_jarvis` |
+| [`jarvis-core/docs/`](jarvis-core/docs/) | configuration, integrations, voice, search, clients, migrating from HA |
+
+`DEVIATIONS.md` records where this build knowingly differs from the original
+plan, and what was not run in this environment.

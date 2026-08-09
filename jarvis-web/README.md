@@ -47,10 +47,36 @@ against Home Assistant.
 | `JARVIS_TTS_VOICE` | `en_GB-alan-medium` | Exposed to the client via `/api/config` (voice is configured in the pipeline itself) |
 | `PORT` | `8199` | HTTP listen port |
 | `ORIGIN` | (assumes https) | Set to the public origin (e.g. `http://localhost:8199`) so adapter-node builds correct absolute URLs / cookie flags |
+| `JARVIS_ALLOWED_ORIGINS` | — | Extra origins allowed to open `/ws`, comma-separated (e.g. `https://hud.example`). Same-origin is always allowed; see below |
 
 A url **and** a token must resolve or the `/ws` relay closes with
 `server missing JARVIS_URL/JARVIS_TOKEN` (or the `HA_*` names when
 `JARVIS_BACKEND=ha`).
+
+### Who may open `/ws`
+
+A socket on `/ws` is an **authenticated admin session** — the server attaches
+the backend token to it, so whoever holds one can read every state and every
+event and call any service, `lock.unlock` included.
+
+WebSocket upgrades are not covered by the same-origin policy: there is no
+preflight, and `Origin` is advisory unless the server checks it. So the relay
+checks it (`isOriginAllowed()` in `src/lib/server/backend.ts`, hand-copied into
+`server/ws-proxy.js`) and answers **403 before the socket exists**:
+
+* same-origin — allowed, comparing host:port, so a TLS terminator in front does
+  not break it;
+* an origin in `JARVIS_ALLOWED_ORIGINS` — allowed;
+* **no** `Origin` header — allowed. Every browser sends one on a WS handshake,
+  so its absence means a script or native client, which a hostile page cannot
+  arrange;
+* anything else, including `Origin: null` from a sandboxed frame — refused.
+
+Without this, any page the user happens to open — an ad frame, a blog — could
+open `ws://jarvis.local:8199/ws` and drive the house, with no token and no
+prompt. Set `JARVIS_ALLOWED_ORIGINS` to the exact origin you serve the HUD on
+if you want to pin it harder than "whatever `Host` says" (that default still
+matches a DNS-rebinding attacker, who controls both headers).
 
 ## Pages
 

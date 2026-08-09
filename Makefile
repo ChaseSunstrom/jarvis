@@ -1,6 +1,7 @@
 # Jarvis — top-level developer tasks.
 # `make help` lists targets. `make test` runs everything runnable in CI/dev
-# (no hardware). Hardware gates are in `make test-e2e` / docs/acceptance.
+# (no hardware, no models, no network). Hardware gates live in `make smoke`
+# and docs/verification.md.
 
 SHELL := /bin/bash
 COMPOSE := docker compose
@@ -12,60 +13,83 @@ help: ## show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n",$$1,$$2}'
 
-.PHONY: gen-tools
-gen-tools: ## regenerate HA config from jarvis_tools/*.tool.yaml
-	python3 jarvis_tools/generate_config.py
+# --- tests ------------------------------------------------------------------
+.PHONY: test-core
+test-core: ## jarvis-core: the assistant itself (the big one)
+	cd jarvis-core && python3 -m pytest tests -q
+
+.PHONY: test-desktop
+test-desktop: ## jarvis-desktop
+	cd jarvis-desktop && python3 -m pytest tests -q
+
+.PHONY: test-browser
+test-browser: ## jarvis-browser
+	cd jarvis-browser && python3 -m pytest tests -q
+
+.PHONY: test-services
+test-services: ## orchestrator + sandbox
+	python3 -m pytest jarvis-orchestrator/tests jarvis-sandbox/tests -q
 
 .PHONY: test-python
-test-python: ## run all python unit/integration tests
-	python3 -m pytest jarvis_tools/tests jarvis-orchestrator/tests \
-	  jarvis-sandbox/tests evals -q
+test-python: test-core test-desktop test-browser test-services eval-routing ## every python suite
 
 .PHONY: test-web
 test-web: ## build + unit + smoke + e2e for the HUD
 	cd jarvis-web && npm run build && npm test && node ../tests/web/smoke.test.mjs
 	cd jarvis-web && npm run test:e2e || echo "(playwright skipped/failed — see jarvis-web/README.md)"
 
+.PHONY: test-android
+test-android: ## the Kotlin logic mirrors (pure python, no SDK)
+	@fail=0; for t in android-app/tools/*.py; do echo "--- $$t"; python3 "$$t" || fail=1; done; exit $$fail
+
+.PHONY: test
+test: test-python ## everything runnable without hardware or models
+	@echo "OFFLINE TEST SUITE PASSED"
+
+# --- evals ------------------------------------------------------------------
 .PHONY: eval-routing
-eval-routing: ## P3 routing table test (offline)
+eval-routing: ## routing table + its two mirrors (offline)
 	cd evals && python3 -m pytest test_routing.py -q
 
 .PHONY: eval-persona
-eval-persona: ## P3 persona eval (needs Ollama or HA; BACKEND=ollama|ha)
+eval-persona: ## persona eval (needs a model; BACKEND=ollama|jarvis)
 	cd evals && python3 persona_eval.py --backend $(or $(BACKEND),ollama)
 
 .PHONY: eval-decomp
-eval-decomp: ## P8 task-decomposition ship/no-ship gate (needs model)
+eval-decomp: ## task-decomposition ship/no-ship gate (BACKEND=ollama|orchestrator)
 	cd evals && python3 decomposition_eval.py --backend $(or $(BACKEND),ollama)
 
-.PHONY: test
-test: test-python eval-routing ## everything runnable without hardware/models
-	@echo "OFFLINE TEST SUITE PASSED"
-
-.PHONY: smoke
-smoke: ## P0: full stt->tts round trip against real HA (needs HA_TOKEN)
-	python3 scripts/pipeline-smoke.py
-
-.PHONY: firewall
-firewall: ## P9: apply ufw policy (root, real server). DRY_RUN=1 to preview
-	sudo -E bash scripts/apply-firewall.sh
-
-.PHONY: egress-audit
-egress-audit: ## P9: verify sandbox network isolation (needs running stack)
-	bash scripts/egress-audit.sh
-
+# --- running things ---------------------------------------------------------
 .PHONY: up
-up: ## build and start the server stack
+up: ## start jarvis-core, then the companion stack (HUD/orchestrator/sandbox)
+	cd jarvis-core && $(COMPOSE) up -d --build
 	$(COMPOSE) up -d --build
 
 .PHONY: down
-down: ## stop the stack
-	$(COMPOSE) down
+down: ## stop both stacks
+	-$(COMPOSE) down
+	cd jarvis-core && $(COMPOSE) down
 
-.PHONY: test-e2e
-test-e2e: ## P9 full gate: offline suite + smoke + egress (+ device tests are manual, see docs/acceptance.md)
+.PHONY: smoke
+smoke: ## boot a throwaway jarvis-core and drive its real APIs
+	bash scripts/e2e-smoke.sh
+
+.PHONY: pipeline-smoke
+pipeline-smoke: ## full stt->tts audio round trip (needs JARVIS_TOKEN + Wyoming)
+	python3 scripts/pipeline-smoke.py
+
+.PHONY: firewall
+firewall: ## apply the ufw policy (root, real server). DRY_RUN=1 to preview
+	sudo -E bash scripts/apply-firewall.sh
+
+.PHONY: egress-audit
+egress-audit: ## verify sandbox network isolation (needs the stack running)
+	bash scripts/egress-audit.sh
+
+.PHONY: verify
+verify: ## the full gate: offline suite, then the hardware-backed checks
 	$(MAKE) test
 	-$(MAKE) smoke
 	-$(MAKE) egress-audit
-	cd evals && python3 persona_eval.py --backend ollama || echo "(persona eval needs a model)"
-	@echo "See docs/acceptance.md for the on-device (Pixel, head unit) gates."
+	-$(MAKE) eval-persona
+	@echo "See docs/verification.md for the on-device (Pixel, head unit) gates."

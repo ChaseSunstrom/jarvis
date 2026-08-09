@@ -58,6 +58,20 @@ class PresenceReporter(
     context: Context,
     /** Reaches [JarvisChannel.sendEvent] and nothing else. */
     private val emit: (String, JSONObject) -> Boolean,
+    /**
+     * Whether a report could reach the server *right now*. Default true for
+     * tests; production passes `channel.isRegistered`.
+     *
+     * Two things hang off this. Presence is a **snapshot, not a log**: a stale
+     * one is worthless, and `sendEvent` reports success when it merely queues
+     * a frame for later, so an offline phone would record each heartbeat as
+     * sent and fill the bounded offline queue with hour-old snapshots —
+     * evicting the trigger events that queue is actually for. And sampling is
+     * not free: every poll is four binder round trips (power, keyguard, audio,
+     * the sticky battery broadcast), which a phone with no socket should not
+     * be paying twelve times a minute.
+     */
+    private val reportable: () -> Boolean = { true },
     /** Monotonic milliseconds. Never wall clock — the throttle depends on it. */
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
     /** Epoch milliseconds, for `last_interaction`, which the server compares
@@ -131,14 +145,31 @@ class PresenceReporter(
     fun onReconnected() {
         lastSent = null
         lastSentAt = 0L
-        handler?.post(tick)
+        handler?.post { pollIfReportable() }
+    }
+
+    /**
+     * Sample and send, but only when there is a live socket to send on.
+     *
+     * The gate is checked BEFORE [sample], not after: sampling is the
+     * expensive half, and a phone with no channel should not pay for it. See
+     * [reportable].
+     */
+    private fun pollIfReportable(): String? {
+        val ok = try {
+            reportable()
+        } catch (t: Throwable) {
+            Log.d(TAG, "the reportable gate threw; assuming offline", t)
+            false
+        }
+        return if (ok) poll() else null
     }
 
     private val tick = object : Runnable {
         override fun run() {
             if (!running) return
             try {
-                poll()
+                pollIfReportable()
             } catch (t: Throwable) {
                 // A probe must never kill the loop; a phone that stops
                 // reporting presence quietly disappears from the server's
@@ -154,14 +185,14 @@ class PresenceReporter(
     /** The user just did something here. The strongest presence signal there is. */
     fun noteInteraction() {
         interactionAt = wall()
-        handler?.post { poll() }
+        handler?.post { pollIfReportable() }
     }
 
     /** Car stereo connected/disconnected, from the Bluetooth trigger. */
     fun setCarBluetooth(connected: Boolean) {
         if (carBluetooth == connected) return
         carBluetooth = connected
-        handler?.post { poll() }
+        handler?.post { pollIfReportable() }
     }
 
     /** The zone the server placed this device in, or null to forget it. */
@@ -169,7 +200,7 @@ class PresenceReporter(
         val clean = value?.trim()?.take(64)?.takeIf { it.isNotEmpty() }
         if (zone == clean) return
         zone = clean
-        handler?.post { poll() }
+        handler?.post { pollIfReportable() }
     }
 
     /** A Jarvis surface came to the front, or left it. */
@@ -177,7 +208,7 @@ class PresenceReporter(
         if (jarvisForeground == value) return
         jarvisForeground = value
         if (value) interactionAt = wall()
-        handler?.post { poll() }
+        handler?.post { pollIfReportable() }
     }
 
     // --- the decision -------------------------------------------------------
@@ -197,7 +228,9 @@ class PresenceReporter(
         } ?: return null
 
         val delivered = try {
-            emit(EVENT_PRESENCE, signals.toJson())
+            // Re-checked here too: the socket can die between the gate and
+            // this line, and `sendEvent` answers true when it merely queues.
+            reportable() && emit(EVENT_PRESENCE, signals.toJson())
         } catch (t: Throwable) {
             Log.w(TAG, "could not emit presence", t)
             false

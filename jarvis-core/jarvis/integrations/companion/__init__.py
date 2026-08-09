@@ -111,7 +111,11 @@ class CompanionManager:
         message = self._pending.get(message_id)
         if message is None:
             return False
-        if status == "answered" and not str(answer or "").strip():
+        if (
+            message.kind == "ask"
+            and status == "answered"
+            and not str(answer or "").strip()
+        ):
             # A question is answered by a person choosing something. An
             # `answered` carrying nothing is a device acknowledging *delivery*
             # — every device reports that for a plain notification — and

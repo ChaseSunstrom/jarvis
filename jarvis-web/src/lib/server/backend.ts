@@ -110,6 +110,89 @@ export function mediaProxyTarget(path: string, baseUrl: string): string | null {
 	return target.href;
 }
 
+/**
+ * Origin control for the `/ws` relay.
+ *
+ * The relay attaches the server-held backend token to whatever connects, so a
+ * socket on it is an authenticated admin session: read every state and every
+ * event, and dispatch any service — `lock.unlock` included.
+ *
+ * WebSocket upgrades are **not** subject to the same-origin policy. There is no
+ * preflight, and `Origin` is advisory unless the server checks it. Without this
+ * check any page the user happens to open — an ad frame, a blog, anything that
+ * can reach the HUD on the LAN or over WireGuard — can open
+ * `ws://jarvis.local:8199/ws` and drive the house. That is untrusted content
+ * reaching a dispatcher with no human approval, which the tiering model exists
+ * to prevent; the tiers cannot help here because they gate the *model's* path,
+ * and this is the "a human pressed a button" path being forged.
+ *
+ * Same-origin is the default. `JARVIS_ALLOWED_ORIGINS` (comma-separated) adds
+ * extras for a reverse proxy that terminates on a different name.
+ */
+
+/** Strip a port that is the default for the scheme, so the two spellings match. */
+function normalizeHost(host: string, protocol: string): string {
+	const lower = host.trim().toLowerCase();
+	const dflt = protocol === 'https:' || protocol === 'wss:' ? ':443' : ':80';
+	return lower.endsWith(dflt) ? lower.slice(0, -dflt.length) : lower;
+}
+
+/** Parse `JARVIS_ALLOWED_ORIGINS` into normalised `protocol//host` strings. */
+export function parseAllowedOrigins(raw: string | undefined): string[] {
+	return String(raw ?? '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean)
+		.map((s) => {
+			try {
+				const u = new URL(s);
+				return `${u.protocol}//${normalizeHost(u.host, u.protocol)}`;
+			} catch {
+				return '';
+			}
+		})
+		.filter(Boolean);
+}
+
+/**
+ * Whether a `/ws` upgrade carrying this `Origin` may proceed.
+ *
+ * - **No Origin header** → allowed. Every browser sends one on a WebSocket
+ *   handshake, so its absence means a non-browser client (the Android app, a
+ *   script, curl) — something a hostile web page cannot cause to happen.
+ * - **`Origin: null`** → refused. That is a real browser origin (sandboxed
+ *   iframe, `data:` document); it is simply not ours.
+ * - Otherwise the origin's host must equal the request's `Host`, or appear in
+ *   the allow-list.
+ */
+export function isOriginAllowed(
+	origin: string | undefined | null,
+	host: string | undefined | null,
+	allowed: string[] = []
+): boolean {
+	if (origin === undefined || origin === null || origin === '') return true;
+
+	let originUrl: URL;
+	try {
+		originUrl = new URL(String(origin));
+	} catch {
+		return false; // unparseable, and "null" lands here too
+	}
+	if (!originUrl.host) return false;
+
+	const originKey = `${originUrl.protocol}//${normalizeHost(originUrl.host, originUrl.protocol)}`;
+	if (allowed.includes(originKey)) return true;
+
+	if (host) {
+		// Compare host:port only. The scheme is not comparable: behind a TLS
+		// terminator the page is https while the hop to this server is http.
+		if (normalizeHost(originUrl.host, originUrl.protocol) === normalizeHost(String(host), originUrl.protocol)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** Human-readable reason a backend is unusable, or null when it is fine. */
 export function backendProblem(cfg: BackendConfig): string | null {
 	if (!cfg.url && !cfg.token) {

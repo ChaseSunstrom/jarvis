@@ -20,7 +20,7 @@ Configuration::
         awake: binary_sensor.chris_awake
         active_device: sensor.chris_active_device
       conversation: {ttl: 900, max_turns: 20}
-      tools_dir: jarvis_tools          # *.tool.yaml manifests
+      tools_dir: tools                 # *.tool.yaml manifests, under the config dir
       tools:                           # or declare them inline
         - name: paperless_search
           description: "Search Paperless-ngx documents by query text"

@@ -611,3 +611,279 @@ async def test_a_message_for_an_unknown_device_is_not_delivered(jarvis, session)
     await session.register()
     hub = jarvis.data[DATA_DEVICES]
     assert await hub.async_send("some-other-phone", {"type": "jarvis_message"}) is False
+
+
+# ---------------------------------------------------------------------------
+# a device only speaks for itself
+# ---------------------------------------------------------------------------
+OTHER_ID = "bystander-01"
+
+
+async def test_a_bystander_device_cannot_answer_someone_elses_question(jarvis, token):
+    """An answer to `companion.ask` is a human's decision, not telemetry.
+
+    Camera consent and web approvals both ask through this channel, and the
+    message_id is published to every `subscribe_events` subscriber the moment
+    it is sent — so knowing the id must not be enough to answer with. Only the
+    device the question was actually put on may say yes.
+    """
+    phone = await Session(jarvis, token).open()
+    await phone.register()
+    jarvis.data["presence"].touch_interaction(DEVICE_ID)
+
+    bystander = await Session(jarvis, token).open()
+    await bystander.register(OTHER_ID)
+
+    task = asyncio.create_task(
+        jarvis.data["companion"].send(
+            "May Jarvis look through the hall camera?", kind="ask", options=["allow", "deny"]
+        )
+    )
+    question = await phone.next()
+    assert question["kind"] == "ask"
+
+    bystander.push(
+        {
+            "type": "jarvis_message_result",
+            "message_id": question["message_id"],
+            "status": "answered",
+            "answer": "allow",
+        }
+    )
+    await bystander.settle()
+    assert not task.done(), "a device the question never reached must not consent for the user"
+
+    # The device it was actually put on still answers normally.
+    phone.push(
+        {
+            "type": "jarvis_message_result",
+            "message_id": question["message_id"],
+            "status": "answered",
+            "answer": "deny",
+        }
+    )
+    result = await asyncio.wait_for(task, 2)
+    assert result["status"] == "answered"
+    assert result["answer"] == "deny"
+
+    await bystander.close()
+    await phone.close()
+
+
+async def test_an_unregistered_socket_cannot_answer_a_question(jarvis, token):
+    phone = await Session(jarvis, token).open()
+    await phone.register()
+    jarvis.data["presence"].touch_interaction(DEVICE_ID)
+
+    anonymous = await Session(jarvis, token).open()  # authenticated, never registered
+
+    task = asyncio.create_task(
+        jarvis.data["companion"].send("Deploy to production?", kind="ask", timeout=0.4)
+    )
+    question = await phone.next()
+
+    anonymous.push(
+        {
+            "type": "jarvis_message_result",
+            "message_id": question["message_id"],
+            "status": "answered",
+            "answer": "yes",
+        }
+    )
+    await anonymous.settle()
+    assert not task.done(), "a socket that never said who it is cannot answer for the user"
+
+    result = await asyncio.wait_for(task, 2)
+    assert result["status"] == "timeout"
+
+    await anonymous.close()
+    await phone.close()
+
+
+async def test_a_stale_socket_cannot_answer_the_live_devices_question(jarvis, token):
+    """The target check alone cannot catch this one.
+
+    A superseded socket carries the *same* device_id as the connection that
+    replaced it, so "was this question put on this device?" says yes. Only
+    "does this socket still hold that device?" says no — which is why the
+    registration guard is not redundant with the addressing guard.
+    """
+    stale = await Session(jarvis, token).open()
+    await stale.register()
+    live = await Session(jarvis, token).open()
+    await live.register()
+    jarvis.data["presence"].touch_interaction(DEVICE_ID)
+
+    task = asyncio.create_task(
+        jarvis.data["companion"].send("Unlock the front door?", kind="ask", timeout=0.4)
+    )
+    question = await live.next()
+
+    stale.push(
+        {
+            "type": "jarvis_message_result",
+            "message_id": question["message_id"],
+            "status": "answered",
+            "answer": "yes",
+        }
+    )
+    await stale.settle()
+    assert not task.done(), "a socket that no longer holds the device cannot consent for it"
+
+    result = await asyncio.wait_for(task, 2)
+    assert result["status"] == "timeout"
+
+    await stale.close()
+    await live.close()
+
+
+async def test_a_stale_socket_cannot_forge_a_device_result(jarvis, token):
+    """A superseded socket must not report an outcome for the live device.
+
+    Otherwise it can answer `ok` to a Tier-3 command while the real phone is
+    still showing the confirmation prompt — the model, and then the user, are
+    told something ran that nobody approved.
+    """
+    stale = await Session(jarvis, token).open()
+    await stale.register()
+    live = await Session(jarvis, token).open()
+    await live.register()  # same device_id, new socket: `live` now holds it
+
+    link = get_devices(jarvis).get(DEVICE_ID)
+    assert link.owner is live.handler
+
+    task = asyncio.create_task(
+        link.dispatch("sms_send", {"to": "+1", "body": "hi"}, reason="asked", timeout=2)
+    )
+    command = await live.next()
+    assert command["type"] == "device_command"
+    assert command["tier"] == TIER_CONFIRM
+
+    stale.push(
+        {
+            "type": "device_result",
+            "command_id": command["command_id"],
+            "status": "ok",
+            "result": {"sent": True},
+        }
+    )
+    await stale.settle()
+    assert not task.done(), "a stale socket must not be able to forge a Tier-3 outcome"
+
+    live.push(
+        {"type": "device_result", "command_id": command["command_id"], "status": "denied"}
+    )
+    outcome = await asyncio.wait_for(task, 2)
+    assert outcome["status"] == "denied"
+
+    await stale.close()
+    await live.close()
+
+
+async def test_a_stale_socket_cannot_report_presence(jarvis, token):
+    stale = await Session(jarvis, token).open()
+    await stale.register()
+    live = await Session(jarvis, token).open()
+    await live.register()
+
+    stale.push(
+        {"type": "device_event", "event": "presence", "data": {"screen_on": True, "battery": 3}}
+    )
+    await stale.settle()
+
+    device = jarvis.data["presence"].devices[DEVICE_ID]
+    assert device.screen_on is False, "a socket that no longer holds the device cannot speak for it"
+    assert device.battery is None
+
+    await stale.close()
+    await live.close()
+
+
+# ---------------------------------------------------------------------------
+# re-registration
+# ---------------------------------------------------------------------------
+async def test_a_manifest_refresh_keeps_a_command_in_flight(jarvis, session):
+    """The phone re-registers whenever a permission changes.
+
+    Dropping the pending table at that moment strands every command already
+    waiting: the device's real answer routes to the new link and matches
+    nothing, so the caller blocks for the whole timeout and then reports a
+    failure for something that actually succeeded.
+    """
+    await session.register()
+    link = get_devices(jarvis).get(DEVICE_ID)
+
+    task = asyncio.create_task(link.dispatch("get_battery", {}, reason="checking", timeout=3))
+    command = await session.next()
+    assert command["type"] == "device_command"
+
+    # A permission was granted; the same socket re-registers with more actions.
+    refreshed = MANIFEST + [{"id": "camera_snap", "tier": 3, "description": "Take a photo"}]
+    result = await session.command(
+        {
+            "id": 2,
+            "type": "jarvis/device/register",
+            "device": {
+                "id": DEVICE_ID,
+                "name": "Pixel 8",
+                "platform": "android",
+                "capabilities": ["device", "camera"],
+                "actions": refreshed,
+            },
+        }
+    )
+    assert result["result"]["actions"] == len(refreshed)
+
+    session.push(
+        {
+            "type": "device_result",
+            "command_id": command["command_id"],
+            "status": "ok",
+            "result": {"level": 71},
+        }
+    )
+    outcome = await asyncio.wait_for(task, 2)
+    assert outcome["status"] == "ok", "the answer the device really sent must still land"
+    assert outcome["result"] == {"level": 71}
+
+    live = get_devices(jarvis).get(DEVICE_ID)
+    assert live.owner is session.handler
+    assert live.tier_for("camera_snap") == TIER_CONFIRM
+
+
+# ---------------------------------------------------------------------------
+# hostile numbers
+# ---------------------------------------------------------------------------
+def test_presence_signals_survive_non_finite_numbers():
+    """`json.loads` parses NaN/Infinity; `int()` on either one raises."""
+    for junk in (float("nan"), float("inf"), float("-inf")):
+        assert presence_signals({"battery": junk, "screen_on": True}) == {"screen_on": True}
+        assert "last_interaction" not in presence_signals({"last_interaction": junk})
+
+
+async def test_a_frame_carrying_nan_is_refused_at_the_door(jarvis, session):
+    """NaN is not JSON, and a non-finite float re-emitted by `json.dumps` is a
+    bare `NaN` that every strict parser downstream — the browser HUD included —
+    chokes on mid-stream. One device must not be able to corrupt another
+    client's socket."""
+    await session.register()
+    seen = []
+    jarvis.bus.listen("jarvis_device_event", seen.append)
+
+    session.ws._inbox.put_nowait(
+        {
+            "type": "websocket.receive",
+            "text": '{"type": "device_event", "event": "presence", "data": {"battery": NaN}}',
+        }
+    )
+    await session.settle()
+
+    assert not seen, "a frame that is not JSON must never reach the bus"
+    assert jarvis.data["presence"].devices[DEVICE_ID].battery is None
+
+    # It is reported as what it is — a malformed frame — and the socket lives.
+    complaint = await session.next()
+    assert complaint["success"] is False
+    assert complaint["error"]["code"] == "invalid_format"
+    session.push({"id": 9, "type": "ping"})
+    assert (await session.next())["type"] == "pong"

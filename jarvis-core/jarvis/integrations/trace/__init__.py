@@ -29,8 +29,10 @@ Services
     ``trace.list``            → one summary line per traced automation
     ``trace.clear`` (automation_id)
 
-Event: ``trace_recorded`` fires with the summary of every finished run —
-that is what the web console subscribes to for a live view.
+Event: ``trace_recorded`` fires with the summary of every finished run — small
+enough to push down a websocket, which is what a live console would subscribe
+to (``subscribe_events`` with ``event_type: trace_recorded``). Nothing in
+jarvis-web consumes it yet; the event is the seam, not a feature.
 
 LLM tool: ``get_automation_trace``.
 
@@ -637,6 +639,15 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         max_steps=int(options.get("max_steps") or DEFAULT_MAX_STEPS),
     )
     _install_instrumentation()
+    # Setting up twice for the same instance (a reload) must not leave the old
+    # recorder in the list: `_recorder_for` returns the first match, so runs
+    # would keep landing in a recorder nothing can read any more.
+    previous = jarvis.data.get(DOMAIN)
+    if isinstance(previous, TraceRecorder):
+        try:
+            _RECORDERS.remove(previous)
+        except ValueError:  # pragma: no cover - already gone
+            pass
     jarvis.data[DOMAIN] = recorder
     _RECORDERS.append(recorder)
 

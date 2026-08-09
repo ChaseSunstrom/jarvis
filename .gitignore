@@ -15,7 +15,17 @@ test-results/
 playwright-report/
 *.keystore
 *.jks
-ha-config/generated/*.yaml
-!ha-config/generated/.gitkeep
-android/ha-android-fork/
+# Written by the evals on every run.
+evals/last_persona_run.json
+evals/last_decomposition_run.json
 .DS_Store
+
+# Runtime state written into a config directory the moment the server (or
+# `--create-token`) is pointed at it. All three are secrets in practice:
+# .storage/auth.json holds token hashes, secrets.yaml holds the real ones, and
+# jarvis.db knows when the house is empty and when the front door opened.
+.storage/
+secrets.yaml
+*.db
+*.db-wal
+*.db-shm

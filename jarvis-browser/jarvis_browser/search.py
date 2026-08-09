@@ -99,10 +99,18 @@ def _csv(values: Iterable[str] | str | None) -> str:
     if values is None:
         return ""
     if isinstance(values, str):
-        parts: Sequence[str] = values.split(",")
+        parts: Sequence[object] = values.split(",")
     else:
         parts = list(values)
-    return ",".join(part.strip() for part in parts if str(part).strip())
+    # `str(part)` on both sides. Filtering on the string form and then calling
+    # .strip() on the original blows up with AttributeError the first time a
+    # caller passes anything but strings — a tuple of ints out of a config
+    # loader, say — and does it at construction time, which is startup.
+    # `None` is dropped rather than stringified: a bare `- ` in YAML parses to
+    # one, and "None" is not an engine.
+    return ",".join(
+        s for s in (str(part).strip() for part in parts if part is not None) if s
+    )
 
 
 def _result_url(value: object) -> str:
