@@ -219,6 +219,14 @@ class MqttClientBase:
         self.publish_count += 1
         try:
             await self._backend_publish(topic, data, bool(retain), int(qos or 0))
+        except ConnectionError as exc:
+            # The birth message races the first connection on every start and
+            # the retry loop already handles it. A traceback here said
+            # "something is broken" about the one case that is by design. The
+            # caller still gets False, which is what actually matters.
+            _LOGGER.warning("Not publishing to %s yet: %s", topic, exc)
+            self.publish_failures += 1
+            return False
         except Exception:
             _LOGGER.exception("Failed publishing to %s", topic)
             self.publish_failures += 1

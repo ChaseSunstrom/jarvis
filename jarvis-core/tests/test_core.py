@@ -317,3 +317,64 @@ async def test_jarvis_setup_start_stop(tmp_path):
     await jarvis.async_stop()
     assert stopped == [1]
     assert jarvis.is_running is False
+
+
+# --- an unreachable service is information, not a malfunction --------------
+#
+# On a first run with Ollama not yet started, `binary_sensor.ollama_up` and
+# `sensor.ollama_loaded_model` each logged a twenty-frame httpx traceback at
+# ERROR every poll. Those entities exist to report exactly that condition, and
+# the noise buried the real startup log.
+
+class _FlakyEntity(Entity):
+    def __init__(self, exc):
+        self._attr_name = "Probe"
+        self._attr_unique_id = "probe"
+        self._attr_state = "ok"
+        self._exc = exc
+
+    async def async_update(self):
+        if self._exc is not None:
+            raise self._exc
+
+
+async def _poll(tmp_path, exc, caplog, times=1):
+    import logging as _logging
+
+    entity = _FlakyEntity(exc)
+    entity.jarvis = Jarvis(tmp_path)
+    entity.entity_id = "binary_sensor.probe"
+    with caplog.at_level(_logging.DEBUG, logger="jarvis.entity"):
+        for _ in range(times):
+            await entity.async_update_state()
+    return entity, caplog.records
+
+
+async def test_an_unreachable_service_is_a_warning_without_a_traceback(tmp_path, caplog):
+    entity, records = await _poll(tmp_path, ConnectionError("All connection attempts failed"), caplog)
+    assert entity.available is False
+    assert records, "the transition to unavailable must still be reported"
+    assert all(r.exc_info is None for r in records), (
+        "an unreachable service logged a traceback; that is the normal case"
+    )
+    assert any(r.levelname == "WARNING" for r in records)
+
+
+async def test_it_does_not_re_warn_on_every_poll_while_still_down(tmp_path, caplog):
+    _entity, records = await _poll(
+        tmp_path, TimeoutError("timed out"), caplog, times=4
+    )
+    warnings = [r for r in records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, (
+        f"warned {len(warnings)} times for one outage; only the transition "
+        "should be at WARNING"
+    )
+
+
+async def test_a_real_bug_still_gets_its_traceback(tmp_path, caplog):
+    """The distinction is fault: our code being wrong is still an exception."""
+    _entity, records = await _poll(tmp_path, ValueError("bad parse"), caplog)
+    assert any(r.exc_info is not None for r in records), (
+        "a programming error must keep its traceback"
+    )
+    assert any(r.levelname == "ERROR" for r in records)

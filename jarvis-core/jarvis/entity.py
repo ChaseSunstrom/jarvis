@@ -130,10 +130,47 @@ class Entity:
         try:
             await self.async_update()
             self._attr_available = True
-        except Exception:
-            _LOGGER.exception("Error updating %s", self.entity_id or self.name)
+        except Exception as exc:
+            # An unreachable service is the NORMAL failure here, not a defect:
+            # `binary_sensor.ollama_up` exists precisely to report that Ollama
+            # is down, and dumping a twenty-frame httpx traceback to say so
+            # buried the real log on a first run. Going unavailable IS the
+            # answer the entity was asked for.
+            #
+            # The distinction is fault. A connection that could not be made is
+            # the world being the way it is; anything else is this code being
+            # wrong, and still gets its traceback.
+            if isinstance(exc, _EXPECTED_UPDATE_ERRORS):
+                if self._attr_available:  # the transition, not every poll after
+                    _LOGGER.warning(
+                        "%s is unavailable: %s",
+                        self.entity_id or self.name,
+                        _brief(exc),
+                    )
+                else:
+                    _LOGGER.debug(
+                        "%s still unavailable: %s",
+                        self.entity_id or self.name,
+                        _brief(exc),
+                    )
+            else:
+                _LOGGER.exception("Error updating %s", self.entity_id or self.name)
             self._attr_available = False
         self.async_write_state()
+
+
+
+#: Failures meaning "the thing this entity watches is not there", which is
+#: information rather than a malfunction. OSError covers ConnectionError and
+#: socket errors, and httpx's connect failures subclass it, so this catches
+#: them without importing httpx here.
+_EXPECTED_UPDATE_ERRORS = (OSError, asyncio.TimeoutError)
+
+
+def _brief(exc: BaseException) -> str:
+    """One line: the type, plus the message when it adds anything."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
 class EntityPlatform:
