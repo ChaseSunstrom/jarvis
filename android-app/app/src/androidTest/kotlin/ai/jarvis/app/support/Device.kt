@@ -1,9 +1,11 @@
 package ai.jarvis.app.support
 
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
+import org.junit.Assert.fail
 import java.io.ByteArrayOutputStream
 
 /**
@@ -73,6 +75,30 @@ object Device {
             val output = shell("pm grant $packageName $permission")
             if (output.isNotBlank()) Log.i(TAG, "pm grant $permission: ${output.trim()}")
         }
+    }
+
+    /**
+     * Is [permission] actually held right now?
+     *
+     * `pm grant` fails quietly on an image that does not know a permission, and
+     * [grant] deliberately swallows that — most tests do not care. The ones that
+     * DO care should say so before they start, because "RECORD_AUDIO was never
+     * granted" surfaces ninety seconds later as "no transcript ever rendered",
+     * which sends the reader off debugging a server.
+     */
+    fun isGranted(permission: String): Boolean =
+        InstrumentationRegistry.getInstrumentation().targetContext
+            .checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    /** Fail now, with the reason, rather than as a timeout somewhere else. */
+    fun requireGranted(permission: String) {
+        if (isGranted(permission)) return
+        fail(
+            "$permission is not granted to $packageName, and this test cannot " +
+                "work without it. JarvisTestRule runs `pm grant`; on this image " +
+                "it did not take. Grant it by hand:\n" +
+                "  adb shell pm grant $packageName $permission"
+        )
     }
 
     /** The runtime permissions every instrumented test in this suite wants. */

@@ -184,59 +184,101 @@ dependencies {
 
 /**
  * Fail the build if anything under `ai.jarvis.app.testing` reaches a release
- * APK.
+ * artefact.
  *
  * The debug source set already guarantees this — AGP does not compile
  * src/debug/ into release — but "guaranteed by a build-system default" is the
  * kind of guarantee that quietly stops holding when someone adds a source set,
  * a flavour, or a `matchingFallbacks`. The hooks inject server credentials and
  * a synthetic microphone, so the cost of being wrong is high and the cost of
- * checking is one string search over the DEX.
+ * checking is one string search over the archive.
  *
- * Runs as part of `assembleRelease`; costs nothing on a debug build.
+ * ## What is searched, and why it is not only the DEX
+ *
+ * Three encodings, over EVERY entry of the archive rather than only `*.dex`:
+ *
+ *  * `ai/jarvis/app/testing/` — the DEX type-descriptor form, stored as plain
+ *    UTF-8 in the DEX string table.
+ *  * `ai.jarvis.app.testing` — the source form, as it appears in a manifest, a
+ *    reflective `Class.forName`, or a stack-trace string.
+ *  * the same string in UTF-16LE — how a **binary** `AndroidManifest.xml`
+ *    stores it. `src/debug/AndroidManifest.xml` declares `TestHostActivity`,
+ *    and a manifest entry moved to `src/main` would put a debug-only component
+ *    into the release manifest without a single byte changing in any DEX. A
+ *    DEX-only scan would have called that clean.
+ *
+ * Searching every entry costs a few million byte comparisons on a 5 MB APK and
+ * removes a whole class of "we only looked in the obvious place" mistake.
+ *
+ * Runs after `assembleRelease` and `bundleRelease`; costs nothing on a debug
+ * build.
  */
 val assertNoTestHooksInRelease = tasks.register("assertNoTestHooksInRelease") {
-    description = "Verifies ai.jarvis.app.testing.* is absent from the release APK."
+    description = "Verifies ai.jarvis.app.testing.* is absent from every release artefact."
     group = "verification"
     val apkDir = layout.buildDirectory.dir("outputs/apk/release")
+    val bundleDir = layout.buildDirectory.dir("outputs/bundle/release")
     outputs.upToDateWhen { false }
     doLast {
-        val apks = apkDir.get().asFile.listFiles().orEmpty().filter { it.name.endsWith(".apk") }
-        if (apks.isEmpty()) {
-            logger.lifecycle("assertNoTestHooksInRelease: no release APK to inspect; skipping.")
+        val archives = listOf(apkDir, bundleDir)
+            .flatMap { it.get().asFile.listFiles().orEmpty().asIterable() }
+            .filter { it.name.endsWith(".apk") || it.name.endsWith(".aab") }
+        if (archives.isEmpty()) {
+            logger.lifecycle("assertNoTestHooksInRelease: no release artefact to inspect; skipping.")
             return@doLast
         }
-        // DEX stores type descriptors as plain UTF-8 in its string table, so a
-        // byte search over the DEX is enough — no dexlib, no d8 round trip.
-        val needle = "ai/jarvis/app/testing/".toByteArray(Charsets.UTF_8)
-        for (apk in apks) {
-            java.util.zip.ZipFile(apk).use { zip ->
+
+        val needles: List<Pair<String, ByteArray>> = listOf(
+            "DEX descriptor" to "ai/jarvis/app/testing/".toByteArray(Charsets.UTF_8),
+            "UTF-8 class name" to "ai.jarvis.app.testing".toByteArray(Charsets.UTF_8),
+            "UTF-16 (binary manifest)" to
+                "ai.jarvis.app.testing".toByteArray(Charsets.UTF_16LE),
+        )
+
+        fun contains(haystack: ByteArray, needle: ByteArray): Boolean {
+            if (needle.isEmpty() || haystack.size < needle.size) return false
+            val first = needle[0]
+            val last = haystack.size - needle.size
+            var i = 0
+            while (i <= last) {
+                if (haystack[i] == first) {
+                    var j = 1
+                    while (j < needle.size && haystack[i + j] == needle[j]) j++
+                    if (j == needle.size) return true
+                }
+                i++
+            }
+            return false
+        }
+
+        var entriesScanned = 0
+        for (archive in archives) {
+            java.util.zip.ZipFile(archive).use { zip ->
                 for (entry in zip.entries()) {
-                    if (!entry.name.endsWith(".dex")) continue
-                    val dex = zip.getInputStream(entry).readBytes()
-                    var found = false
-                    var i = 0
-                    val last = dex.size - needle.size
-                    while (i <= last && !found) {
-                        var j = 0
-                        while (j < needle.size && dex[i + j] == needle[j]) j++
-                        if (j == needle.size) found = true
-                        i++
-                    }
-                    if (found) {
-                        throw GradleException(
-                            "SECURITY: ${apk.name}/${entry.name} references " +
-                                "ai.jarvis.app.testing — the debug-only test hooks " +
-                                "leaked into a release build."
-                        )
+                    if (entry.isDirectory) continue
+                    val bytes = zip.getInputStream(entry).readBytes()
+                    entriesScanned++
+                    for ((what, needle) in needles) {
+                        if (contains(bytes, needle)) {
+                            throw GradleException(
+                                "SECURITY: ${archive.name}/${entry.name} contains the " +
+                                    "$what form of ai.jarvis.app.testing — the " +
+                                    "debug-only test hooks leaked into a release build. " +
+                                    "See the header of " +
+                                    "app/src/debug/kotlin/ai/jarvis/app/testing/TestHooks.kt."
+                            )
+                        }
                     }
                 }
             }
         }
-        logger.lifecycle("assertNoTestHooksInRelease: ${apks.size} release APK(s) clean.")
+        logger.lifecycle(
+            "assertNoTestHooksInRelease: ${archives.size} release artefact(s), " +
+                "$entriesScanned entries, clean."
+        )
     }
 }
 
-tasks.matching { it.name == "assembleRelease" }.configureEach {
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
     finalizedBy(assertNoTestHooksInRelease)
 }

@@ -259,6 +259,30 @@ def test_the_communication_route_is_released() -> None:
     )
 
 
+def test_the_synthetic_mic_seam_stays_ahead_of_route_selection() -> None:
+    """`debugPcmSource` must be consulted before any headset routing happens.
+
+    It is how `ConversationE2ETest` drives a full voice turn on an emulator that
+    has no microphone. If route selection moves ahead of it, the synthetic
+    source stops being consulted and the instrumented test fails ninety seconds
+    later as "the transcript never rendered" — which reads like a server fault
+    and is not one. Cheap to assert, expensive to debug.
+    """
+    src = MIC.read_text()
+    body = src.split("fun start()", 1)[1]
+    seam = body.index("debugPcmSource")
+    route = body.index("captureProfile()")
+    assert seam < route, (
+        "route selection moved ahead of the debugPcmSource test seam; "
+        "the synthetic microphone would be bypassed"
+    )
+    # And the early return has to be between them, or the seam is consulted but
+    # the real AudioRecord is opened anyway.
+    assert "return" in body[seam:route], (
+        "the injected-source branch no longer returns before opening AudioRecord"
+    )
+
+
 def test_headset_mode_defaults_to_off() -> None:
     """Plugging in a headset must never silently move the microphone."""
     src = CONFIG.read_text()

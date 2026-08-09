@@ -126,6 +126,51 @@ object Views {
     }
 
     /**
+     * The text of every CLICKABLE node on the screen, gathered while scrolling
+     * the whole of it.
+     *
+     * The proof shape for "there is no control that does X" — `ConsentGateTest`
+     * uses it to show a Tier-3 prompt offers no way to remember an answer.
+     * Scrolling is not a nicety there: the consent prompt is a `ScrollView` that
+     * overflows on the CI emulator profile, and a one-screen
+     * `findObjects(By.clickable(true))` would report the absence of a control
+     * that is merely below the fold. An assertion about absence has to have
+     * looked everywhere before it means anything.
+     *
+     * Nodes with no text contribute an empty string rather than being dropped,
+     * so a caller can tell "no clickable nodes at all" (empty list — usually a
+     * sign the screen never rendered) from "clickable nodes, none labelled".
+     */
+    fun clickableTextsScrolling(maxScrolls: Int = DEFAULT_MAX_SCROLLS): List<String> {
+        val out = LinkedHashSet<String>()
+        fun collect() {
+            val found = try {
+                Device.ui.findObjects(By.clickable(true))
+            } catch (e: StaleObjectException) {
+                emptyList<UiObject2>()
+            }
+            for (node in found) {
+                out += try {
+                    node.text.orEmpty()
+                } catch (e: StaleObjectException) {
+                    continue
+                }
+            }
+        }
+
+        var steps = 0
+        while (steps < maxScrolls && scrollOnce(Direction.UP, 1f)) steps++
+        collect()
+        steps = 0
+        while (steps < maxScrolls) {
+            if (!scrollOnce(Direction.DOWN, SCROLL_STEP)) break
+            collect()
+            steps++
+        }
+        return out.toList()
+    }
+
+    /**
      * One scroll of whatever scrollable container is on screen. False when there
      * is none, or it will not move any further.
      *

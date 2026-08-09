@@ -5,7 +5,7 @@ failures below it.
 
 | layer | where | needs | what it can prove |
 |---|---|---|---|
-| Python specs | `tools/*.py` | nothing | the pure rules — tiers, timelines, geofences, wire shapes — and that Kotlin and Python agree about them |
+| Python specs | `tools/*.py` | nothing | the pure rules — tiers, timelines, geofences, wire shapes — and that Kotlin and Python agree about them; plus `instrumentation_contract_test.py`, which checks the instrumented suite's assumptions about the app without a device |
 | JVM unit tests | `app/src/test/` | a JDK | pure-logic classes with the Android SDK stubbed out |
 | **instrumented tests** | `app/src/androidTest/` | **an emulator** | the app actually starting, drawing, talking to a server, and refusing to do dangerous things |
 
@@ -176,6 +176,24 @@ stopped talking. Both values are also checked against the error strings the app
 puts on screen, so "the response rendered" cannot be satisfied by the words
 "connection error".
 
+Two things about this class are worth knowing before editing it, because both
+were once got wrong here in ways that produced an assertion which could not fail:
+
+* **The talk button's label proves nothing about the server.**
+  `MainActivity.toggleTalk` sets it to `LISTENING… (TAP TO STOP)` synchronously,
+  before a socket is opened. A test that waited for the label to leave
+  `TAP TO SPEAK` would be waiting for its own tap, and would pass against a
+  harness that refused the token. `theServerAcceptsTheRunAndTheTranscriptRenders`
+  therefore waits on the transcript view instead.
+* **The orb's ERROR state is not readable.** `JarvisOrbView` paints its caption
+  onto a `Canvas` — no accessibility node, no getter — and `MainActivity.onError`
+  writes only that caption and `responseView`. `onMode`, the sole writer of the
+  button, is only ever called with `LISTENING`, `PROCESSING`, `RESPONDING`. So
+  the error assertions read `responseView`, and
+  `tools/instrumentation_contract_test.py` fails if `onError` stops writing it or
+  if an ERROR mode ever appears (at which point the stronger assertion becomes
+  available again).
+
 ### `DeviceChannelTest`
 
 Authenticate, register an action manifest, execute a Tier-1 `list_files`, get a
@@ -299,6 +317,14 @@ Screenshots never fail a test. A suite where the diagnostic tool can itself turn
 the build red is a suite people learn to ignore; a capture that fails leaves a
 `<name>.FAILED.txt` beside where it should have been.
 
+The directory is cleared **once per run**, before the first test — `am instrument`
+runs the whole suite in one process, so `JarvisTestRule` does it behind an
+`AtomicBoolean`. That matters because the app's data survives `adb install -r`
+and survives a re-run against the same device: without the clear, a test that
+failed *before* reaching its `Screenshots.take` would leave the previous run's
+picture in place, CI would upload it, and somebody would debug a screenshot of a
+passing run.
+
 `ApprovalActivity` and `CompanionAskActivity` set `FLAG_SECURE`, which is
 correct — a Tier-3 prompt's parameters must not reach the screen recorder.
 `UiAutomation.takeScreenshot` captures secure layers because it runs with system
@@ -322,9 +348,16 @@ and fails the test if anything is in it afterwards.
 
 `app/src/debug/kotlin/ai/jarvis/app/testing/` — compiled into the debug variant
 and **no other**. `app/build.gradle.kts` additionally registers
-`assertNoTestHooksInRelease`, which unzips every release APK and fails the build
-if the string `ai/jarvis/app/testing/` appears in any DEX, so the guarantee
-survives someone adding a flavour or a source set later.
+`assertNoTestHooksInRelease`, which unzips every release APK **and every release
+AAB** and fails the build if `ai.jarvis.app.testing` appears in any entry, so the
+guarantee survives someone adding a flavour or a source set later.
+
+Three encodings are searched, over every entry rather than only `*.dex`: the DEX
+descriptor `ai/jarvis/app/testing/`, the UTF-8 class name, and the same name in
+**UTF-16LE** — which is how a binary `AndroidManifest.xml` stores it. The debug
+manifest declares `TestHostActivity`; a DEX-only, UTF-8-only scan would have
+called a release manifest carrying that declaration clean.
+`tools/instrumentation_contract_test.py` fails if any of that wiring is removed.
 
 | hook | why it has to exist |
 |---|---|
@@ -416,3 +449,22 @@ automation foreground service is expected to do when that lands.
 So `DeviceChannelTest`, `ConsentGateTest` and `CompanionAskTest` prove the
 channel *works*. They do not prove that anything *starts* it. That is a real gap
 and it is in the app, not in the tests.
+
+## Where these tests are compiled, and where they are not
+
+`src/androidTest` is compiled by exactly one thing today: the emulator job in
+`.github/workflows/e2e.yml`, inside the same step that boots the AVD. Neither
+`ci.yml` (the fast lane) nor `android-apk.yml` compiles it —
+`android-apk.yml` compiles `:app:compileDebugUnitTestKotlin` and stops there.
+
+The consequence is worth stating plainly: **a Kotlin compile error in this
+suite is not caught until roughly thirty minutes into an emulator run**, and it
+fails after the AVD has booted rather than before. The fix is one extra Gradle
+invocation — `gradle :app:assembleDebugAndroidTest` — either as a step in
+`android-apk.yml` beside the unit-test compile, or as a preflight step in the
+emulator job before the AVD cache is restored. It also warms the Gradle cache
+for the run that follows.
+
+`tools/instrumentation_contract_test.py` is the part of that gap which *can* be
+closed without an SDK, and it runs in the fast lane on every push. It does not
+compile anything; it checks the assumptions the suite makes about the app.

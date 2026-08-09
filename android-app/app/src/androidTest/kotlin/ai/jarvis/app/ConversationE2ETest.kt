@@ -62,9 +62,20 @@ import java.util.concurrent.atomic.AtomicReference
  *    deciding the user stopped talking.
  *  * A non-empty RESPONSE can only come from `intent-progress` or `intent-end`,
  *    which happen after the pipeline ran.
- *  * Neither may be an error string, and the orb may not be in its ERROR state
- *    — otherwise "the response rendered" would be satisfied by the app
- *    rendering the words "connection error".
+ *  * Neither may be an error string — otherwise "the response rendered" would be
+ *    satisfied by the app rendering the words "connection error".
+ *
+ * ## The orb's caption is deliberately NOT the error assertion
+ *
+ * `JarvisOrbView` draws its caption onto a `Canvas` and exposes no getter, so
+ * the only readable proxy is the talk button's label. That label is NOT a proxy
+ * for the error state: `MainActivity.onError` sets `orbView.setStateLabel(
+ * "ERROR")` and leaves the button alone, and `MainActivity.onMode` — the only
+ * thing that writes the button — is ever called with just LISTENING, PROCESSING
+ * and RESPONDING. An assertion that the button label does not contain "ERROR"
+ * therefore cannot fail on any build, which is worse than no assertion at all.
+ * The error sink that IS readable is `responseView`, which `onError` writes, and
+ * that is what this test asserts against.
  *
  * Pass `-e jarvisExpectedTranscript <text>` to tighten the transcript assertion
  * to a substring match when the harness's canned phrase is known.
@@ -88,6 +99,11 @@ class ConversationE2ETest {
     @Before
     fun pointTheAppAtTheHarness() {
         Harness.requireReachable()
+        // Checked, not assumed. `MainActivity.toggleTalk` puts up the system
+        // permission dialog instead of starting a conversation when this is
+        // missing, and the symptom — no transcript for ninety seconds — points
+        // at the server rather than at the phone.
+        Device.requireGranted(android.Manifest.permission.RECORD_AUDIO)
         TestHooks.configure(
             context = context,
             serverUrl = Harness.baseUrl,
@@ -135,7 +151,11 @@ class ConversationE2ETest {
             response.get().isNotBlank(),
         )
 
-        for (text in listOf(transcript.get(), response.get())) {
+        // The latched values, AND whatever is on the response view right now —
+        // `MainActivity.onError` writes that view, so an error raised after the
+        // reply rendered would otherwise pass unnoticed.
+        val finalResponse = Activities.onMain { readTurn(main).response }
+        for (text in listOf(transcript.get(), response.get(), finalResponse)) {
             for (marker in ERROR_MARKERS) {
                 assertFalse(
                     "The screen is showing an error, not a conversation: \"$text\"",
@@ -143,13 +163,6 @@ class ConversationE2ETest {
                 )
             }
         }
-
-        val label = Activities.onMain { stateLabel(main) }
-        assertFalse(
-            "The orb must not be in its ERROR state at the end of a successful turn " +
-                "(it read \"$label\")",
-            label.contains("ERROR", ignoreCase = true),
-        )
 
         Harness.expectedTranscript()?.let { expected ->
             assertTrue(
@@ -161,35 +174,52 @@ class ConversationE2ETest {
     }
 
     @Test
-    fun theOrbLeavesIdleOnceTheServerAcceptsTheRun() {
-        // The caption is the only feedback a user gets about what the app is
-        // doing with an open microphone. Leaving TAP TO SPEAK is a real claim:
-        // MainActivity.onMode is driven by AssistPipelineClient.onState, which
-        // only reports LISTENING after `assist_pipeline/run` went out on an
-        // authenticated socket.
+    fun theServerAcceptsTheRunAndTheTranscriptRenders() {
+        // The cheap half of the round trip, asserted on the FIRST thing on
+        // screen that only the server can cause.
+        //
+        // Deliberately not the talk button's label. `MainActivity.toggleTalk`
+        // sets it to "LISTENING… (TAP TO STOP)" synchronously, before a socket
+        // is even opened, so "the label left TAP TO SPEAK" is satisfied by the
+        // tap itself and would pass against a harness that refused the token.
+        // A transcript cannot appear without `stt-end`, and `stt-end` cannot
+        // arrive without auth_ok, a resolved pipeline, an accepted
+        // `assist_pipeline/run`, audio frames prefixed with the run's
+        // stt_binary_handler_id, and the end-of-audio byte.
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
         tapTalk()
 
+        val transcript = AtomicReference("")
         Waits.until(
-            "the orb to leave its idle state once the pipeline run starts",
-            Waits.NETWORK_TIMEOUT_MS,
+            "a transcript to render from ${Harness.baseUrl}. Empty means the run was " +
+                "never accepted: the harness refused the token, has no pipeline named " +
+                "\"${Harness.pipeline}\", or is not speaking the pipeline protocol.",
+            Waits.CONVERSATION_TIMEOUT_MS,
             pollMs = POLL_MS,
         ) {
-            val label = Activities.onMain { stateLabel(main) }
-            label.isNotBlank() && label != IDLE_LABEL
+            val turn = Activities.onMain { readTurn(main) }
+            if (turn.transcript.isNotBlank()) transcript.compareAndSet("", turn.transcript)
+            transcript.get().isNotBlank()
         }
 
-        Screenshots.take("ConversationE2ETest-listening")
+        Screenshots.take("ConversationE2ETest-transcript")
 
-        val label = Activities.onMain { stateLabel(main) }
-        assertFalse(
-            "The orb must not go straight to ERROR; the harness at ${Harness.baseUrl} " +
-                "either refused the token or is not speaking the pipeline protocol " +
-                "(caption read \"$label\")",
-            label.contains("ERROR", ignoreCase = true),
-        )
+        // `MainActivity.onError` writes the response view — the only readable
+        // error sink on this screen. See the class header for why the orb's
+        // caption is not used here.
+        val response = Activities.onMain { readTurn(main).response }
+        for (marker in ERROR_MARKERS) {
+            assertFalse(
+                "The pipeline reported an error rather than running: \"$response\"",
+                response.contains(marker, ignoreCase = true),
+            )
+            assertFalse(
+                "The transcript is an error string, not speech: \"${transcript.get()}\"",
+                transcript.get().contains(marker, ignoreCase = true),
+            )
+        }
     }
 
     // --- reading the screen -------------------------------------------------
@@ -219,17 +249,6 @@ class ConversationE2ETest {
             response = plain.getOrNull(1)?.text?.toString().orEmpty(),
         )
     }
-
-    /**
-     * The orb's state caption.
-     *
-     * `JarvisOrbView` draws its own caption straight onto a `Canvas`, so there
-     * is no accessibility node and no `TextView` for it. The talk button's label
-     * tracks it one for one — see `MainActivity.onMode` — and that is a real
-     * view. MAIN THREAD ONLY.
-     */
-    private fun stateLabel(main: MainActivity): String =
-        talkButton(main)?.text?.toString()?.substringBefore('…')?.trim().orEmpty()
 
     private fun talkButton(main: MainActivity): Button? =
         Views.allOfType(main.window.decorView, Button::class.java)

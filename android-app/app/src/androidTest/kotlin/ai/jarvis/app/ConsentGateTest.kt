@@ -408,17 +408,27 @@ class ConsentGateTest {
      * prompt's own footer contains the word "remembered" — in the sentence
      * promising that the answer is not. The claim under test is that there is no
      * *affordance*, so the clickable set is the right thing to look at.
+     *
+     * Gathered WHILE SCROLLING the whole prompt. An assertion about absence that
+     * only ever looked at one screenful would report "no such control" for a
+     * control that is simply below the fold — and the consent prompt overflows
+     * on the CI emulator profile, which is exactly where this runs.
      */
     private fun assertNoRememberControl() {
-        val offenders = Device.ui.findObjects(By.clickable(true))
-            .mapNotNull { it.text }
-            .filter { label ->
-                REMEMBER_WORDS.any { label.contains(it, ignoreCase = true) }
-            }
+        val labels = Views.clickableTextsScrolling()
+        assertTrue(
+            "No clickable node was found anywhere on the consent prompt, so this " +
+                "assertion looked at nothing. The prompt did not render, or the " +
+                "accessibility tree is empty.\n${Device.windowDump()}",
+            labels.isNotEmpty(),
+        )
+        val offenders = labels.filter { label ->
+            REMEMBER_WORDS.any { label.contains(it, ignoreCase = true) }
+        }
         assertTrue(
             "A Tier-3 prompt must offer no way to remember an answer, and " +
                 "ApprovalBridge never returns approved_always. Found control(s): " +
-                "$offenders",
+                "$offenders (all clickable labels: $labels)",
             offenders.isEmpty(),
         )
     }

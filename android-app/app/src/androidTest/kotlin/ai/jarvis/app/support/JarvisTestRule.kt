@@ -8,6 +8,7 @@ import org.junit.Assert.fail
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The setup every instrumented test in this suite needs, and the diagnostics
@@ -46,6 +47,7 @@ class JarvisTestRule(
 
     override fun starting(description: Description) {
         Log.i(TAG, "=== ${description.className}#${description.methodName} ===")
+        clearScreenshotsOncePerRun()
         Device.wakeAndUnlock()
         if (grantPermissions) Device.grantStandardTestPermissions()
         if (resetState) TestHooks.resetState(context)
@@ -102,6 +104,23 @@ class JarvisTestRule(
         return "$cls-${description.methodName ?: "unknown"}"
     }
 
+    /**
+     * Delete last run's PNGs, once, before the first test of this process.
+     *
+     * The screenshot directory lives in the app's data, which survives an `adb
+     * install -r` and survives a re-run against the same device. Without this, a
+     * test that failed BEFORE reaching its `Screenshots.take` leaves the
+     * previous run's picture in place, CI uploads it, and somebody debugs a
+     * screenshot of a passing run. `am instrument` runs the whole suite in one
+     * process, so once per process is once per run.
+     */
+    private fun clearScreenshotsOncePerRun() {
+        if (!screenshotsCleared.compareAndSet(false, true)) return
+        runCatching { TestHooks.clearScreenshots(context) }
+            .onSuccess { Log.i(TAG, "cleared screenshots from any previous run") }
+            .onFailure { Log.w(TAG, "could not clear the screenshot directory", it) }
+    }
+
     private fun dumpWindows(name: String) {
         runCatching {
             val target = File(TestHooks.screenshotDir(context), "$name.windows.txt")
@@ -112,5 +131,8 @@ class JarvisTestRule(
 
     private companion object {
         const val TAG = "JarvisTestRule"
+
+        /** Process-wide, so the clear happens once per `am instrument` run. */
+        val screenshotsCleared = AtomicBoolean(false)
     }
 }

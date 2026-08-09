@@ -269,6 +269,11 @@ jobs:
 
       - name: Instrumented suite on the emulator
         id: emulator
+        env:
+          # The script is a file now, so it cannot read `${{ }}` — the matrix
+          # value has to arrive as an environment variable. android-emulator-
+          # runner passes `process.env` straight through to the shell it spawns.
+          API_LEVEL: ${{ matrix.api-level }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api-level }}
@@ -280,94 +285,64 @@ jobs:
           emulator-boot-timeout: 1200
           disable-animations: true
           working-directory: android-app
-          # Everything after Gradle runs whatever Gradle did: the screenshots
-          # and the logcat are most valuable precisely when the suite went red,
-          # and the emulator is destroyed the moment this script returns.
-          script: |
-            set -uo pipefail
-            mkdir -p artifacts
+          # ############ ONE LINE. THIS IS NOT A SHELL BLOCK. ############
+          # android-emulator-runner does NOT hand this input to a shell as one
+          # program. src/script-parser.ts splits it on /\r\n|\n|\r/, trims each
+          # piece and drops blanks and #-comments; src/main.ts then runs the
+          # pieces one at a time with `exec.exec('sh', ['-c', piece])`.
+          #
+          # So every line would get its own shell: an assignment is lost by the
+          # next line, a `set` applies to nothing after it, a backslash
+          # continuation is severed, and a multi-line `if ... fi` becomes
+          # fragments that are each a syntax error alone. The first failure
+          # makes exec.exec throw and the step dies with nothing run — which is
+          # what happened on run 31303989376, where the echoed command was the
+          # single line `set -uo pipefail` and dash rejected it.
+          #
+          # Keep this ONE line invoking ONE file. The file is bash and may use
+          # bash. `testing/e2e/test_ci_workflow_contract.py` fails the build if
+          # this input ever grows a second line, and checks that the file it
+          # names exists and parses.
+          #
+          # `bash <path>`, not `./<path>`: a checkout that lost the executable
+          # bit must not turn into a mystery permission error at minute forty.
+          script: bash "$GITHUB_WORKSPACE/android-app/tools/run-instrumented-e2e.sh"
 
-            adb wait-for-device
-            adb devices
+      # BEFORE the uploads, not after. The harness writes jarvis-core.log
+      # continuously, and `testing/artifacts/**` is one of the things uploaded
+      # below — a log still being appended to while it is being zipped is a
+      # truncated log in the artifact, which is the one file a failure is read
+      # from. Stopping first also means the artifact contains the server's
+      # shutdown, so "did it die, or was it killed" is answerable.
+      - name: Stop the harness
+        if: always()
+        run: |
+          set -u
+          pidfile="$GITHUB_WORKSPACE/testing/artifacts/harness.pid"
+          [ -f "$pidfile" ] || exit 0
+          pid="$(cat "$pidfile")"
+          kill "$pid" 2>/dev/null || exit 0
+          # harness.py traps SIGTERM and kills jarvis-core and both fakes by
+          # process group on the way out; give it that chance before the runner
+          # tears the whole VM down, or the logs stop mid-line.
+          for _ in $(seq 1 30); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+          exit 0
 
-            # Two ways for the app to reach the harness, and both are permitted
-            # by a network-security config, so take the one that can be verified
-            # before the suite runs and fall back to the other.
-            #
-            #  1. adb reverse -> 127.0.0.1, which the SHIPPING config already
-            #     allows cleartext to, so the app is exercised in its real
-            #     transport posture. Establishing it either works or fails now.
-            #  2. 10.0.2.2, QEMU's alias for the host's loopback, allowed by the
-            #     DEBUG-variant config (src/debug/res/xml/network_security_config.xml).
-            HARNESS_URL="http://127.0.0.1:${JARVIS_HARNESS_PORT}"
-            if adb reverse "tcp:${JARVIS_HARNESS_PORT}" "tcp:${JARVIS_HARNESS_PORT}"; then
-              adb reverse --list || true
-            else
-              echo "::warning::adb reverse tcp:${JARVIS_HARNESS_PORT} failed; falling back to the emulator host alias"
-              HARNESS_URL="http://10.0.2.2:${JARVIS_HARNESS_PORT}"
-            fi
-            echo "harness for the app: ${HARNESS_URL}"
-
-            adb logcat -c || true
-
-            status=0
-            gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.jarvisHarnessUrl="${HARNESS_URL}" \
-              -Pandroid.testInstrumentationRunnerArguments.jarvisHarnessToken="${JARVIS_HARNESS_TOKEN}" \
-              -Pandroid.testInstrumentationRunnerArguments.jarvisRequireHarness=true \
-              || status=$?
-            echo "gradle :app:connectedDebugAndroidTest exited ${status}"
-
-            # --- screenshots ------------------------------------------------
-            # ai.jarvis.app.testing.TestHooks.screenshotDir() = the app's
-            # external files dir, which needs no storage permission.
-            SHOTS=/sdcard/Android/data/ai.jarvis.app/files/screenshots
-            adb shell ls -l "$SHOTS" || true
-            adb pull "$SHOTS" artifacts/ || true
-            if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
-              echo "screenshots unreadable as the shell user; retrying with adb root"
-              adb root >/dev/null 2>&1 || true
-              adb wait-for-device
-              adb pull "$SHOTS" artifacts/ || true
-              adb unroot >/dev/null 2>&1 || true
-              adb wait-for-device || true
-            fi
-            # Internal-storage fallback: screenshotDir() lands there on a device
-            # with no external volume.
-            if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
-              adb exec-out run-as ai.jarvis.app tar -cf - files/screenshots 2>/dev/null \
-                | tar -xf - -C artifacts 2>/dev/null || true
-              if [ -d artifacts/files/screenshots ]; then
-                # An earlier partial pull may have left an empty directory in
-                # the way; mv into it would nest rather than replace.
-                rmdir artifacts/screenshots 2>/dev/null || true
-                mv artifacts/files/screenshots artifacts/screenshots || true
-              fi
-            fi
-            shots="$(ls -1 artifacts/screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')"
-            echo "pulled ${shots} screenshot(s)"
-
-            # --- logs --------------------------------------------------------
-            adb logcat -d -v time > artifacts/logcat.txt 2>&1 || true
-            adb logcat -b crash -d -v time > artifacts/logcat-crash.txt 2>&1 || true
-            adb shell dumpsys package ai.jarvis.app > artifacts/dumpsys-package.txt 2>&1 || true
-
-            {
-              echo "### e2e · android emulator (API ${{ matrix.api-level }})"
-              echo ""
-              if [ "${status}" = "0" ]; then
-                echo "The instrumented suite PASSED on a real emulator."
-              else
-                echo "The instrumented suite FAILED (gradle exit ${status})."
-              fi
-              echo ""
-              echo "- Real APK, real activities, real sockets. \`ConversationE2ETest\` drove a full voice turn against the real \`jarvis-core\` harness at \`${HARNESS_URL}\`."
-              echo "- Screenshots pulled: **${shots}** — artifact **android-e2e-screenshots-api${{ matrix.api-level }}**."
-              echo "- HTML/XML reports: artifact **android-e2e-reports-api${{ matrix.api-level }}**."
-              echo "- logcat (incl. the crash buffer): artifact **android-e2e-logs-api${{ matrix.api-level }}**."
-            } >> "$GITHUB_STEP_SUMMARY"
-
-            exit "${status}"
+      - name: Harness log tail (on failure)
+        if: failure()
+        run: |
+          set -u
+          for log in "$GITHUB_WORKSPACE"/testing/artifacts/harness/logs/*.log; do
+            [ -f "$log" ] || continue
+            echo "----- $log (last 80 lines) -----"
+            tail -n 80 "$log"
+          done
+          echo "----- crash buffer -----"
+          tail -n 200 "$GITHUB_WORKSPACE/android-app/artifacts/logcat-crash.txt" 2>/dev/null || true
 
       - name: Upload screenshots
         if: always()
@@ -403,41 +378,29 @@ jobs:
           retention-days: 14
 
       # The emulator step writes the real summary itself, because only it knows
-      # how many screenshots came off the device. This covers the case where it
-      # never ran at all — a failed harness boot, a failed SDK install — so the
-      # run never shows an android section with nothing in it.
-      - name: Summary (emulator never ran)
-        if: always() && steps.emulator.outcome == 'skipped'
-        run: |
-          set -u
-          {
-            echo '### e2e · android emulator (API ${{ matrix.api-level }})'
-            echo ''
-            echo 'The instrumented suite never started: a step before it failed.'
-            echo 'Look at the job log for the `::error::` annotation, and at the'
-            echo 'harness logs in artifact'
-            echo '**android-e2e-logs-api${{ matrix.api-level }}**.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Harness log tail (on failure)
-        if: failure()
-        run: |
-          set -u
-          for log in "$GITHUB_WORKSPACE"/testing/artifacts/harness/logs/*.log; do
-            [ -f "$log" ] || continue
-            echo "----- $log (last 80 lines) -----"
-            tail -n 80 "$log"
-          done
-          echo "----- crash buffer -----"
-          tail -n 200 "$GITHUB_WORKSPACE/android-app/artifacts/logcat-crash.txt" 2>/dev/null || true
-
-      - name: Stop the harness
+      # how many screenshots came off the device — and it drops a marker file
+      # when it does. Anything that stops the script reaching that point leaves
+      # no marker: a harness boot that failed (step skipped), an emulator that
+      # never booted (step failed inside the action, before `script` ran), a
+      # cancelled run. Keying off `outcome == 'skipped'` covered only the first
+      # of those and left an emulator boot failure with no summary at all,
+      # which is exactly when a human most needs to be told where to look.
+      - name: Summary (no summary from the emulator)
         if: always()
         run: |
           set -u
-          pidfile="$GITHUB_WORKSPACE/testing/artifacts/harness.pid"
-          [ -f "$pidfile" ] || exit 0
-          kill "$(cat "$pidfile")" 2>/dev/null || true
+          [ -f "$GITHUB_WORKSPACE/android-app/artifacts/summary-written" ] && exit 0
+          {
+            echo '### e2e · android emulator (API ${{ matrix.api-level }})'
+            echo ''
+            echo 'The instrumented suite produced no result: it either never'
+            echo 'started (a step before it failed) or the emulator did not boot.'
+            echo 'Step outcome was `${{ steps.emulator.outcome }}`.'
+            echo ''
+            echo 'Look at the job log for the `::error::` annotation, and at the'
+            echo 'jarvis-core harness logs in artifact'
+            echo '**android-e2e-logs-api${{ matrix.api-level }}**.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # 3. The real desktop agent over the real device channel.
@@ -492,6 +455,13 @@ jobs:
           JARVIS_HARNESS_KEEP: "1"
         run: |
           set -uo pipefail
+          # `set -uo pipefail` does NOT clear errexit, and GitHub runs every
+          # `run:` block as `bash -e {0}` — so without this the shell exits the
+          # instant pytest returns non-zero, `status=$?` never executes, and
+          # the log tail below is dead code that has never once run. Turning
+          # errexit off explicitly is what makes the failure path reachable;
+          # every command from here on is checked by hand.
+          set +e
           if [ ! -d jarvis-desktop/tests_e2e ]; then
             echo "::error::jarvis-desktop/tests_e2e does not exist — the desktop end-to-end suite is missing"
             exit 1
@@ -501,6 +471,7 @@ jobs:
           status=$?
 
           if [ "$status" != "0" ]; then
+            echo "::error::the desktop end-to-end suite failed (pytest exit $status); see artifact desktop-e2e-artifacts"
             while IFS= read -r log; do
               echo "----- $log (last 60 lines) -----"
               tail -n 60 "$log"
@@ -535,6 +506,9 @@ jobs:
               )
               sys.exit(1)
           PY
+          # errexit is off, so say what this step's result is rather than
+          # inheriting whatever the last command happened to return.
+          exit $?
 
       - uses: actions/upload-artifact@v4
         if: always()
