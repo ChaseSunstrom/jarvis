@@ -1,6 +1,7 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi

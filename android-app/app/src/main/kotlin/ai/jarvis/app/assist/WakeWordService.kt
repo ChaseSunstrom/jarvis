@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -284,7 +285,9 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             .setContentIntent(open)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(Notification.Action.Builder(null, "STOP", stop).build())
+            // The Icon overload, spelled out: `null` alone cannot pick
+            // between Builder(Icon, …) and the deprecated Builder(Int, …).
+            .addAction(Notification.Action.Builder(null as Icon?, "STOP", stop).build())
             .build()
     }
 
