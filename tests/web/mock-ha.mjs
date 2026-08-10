@@ -217,8 +217,11 @@ export function makeWorld() {
 			enabled: true,
 			trigger: [{ platform: 'time', at: '23:00:00' }],
 			condition: [],
-			action: [{ service: 'light.turn_off' }],
-			editable: false
+			action: [{ service: 'light.turn_off' }, { service: 'lock.lock' }],
+			editable: false,
+			// Running it can reach a lock, so jarvis-core holds it for a human.
+			needs_approval: true,
+			reach: 'can lock',
 		},
 		{
 			id: 'morning_lights',
@@ -230,7 +233,9 @@ export function makeWorld() {
 			trigger: [{ platform: 'time', at: '07:00:00' }],
 			condition: [],
 			action: [{ service: 'light.turn_on' }],
-			editable: false
+			editable: false,
+			needs_approval: false,
+			reach: 'touches nothing that needs approval',
 		}
 	];
 
@@ -948,7 +953,9 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 						trigger: draft.trigger ?? [],
 						condition: draft.condition ?? [],
 						action: draft.action ?? [],
-						editable: true
+						editable: true,
+						needs_approval: false,
+						reach: 'touches nothing that needs approval'
 					};
 					world.automations.push(row);
 					world.states.set(

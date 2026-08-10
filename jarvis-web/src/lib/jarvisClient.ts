@@ -116,6 +116,10 @@ export interface AutomationRow {
 	 * console cannot edit or delete them — only the file they live in can.
 	 */
 	editable: boolean;
+	/** True when RUNNING this one has to go past a human. */
+	needs_approval?: boolean;
+	/** Why, in a phrase — "can lock", "calls something this cannot read". */
+	reach?: string;
 	created_at?: number | null;
 	updated_at?: number | null;
 }

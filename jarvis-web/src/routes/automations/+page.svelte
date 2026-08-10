@@ -370,6 +370,17 @@
 				>
 					RUN NOW
 				</button>
+				{#if row?.needs_approval}
+					<!-- Worth knowing before you press RUN NOW, and it explains the
+					     approval prompt when it appears. -->
+					<span
+						class="pill warn"
+						data-testid="gated-{automation.entity_id}"
+						title="Running this needs your approval: {row.reach}"
+					>
+						NEEDS OK
+					</span>
+				{/if}
 				{#if row}
 					{#if row.editable}
 						<button

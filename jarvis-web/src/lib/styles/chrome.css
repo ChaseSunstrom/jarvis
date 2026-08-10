@@ -750,6 +750,10 @@
 	color: var(--jv-text-dim);
 	overflow-wrap: anywhere;
 }
+.console .pill.warn {
+	color: var(--jv-warn);
+	border-color: var(--jv-warn);
+}
 .console .pill {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-2xs);

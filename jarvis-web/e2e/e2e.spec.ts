@@ -185,6 +185,11 @@ test('automations page shows last_triggered, toggles and runs now', async ({ pag
 		timeout: 10_000
 	});
 
+	// An automation that can reach a lock says so before you run it, and one
+	// that cannot does not — a badge on everything would say nothing.
+	await expect(page.getByTestId('gated-automation.night_mode')).toBeVisible();
+	await expect(page.getByTestId('gated-automation.morning_lights')).toHaveCount(0);
+
 	await page.getByTestId('trigger-automation.morning_lights').click();
 	await expect(page.getByTestId('flash')).toContainText('triggered', { timeout: 10_000 });
 	await expect(page.getByTestId('last-automation.morning_lights')).not.toHaveText('never', {
