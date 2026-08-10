@@ -36,6 +36,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...automation.authored import get_authored
 from ...automation.engine import AutomationManager, async_await_run
 from ...automation.util import as_list, result_as_boolean
 from ...services import ServiceCall
@@ -98,7 +99,13 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         jarvis.data[DATA_MANAGER] = manager
 
     await _async_setup_input_helpers(jarvis)
-    await manager.async_setup_automations(_configs_from(jarvis, config))
+
+    # Automations the console created live in .storage, not in automations.yaml
+    # — rewriting that file would reformat it and lose the user's comments. The
+    # engine takes a list of configs and cannot tell the two apart.
+    authored = get_authored(jarvis)
+    stored = await authored.async_load()
+    await manager.async_setup_automations(_configs_from(jarvis, config) + stored)
 
     # --- services ---------------------------------------------------------
     async def _handle_trigger(call: ServiceCall) -> None:
@@ -131,16 +138,23 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
 
     async def _handle_reload(call: ServiceCall) -> None:
         try:
-            from ...config import load_config
+            from ...config import load_config_with_provenance
 
             # load_config walks the config dir (!include/!secret) — real,
             # blocking file I/O, so keep it off the event loop.
-            fresh = await asyncio.to_thread(load_config, jarvis.config_dir)
+            fresh, provenance = await asyncio.to_thread(
+                load_config_with_provenance, jarvis.config_dir
+            )
+            # Through async_install_config, not a bare assignment: this replaces
+            # jarvis.config wholesale, and without re-applying the overlay every
+            # setting the console has set is silently dropped the first time
+            # anyone edits an automation — invisible until the next restart.
+            fresh = await jarvis.async_install_config(fresh, provenance)
+            stored = await authored.async_load()
         except Exception:
             _LOGGER.exception("Could not re-read configuration; keeping automations")
             return
-        jarvis.config = fresh
-        await manager.async_reload(_configs_from(jarvis, fresh.get(DOMAIN)))
+        await manager.async_reload(_configs_from(jarvis, fresh.get(DOMAIN)) + stored)
         _LOGGER.info("Reloaded %d automations", len(manager.automations))
 
     jarvis.services.register(
