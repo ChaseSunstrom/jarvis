@@ -83,14 +83,34 @@ matches a DNS-rebinding attacker, who controls both headers).
 | Route | What it does |
 | --- | --- |
 | `/` | Voice HUD: push-to-talk, hands-free VAD, barge-in, orb, latency readout |
-| `/devices` | Every entity grouped by area, live over `subscribe_events`, with inline controls (toggle, brightness, cover open/stop/close + position, climate setpoint and HVAC mode, media transport and volume, locks, selects, numbers) |
+| `/devices` | Every entity grouped by area, live over `subscribe_events`, with inline controls (toggle, brightness, cover open/stop/close + position, climate setpoint and HVAC mode, media transport and volume, locks, selects, numbers). MANAGE edits an entity's name, area, aliases and its exposed / hidden / disabled flags |
 | `/areas` | Create / rename / delete areas and assign entities to them |
-| `/automations` | Enable, disable and run automations; shows `last_triggered` |
-| `/tools` | The LLM tool catalogue, an entity-exposure switchboard, and a test-runner that calls a tool with JSON arguments and prints the result |
-| `/settings` | Resolved backend, pipeline and TTS voice, plus a filterable live event stream |
+| `/automations` | Enable, disable and run automations; shows `last_triggered`. Create, edit and delete automations — triggers, conditions and actions as JSON |
+| `/tools` | The LLM tool catalogue, an entity-exposure switchboard, and a test-runner that calls a tool with JSON arguments and prints the result. Create, edit and delete tools — an HTTP call the assistant may make, with its tier |
+| `/settings` | Every editable jarvis-core setting (model, temperature, name, time zone, log level, voice) with where its value came from and whether a change needs a restart; plus the resolved backend, pipeline and TTS voice, and a filterable live event stream |
 
 An entity's area is its own `area_id`, falling back to its device's — the same
 rule jarvis-core resolves voice commands with.
+
+#### What the console can and cannot change
+
+Automations and tools created here are stored by jarvis-core in `.storage/`,
+**not** written back into `automations.yaml` or a `*.tool.yaml` manifest. A
+round-trip writer would reformat those files and lose the user's comments, so
+the console leaves them alone entirely. The consequence is visible in the UI
+rather than hidden: anything that came from YAML is listed, marked `FROM YAML`
+or `BUILT IN`, and has no edit or delete button — with the file to edit named.
+
+The same applies to settings. An override is stored as an overlay merged over
+`configuration.yaml`, and each row says whether the current value came from
+that overlay, the file, a package or a default — because that is what decides
+where you go to change it. A setting a package owns cannot be changed here and
+says which package file to edit.
+
+Settings also report whether a change is already in effect or needs a restart,
+which is the question anyone changing one is actually asking. A `live` setting
+that found nothing running to apply to reports that it needs a restart rather
+than claiming to be in effect.
 
 `/tools` prefers a `jarvis/tools/list` websocket command. Backends that do not
 implement it (including today's jarvis-core) fall back to the service catalogue

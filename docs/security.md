@@ -87,6 +87,17 @@ Content cannot close its own fence — the markers are escaped inside the body.
 "Another model wrote it" is not a trust boundary: a delegated agent that read
 a poisoned page must not be able to smuggle an instruction back.
 
+The markers are the half the model sees. The half that holds is
+`mark_untrusted_result`, which taints the *turn*: once a turn has read
+somebody else's words, no dispatcher can be reached from it without a human.
+Any tool that returns bytes from a machine that is not this one must call it —
+including YAML- and console-defined tools, which fetch an arbitrary HTTP
+endpoint. A `note` on the result asking the model to treat the body as data is
+worth saying and is **not** a control, because a hostile endpoint's reply is
+exactly the text that talks a model out of following a note. Error paths count:
+a 500 whose body is the remote server's words is as much an injection vector
+as a 200, and is cheaper to return.
+
 ## Isolation matrix
 
 | service | network | user | rootfs | mounts | caps |
