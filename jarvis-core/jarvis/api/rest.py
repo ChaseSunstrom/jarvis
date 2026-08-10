@@ -396,6 +396,11 @@ async def area_registry_delete(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/config/companion/list")
+async def companion_list(request: Request) -> list[dict[str, Any]]:
+    return common.companion_list_payload(get_jarvis(request))
+
+
 @api_router.get("/config/tool/list")
 async def tool_list(request: Request) -> list[dict[str, Any]]:
     return common.tool_list_payload(get_jarvis(request))

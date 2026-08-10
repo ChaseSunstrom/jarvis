@@ -141,6 +141,25 @@ test('devices page groups entities by area and a toggle round-trips call_service
 	await expect(page.getByTestId('entity-light.lab_lights')).toHaveCount(0);
 });
 
+test('the devices page shows the phones and desktops running Jarvis', async ({ page }) => {
+	// Distinct from the entity list below it: these are the machines on the
+	// other end of the socket. Nothing showed them before, so you could grant
+	// your phone forty capabilities and never confirm it had connected.
+	await page.goto('/devices');
+	const panel = page.getByTestId('companions');
+	await expect(panel).toBeVisible({ timeout: 15_000 });
+
+	await expect(page.getByTestId('companion-pixel-8')).toContainText('Pixel 8');
+	await expect(page.getByTestId('companion-pixel-8')).toContainText('android');
+	await expect(page.getByTestId('companion-actions-pixel-8')).toContainText('48');
+	await expect(page.getByTestId('companion-state-pixel-8')).toHaveText('online');
+
+	// Offline is the state worth being able to see.
+	await expect(page.getByTestId('companion-state-workshop-desktop')).toHaveText('offline');
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
 test('areas page creates, renames and deletes an area', async ({ page }) => {
 	await page.goto('/areas');
 	await expect(page.getByTestId('area-lab')).toBeVisible({ timeout: 15_000 });

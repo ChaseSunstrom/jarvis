@@ -418,6 +418,26 @@ async def async_delete_area(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     return {"area_id": area_id, "deleted": True}
 
 
+# --- companion devices --------------------------------------------------------
+def companion_list_payload(jarvis: "Jarvis", include_actions: bool = True) -> list[dict[str, Any]]:
+    """The phones, desktops and satellites currently registered on the socket.
+
+    Distinct from `device_registry_payload`, which is the registry of *things in
+    the house* — a Hue bridge, a thermostat. These are the machines running
+    Jarvis clients, each advertising the actions it will accept, and until now
+    nothing could show them: you could grant your phone forty-odd capabilities
+    and have no way to see that it had connected, let alone what it offered.
+    """
+    from .devices import get_devices
+
+    hub = get_devices(jarvis)
+    try:
+        return hub.as_dict(include_actions)
+    except Exception:  # pragma: no cover - a broken link must not blank the page
+        _LOGGER.exception("Could not describe the connected devices")
+        return []
+
+
 # --- tools --------------------------------------------------------------------
 def _tool_registry(jarvis: "Jarvis") -> Any:
     registry = jarvis.data.get("llm_tools")

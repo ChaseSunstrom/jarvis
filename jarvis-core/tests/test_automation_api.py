@@ -217,3 +217,21 @@ def test_every_automation_route_is_wired_to_the_api():
     for verb in ("list", "create", "update", "delete"):
         assert f"/api/config/automation/{verb}" in paths, verb
         assert f"config/automation/{verb}" in websocket.WebSocketHandler._HANDLERS, verb
+
+
+async def test_the_companion_list_is_wired_and_empty_when_nothing_registered(tmp_path):
+    """Phones and desktops, as opposed to the house's own entity registry.
+
+    Empty is the honest answer on a box nothing has connected to yet — the
+    console hides the panel rather than showing a heading over nothing.
+    """
+    box = Jarvis(tmp_path)
+    assert common.companion_list_payload(box) == []
+
+
+def test_the_companion_route_is_wired_to_both_transports():
+    from jarvis.api import rest, websocket
+
+    paths = {getattr(route, "path", "") for route in rest.api_router.routes}
+    assert "/api/config/companion/list" in paths
+    assert "config/companion/list" in websocket.WebSocketHandler._HANDLERS

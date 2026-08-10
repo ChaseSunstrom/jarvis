@@ -8,6 +8,7 @@
 	import { staggerStyle } from '$lib/motion';
 	import {
 		applyStateChanged,
+		type CompanionDevice,
 		areaForEntity,
 		areaKey,
 		domainOf,
@@ -170,6 +171,28 @@
 		devices = await optional(() => client.listDevices());
 	}
 
+	/**
+	 * The machines running Jarvis clients, as opposed to the things in the house.
+	 *
+	 * They register over the same socket and advertise what they will let Jarvis
+	 * do to them, and until now nothing showed them: you could grant your phone
+	 * forty capabilities and have no way to confirm it had ever connected.
+	 */
+	let companions = $state<CompanionDevice[]>([]);
+	let companionsSupported = $state(true);
+
+	async function loadCompanions(connection: Connection): Promise<void> {
+		try {
+			companions = (await connection.client.listCompanions()) ?? [];
+		} catch (e) {
+			// An older jarvis-core has no such command; the rest of the page is
+			// unaffected, so this hides rather than shouting.
+			companions = [];
+			companionsSupported = false;
+			console.warn('companion list unavailable', e);
+		}
+	}
+
 	onMount(() => {
 		let disposed = false;
 		let sub: Subscription | null = null;
@@ -182,6 +205,7 @@
 				}
 				conn = connection;
 				await load(connection);
+				await loadCompanions(connection);
 				sub = await connection.client.subscribeEvents((event) => {
 					if (applyStateChanged(stateMap, event)) publish();
 				}, 'state_changed');
@@ -226,6 +250,35 @@
 		</button>
 	{/if}
 </div>
+
+{#if companionsSupported && companions.length}
+	<section class="panel" data-testid="companions">
+		<div class="panel-head">
+			<span>Companions</span>
+			<span class="muted">phones, desktops and satellites running Jarvis</span>
+		</div>
+		{#each companions as device (device.device_id)}
+			<div class="row" data-testid="companion-{device.device_id}">
+				<span class="name">
+					<b>{device.name}</b>
+					<span class="eid">
+						{device.platform ?? 'unknown'}{device.app_version ? ` · v${device.app_version}` : ''}
+					</span>
+				</span>
+				<span class="muted" data-testid="companion-actions-{device.device_id}">
+					{device.action_count ?? device.actions?.length ?? 0} action(s)
+				</span>
+				<span
+					class="pill"
+					class:on={device.connected}
+					data-testid="companion-state-{device.device_id}"
+				>
+					{device.connected ? 'online' : 'offline'}
+				</span>
+			</div>
+		{/each}
+	</section>
+{/if}
 
 {#if loading && !states.length}
 	<section class="panel" aria-label="Loading devices">

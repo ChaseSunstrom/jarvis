@@ -52,6 +52,18 @@ export interface ToolDraft {
 	service: Record<string, any>;
 }
 
+/** A phone, desktop or satellite registered on the socket. */
+export interface CompanionDevice {
+	device_id: string;
+	name: string;
+	platform?: string;
+	capabilities?: string[];
+	connected?: boolean;
+	app_version?: string | null;
+	action_count?: number;
+	actions?: { name: string; description?: string; tier?: number }[];
+}
+
 /** A tier-3 action held until a human says yes. */
 export interface PendingApproval {
 	request_id?: string;
@@ -522,6 +534,17 @@ export class JarvisClient {
 
 	deleteTool(name: string): Promise<any> {
 		return this.command({ type: 'config/tool/delete', name });
+	}
+
+	/**
+	 * The machines running Jarvis clients — phones, desktops, satellites.
+	 *
+	 * Not `listDevices()`, which is the registry of things in the HOUSE. These
+	 * are the clients on the other end of the socket, each advertising what it
+	 * will let Jarvis do to it.
+	 */
+	listCompanions(): Promise<CompanionDevice[]> {
+		return this.command<CompanionDevice[]>({ type: 'config/companion/list' });
 	}
 
 	// --- approvals ---------------------------------------------------------

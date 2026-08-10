@@ -333,7 +333,35 @@ export function makeWorld() {
 		}
 	];
 
-	return { areas, devices, entities, states, automations, settings, tools, approvals: [], calls: [] };
+	// One online and one not: "connected" is the fact the panel exists to show,
+	// so a fixture where everything is online would not prove it is read.
+	const companions = [
+		{
+			device_id: 'pixel-8',
+			name: 'Pixel 8',
+			platform: 'android',
+			capabilities: ['notify', 'ui_automation'],
+			connected: true,
+			app_version: '1.0.32',
+			action_count: 48,
+			actions: []
+		},
+		{
+			device_id: 'workshop-desktop',
+			name: 'Workshop Desktop',
+			platform: 'linux',
+			capabilities: ['shell'],
+			connected: false,
+			app_version: '0.9.0',
+			action_count: 12,
+			actions: []
+		}
+	];
+
+	return {
+		areas, devices, entities, states, automations, settings, tools,
+		companions, approvals: [], calls: []
+	};
 }
 
 const SERVICES = {
@@ -787,6 +815,12 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				// Tools. Identity is the name, so the interesting cases are a
 				// console tool refusing to take a built-in's name and a delete
 				// refusing to reach one.
+				// The phones and desktops on the other end of the socket, as
+				// opposed to `config/device_registry/list`, which is the house.
+				case 'config/companion/list':
+					ok(msg.id, world.companions);
+					break;
+
 				case 'config/tool/list':
 					ok(msg.id, world.tools);
 					break;
