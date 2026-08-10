@@ -30,7 +30,10 @@ from pathlib import Path
 
 # --- the rules, mirrored from JarvisConversation.kt -------------------------
 
-START_THRESHOLD = 0.02
+# Mirrors JarvisConversation. Lowered by ten after a report of having to shout:
+# the old figure came from the browser, whose getUserMedia applies automatic
+# gain, and this capture path deliberately does not.
+START_THRESHOLD = 0.002
 DEAD_MIC_LEVEL = 0.0005
 
 DEAD_MIC = "dead-mic"
@@ -81,19 +84,26 @@ TABLE: list[tuple[bool, bool, float, str | None, str]] = [
         "is too strict a test for real hardware",
     ),
     (
-        True, False, 0.012, TOO_QUIET,
+        True, False, 0.0012, TOO_QUIET,
         "audio arrived and never crossed the start edge — a distance or gain "
         "problem, not a permission one",
     ),
     (
-        True, False, 0.0199, TOO_QUIET,
+        True, False, 0.00199, TOO_QUIET,
         "just under the threshold is the most frustrating case and must name "
         "the numbers",
     ),
     (
-        True, False, 0.02, NOTHING_HEARD,
+        True, False, 0.002, NOTHING_HEARD,
         "at the threshold the VAD would have latched, so silence here is a "
         "genuine did-not-speak",
+    ),
+    (
+        True, False, 0.012, NOTHING_HEARD,
+        "an ordinary voice at arm's length through an unprocessed phone mic. "
+        "This is the case the old 0.02 edge got wrong, and calling it TOO_QUIET "
+        "is what told people to move closer to a microphone that could hear "
+        "them perfectly well",
     ),
     (
         True, False, 0.4, NOTHING_HEARD,
@@ -170,7 +180,8 @@ def check_kotlin_still_says_so() -> list[str]:
     source = _source()
     required = {
         "private const val DEAD_MIC_LEVEL = 0.0005f": "the dead-mic floor",
-        "private const val START_THRESHOLD = 0.02f": "the start threshold",
+        "private const val START_THRESHOLD = 0.002f": "the start threshold",
+        "private const val END_THRESHOLD = 0.001f": "the end edge, which must stay BELOW the start edge",
         "peakLevel <= DEAD_MIC_LEVEL -> DEAD_MIC": "the dead-mic branch",
         "peakLevel < START_THRESHOLD -> TOO_QUIET": "the too-quiet branch",
         "if (level > peakLevel) peakLevel = level": "the peak being recorded at all",

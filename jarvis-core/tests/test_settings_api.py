@@ -216,3 +216,127 @@ def test_every_settings_route_is_wired_to_the_api():
     for verb in ("list", "set", "reset"):
         assert f"/api/config/settings/{verb}" in paths, verb
         assert f"config/settings/{verb}" in websocket.WebSocketHandler._HANDLERS, verb
+
+
+# ---------------------------------------------------------------------------
+# Choices: a text box for something with a knowable set of answers is a typo
+# waiting to happen, and every one of these typos fails silently.
+# ---------------------------------------------------------------------------
+def test_every_setting_with_a_knowable_answer_offers_the_answers():
+    """The rule, rather than a list of the fields that happen to have one.
+
+    A free-text timezone fires every time trigger at the wrong hour. A free-text
+    Piper voice makes the first reply a download, or a failure on a box with no
+    internet. A free-text wake word stops your name working. None of the three
+    says anything when it is wrong, which is exactly the class of field that has
+    to be a dropdown.
+    """
+    by_key = {spec.key: spec for spec in SETTINGS}
+    for key in (
+        "jarvis.time_zone",
+        "jarvis.unit_system",
+        "jarvis.currency",
+        "jarvis.country",
+        "jarvis.language",
+        "jarvis.log_level",
+        "llm.model",
+        "voice.language",
+        "voice.tts_voice",
+        "voice.wake_word",
+    ):
+        spec = by_key[key]
+        assert spec.type == "choice", f"{key} is still a {spec.type} field"
+        assert spec.choices_hook is not None, f"{key} has no way to offer choices"
+
+
+def test_the_static_choice_lists_are_not_empty_and_contain_the_defaults():
+    box = Jarvis(Path("/nonexistent"))
+    by_key = {spec.key: spec for spec in SETTINGS}
+    for key, expected in (
+        ("jarvis.currency", "GBP"),
+        ("jarvis.country", "GB"),
+        ("jarvis.language", "en"),
+        ("voice.language", "en"),
+        ("jarvis.unit_system", "metric"),
+        ("jarvis.log_level", "info"),
+    ):
+        choices = by_key[key].choices_hook(box)
+        assert choices, f"{key} offers nothing"
+        assert expected in choices, (
+            f"{key} does not offer {expected!r}, which is what the shipped "
+            "configuration.yaml sets — the console would show the current value "
+            "as an unknown extra"
+        )
+
+
+def test_the_timezone_list_is_real_and_contains_the_shipped_default():
+    box = Jarvis(Path("/nonexistent"))
+    by_key = {spec.key: spec for spec in SETTINGS}
+    zones = by_key["jarvis.time_zone"].choices_hook(box)
+    assert len(zones) > 100, "that is not the IANA database"
+    assert "Europe/London" in zones
+    assert "America/New_York" in zones
+
+
+def test_voice_choices_come_from_the_running_services_and_survive_their_absence():
+    """The two that cannot be a static list: they depend on what is running.
+
+    And the degradation matters as much as the happy path — a settings screen
+    that will not render because Piper is restarting is one you cannot use to
+    point Jarvis at a different Piper.
+    """
+    box = Jarvis(Path("/nonexistent"))
+    by_key = {spec.key: spec for spec in SETTINGS}
+    voices = by_key["voice.tts_voice"]
+    words = by_key["voice.wake_word"]
+
+    # Nothing configured at all.
+    assert voices.choices_hook(box) == []
+    assert words.choices_hook(box) == []
+
+    class _Voice:
+        catalogue = {
+            "tts_voices": ["en_GB-alan-medium", "en_US-lessac-medium"],
+            "wake_words": ["hey_jarvis", "ok_nabu"],
+        }
+
+    box.data["voice"] = _Voice()
+    assert voices.choices_hook(box) == ["en_GB-alan-medium", "en_US-lessac-medium"]
+    assert words.choices_hook(box) == ["hey_jarvis", "ok_nabu"]
+
+    # A voice object that has never been probed, and one holding junk.
+    class _Unprobed:
+        catalogue: dict = {}
+
+    box.data["voice"] = _Unprobed()
+    assert voices.choices_hook(box) == []
+    box.data["voice"] = object()
+    assert voices.choices_hook(box) == []
+
+
+async def test_the_catalogue_is_read_from_a_wyoming_describe():
+    """Mapped off the shape the services actually answer with."""
+    from jarvis.integrations.voice import VoiceData
+    from jarvis.voice.pipelines import PipelineStore
+
+    box = Jarvis(Path("/nonexistent"))
+    data = VoiceData(jarvis=box, pipelines=PipelineStore())
+
+    async def fake_info():
+        return {
+            "tts": {"tts": [{"name": "piper", "voices": [
+                {"name": "en_GB-alan-medium"}, {"name": "en_US-lessac-medium"},
+            ]}]},
+            "wake": {"wake": [{"name": "openWakeWord", "models": [
+                {"name": "hey_jarvis"}, {"name": "alexa"},
+            ]}]},
+            "stt": {"error": "connection refused"},
+        }
+
+    data.async_info = fake_info  # type: ignore[method-assign]
+    catalogue = await data.async_refresh_catalogue()
+
+    assert catalogue["tts_voices"] == ["en_GB-alan-medium", "en_US-lessac-medium"]
+    assert catalogue["wake_words"] == ["alexa", "hey_jarvis"]
+    # A service that is down contributes nothing rather than an error string.
+    assert catalogue["stt_models"] == []

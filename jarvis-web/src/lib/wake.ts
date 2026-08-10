@@ -42,8 +42,16 @@ export class EnergyVAD {
 
 	constructor(opts: VadOptions = {}) {
 		this.opts = {
-			startThreshold: opts.startThreshold ?? 0.02,
-			endThreshold: opts.endThreshold ?? 0.01,
+			// Ten times lower than the 0.02/0.01 this shipped with, matching the
+			// phone. Both move together: they are a hysteresis, and a start edge
+			// below the end edge would open a turn and immediately start counting
+			// it as silence.
+			//
+			// The browser applies automatic gain by default, so this surface was
+			// the less wrong of the two — but the same room and the same voice
+			// should not need to be louder for the console than for the app.
+			startThreshold: opts.startThreshold ?? 0.002,
+			endThreshold: opts.endThreshold ?? 0.001,
 			minSpeechMs: opts.minSpeechMs ?? 120,
 			hangoverMs: opts.hangoverMs ?? 800
 		};

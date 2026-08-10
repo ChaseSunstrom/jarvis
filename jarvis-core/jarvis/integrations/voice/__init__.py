@@ -102,6 +102,14 @@ class VoiceData:
     tts_voice: str | None = None
     wake_word: str | None = DEFAULT_WAKE_WORD
 
+    #: What the running services say they can do, from their own `describe`.
+    #:
+    #: Cached because the settings screen's `choices_hook` is synchronous and
+    #: this is a network round trip. Empty until :meth:`async_refresh_catalogue`
+    #: has run, and empty is handled: the console falls back to a text box, which
+    #: is what every one of these used to be.
+    catalogue: dict[str, list[str]] = field(default_factory=dict)
+
     def async_create_run(
         self,
         pipeline: Pipeline | str | None = None,
@@ -149,6 +157,52 @@ class VoiceData:
             except (WyomingError, OSError) as err:
                 info[name] = {"error": str(err)}
         return info
+
+    async def async_refresh_catalogue(self) -> dict[str, list[str]]:
+        """Ask the services what they actually serve, and remember it.
+
+        The voice settings were three free-text boxes: type a Piper voice that
+        the container was not started with and every reply becomes a download,
+        or fails; type a wake word openWakeWord is not serving and your name
+        stops working. Neither mistake is visible until you make it, and the
+        answer is a round trip away — Wyoming's `describe` is exactly this
+        question.
+
+        Best effort by construction. A service that is down contributes nothing
+        and the field stays a text box, because a settings screen that will not
+        load when Piper is restarting is a settings screen you cannot use.
+        """
+        info = await self.async_info()
+
+        def named(section: str, key: str) -> list[str]:
+            out: set[str] = set()
+            for service in info.get(section) or []:
+                if not isinstance(service, dict):
+                    continue
+                for entry in service.get(key) or []:
+                    name = entry.get("name") if isinstance(entry, dict) else entry
+                    if isinstance(name, str) and name:
+                        out.add(name)
+            return sorted(out)
+
+        # `info` is {"tts": {...}} per service, and each payload is itself
+        # {"tts": [ {...program...} ]} — Wyoming nests the program list under
+        # the same word. Flatten both shapes rather than assume one.
+        def section(name: str) -> dict[str, Any]:
+            payload = info.get(name)
+            return payload if isinstance(payload, dict) else {}
+
+        merged: dict[str, Any] = {}
+        for name in ("stt", "tts", "wake"):
+            merged[name] = section(name).get(name) or []
+
+        info = merged  # noqa: PLW2901 - `named` reads the flattened form
+        self.catalogue = {
+            "tts_voices": named("tts", "voices"),
+            "wake_words": named("wake", "models"),
+            "stt_models": named("stt", "models"),
+        }
+        return self.catalogue
 
 
 # --- helpers other integrations use -----------------------------------------
@@ -439,6 +493,25 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
     jarvis.data.setdefault(DATA_TTS_CACHE, {})
 
     _register_services(jarvis, data)
+
+    # Ask the services what they serve, in the background. Two reasons it is not
+    # awaited: three network round trips on the startup path would delay every
+    # other integration behind a container that may still be loading a model,
+    # and the answer is only needed by the settings screen, which nobody is
+    # looking at one second after boot. A failure is a debug line and an empty
+    # dropdown, never a failed setup.
+    async def _catalogue() -> None:
+        try:
+            found = await data.async_refresh_catalogue()
+            _LOGGER.info(
+                "Voice catalogue: %d voice(s), %d wake word(s)",
+                len(found.get("tts_voices") or []),
+                len(found.get("wake_words") or []),
+            )
+        except Exception:  # pragma: no cover - a probe is never load-bearing
+            _LOGGER.debug("voice: could not read the service catalogue", exc_info=True)
+
+    jarvis.async_create_task(_catalogue())
 
     _LOGGER.info(
         "Voice ready: stt=%s tts=%s wake=%s, %d pipeline(s), preferred %r",

@@ -85,7 +85,15 @@ DEFAULT_TIMEOUT = 300.0
 # is a trust boundary: nothing a client sends may produce a run with no
 # deadline at all (a run holds a Wyoming connection and a driver task open).
 MAX_TIMEOUT = 3600.0
-DEFAULT_VAD_THRESHOLD = 200.0
+# RMS in int16 units, so 80 is ~0.0024 of full scale — deliberately the same
+# place the clients' 0.002 start edge sits, because the two disagreeing means
+# the orb says "speaking" at a different moment from the surface that is
+# actually deciding when the turn ends.
+#
+# Safe to lower: this VAD only EMITS stt-vad-start/end. Every chunk is yielded
+# to the recogniser either way, so a threshold that is too low costs an early
+# event and never a lost word.
+DEFAULT_VAD_THRESHOLD = 80.0
 DEFAULT_VAD_SILENCE_MS = 900
 
 _HANDLER_IDS = itertools.count(1)

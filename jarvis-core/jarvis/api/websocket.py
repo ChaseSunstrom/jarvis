@@ -665,6 +665,7 @@ class WebSocketHandler:
 
     # settings
     async def _cmd_settings_list(self, msg: dict[str, Any]) -> Any:
+        await common.async_refresh_choices(self.jarvis)
         return common.settings_payload(self.jarvis)
 
     async def _cmd_settings_set(self, msg: dict[str, Any]) -> Any:

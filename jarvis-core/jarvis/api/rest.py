@@ -432,7 +432,12 @@ async def tool_delete(request: Request) -> dict[str, Any]:
 
 @api_router.get("/config/settings/list")
 async def settings_list(request: Request) -> dict[str, Any]:
-    return common.settings_payload(get_jarvis(request))
+    jarvis = get_jarvis(request)
+    # Opening the settings page is the moment to re-ask the voice services what
+    # they serve: a Piper restarted with a different voice since boot would
+    # otherwise be offered yesterday's list.
+    await common.async_refresh_choices(jarvis)
+    return common.settings_payload(jarvis)
 
 
 @api_router.post("/config/settings/set")

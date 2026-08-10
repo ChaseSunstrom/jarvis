@@ -576,6 +576,29 @@ def _tool_spec(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- settings ---------------------------------------------------------------
+async def async_refresh_choices(jarvis: "Jarvis") -> None:
+    """Re-ask the services what they offer, before the settings page is built.
+
+    `choices_hook` is synchronous — it has to be, because it runs once per row
+    while the payload is assembled — so anything that needs a network round trip
+    has to have been fetched already. Voice is the case: Piper's voice list and
+    openWakeWord's model list come from a Wyoming `describe`, and a container
+    restarted since boot serves a different set.
+
+    Best effort and never awaited by anything that matters. A probe that fails
+    leaves the previous answer in place, and an empty answer degrades the field
+    to the text box it used to be rather than failing the page.
+    """
+    voice = jarvis.data.get("voice")
+    refresh = getattr(voice, "async_refresh_catalogue", None)
+    if refresh is None:
+        return
+    try:
+        await refresh()
+    except Exception:  # pragma: no cover - the page must still render
+        _LOGGER.debug("could not refresh the voice catalogue", exc_info=True)
+
+
 def settings_payload(jarvis: "Jarvis") -> dict[str, Any]:
     """Every editable setting, with where its current value came from.
 

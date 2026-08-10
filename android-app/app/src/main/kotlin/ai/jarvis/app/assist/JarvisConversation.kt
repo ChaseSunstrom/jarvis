@@ -371,15 +371,40 @@ class JarvisConversation(
          * cannot: crossing 0.02 starts a turn, and only falling below 0.01
          * counts towards the hangover.
          */
-        private const val START_THRESHOLD = 0.02f
-        private const val END_THRESHOLD = 0.01f
+        // Lowered by a factor of ten from 0.02/0.01 after a field report of
+        // having to be next to the phone, or shouting, to be heard at all.
+        //
+        // The old figure came from jarvis-web, where the browser's getUserMedia
+        // applies automatic gain by default. This capture path deliberately does
+        // not: VOICE_RECOGNITION is unprocessed, which is right for the STT
+        // model and means the same sentence arrives several times quieter than
+        // the number was chosen against. Conversational speech at arm's length
+        // through an unprocessed phone mic smooths to roughly 0.005-0.02, so the
+        // start edge sat at the TOP of the normal range instead of below it.
+        //
+        // BOTH move, and they have to. The pair is a hysteresis: crossing the
+        // start edge begins a turn, and only falling below the end edge counts
+        // towards the hangover. Lowering the start alone would leave the end
+        // edge ABOVE it, so an ordinary voice would open a turn and be counted
+        // as silence in the same breath — the turn would end 900 ms later while
+        // the person was still talking.
+        private const val START_THRESHOLD = 0.002f
+        private const val END_THRESHOLD = 0.001f
 
         /**
          * Barge-in over the reply. Must stay well above [START_THRESHOLD]: it
          * is answered by cancelling TTS and starting a new turn, so a value
          * near the start edge would make the phone interrupt itself.
+         *
+         * Deliberately NOT scaled with the pair above. Its job is to sit above
+         * what the microphone hears from the phone's own speaker while it is
+         * talking, and that has not changed; scaling it to 0.01 would make
+         * Jarvis interrupt its own reply. Halved rather than divided by ten,
+         * because 0.10 was chosen against the old start edge and is now 50x it —
+         * far enough that barging in took a raised voice, which is the same
+         * complaint one surface along.
          */
-        private const val BARGE_THRESHOLD = 0.10f
+        private const val BARGE_THRESHOLD = 0.06f
 
         /** Sustained energy required to latch the start edge (jarvis-web: 120 ms). */
         private const val START_DEBOUNCE_MS = 120L
@@ -438,8 +463,10 @@ class JarvisConversation(
 
         /** Audio arrived, and it never reached the start threshold. */
         private const val TOO_QUIET =
-            "I heard sound, but too faintly to be sure it was speech (peak %.3f, " +
-                "needs %.2f). Move closer, or check that the right microphone is selected."
+            // %.4f on both: the start edge is 0.002 now, and %.2f printed it as
+            // "0.00" — a diagnostic that told the user the threshold was zero.
+            "I heard sound, but too faintly to be sure it was speech (peak %.4f, " +
+                "needs %.4f). Move closer, or check that the right microphone is selected."
 
         /**
          * Said when the socket never got as far as listening. Names the server,

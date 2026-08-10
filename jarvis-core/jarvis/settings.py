@@ -221,6 +221,62 @@ def _model_choices(jarvis: "Jarvis") -> list[str]:
     return sorted(names) if isinstance(names, (list, set, tuple)) else []
 
 
+def _voice_catalogue(jarvis: "Jarvis", key: str) -> list[str]:
+    """What the Wyoming services said they serve, from their own `describe`.
+
+    Empty when they have not been asked yet or are down, and empty is the
+    honest answer: the console falls back to a text box rather than offering a
+    list that might be wrong.
+    """
+    voice = jarvis.data.get("voice")
+    catalogue = getattr(voice, "catalogue", None)
+    if not isinstance(catalogue, dict):
+        return []
+    values = catalogue.get(key)
+    return list(values) if isinstance(values, list) else []
+
+
+def _time_zone_choices(jarvis: "Jarvis") -> list[str]:
+    """Every IANA zone this Python knows about.
+
+    A long list, and a dropdown of it is still strictly better than a text box:
+    the failure mode of the text box is a typo that makes every time trigger
+    fire at the wrong hour, silently, until someone notices the lights coming
+    on at four in the morning.
+    """
+    try:
+        from zoneinfo import available_timezones
+
+        return sorted(available_timezones())
+    except Exception:  # pragma: no cover - no tzdata on this box
+        return []
+
+
+#: ISO 4217, the ones a home assistant is plausibly priced in. Not the full
+#: list of 180: this is a dropdown, and a dropdown you have to search is worse
+#: than the text box it replaced.
+_CURRENCIES = (
+    "AUD", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "EUR", "GBP", "HKD",
+    "HUF", "ILS", "INR", "JPY", "KRW", "MXN", "NOK", "NZD", "PLN", "RON",
+    "SEK", "SGD", "THB", "TRY", "TWD", "USD", "ZAR",
+)
+
+#: ISO 3166-1 alpha-2, same reasoning. Used for holiday calendars and units.
+_COUNTRIES = (
+    "AT", "AU", "BE", "BR", "CA", "CH", "CN", "CZ", "DE", "DK", "ES", "FI",
+    "FR", "GB", "HK", "HU", "IE", "IL", "IN", "IT", "JP", "KR", "MX", "NL",
+    "NO", "NZ", "PL", "PT", "RO", "SE", "SG", "TH", "TR", "TW", "US", "ZA",
+)
+
+#: The languages the voice stack has models for in practice. `language` is used
+#: by STT, TTS and the assistant's replies.
+_LANGUAGES = (
+    "ar", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr", "hi",
+    "hu", "is", "it", "ja", "ka", "kk", "ko", "lb", "lv", "nl", "no", "pl",
+    "pt", "ro", "ru", "sk", "sl", "sr", "sv", "sw", "tr", "uk", "vi", "zh",
+)
+
+
 # --- the allowlist ----------------------------------------------------------
 SETTINGS: tuple[SettingSpec, ...] = (
     # --- assistant ---------------------------------------------------------
@@ -302,11 +358,12 @@ SETTINGS: tuple[SettingSpec, ...] = (
         path=("jarvis", "time_zone"),
         label="Timezone",
         group="House",
-        type="string",
+        type="choice",
         apply=APPLY_LIVE,
         note="An IANA name. Decides when `at: \"07:00:00\"` fires and what "
         "{{ now() }} reads.",
         validate=_time_zone,
+        choices_hook=_time_zone_choices,
     ),
     SettingSpec(
         key="jarvis.unit_system",
@@ -322,24 +379,27 @@ SETTINGS: tuple[SettingSpec, ...] = (
         path=("jarvis", "currency"),
         label="Currency",
         group="House",
-        type="string",
+        type="choice",
         validate=_text(3, 3),
+        choices_hook=lambda jarvis: list(_CURRENCIES),
     ),
     SettingSpec(
         key="jarvis.country",
         path=("jarvis", "country"),
         label="Country",
         group="House",
-        type="string",
+        type="choice",
         validate=_text(2, 2),
+        choices_hook=lambda jarvis: list(_COUNTRIES),
     ),
     SettingSpec(
         key="jarvis.language",
         path=("jarvis", "language"),
         label="Language",
         group="House",
-        type="string",
+        type="choice",
         validate=_text(2, 10),
+        choices_hook=lambda jarvis: list(_LANGUAGES),
     ),
     SettingSpec(
         key="jarvis.latitude",
@@ -389,30 +449,35 @@ SETTINGS: tuple[SettingSpec, ...] = (
         path=("voice", "language"),
         label="Speech language",
         group="Voice",
-        type="string",
+        type="choice",
         validate=_text(2, 10),
         apply_hook=_apply_voice_attr("language"),
+        choices_hook=lambda jarvis: list(_LANGUAGES),
     ),
     SettingSpec(
         key="voice.tts_voice",
         path=("voice", "tts_voice"),
         label="Voice",
         group="Voice",
-        type="string",
-        note="A Piper voice name, e.g. en_GB-alan-medium. Piper must have been "
-        "given it at startup.",
+        type="choice",
+        note="The voices Piper is actually serving, from its own `describe`. "
+        "Naming one it was not started with makes the first reply a download — "
+        "and a failure on a box with no internet.",
         validate=_text(1, 80),
         apply_hook=_apply_voice_attr("tts_voice"),
+        choices_hook=lambda jarvis: _voice_catalogue(jarvis, "tts_voices"),
     ),
     SettingSpec(
         key="voice.wake_word",
         path=("voice", "wake_word"),
         label="Wake word",
         group="Voice",
-        type="string",
-        note="A model openWakeWord is serving.",
+        type="choice",
+        note="The models openWakeWord is actually serving. A name it does not "
+        "have means your name stops working, with nothing to say so.",
         validate=_text(1, 60),
         apply_hook=_apply_voice_attr("wake_word"),
+        choices_hook=lambda jarvis: _voice_catalogue(jarvis, "wake_words"),
     ),
 )
 
