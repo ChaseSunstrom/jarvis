@@ -540,6 +540,38 @@ one uncovered a third that had been invisible.
   you are changing anything that touches asyncio lifecycles, run the suite under
   3.12 before believing it.
 
+- **The `e2e · android emulator` job had been red on every push since the AVD
+  cache started hitting.** Not flaky, and not anything the instrumented suite
+  tests: the emulator action's own boot sequence died before `script` ran.
+
+  ```
+  Successfully loaded snapshot 'default_boot' using 6438 ms
+  adb ... shell getprop sys.boot_completed -> 1
+  Emulator booted.
+  adb ... shell input keyevent 82
+  java.lang.RuntimeException: android.os.DeadSystemException
+  ```
+
+  `sys.boot_completed` is part of the state a snapshot restores, so it reads
+  `1` the instant the snapshot loads and says nothing about whether *this*
+  boot's `system_server` is alive. The action's readiness gate is therefore
+  vacuous on a restore, and the unlock keyevent it sends immediately afterwards
+  lands on a system still coming back up. A cache hit every run means this
+  every run. It is also unreachable from our side — that unlock is inside the
+  action, before `script` — so the only lever is to refuse the snapshot.
+
+  `-no-snapshot-load` on the instrumented step makes `boot_completed` mean what
+  the action thinks it means. Verified by the run for `011b205`: the step got
+  past boot and the whole `End-to-end` workflow went green for the first time,
+  against `7df9f3e` and the four commits before it where the same job died
+  about a minute in. Two contract tests in
+  `testing/e2e/test_ci_workflow_contract.py` pin the flags, each checked to
+  fail without them.
+
+  This one hid behind the same shape as the row above: the emulator job is the
+  slow one, the other jobs were green, and a boot failure inside a third-party
+  action reads as infrastructure rather than as something in this repo.
+
 The lesson is the one this document keeps relearning, alongside the mutation
 stub and the four-commit APK breakage: a suite that does not run is
 indistinguishable from a suite that passes, and this file is the place that
