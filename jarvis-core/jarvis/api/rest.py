@@ -396,6 +396,27 @@ async def area_registry_delete(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/config/settings/list")
+async def settings_list(request: Request) -> dict[str, Any]:
+    return common.settings_payload(get_jarvis(request))
+
+
+@api_router.post("/config/settings/set")
+async def settings_set(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_set_setting(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/settings/reset")
+async def settings_reset(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_reset_setting(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/config/automation/list")
 async def automation_list(request: Request) -> list[dict[str, Any]]:
     return common.automation_list_payload(get_jarvis(request))

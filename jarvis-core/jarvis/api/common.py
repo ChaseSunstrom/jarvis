@@ -418,6 +418,128 @@ async def async_delete_area(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     return {"area_id": area_id, "deleted": True}
 
 
+# --- settings ---------------------------------------------------------------
+def settings_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Every editable setting, with where its current value came from.
+
+    The `choices` come from each spec's `choices_hook`, which asks the running
+    system — the installed Ollama models, the loaded voices. A hook that throws
+    (the backend is down, the integration is not configured) contributes no
+    choices rather than failing the whole page: a settings screen that will not
+    load because Ollama is unreachable is a settings screen you cannot use to
+    fix the Ollama address.
+    """
+    from ..settings import SETTINGS_BY_KEY
+
+    rows = jarvis.settings.describe(jarvis.raw_config, jarvis.package_provenance)
+    for row in rows:
+        spec = SETTINGS_BY_KEY.get(row["key"])
+        hook = getattr(spec, "choices_hook", None)
+        if hook is None:
+            continue
+        try:
+            choices = hook(jarvis)
+        except Exception:  # pragma: no cover - defensive, see the docstring
+            _LOGGER.debug("choices for %s could not be listed", row["key"], exc_info=True)
+            continue
+        if choices:
+            row["choices"] = list(choices)
+    return {
+        "settings": rows,
+        "unapplied": [entry.as_dict() for entry in jarvis.settings.unapplied],
+    }
+
+
+def _apply_now(jarvis: "Jarvis", key: str, value: Any) -> bool:
+    """Push a stored setting into whatever is already running.
+
+    Storing a setting only changes what the *next* boot builds from. Every
+    spec marked `live` carries an `apply_hook` for the running copy, and until
+    this called them the console could report a model that nothing was using.
+    Returns whether the value actually landed somewhere live.
+    """
+    from ..settings import SETTINGS_BY_KEY
+
+    spec = SETTINGS_BY_KEY.get(key)
+    if spec is None or spec.apply_hook is None:
+        return False
+    try:
+        return bool(spec.apply_hook(jarvis, value))
+    except Exception:
+        _LOGGER.exception("Could not apply %s live", key)
+        return False
+
+
+def _setting_result(jarvis: "Jarvis", key: str, value: Any, applied: bool) -> dict[str, Any]:
+    from ..settings import APPLY_LIVE, SETTINGS_BY_KEY
+
+    spec = SETTINGS_BY_KEY[key]
+    return {
+        "key": key,
+        "value": value,
+        "applied": applied,
+        "apply": spec.apply,
+        # The honest answer to "do I need to restart", which is the question
+        # anyone changing a setting is actually asking. `live` still counts as
+        # needing one if the hook did not find its target.
+        "restart_required": spec.apply != APPLY_LIVE or not applied,
+        "settings": settings_payload(jarvis)["settings"],
+    }
+
+
+async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    from ..settings import SETTINGS_BY_KEY, SettingsError
+
+    key = str(payload.get("key") or "").strip()
+    if not key:
+        raise ApiError("invalid_format", "key is required", 400)
+    if "value" not in payload:
+        raise ApiError("invalid_format", "value is required", 400)
+    # Resolved before the write so an unknown key is a 404 rather than sharing
+    # the 400 that a *bad value for a real key* gets. The console shows them
+    # differently: one is a typo in the request, the other is a field to fix.
+    if key not in SETTINGS_BY_KEY:
+        raise ApiError("not_found", f"{key} is not an editable setting", 404)
+    try:
+        value = await jarvis.settings.async_set(key, payload["value"])
+    except SettingsError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+
+    # Re-merge so `jarvis.config` — which everything reads — matches the store
+    # immediately, rather than only after the next restart.
+    await jarvis.async_install_config(jarvis.raw_config, jarvis.package_provenance)
+    return _setting_result(jarvis, key, value, _apply_now(jarvis, key, value))
+
+
+async def async_reset_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop an override so the file's value shows through again."""
+    from ..settings import SETTINGS_BY_KEY
+
+    key = str(payload.get("key") or "").strip()
+    if not key:
+        raise ApiError("invalid_format", "key is required", 400)
+    spec = SETTINGS_BY_KEY.get(key)
+    if spec is None:
+        raise ApiError("not_found", f"{key} is not an editable setting", 404)
+
+    await jarvis.settings.async_reset(key)
+    merged = await jarvis.async_install_config(jarvis.raw_config, jarvis.package_provenance)
+    # Whatever the file (or a default) says now, pushed live the same way a set
+    # would be — otherwise a reset appears to work and changes nothing.
+    reverted = _dig_config(merged, spec.path)
+    applied = _apply_now(jarvis, key, reverted) if reverted is not None else False
+    return _setting_result(jarvis, key, reverted, applied)
+
+
+def _dig_config(config: dict[str, Any], path: tuple[str, ...]) -> Any:
+    node: Any = config
+    for part in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
 # --- automations ------------------------------------------------------------
 def automation_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
     """Every automation the engine is running, editable or not.

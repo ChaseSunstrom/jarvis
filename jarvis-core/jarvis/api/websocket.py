@@ -644,6 +644,16 @@ class WebSocketHandler:
     async def _cmd_area_delete(self, msg: dict[str, Any]) -> Any:
         return await common.async_delete_area(self.jarvis, msg)
 
+    # settings
+    async def _cmd_settings_list(self, msg: dict[str, Any]) -> Any:
+        return common.settings_payload(self.jarvis)
+
+    async def _cmd_settings_set(self, msg: dict[str, Any]) -> Any:
+        return await common.async_set_setting(self.jarvis, msg)
+
+    async def _cmd_settings_reset(self, msg: dict[str, Any]) -> Any:
+        return await common.async_reset_setting(self.jarvis, msg)
+
     # automations
     async def _cmd_automation_list(self, msg: dict[str, Any]) -> Any:
         return common.automation_list_payload(self.jarvis)
@@ -909,6 +919,9 @@ WebSocketHandler._HANDLERS = {
     "config/area_registry/create": WebSocketHandler._cmd_area_create,
     "config/area_registry/update": WebSocketHandler._cmd_area_update,
     "config/area_registry/delete": WebSocketHandler._cmd_area_delete,
+    "config/settings/list": WebSocketHandler._cmd_settings_list,
+    "config/settings/set": WebSocketHandler._cmd_settings_set,
+    "config/settings/reset": WebSocketHandler._cmd_settings_reset,
     "config/automation/list": WebSocketHandler._cmd_automation_list,
     "config/automation/create": WebSocketHandler._cmd_automation_create,
     "config/automation/update": WebSocketHandler._cmd_automation_update,

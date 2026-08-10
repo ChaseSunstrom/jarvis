@@ -30,6 +30,9 @@ class Jarvis:
         #: The configuration exactly as the files give it, before the overlay.
         #: Kept so the console can show what a setting would revert to.
         self.raw_config: dict[str, Any] = {}
+        #: Which package supplied which top-level key. The console needs it to
+        #: answer "why can I not change this here" with the file to edit.
+        self.package_provenance: dict[str, str] = {}
         self.bus = EventBus()
         self.states = StateMachine(self.bus)
         self.services = ServiceRegistry(self.bus)
@@ -101,6 +104,7 @@ class Jarvis:
         model that nothing was running.
         """
         self.raw_config = config
+        self.package_provenance = package_provenance or {}
         merged, _unapplied = self.settings.apply(config, package_provenance or {})
         self.config = merged
         return merged
