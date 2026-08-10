@@ -430,6 +430,45 @@ async def tool_delete(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/models/list")
+async def models_list(request: Request) -> dict[str, Any]:
+    """What the phone can run locally, and whether it is here yet."""
+    from . import models as model_store
+
+    return {"models": model_store.catalogue_payload(get_jarvis(request))}
+
+
+@api_router.get("/models/{name}")
+async def models_get(request: Request, name: str) -> Response:
+    """Serve a model file to the app, fetching it once if this is the first ask.
+
+    Authenticated like every other route on this router, which is the point:
+    the phone reaches its own Jarvis with the token it already holds, and never
+    talks to GitHub. See `api/models.py` for why that matters more than it
+    might look.
+    """
+    from . import models as model_store
+
+    jarvis = get_jarvis(request)
+    try:
+        path = await model_store.async_ensure(jarvis, name)
+    except model_store.ModelError as err:
+        # 404 for "no such model", 502 for "the mirror could not get it" — the
+        # app retries the second and gives up on the first.
+        status = 404 if "not a model" in str(err) else 502
+        raise HTTPException(status_code=status, detail=str(err)) from err
+    return Response(
+        content=path.read_bytes(),
+        media_type="application/octet-stream",
+        headers={
+            # The digest travels with the bytes so the phone can verify what it
+            # received rather than trusting the transfer.
+            "X-Jarvis-SHA256": model_store.CATALOGUE_BY_NAME[name].sha256,
+            "Content-Disposition": f'attachment; filename="{name}"',
+        },
+    )
+
+
 @api_router.get("/config/settings/list")
 async def settings_list(request: Request) -> dict[str, Any]:
     jarvis = get_jarvis(request)
