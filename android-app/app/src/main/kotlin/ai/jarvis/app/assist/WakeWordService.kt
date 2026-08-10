@@ -1,9 +1,13 @@
 package ai.jarvis.app.assist
 
 import ai.jarvis.app.JarvisAssistActivity
+import ai.jarvis.app.ListenTrampolineActivity
 import ai.jarvis.app.R
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.ui.JarvisOrbView
 import android.Manifest
+import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -18,6 +22,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ServiceCompat
 
@@ -42,6 +49,22 @@ import androidx.core.app.ServiceCompat
  * telling the person holding the phone that something is listening, and it
  * says so plainly and offers a STOP.
  *
+ * **Staying up is its own problem, and most of this file.** A microphone-typed
+ * foreground service cannot be started from the background — `BOOT_COMPLETED`
+ * is not an exemption for the while-in-use types — so after a reboot the
+ * listener simply was not running and the only cure was opening the app. Three
+ * things fix that, and each is here because the failure it covers is invisible
+ * from the phone:
+ *
+ *  1. [WakeStartPolicy] decides in advance whether a start will be allowed, and
+ *     when it will not, [tellTheUser] puts it one tap away instead of logging a
+ *     warning nobody can read.
+ *  2. A failure to open the mic no longer stops the service. It used to, which
+ *     turned every transient conflict — a phone call, another app recording —
+ *     into a listener that stayed dead until the app was opened.
+ *  3. [armHeartbeat] re-checks every quarter of an hour, so a process the system
+ *     killed comes back on its own.
+ *
  * The mic is released the moment a conversation starts and re-acquired when it
  * ends, because two `AudioRecord`s on one device is a coin toss over which one
  * gets the audio — see [pause].
@@ -58,12 +81,26 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     /** Consecutive failed connects, for the backoff. */
     private var failures = 0
 
+    /** Consecutive failures to open the microphone, for its own backoff. */
+    private var micFailures = 0
+
+    /** Notices a recorder that is open and handing back nothing. */
+    private val silence = MicSilenceWatch()
+
+    /** The floating orb, when the wake word led to one. */
+    private var overlay: AssistOverlay? = null
+
+    /** The conversation the overlay is showing, if any. */
+    private var convo: JarvisConversation? = null
+
     private val reconnect = Runnable { if (running) openLink() }
 
     /**
      * Take the microphone back when a wake word led nowhere.
      *
-     * Cancelled by ACTION_PAUSE, which the assist activity sends as it starts.
+     * Cancelled by ACTION_PAUSE, which the assist activity sends as it starts,
+     * and never armed at all when the overlay took the conversation — that path
+     * hands the mic back itself.
      */
     private val rearm = Runnable {
         if (!running || !config.wakeWordEnabled) return@Runnable
@@ -85,35 +122,69 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
                 // off too, or the next thing that calls ensureRunning quietly
                 // starts listening again and the STOP button looks broken.
                 config.wakeWordEnabled = false
+                cancelHeartbeat(this)
+                clearAttention(this)
                 stopSelf()
                 return START_NOT_STICKY
             }
             ACTION_PAUSE -> {
-                // A conversation took the mic, so the re-arm safety net is not needed.
+                // A conversation took the mic, so the re-arm safety net is not
+                // needed. If our own overlay was up, whatever is starting now
+                // supersedes it.
                 main.removeCallbacks(rearm)
+                endOverlayConversation(giveMicBack = false)
+                if (!running) {
+                    // A pause delivered to a listener that was not up would
+                    // otherwise leave a service with no foreground notification
+                    // and nothing to do. It is not a reason to start listening.
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 pause()
                 return START_STICKY
             }
             ACTION_RESUME -> {
-                resume()
-                return START_STICKY
+                if (running) {
+                    resume()
+                    return START_STICKY
+                }
+                // Not running: a resume aimed at a listener the system already
+                // killed is a start. Falling through to the ordinary path below
+                // re-checks every precondition and enters the foreground, which
+                // resume() on its own would not — leaving a service holding a
+                // microphone with no notification over it.
             }
         }
 
-        if (!config.wakeWordEnabled || !hasMic()) {
-            Log.i(TAG, "not listening: enabled=${config.wakeWordEnabled} mic=${hasMic()}")
+        if (!config.wakeWordEnabled) {
+            Log.i(TAG, "not listening: the setting is off")
+            cancelHeartbeat(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (!hasMic()) {
+            // Not a silent stop. Without the permission this service can never
+            // do its job, and the user asked for it to — so say so where they
+            // will see it rather than leaving the switch on and nothing behind
+            // it.
+            Log.i(TAG, "not listening: RECORD_AUDIO is not granted")
+            tellTheUser(this, WakeStartPolicy.Route.NEEDS_MIC_PERMISSION)
             stopSelf()
             return START_NOT_STICKY
         }
 
-        enterForeground()
+        if (!enterForeground()) return START_NOT_STICKY
+        clearAttention(this)
+        armHeartbeat(this)
         if (!running) {
             running = true
             openLink()
         }
         // STICKY: a wake-word listener the system killed under memory pressure
         // should come back, and onStartCommand re-checks every precondition
-        // rather than assuming the previous state survived.
+        // rather than assuming the previous state survived. The heartbeat
+        // covers the case where the platform refuses the sticky restart because
+        // it would be a background start of a microphone service.
         return START_STICKY
     }
 
@@ -121,6 +192,7 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         running = false
         main.removeCallbacks(reconnect)
         main.removeCallbacks(rearm)
+        endOverlayConversation(giveMicBack = false)
         closeLink()
         super.onDestroy()
     }
@@ -147,23 +219,64 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             onKindResolved = { config.serverKind = it },
         ).also { it.connect(config.pipeline) }
 
+        silence.reset()
         mic = MicStreamer(
             onPcm = { buf, len -> client?.sendAudio(buf, len) },
-            onLevel = { /* nothing to draw: there is no surface while waiting */ },
-            onUnavailable = { reason ->
-                // A dead mic while waiting is silent by nature — there is no
-                // screen to put it on — so it goes in the notification, which
-                // is the one surface this service always has.
-                Log.w(TAG, "capture unavailable: $reason")
-                showProblem(reason)
-                stopSelf()
-            },
+            onLevel = { level -> watchForSilence(level) },
+            onUnavailable = { reason -> onMicUnavailable(reason) },
         ).also { it.start() }
     }
 
     private fun closeLink() {
         mic?.stop(); mic = null
         client?.close(); client = null
+    }
+
+    /**
+     * The microphone could not be opened.
+     *
+     * This used to call `stopSelf()`, which is the single worst thing it could
+     * do: the usual cause is another app holding the recorder for a moment — a
+     * phone call, a voice note, the assistant on the lock screen — and a
+     * momentary conflict permanently killed always-on listening until the user
+     * next opened the app. Retry instead, on the same capped backoff the socket
+     * uses, and say what is wrong on the notification that is already there.
+     */
+    private fun onMicUnavailable(reason: String) {
+        Log.w(TAG, "capture unavailable: $reason")
+        closeLink()
+        if (!hasMic()) {
+            // A revoked permission is not transient and retrying it forever is
+            // just a warm radio. This is the one case that still stops.
+            tellTheUser(this, WakeStartPolicy.Route.NEEDS_MIC_PERMISSION)
+            stopSelf()
+            return
+        }
+        val delay = backoff(micFailures)
+        micFailures++
+        updateNotification("$reason Retrying.")
+        main.removeCallbacks(reconnect)
+        main.postDelayed(reconnect, delay)
+    }
+
+    /**
+     * Watch for the recorder that opens, reads happily and returns zeroes.
+     *
+     * That is what Android does to a while-in-use foreground service started
+     * from the background, and what a GrapheneOS per-app *Sensors* toggle does,
+     * and what a hardware mute switch does. None of them produce an error, so
+     * without this the notification says "Jarvis is listening" while nothing
+     * can reach it — which is worse than saying nothing at all.
+     *
+     * Reported, not acted on: the fix needs an Activity (see
+     * [ListenTrampolineActivity]) and taking the listener down would remove the
+     * only surface able to offer one.
+     */
+    private fun watchForSilence(level: Float) {
+        if (silence.onLevel(SystemClock.uptimeMillis(), level)) {
+            Log.w(TAG, "the microphone has been returning silence")
+            updateNotification(MicSilenceWatch.MUTED_MESSAGE, tapToRestart = true)
+        }
     }
 
     /**
@@ -188,13 +301,14 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
     private fun scheduleReconnect() {
         if (!running) return
-        // Exponential, capped. A server that is off overnight must not become a
-        // radio that retries every second until the battery is gone.
-        val delay = (BACKOFF_BASE_MS shl failures.coerceAtMost(5)).coerceAtMost(BACKOFF_MAX_MS)
-        failures++
         main.removeCallbacks(reconnect)
-        main.postDelayed(reconnect, delay)
+        main.postDelayed(reconnect, backoff(failures))
+        failures++
     }
+
+    /** Exponential, capped: a server that is off overnight must not be a radio. */
+    private fun backoff(attempts: Int): Long =
+        (BACKOFF_BASE_MS shl attempts.coerceAtMost(5)).coerceAtMost(BACKOFF_MAX_MS)
 
     private fun hasMic(): Boolean =
         checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -204,10 +318,18 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     override fun onWakeWord(name: String) {
         Log.i(TAG, "wake word heard")
         failures = 0
-        // Hand the conversation to the popup and get out of the way. The
-        // activity opens its own pipeline run; this service keeps the mic only
-        // until that happens.
+        micFailures = 0
+        // Hand the conversation on and get out of the way; this service keeps
+        // the mic only until something else takes it.
         pause()
+
+        if (startOverlayConversation()) {
+            // The orb is on screen over whatever the user is doing, and the
+            // conversation is running in this process. Nothing to hand off to,
+            // no re-arm timer: onIdle gives the mic back itself.
+            return
+        }
+
         val intent = Intent(this, JarvisAssistActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(JarvisAssistActivity.EXTRA_FROM_WAKE_WORD, true)
@@ -261,22 +383,106 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     override fun onResponseFinal(text: String) = Unit
     override fun onTtsUrl(absoluteUrl: String) = Unit
 
+    // --- the floating orb -----------------------------------------------------
+
+    /**
+     * Show the Siri-style orb over whatever is on screen and talk there.
+     *
+     * @return false when there is no overlay to show — the permission is not
+     *   granted, or the phone is locked, where `TYPE_APPLICATION_OVERLAY`
+     *   windows are not displayed at all and the full-screen intent is the
+     *   platform's own answer. The caller falls back rather than assuming a
+     *   surface that is not there.
+     */
+    private fun startOverlayConversation(): Boolean {
+        if (!AssistOverlay.canShow(this)) return false
+        if (isLocked()) return false
+        if (!config.isConfigured) return false
+
+        endOverlayConversation(giveMicBack = false)
+        val surface = AssistOverlay(this) { endOverlayConversation(giveMicBack = true) }
+        if (!surface.attach()) return false
+        overlay = surface
+        convo = JarvisConversation(this, config, overlayUi, inactivityMs = 8000L)
+            .also { it.start() }
+        return true
+    }
+
+    /** Take the orb down. [giveMicBack] re-opens the wake link afterwards. */
+    private fun endOverlayConversation(giveMicBack: Boolean) {
+        val hadOne = overlay != null
+        convo?.stop(); convo = null
+        overlay?.detach(); overlay = null
+        if (hadOne && giveMicBack) resume()
+    }
+
+    /**
+     * The conversation's view of the overlay.
+     *
+     * An anonymous object rather than another interface on the service:
+     * `JarvisConversation.Ui` and `AssistPipelineClient.Callbacks` both declare
+     * `onTranscript(String)` and `onError(String)`, so implementing both here
+     * would collapse two unrelated meanings into one method.
+     */
+    private val overlayUi = object : JarvisConversation.Ui {
+        override fun onMode(mode: JarvisOrbView.Mode, label: String) {
+            overlay?.setMode(mode, label)
+        }
+
+        override fun onAmplitude(level: Float) {
+            overlay?.setAmplitude(level)
+        }
+
+        override fun onTranscript(text: String) {
+            overlay?.setTranscript(text)
+        }
+
+        override fun onResponse(text: String) {
+            overlay?.setResponse(text)
+        }
+
+        override fun onError(message: String) {
+            overlay?.setResponse(message)
+            overlay?.setMode(JarvisOrbView.Mode.ERROR, "ERROR")
+            // Leave it up for a moment so the reason can be read, then go back
+            // to listening. An error that vanishes instantly is a wake word
+            // that appears to do nothing.
+            main.postDelayed({ endOverlayConversation(giveMicBack = true) }, ERROR_LINGER_MS)
+        }
+
+        override fun onIdle() {
+            endOverlayConversation(giveMicBack = true)
+        }
+    }
+
+    private fun isLocked(): Boolean =
+        (getSystemService(KeyguardManager::class.java))?.isKeyguardLocked == true
+
     // --- the notification ----------------------------------------------------
 
-    private fun enterForeground() {
+    /** @return false if the platform refused, in which case we are stopping. */
+    private fun enterForeground(): Boolean {
         ensureChannel()
-        try {
+        return try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                buildNotification(WAITING),
+                buildNotification(WAITING, tapToRestart = false),
                 // The honest type, and the one the platform requires before it
                 // will let a background service touch the mic at all on 34+.
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
             )
+            true
         } catch (t: Throwable) {
+            // On 12+ this is where a background start lands: the service was
+            // created and the platform then refused to let it be foreground.
+            // The user gets the same one-tap repair as any other refusal —
+            // and the caller must not carry on opening a microphone behind a
+            // notification that was never accepted.
             Log.w(TAG, "could not enter the foreground", t)
+            tellTheUser(this, WakeStartPolicy.Route.NEEDS_A_TAP)
             stopSelf()
+            false
         }
     }
 
@@ -295,12 +501,16 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         )
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(text: String, tapToRestart: Boolean): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, JarvisAssistActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            if (tapToRestart) {
+                ListenTrampolineActivity.intent(this)
+            } else {
+                Intent(this, JarvisAssistActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val stop = PendingIntent.getService(
@@ -322,9 +532,9 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             .build()
     }
 
-    private fun updateNotification(text: String) {
+    private fun updateNotification(text: String, tapToRestart: Boolean = false) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
+        manager.notify(NOTIFICATION_ID, buildNotification(text, tapToRestart))
     }
 
     /**
@@ -336,6 +546,9 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
      * arrives as a heads-up the user can tap. Either way the wake word leads
      * somewhere, which a background `startActivity` that the system quietly
      * dropped does not.
+     *
+     * Only used when the floating orb is unavailable; with "display over other
+     * apps" granted and the phone unlocked, the user never sees this.
      */
     private fun showHeard(open: Intent) {
         ensureAlertChannel()
@@ -378,14 +591,14 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         )
     }
 
-    private fun showProblem(reason: String) = updateNotification(reason)
-
     companion object {
         private const val TAG = "JarvisWake"
         private const val CHANNEL = "jarvis-wake"
         private const val CHANNEL_ALERT = "jarvis-wake-heard"
+        private const val CHANNEL_ATTENTION = "jarvis-wake-attention"
         private const val NOTIFICATION_ID = 0x4A57 // 'JW'
         private const val ALERT_ID = 0x4A58 // 'JX'
+        private const val ATTENTION_ID = 0x4A59 // 'JY'
 
         const val ACTION_STOP = "ai.jarvis.app.WAKE_STOP"
         const val ACTION_PAUSE = "ai.jarvis.app.WAKE_PAUSE"
@@ -400,26 +613,74 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
          */
         private const val HANDOFF_GRACE_MS = 30_000L
 
+        /** How long a failed turn stays readable on the floating orb. */
+        private const val ERROR_LINGER_MS = 2_600L
+
         private const val BACKOFF_BASE_MS = 2_000L
         private const val BACKOFF_MAX_MS = 60_000L
 
         /**
-         * Start listening if the user has asked for it. Safe to call repeatedly
-         * and from anywhere — it checks the setting itself rather than trusting
-         * the caller to.
+         * How often to check that the listener is actually up.
+         *
+         * Inexact and batched with whatever else the phone is doing, so the
+         * real interval is "roughly this, when the device is awake anyway".
+         * Fifteen minutes is the shortest period Android will honour for
+         * background work without special pleading, and there is nothing to
+         * gain from asking for more: this exists to recover from a kill or a
+         * refused start, both of which the user can wait a few minutes for.
          */
-        fun ensureRunning(context: Context) {
-            val config = JarvisConfig(context)
-            if (!config.wakeWordEnabled) return
-            val intent = Intent(context, WakeWordService::class.java)
-            try {
-                context.startForegroundService(intent)
-            } catch (t: Throwable) {
-                // Android 12+ throws if this is called from the background
-                // without an exemption. Not fatal: the next start from a
-                // resumed activity succeeds, and BootReceiver retries.
-                Log.w(TAG, "could not start the wake listener", t)
+        private const val HEARTBEAT_MS = 15 * 60 * 1000L
+
+        /**
+         * Start listening if the user has asked for it.
+         *
+         * Safe to call repeatedly and from anywhere — it checks the setting
+         * itself rather than trusting the caller to. What it will *not* do is
+         * fail silently: when the platform would refuse the start,
+         * [tellTheUser] puts a one-tap repair in the shade instead.
+         *
+         * @param fromForeground true when the caller is a resumed Activity, for
+         *   which a start is always permitted. Callers that are not one (a boot
+         *   receiver, the heartbeat) must leave this false or the policy check
+         *   is a lie and the start throws.
+         * @return what was decided, which the tests assert on and callers may
+         *   ignore.
+         */
+        fun ensureRunning(context: Context, fromForeground: Boolean = false): WakeStartPolicy.Route {
+            val app = context.applicationContext
+            val config = JarvisConfig(app)
+            val route = WakeStartPolicy.route(
+                enabled = config.wakeWordEnabled,
+                hasMicPermission = app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED,
+                fromForeground = fromForeground,
+                sdkInt = Build.VERSION.SDK_INT,
+                ignoringBatteryOptimizations = isExemptFromDoze(app),
+                canDrawOverlays = Settings.canDrawOverlays(app),
+            )
+            when (route) {
+                WakeStartPolicy.Route.OFF -> cancelHeartbeat(app)
+                WakeStartPolicy.Route.DIRECT -> {
+                    armHeartbeat(app)
+                    try {
+                        context.startForegroundService(Intent(context, WakeWordService::class.java))
+                    } catch (t: Throwable) {
+                        // The policy said this would be allowed and it was not.
+                        // Rather than swallow it — which is how the listener
+                        // came to be silently dead after every reboot — fall
+                        // back to the thing the user can act on.
+                        Log.w(TAG, "the wake listener would not start", t)
+                        tellTheUser(app, WakeStartPolicy.Route.NEEDS_A_TAP)
+                    }
+                }
+                WakeStartPolicy.Route.NEEDS_A_TAP,
+                WakeStartPolicy.Route.NEEDS_MIC_PERMISSION,
+                -> {
+                    armHeartbeat(app)
+                    tellTheUser(app, route)
+                }
             }
+            return route
         }
 
         /** Hand the microphone to a conversation. */
@@ -436,5 +697,114 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
                 Log.w(TAG, "could not deliver $action", t)
             }
         }
+
+        private fun isExemptFromDoze(context: Context): Boolean = try {
+            context.getSystemService(PowerManager::class.java)
+                ?.isIgnoringBatteryOptimizations(context.packageName) == true
+        } catch (t: Throwable) {
+            false
+        }
+
+        // --- the one-tap repair ----------------------------------------------
+
+        /**
+         * Say that Jarvis wants to listen and cannot, with a tap that fixes it.
+         *
+         * The alternative — which is what shipped — was a `Log.w`. On a phone
+         * that means nothing happened and nothing said so, which is how "the
+         * mic is always on" turned into "I have to open the app and start it".
+         *
+         * Idempotent: the same notification id and `setOnlyAlertOnce`, so the
+         * quarter-hourly heartbeat re-posting it is silent after the first
+         * time.
+         */
+        fun tellTheUser(context: Context, route: WakeStartPolicy.Route) {
+            val message = WakeStartPolicy.explain(route) ?: return
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            if (Build.VERSION.SDK_INT >= 26 &&
+                manager.getNotificationChannel(CHANNEL_ATTENTION) == null
+            ) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CHANNEL_ATTENTION,
+                        "Jarvis needs a tap",
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    ).apply {
+                        description =
+                            "Shown when always-on listening is switched on but Android will " +
+                                "not let it start on its own — after a restart, for example."
+                        setShowBadge(true)
+                    }
+                )
+            }
+            val tap = PendingIntent.getActivity(
+                context,
+                3,
+                ListenTrampolineActivity.intent(context),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            manager.notify(
+                ATTENTION_ID,
+                Notification.Builder(context, CHANNEL_ATTENTION)
+                    .setSmallIcon(R.drawable.ic_jarvis_status)
+                    .setContentTitle("Jarvis is not listening")
+                    .setContentText(message)
+                    .setStyle(Notification.BigTextStyle().bigText(message))
+                    .setContentIntent(tap)
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    .setCategory(Notification.CATEGORY_STATUS)
+                    .build()
+            )
+        }
+
+        /** Take the repair notification down once listening actually started. */
+        fun clearAttention(context: Context) {
+            context.getSystemService(NotificationManager::class.java)?.cancel(ATTENTION_ID)
+        }
+
+        // --- the heartbeat -----------------------------------------------------
+
+        /**
+         * Re-check every quarter of an hour that the listener is running.
+         *
+         * `START_STICKY` is not enough on its own: the restart the system
+         * performs after a kill is itself a background start of a
+         * microphone-typed service, so on 12+ the platform may refuse the very
+         * restart it just scheduled. An alarm gives a second chance that is not
+         * subject to the same race, and — since [ensureRunning] falls through
+         * to [tellTheUser] — turns a permanent silent failure into a visible
+         * one at worst.
+         */
+        fun armHeartbeat(context: Context) {
+            val alarms = context.getSystemService(AlarmManager::class.java) ?: return
+            try {
+                alarms.setInexactRepeating(
+                    AlarmManager.ELAPSED_REALTIME,
+                    SystemClock.elapsedRealtime() + HEARTBEAT_MS,
+                    HEARTBEAT_MS,
+                    heartbeatIntent(context),
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "could not arm the listener heartbeat", t)
+            }
+        }
+
+        fun cancelHeartbeat(context: Context) {
+            val alarms = context.getSystemService(AlarmManager::class.java) ?: return
+            try {
+                alarms.cancel(heartbeatIntent(context))
+            } catch (t: Throwable) {
+                Log.w(TAG, "could not cancel the listener heartbeat", t)
+            }
+        }
+
+        private fun heartbeatIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
+            context.applicationContext,
+            4,
+            Intent(context.applicationContext, WakeHeartbeatReceiver::class.java)
+                .setAction(WakeHeartbeatReceiver.ACTION_CHECK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
     }
 }

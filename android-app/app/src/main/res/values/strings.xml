@@ -28,4 +28,7 @@
 
     <string name="voice_interaction_label">Jarvis</string>
     <string name="recognition_service_label">Jarvis (stub recognizer)</string>
+
+    <!-- Quick-settings tile. Short enough to survive the shade's two-line cap. -->
+    <string name="tile_wake_word">Hey Jarvis</string>
 </resources>

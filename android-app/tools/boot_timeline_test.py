@@ -334,6 +334,7 @@ REQUIREMENT_TABLE = [
     ("accessibility", False, "ACTION_ACCESSIBILITY_SETTINGS", False),
     ("notifications", False, "ACTION_NOTIFICATION_LISTENER_SETTINGS", False),
     ("battery", True, "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", True),
+    ("overlay", False, "ACTION_MANAGE_OVERLAY_PERMISSION", True),
     ("exact_alarms", False, "ACTION_REQUEST_SCHEDULE_EXACT_ALARM", True),
 ]
 
@@ -345,6 +346,7 @@ SETTINGS_ACTIONS = {
     "ACTION_ACCESSIBILITY_SETTINGS": "android.settings.ACCESSIBILITY_SETTINGS",
     "ACTION_NOTIFICATION_LISTENER_SETTINGS": "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS",
     "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS": "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+    "ACTION_MANAGE_OVERLAY_PERMISSION": "android.settings.action.MANAGE_OVERLAY_PERMISSION",
     "ACTION_REQUEST_SCHEDULE_EXACT_ALARM": "android.settings.REQUEST_SCHEDULE_EXACT_ALARM",
 }
 
@@ -356,6 +358,7 @@ STATUS_FIELDS = [
     "notificationListener",
     "batteryExempt",
     "batteryRestricted",
+    "canDrawOverlays",
     "exactAlarms",
 ]
 
@@ -371,6 +374,9 @@ def evaluate(status: dict):
         # Exempt from doze AND not background-restricted. Either one alone
         # still gets the automation service killed.
         "battery": status["batteryExempt"] and not status["batteryRestricted"],
+        # The other half of "does listening survive a reboot", and the whole
+        # of "does the wake word draw an orb over the app you are in".
+        "overlay": status["canDrawOverlays"],
         "exact_alarms": status["exactAlarms"],
     }
     out = []
@@ -826,6 +832,7 @@ def test_the_checklist_covers_exactly_the_documented_surface():
         "accessibility",
         "notifications",
         "battery",
+        "overlay",
         "exact_alarms",
     ], ids
     assert ids[0] == "network", "network is the most common GrapheneOS surprise; it goes first"
@@ -841,6 +848,7 @@ def test_verdicts_follow_the_status_for_every_combination():
         assert by_id["accessibility"]["satisfied"] == status["accessibility"]
         assert by_id["notifications"]["satisfied"] == status["notificationListener"]
         assert by_id["exact_alarms"]["satisfied"] == status["exactAlarms"]
+        assert by_id["overlay"]["satisfied"] == status["canDrawOverlays"]
         # Battery needs BOTH: exempt from doze and not background-restricted.
         assert by_id["battery"]["satisfied"] == (
             status["batteryExempt"] and not status["batteryRestricted"]

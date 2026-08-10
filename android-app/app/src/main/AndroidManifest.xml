@@ -257,6 +257,22 @@
             </intent-filter>
         </activity>
 
+        <!--
+          One frame of Activity, so that starting the microphone service is
+          legal. Android refuses a background start of a foreground service
+          typed `microphone`, which is why "always on" stopped after every
+          reboot; a start from a resumed Activity is always permitted. Every
+          one-tap repair — the notification, the quick-settings tile — points
+          here. Not exported: only this app's own PendingIntents reach it.
+        -->
+        <activity
+            android:name=".ListenTrampolineActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisInvisible"
+            android:excludeFromRecents="true"
+            android:taskAffinity="ai.jarvis.app.listen"
+            android:noHistory="true" />
+
         <!-- Server URL, token, pipeline, device name, wake-word gating. -->
         <activity
             android:name=".SettingsActivity"
@@ -400,6 +416,37 @@
             android:name="ai.jarvis.app.assist.WakeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!--
+          "Hey Jarvis" as a quick-settings tile, so turning listening back on
+          after a reboot is a swipe rather than a trip through Settings.
+          exported=true and the BIND permission are what the system requires to
+          bind a tile; the permission is one only the system holds.
+        -->
+        <service
+            android:name="ai.jarvis.app.assist.WakeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_jarvis_status"
+            android:label="@string/tile_wake_word"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="false" />
+        </service>
+
+        <!--
+          The quarter-hourly "is it still listening?" alarm. START_STICKY alone
+          is not enough on 12+, because the restart the system performs after a
+          kill is itself a background start of a microphone service and may be
+          refused. Not exported, and its PendingIntent is explicit and
+          immutable, so nothing outside this app can fire it.
+        -->
+        <receiver
+            android:name="ai.jarvis.app.assist.WakeHeartbeatReceiver"
+            android:exported="false" />
 
         <service
             android:name="ai.jarvis.app.automation.JarvisAutomationService"

@@ -106,9 +106,11 @@ class MainActivity : Activity(), JarvisConversation.Ui {
      */
     private fun startAutomationLayer() {
         runCatching { JarvisAutomationService.ensureRunning(this, "home") }
-        // Starting from a resumed activity is always permitted, which is why
-        // the wake listener is nudged here rather than from a receiver.
-        runCatching { WakeWordService.ensureRunning(this) }
+        // Starting from a resumed activity is always permitted — the one route
+        // Android never refuses for a microphone-typed service — which is why
+        // the wake listener is nudged here rather than from a receiver, and why
+        // this is the one caller that may claim `fromForeground`.
+        runCatching { WakeWordService.ensureRunning(this, fromForeground = true) }
     }
 
     // --- the power-on -------------------------------------------------------

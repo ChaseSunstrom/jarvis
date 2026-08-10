@@ -62,6 +62,23 @@
     </style>
 
     <!--
+      Nothing at all, for ListenTrampolineActivity — an Activity that exists for
+      one frame so that starting the microphone service is legal.
+
+      No background, no dim, no window animation: the user taps a notification
+      and sees the shade close and the listening notification appear. Anything
+      visible here would be a flash of a screen that has no content.
+    -->
+    <style name="Theme.JarvisInvisible" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoDisplay">true</item>
+    </style>
+
+    <!--
       Tier-3 consent prompt. Translucent so the user still sees the context it
       interrupted, but dimmed hard so the prompt is unmistakably the focus, and
       NOT closeable by touching outside (set in code, along with FLAG_SECURE).

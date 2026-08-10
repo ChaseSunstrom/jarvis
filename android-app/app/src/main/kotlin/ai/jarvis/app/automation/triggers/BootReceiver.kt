@@ -40,6 +40,24 @@ class BootReceiver : BroadcastReceiver() {
             Log.i(TAG, "not starting after $action: panic is set")
             return
         }
+        // The wake listener first, and NOT behind the automation checks below.
+        //
+        // It used to sit after them, which meant that someone who had turned
+        // the automation layer off — or never turned start-on-boot on — lost
+        // "Hey Jarvis" across every reboot for reasons that have nothing to do
+        // with it. They are separate features with separate switches; only
+        // panic, which means stop everything, is shared.
+        //
+        // `ensureRunning` will very likely NOT be able to start it from here:
+        // a foreground service typed `microphone` cannot be started from the
+        // background, and BOOT_COMPLETED is explicitly not an exemption for the
+        // while-in-use types. That refusal is the whole reason always-on
+        // listening quietly stopped working after a restart. The call is still
+        // right — with battery-optimisation exemption or "display over other
+        // apps" granted it succeeds — and when it cannot, it leaves a
+        // notification that starts it in one tap instead of a log line.
+        WakeWordService.ensureRunning(app)
+
         if (!policy.automationEnabled) {
             Log.i(TAG, "not starting after $action: automation is switched off")
             return
@@ -50,13 +68,6 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         AutomationServiceStarter.start(app, "boot:$action")
-
-        // "Always on" has to mean across a reboot, or the first restart turns
-        // it silently off and the switch in Settings becomes a lie. Gated on
-        // its own setting inside ensureRunning, and on the same panic and
-        // automation-enabled checks above, which have already run — a killed
-        // automation stack should not leave a microphone open behind it.
-        WakeWordService.ensureRunning(app)
 
         // Let a task fire on boot itself. The real BOOT_COMPLETED broadcast is
         // long finished by the time the service has built its triggers, so a

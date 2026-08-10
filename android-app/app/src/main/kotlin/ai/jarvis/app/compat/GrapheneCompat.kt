@@ -342,6 +342,7 @@ object GrapheneCompat {
     const val ID_ACCESSIBILITY = "accessibility"
     const val ID_NOTIFICATIONS = "notifications"
     const val ID_BATTERY = "battery"
+    const val ID_OVERLAY = "overlay"
     const val ID_EXACT_ALARMS = "exact_alarms"
 
     /** Everything [evaluate] needs, so the verdicts can be tested without a device. */
@@ -353,6 +354,7 @@ object GrapheneCompat {
         val notificationListener: Boolean,
         val batteryExempt: Boolean,
         val batteryRestricted: Boolean,
+        val canDrawOverlays: Boolean,
         val exactAlarms: Boolean,
     )
 
@@ -422,6 +424,19 @@ object GrapheneCompat {
             needsPackageUri = true,
         ),
         Requirement(
+            id = ID_OVERLAY,
+            label = "Display over other apps",
+            why = "Lets the wake word draw Jarvis over whatever you are using, and " +
+                "lets listening restart by itself after a reboot.",
+            satisfied = status.canDrawOverlays,
+            // Not essential: unrestricted battery already covers restarting on
+            // its own, and without this a wake word still arrives — as a
+            // notification to tap rather than as an orb on screen.
+            essential = false,
+            settingsAction = Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            needsPackageUri = true,
+        ),
+        Requirement(
             id = ID_EXACT_ALARMS,
             label = "Exact alarms",
             why = "Time-based automations fire late or not at all without it.",
@@ -442,8 +457,26 @@ object GrapheneCompat {
         notificationListener = hasNotificationListener(context),
         batteryExempt = isIgnoringBatteryOptimizations(context),
         batteryRestricted = isRestrictedBattery(context),
+        canDrawOverlays = canDrawOverlays(context),
         exactAlarms = canScheduleExactAlarms(context),
     )
+
+    /**
+     * "Display over other apps".
+     *
+     * Two jobs, which is why it earns a place on the checklist: it is what lets
+     * the wake word put the orb over whatever app is in front, and it is one of
+     * the two documented exemptions that let a microphone-typed foreground
+     * service start from the background — so without it or the battery
+     * exemption, always-on listening does not survive a reboot.
+     */
+    @JvmStatic
+    fun canDrawOverlays(context: Context): Boolean = try {
+        Settings.canDrawOverlays(context)
+    } catch (t: Throwable) {
+        Log.w(TAG, "overlay permission check failed", t)
+        false
+    }
 
     /** The live checklist: one screen that says exactly what is missing. */
     @JvmStatic

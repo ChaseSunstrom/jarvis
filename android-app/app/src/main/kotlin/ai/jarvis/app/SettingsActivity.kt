@@ -9,6 +9,7 @@ import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.update.UpdateChecker
 import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.JarvisUi
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ClipboardManager
@@ -16,6 +17,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -46,6 +48,7 @@ class SettingsActivity : Activity() {
     private lateinit var deviceNameField: EditText
 
     private lateinit var overlayStatus: TextView
+    private lateinit var listenStatus: TextView
     private lateinit var updateStatus: TextView
     private lateinit var prereleaseUpdates: Switch
     private lateinit var wakeEnabled: Switch
@@ -161,6 +164,22 @@ class SettingsActivity : Activity() {
         hours.addView(wakeEndField, LinearLayout.LayoutParams(JarvisUi.dp(ctx, 64), ViewGroup.LayoutParams.WRAP_CONTENT))
         col.addView(hours, matchWidth())
         col.addView(JarvisUi.hint(ctx, "Hours are 0-23 for the start and 0-24 for the end; a window that wraps midnight (22 to 6) is fine."))
+
+        // Whether listening can come back on its own after a restart, which is
+        // a different question from whether it is switched on and has nowhere
+        // else to be answered. Android will not let a microphone service start
+        // from the background, so without one of these two grants the switch
+        // above is only true until the next reboot — and the failure is silent,
+        // which is exactly how it was found: by the phone quietly not
+        // listening until the app was opened again.
+        listenStatus = TextView(ctx).apply { textSize = 12f }
+        col.addView(listenStatus)
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
+                JarvisUi.ghost(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
+            )
+        )
 
         // --- other screens --------------------------------------------------
 
@@ -338,8 +357,13 @@ class SettingsActivity : Activity() {
         // listener has to start or stop. ensureRunning checks the setting
         // itself; the stop is explicit because nothing else would issue it.
         runCatching {
-            if (config.wakeWordEnabled) WakeWordService.ensureRunning(this)
-            else stopService(Intent(this, WakeWordService::class.java))
+            if (config.wakeWordEnabled) {
+                WakeWordService.ensureRunning(this, fromForeground = true)
+            } else {
+                WakeWordService.cancelHeartbeat(this)
+                WakeWordService.clearAttention(this)
+                stopService(Intent(this, WakeWordService::class.java))
+            }
         }
 
         check.warning?.let { toast(it) }
@@ -401,6 +425,7 @@ class SettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::overlayStatus.isInitialized) refreshOverlayStatus()
+        if (::listenStatus.isInitialized) refreshListenStatus()
     }
 
     private fun refreshOverlayStatus() {
@@ -412,6 +437,66 @@ class SettingsActivity : Activity() {
                 "instead of opening over the app you are in. Tap OVERLAY to change it."
         }
         overlayStatus.setTextColor(if (granted) JarvisUi.DIM else JarvisUi.GOLD)
+    }
+
+    /**
+     * Whether always-on listening will survive a restart.
+     *
+     * Android refuses to start a foreground service typed `microphone` while
+     * the app is in the background, and `BOOT_COMPLETED` is not an exemption
+     * for that class of service. Two grants are: exemption from battery
+     * optimisation, and "display over other apps". Either one is enough, so
+     * this reports the pair as a single yes/no rather than making the user
+     * reason about which.
+     */
+    private fun refreshListenStatus() {
+        val exempt = isExemptFromBatteryOptimisation()
+        val overlay = Settings.canDrawOverlays(this)
+        val ok = exempt || overlay
+        listenStatus.text = when {
+            ok && exempt && overlay ->
+                "Starts on its own: yes — battery exemption and overlay are both granted."
+            ok && exempt ->
+                "Starts on its own: yes — Jarvis is exempt from battery optimisation."
+            ok ->
+                "Starts on its own: yes — “display over other apps” covers it."
+            else ->
+                "Starts on its own: NO. Android will not let Jarvis open the microphone " +
+                    "after a restart without one of these. Until you grant one, a reboot " +
+                    "leaves a notification you have to tap before “Hey Jarvis” works again."
+        }
+        listenStatus.setTextColor(if (ok) JarvisUi.DIM else JarvisUi.GOLD)
+    }
+
+    private fun isExemptFromBatteryOptimisation(): Boolean = runCatching {
+        getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(packageName) == true
+    }.getOrDefault(false)
+
+    /**
+     * Ask to be left running in the background.
+     *
+     * The direct request dialog is the one that can be answered in place; some
+     * ROMs remove it, so a failure falls back to the settings list where the
+     * user can find Jarvis themselves.
+     */
+    // BatteryLife: asking for this outright is a Play-policy concern, and this
+    // app is not on Play. An always-on microphone that Android may kill and
+    // then refuse to restart is precisely what the exemption is for.
+    @SuppressLint("BatteryLife")
+    private fun requestBackgroundStart() {
+        if (isExemptFromBatteryOptimisation()) {
+            openSetting(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            return
+        }
+        try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.fromParts("package", packageName, null))
+            )
+        } catch (e: ActivityNotFoundException) {
+            openSetting(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        }
     }
 
     // --- updates -----------------------------------------------------------
