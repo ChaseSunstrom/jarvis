@@ -644,6 +644,19 @@ class WebSocketHandler:
     async def _cmd_area_delete(self, msg: dict[str, Any]) -> Any:
         return await common.async_delete_area(self.jarvis, msg)
 
+    # automations
+    async def _cmd_automation_list(self, msg: dict[str, Any]) -> Any:
+        return common.automation_list_payload(self.jarvis)
+
+    async def _cmd_automation_create(self, msg: dict[str, Any]) -> Any:
+        return await common.async_create_automation(self.jarvis, msg, self._context())
+
+    async def _cmd_automation_update(self, msg: dict[str, Any]) -> Any:
+        return await common.async_update_automation(self.jarvis, msg, self._context())
+
+    async def _cmd_automation_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_delete_automation(self.jarvis, msg, self._context())
+
     # devices
     async def _cmd_device_register(self, msg: dict[str, Any]) -> Any:
         """``jarvis/device/register`` — this socket says who it is.
@@ -896,6 +909,10 @@ WebSocketHandler._HANDLERS = {
     "config/area_registry/create": WebSocketHandler._cmd_area_create,
     "config/area_registry/update": WebSocketHandler._cmd_area_update,
     "config/area_registry/delete": WebSocketHandler._cmd_area_delete,
+    "config/automation/list": WebSocketHandler._cmd_automation_list,
+    "config/automation/create": WebSocketHandler._cmd_automation_create,
+    "config/automation/update": WebSocketHandler._cmd_automation_update,
+    "config/automation/delete": WebSocketHandler._cmd_automation_delete,
     "assist_pipeline/pipeline/list": WebSocketHandler._cmd_pipeline_list,
     "assist_pipeline/run": WebSocketHandler._cmd_pipeline_run,
     # the device channel (phone, desktop agent, satellites)

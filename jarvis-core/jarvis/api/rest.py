@@ -396,6 +396,35 @@ async def area_registry_delete(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/config/automation/list")
+async def automation_list(request: Request) -> list[dict[str, Any]]:
+    return common.automation_list_payload(get_jarvis(request))
+
+
+@api_router.post("/config/automation/create")
+async def automation_create(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_create_automation(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/automation/update")
+async def automation_update(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_update_automation(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/automation/delete")
+async def automation_delete(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_delete_automation(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 # --- tokens ---------------------------------------------------------------
 @api_router.get("/auth/tokens")
 async def list_tokens(request: Request) -> list[dict[str, Any]]:

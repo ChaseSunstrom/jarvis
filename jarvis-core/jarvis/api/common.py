@@ -418,6 +418,130 @@ async def async_delete_area(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     return {"area_id": area_id, "deleted": True}
 
 
+# --- automations ------------------------------------------------------------
+def automation_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
+    """Every automation the engine is running, editable or not.
+
+    The console shows YAML automations alongside the ones it created, marked
+    `editable: false`. Hiding them would be worse than useless: the user would
+    see an empty list on a box that is visibly running automations, and the
+    obvious conclusion — "it lost them" — would be wrong.
+    """
+    from ..automation.authored import get_authored
+
+    manager = jarvis.data.get("automation")
+    if manager is None:  # `automation:` not set up — no automations, not an error
+        return []
+    authored = get_authored(jarvis)
+    rows: list[dict[str, Any]] = []
+    for automation in manager.all():
+        entry = authored.items.get(automation.automation_id)
+        rows.append(
+            {
+                "id": automation.automation_id,
+                "entity_id": automation.entity_id,
+                "alias": automation.alias,
+                "description": automation.description,
+                "mode": automation.mode,
+                "enabled": automation.enabled,
+                # The engine's own copy, so what is shown is what is running
+                # rather than what the store believes it saved.
+                "trigger": automation.config.get("trigger") or [],
+                "condition": automation.config.get("condition") or [],
+                "action": automation.config.get("action") or [],
+                "editable": entry is not None,
+                "created_at": (entry or {}).get("created_at"),
+                "updated_at": (entry or {}).get("updated_at"),
+            }
+        )
+    rows.sort(key=lambda row: (not row["editable"], row["alias"].lower()))
+    return rows
+
+
+def _automation_config(payload: dict[str, Any]) -> dict[str, Any]:
+    """The automation out of an API payload, without the transport's own keys.
+
+    The websocket puts `id` and `type` on every message, and REST payloads that
+    address an existing automation carry `automation_id`. None of those are
+    fields of the automation, and `validate` refuses unknown fields — so
+    passing the message through verbatim would reject every well-formed
+    request.
+    """
+    config = payload.get("automation")
+    if isinstance(config, dict):
+        return dict(config)
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in ("id", "type", "automation_id")
+    }
+
+
+async def _async_reload_automations(jarvis: "Jarvis", context: Context | None = None) -> None:
+    """Make the change live.
+
+    Through the `automation.reload` service rather than by reaching into the
+    manager: reload is the one path that already re-reads YAML, re-applies the
+    settings overlay and re-loads the store together. A shortcut here would be
+    a second, subtly different way to load automations, and the two would
+    drift.
+    """
+    await jarvis.services.async_call(
+        "automation", "reload", {}, blocking=True, context=context or api_context()
+    )
+
+
+async def async_create_automation(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Context | None = None
+) -> dict[str, Any]:
+    from ..automation.authored import AuthoredError, get_authored
+
+    try:
+        entry = await get_authored(jarvis).async_create(_automation_config(payload))
+    except AuthoredError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+    await _async_reload_automations(jarvis, context)
+    return {"automation": entry}
+
+
+async def async_update_automation(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Context | None = None
+) -> dict[str, Any]:
+    from ..automation.authored import AuthoredError, get_authored
+
+    automation_id = str(payload.get("automation_id") or "").strip()
+    if not automation_id:
+        raise ApiError("invalid_format", "automation_id is required", 400)
+    try:
+        entry = await get_authored(jarvis).async_update(
+            automation_id, _automation_config(payload)
+        )
+    except AuthoredError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+    await _async_reload_automations(jarvis, context)
+    return {"automation": entry}
+
+
+async def async_delete_automation(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Context | None = None
+) -> dict[str, Any]:
+    from ..automation.authored import AuthoredError, get_authored
+
+    automation_id = str(payload.get("automation_id") or "").strip()
+    if not automation_id:
+        raise ApiError("invalid_format", "automation_id is required", 400)
+    try:
+        deleted = await get_authored(jarvis).async_delete(automation_id)
+    except AuthoredError as err:
+        # Refusing to delete a YAML automation is the caller asking for
+        # something this API will never do, not a malformed request.
+        raise ApiError("not_supported", str(err), 400) from err
+    if not deleted:
+        raise ApiError("not_found", f"unknown automation {automation_id}", 404)
+    await _async_reload_automations(jarvis, context)
+    return {"automation_id": automation_id, "deleted": True}
+
+
 # --- history / tts / webhooks ----------------------------------------------
 async def async_history(
     jarvis: "Jarvis",
