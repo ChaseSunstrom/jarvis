@@ -828,6 +828,81 @@
 	box-shadow: var(--jv-glow-lg);
 }
 
+/* The editor panel that drops out of a row on Devices and Automations. It is
+   a full-width sibling of `.row`, not a cell inside it, so the row's flex
+   layout never has to accommodate a form. */
+.console .editor {
+	display: flex;
+	flex-direction: column;
+	gap: var(--jv-space-3);
+	width: 100%;
+	padding: var(--jv-space-3) var(--jv-space-3) var(--jv-space-4);
+	margin: 0 0 var(--jv-space-2);
+	border: 1px solid var(--jv-line-soft);
+	border-left: 2px solid var(--jv-accent);
+	border-radius: var(--jv-radius-sm);
+	background: var(--jv-field);
+}
+.console .editor .entity-id {
+	font-family: var(--jv-font-chrome);
+	font-size: var(--jv-fs-2xs);
+	letter-spacing: var(--jv-track-tight);
+	color: var(--jv-text-dim);
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+.console .field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--jv-space-1);
+}
+.console .field > label {
+	font-family: var(--jv-font-chrome);
+	font-size: var(--jv-fs-2xs);
+	letter-spacing: var(--jv-track-wide);
+	text-transform: uppercase;
+	color: var(--jv-text-dim);
+}
+.console .field textarea {
+	/* Structured JSON: a proportional font makes indentation unreadable. */
+	font-family: var(--jv-font-chrome);
+	line-height: 1.5;
+	resize: vertical;
+	min-height: 5rem;
+	white-space: pre;
+	overflow-wrap: normal;
+	overflow-x: auto;
+}
+.console .field .hint {
+	font-family: var(--jv-font-chrome);
+	font-size: var(--jv-fs-2xs);
+	color: var(--jv-text-dim);
+}
+.console .toggles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--jv-space-3);
+}
+.console .toggles label {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--jv-space-2);
+	font-family: var(--jv-font-chrome);
+	font-size: var(--jv-fs-xs);
+	color: var(--jv-text);
+}
+.console .editor .actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--jv-space-3);
+}
+.console .editor .summary {
+	font-family: var(--jv-font-chrome);
+	font-size: var(--jv-fs-2xs);
+	color: var(--jv-text-dim);
+}
+
 .console input[type='text'],
 .console input[type='number'],
 .console input[type='search'],

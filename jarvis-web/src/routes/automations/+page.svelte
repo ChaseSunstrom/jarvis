@@ -8,10 +8,19 @@
 	import {
 		applyStateChanged,
 		friendlyName,
+		type AutomationRow,
 		type EntityRegistryEntry,
 		type EntityState,
 		type Subscription
 	} from '$lib/jarvisClient';
+	import {
+		MODES,
+		blankForm,
+		formFromRow,
+		parseForm,
+		readOnlyNote,
+		type DraftForm
+	} from '$lib/automationDraft';
 
 	let conn: Connection | null = null;
 	let status = $state('connecting');
@@ -21,6 +30,25 @@
 	let filter = $state('');
 	let states = $state<EntityState[]>([]);
 	let entries = $state<EntityRegistryEntry[]>([]);
+
+	/**
+	 * The automations as jarvis-core describes them, which is a different thing
+	 * from their entities: only this says which ones the console may edit, and
+	 * carries the trigger/action bodies the editor needs.
+	 */
+	let rows = $state<AutomationRow[]>([]);
+	let rowMap = $derived(new Map(rows.map((row) => [row.entity_id, row])));
+
+	/** '' when closed, 'new' for the create form, otherwise an automation id. */
+	let editing = $state('');
+	let form = $state<DraftForm>(blankForm());
+	let formError = $state('');
+	let saving = $state(false);
+	let removing = $state('');
+	/** Set for a moment after a delete so the button can ask for confirmation. */
+	let confirming = $state('');
+	/** False against a backend too old to know `config/automation/*`. */
+	let manageable = $state(true);
 
 	const stateMap = new Map<string, EntityState>();
 	let flashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -71,6 +99,106 @@
 		}
 	}
 
+	async function refreshRows(): Promise<void> {
+		if (!conn) return;
+		try {
+			rows = (await conn.client.listAutomations()) ?? [];
+		} catch (e) {
+			// An older jarvis-core has no such command. The page still lists and
+			// runs automations from their entities; it just cannot edit them.
+			rows = [];
+			manageable = false;
+			console.warn('automation list unavailable', e);
+		}
+	}
+
+	function openNew(): void {
+		editing = editing === 'new' ? '' : 'new';
+		form = blankForm();
+		formError = '';
+		confirming = '';
+	}
+
+	function openEdit(row: AutomationRow): void {
+		if (editing === row.id) {
+			editing = '';
+			return;
+		}
+		editing = row.id;
+		form = formFromRow(row);
+		formError = '';
+		confirming = '';
+	}
+
+	async function save(): Promise<void> {
+		if (!conn || !editing) return;
+		const parsed = parseForm(form);
+		if (!parsed.ok) {
+			formError = parsed.error;
+			// Put the cursor where the problem is rather than leaving the user to
+			// work out which of three JSON boxes the message is about.
+			document.getElementById(`field-${parsed.field}`)?.focus();
+			return;
+		}
+		saving = true;
+		formError = '';
+		err = '';
+		try {
+			if (editing === 'new') {
+				await conn.client.createAutomation(parsed.draft);
+				toasts.success(`Created ${parsed.draft.alias}`);
+			} else {
+				await conn.client.updateAutomation(editing, parsed.draft);
+				toasts.success(`Saved ${parsed.draft.alias}`);
+			}
+			editing = '';
+			await refreshRows();
+			await refreshStates();
+		} catch (e) {
+			// The server re-runs every check this form does and knows things it
+			// cannot, so its message is the one worth showing.
+			formError = describeError(e);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function remove(row: AutomationRow): Promise<void> {
+		if (!conn) return;
+		if (confirming !== row.id) {
+			// Two clicks, not a modal: an automation is recoverable only by
+			// typing it again, and a native confirm() blocks the whole tab.
+			confirming = row.id;
+			setTimeout(() => {
+				if (confirming === row.id) confirming = '';
+			}, 4000);
+			return;
+		}
+		confirming = '';
+		removing = row.id;
+		err = '';
+		try {
+			await conn.client.deleteAutomation(row.id);
+			toasts.success(`Deleted ${row.alias}`);
+			if (editing === row.id) editing = '';
+			await refreshRows();
+			await refreshStates();
+		} catch (e) {
+			err = describeError(e);
+			toasts.error(`Could not delete ${row.alias}`, describeError(e));
+		} finally {
+			removing = '';
+		}
+	}
+
+	async function refreshStates(): Promise<void> {
+		if (!conn) return;
+		const fresh = await conn.client.getStates();
+		stateMap.clear();
+		for (const state of fresh) stateMap.set(state.entity_id, state);
+		publish();
+	}
+
 	onMount(() => {
 		let disposed = false;
 		let sub: Subscription | null = null;
@@ -91,6 +219,7 @@
 				} catch {
 					entries = [];
 				}
+				await refreshRows();
 				sub = await connection.client.subscribeEvents((event) => {
 					if (applyStateChanged(stateMap, event)) publish();
 				}, 'state_changed');
@@ -112,11 +241,77 @@
 
 <svelte:head><title>Jarvis · Automations</title></svelte:head>
 
+{#snippet editorFields()}
+	{#if formError}
+		<p class="err" data-testid="form-error" role="alert">{formError}</p>
+	{/if}
+
+	<div class="field">
+		<label for="field-alias">Name</label>
+		<input id="field-alias" type="text" data-testid="field-alias" placeholder="Porch light at dusk" bind:value={form.alias} />
+	</div>
+
+	<div class="field">
+		<label for="field-description">Description</label>
+		<input id="field-description" type="text" data-testid="field-description" placeholder="optional" bind:value={form.description} />
+	</div>
+
+	<div class="field">
+		<label for="field-mode">Mode</label>
+		<select id="field-mode" data-testid="field-mode" bind:value={form.mode}>
+			{#each MODES as mode (mode)}<option value={mode}>{mode}</option>{/each}
+		</select>
+	</div>
+
+	<div class="field">
+		<label for="field-trigger">Triggers</label>
+		<textarea id="field-trigger" rows="6" spellcheck="false" data-testid="field-trigger" bind:value={form.trigger}></textarea>
+		<span class="hint">JSON. What starts it — e.g. <code>{'{"platform": "time", "at": "21:00:00"}'}</code></span>
+	</div>
+
+	<div class="field">
+		<label for="field-condition">Conditions</label>
+		<textarea id="field-condition" rows="3" spellcheck="false" data-testid="field-condition" bind:value={form.condition}></textarea>
+		<span class="hint">JSON. Optional — leave as <code>[]</code> to always run.</span>
+	</div>
+
+	<div class="field">
+		<label for="field-action">Actions</label>
+		<textarea id="field-action" rows="6" spellcheck="false" data-testid="field-action" bind:value={form.action}></textarea>
+		<span class="hint">JSON. What it does — e.g. <code>{'{"service": "light.turn_on"}'}</code></span>
+	</div>
+
+	<div class="actions">
+		<button type="button" class="btn" data-testid="save" disabled={saving} onclick={save}>
+			{saving ? 'SAVING…' : editing === 'new' ? 'CREATE' : 'SAVE'}
+		</button>
+		<button type="button" class="btn ghost" data-testid="cancel" onclick={() => (editing = '')}>CANCEL</button>
+	</div>
+{/snippet}
+
 <h1>AUTOMATIONS</h1>
 <p class="lede">{automations.length} automation(s) · link {status}</p>
 
 {#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if flash}<p class="notice" data-testid="flash">{flash}</p>{/if}
+
+{#if manageable}
+	<div class="toolbar">
+		<button type="button" class="btn" data-testid="new" aria-expanded={editing === 'new'} onclick={openNew}>
+			{editing === 'new' ? 'CANCEL' : '+ NEW AUTOMATION'}
+		</button>
+		<span class="muted">Automations created here are stored separately from your automations.yaml.</span>
+	</div>
+
+	{#if editing === 'new'}
+		<section class="panel">
+			<div class="panel-head"><span>New automation</span></div>
+			<div class="editor" data-testid="editor-new">
+				{@render editorFields()}
+			</div>
+		</section>
+	{/if}
+{/if}
 
 <section class="panel">
 	<div class="panel-head">
@@ -136,6 +331,7 @@
 	{:else}
 		{#each automations as automation, i (automation.entity_id)}
 			{@const on = automation.state === 'on'}
+			{@const row = rowMap.get(automation.entity_id)}
 			<div
 				class="row jv-stagger"
 				style={staggerStyle(i)}
@@ -174,7 +370,45 @@
 				>
 					RUN NOW
 				</button>
+				{#if row}
+					{#if row.editable}
+						<button
+							type="button"
+							class="btn ghost"
+							data-testid="edit-{automation.entity_id}"
+							aria-expanded={editing === row.id}
+							aria-label="Edit {row.alias}"
+							onclick={() => openEdit(row)}
+						>
+							{editing === row.id ? 'CLOSE' : 'EDIT'}
+						</button>
+						<button
+							type="button"
+							class="btn ghost danger"
+							data-testid="delete-{automation.entity_id}"
+							disabled={removing === row.id}
+							aria-label="Delete {row.alias}"
+							onclick={() => remove(row)}
+						>
+							{removing === row.id ? 'DELETING…' : confirming === row.id ? 'CONFIRM?' : 'DELETE'}
+						</button>
+					{:else}
+						<!-- Said on the row, not hidden behind a disabled button: the
+						     question "why can I edit that one and not this one" should
+						     not need a hover to answer. -->
+						<span class="pill" data-testid="yaml-{automation.entity_id}" title={readOnlyNote(row)}>
+							FROM YAML
+						</span>
+					{/if}
+				{/if}
 			</div>
+
+			{#if row && editing === row.id}
+				<div class="editor" data-testid="editor-{row.id}">
+					<p class="entity-id">{row.entity_id} · {row.id}</p>
+					{@render editorFields()}
+				</div>
+			{/if}
 		{:else}
 			<div class="jv-empty" data-testid="empty">
 				<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>

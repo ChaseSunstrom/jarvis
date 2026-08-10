@@ -193,6 +193,67 @@ test('automations page shows last_triggered, toggles and runs now', async ({ pag
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
 
+test('automations page creates, edits and deletes an automation', async ({ page }) => {
+	await page.goto('/automations');
+	await expect(page.getByTestId('automation-automation.night_mode')).toBeVisible({
+		timeout: 15_000
+	});
+
+	// --- create ---------------------------------------------------------
+	await page.getByTestId('new').click();
+	const editor = page.getByTestId('editor-new');
+	await expect(editor).toBeVisible();
+
+	// Save with a name but no trigger: the form must refuse before the wire,
+	// and say which field is wrong rather than "invalid".
+	await editor.getByTestId('field-alias').fill('Porch Light');
+	await editor.getByTestId('field-trigger').fill('[]');
+	await editor.getByTestId('save').click();
+	await expect(editor.getByTestId('form-error')).toContainText('at least one trigger');
+
+	// Malformed JSON is reported as such, naming the box it is in.
+	await editor.getByTestId('field-trigger').fill('{not json');
+	await editor.getByTestId('save').click();
+	await expect(editor.getByTestId('form-error')).toContainText('trigger:');
+
+	await editor.getByTestId('field-trigger').fill('[{"platform":"time","at":"21:00:00"}]');
+	await editor.getByTestId('field-action').fill('[{"service":"light.turn_on"}]');
+	await editor.getByTestId('save').click();
+
+	const created = page.getByTestId('automation-automation.porch_light');
+	await expect(created).toBeVisible({ timeout: 10_000 });
+	await expect(created).toContainText('Porch Light');
+
+	// --- edit -----------------------------------------------------------
+	await page.getByTestId('edit-automation.porch_light').click();
+	const openEditor = page.locator('[data-testid^="editor-ui_"]');
+	await expect(openEditor.getByTestId('field-alias')).toHaveValue('Porch Light');
+	// Loaded from the server, not from what was typed a moment ago.
+	// toHaveValue, not toContainText: `bind:value` sets the property, so a
+	// textarea's DOM text content stays empty however full the box looks.
+	await expect(openEditor.getByTestId('field-trigger')).toHaveValue(/21:00:00/);
+
+	await openEditor.getByTestId('field-alias').fill('Porch Light Two');
+	await openEditor.getByTestId('save').click();
+	await expect(created).toContainText('Porch Light Two', { timeout: 10_000 });
+
+	// --- a YAML automation offers no way to change it --------------------
+	await expect(page.getByTestId('yaml-automation.night_mode')).toBeVisible();
+	await expect(page.getByTestId('edit-automation.night_mode')).toHaveCount(0);
+	await expect(page.getByTestId('delete-automation.night_mode')).toHaveCount(0);
+
+	// --- delete ----------------------------------------------------------
+	const del = page.getByTestId('delete-automation.porch_light');
+	await del.click();
+	// One click arms, the second commits — an automation is recoverable only
+	// by typing it again.
+	await expect(del).toHaveText('CONFIRM?');
+	await del.click();
+	await expect(created).toHaveCount(0, { timeout: 10_000 });
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
 test('tools page degrades to the service catalogue and test-runs a tool', async ({ page }) => {
 	await page.goto('/tools');
 

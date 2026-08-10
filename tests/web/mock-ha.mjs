@@ -71,6 +71,35 @@ function mkState(entity_id, state, attributes = {}) {
 	};
 }
 
+const slug = (text) =>
+	String(text)
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '_')
+		.replace(/^_|_$/g, '');
+
+/**
+ * The shape checks jarvis-core's `validate` applies, or null if it would pass.
+ *
+ * Only the ones the console can actually trip: the point is that a server-side
+ * refusal reaches the form, not to re-implement the validator.
+ */
+function badAutomation(draft) {
+	if (!draft || typeof draft !== 'object') return 'An automation must be an object.';
+	if (!String(draft.alias ?? '').trim()) return 'Give it a name.';
+	if (!Array.isArray(draft.trigger) || draft.trigger.length === 0) {
+		return 'Give it at least one trigger, or nothing will ever run it.';
+	}
+	if (!Array.isArray(draft.action) || draft.action.length === 0) {
+		return 'Give it at least one action, or it will run and do nothing.';
+	}
+	for (const step of draft.trigger) {
+		if (!String(step?.platform ?? step?.trigger ?? '').trim()) {
+			return 'Every trigger needs a `platform`.';
+		}
+	}
+	return null;
+}
+
 /** Areas, devices, entity registry entries and states, as a fresh world. */
 export function makeWorld() {
 	const areas = [
@@ -160,7 +189,37 @@ export function makeWorld() {
 		capabilities: {}
 	}));
 
-	return { areas, devices, entities, states, calls: [] };
+	// Both seeded automations come "from YAML" — no `ui_` prefix — so the suite
+	// starts with something the console must refuse to edit, and anything it
+	// can edit had to be created through the API under test.
+	const automations = [
+		{
+			id: 'night_mode',
+			entity_id: 'automation.night_mode',
+			alias: 'Night Mode',
+			description: '',
+			mode: 'single',
+			enabled: true,
+			trigger: [{ platform: 'time', at: '23:00:00' }],
+			condition: [],
+			action: [{ service: 'light.turn_off' }],
+			editable: false
+		},
+		{
+			id: 'morning_lights',
+			entity_id: 'automation.morning_lights',
+			alias: 'Morning Lights',
+			description: '',
+			mode: 'single',
+			enabled: false,
+			trigger: [{ platform: 'time', at: '07:00:00' }],
+			condition: [],
+			action: [{ service: 'light.turn_on' }],
+			editable: false
+		}
+	];
+
+	return { areas, devices, entities, states, automations, calls: [] };
 }
 
 const SERVICES = {
@@ -559,6 +618,111 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					}
 					broadcast('area_registry_updated', { action: 'remove', area_id: msg.area_id });
 					ok(msg.id, { area_id: msg.area_id, deleted: true });
+					break;
+				}
+
+				// Automations. Mirrors jarvis-core closely enough to be worth
+				// having: ids are namespaced `ui_`, only those are editable, and a
+				// YAML id refuses rather than silently doing nothing — which is
+				// the behaviour the console's read-only path is written against.
+				case 'config/automation/list':
+					ok(msg.id, world.automations);
+					break;
+
+				case 'config/automation/create': {
+					const draft = msg.automation ?? {};
+					const problem = badAutomation(draft);
+					if (problem) {
+						fail(msg.id, 'invalid_format', problem);
+						break;
+					}
+					const autoId = `ui_${Math.random().toString(16).slice(2, 14)}`;
+					const entityId = `automation.${slug(draft.alias)}`;
+					const row = {
+						id: autoId,
+						entity_id: entityId,
+						alias: draft.alias,
+						description: draft.description ?? '',
+						mode: draft.mode ?? 'single',
+						enabled: true,
+						trigger: draft.trigger ?? [],
+						condition: draft.condition ?? [],
+						action: draft.action ?? [],
+						editable: true
+					};
+					world.automations.push(row);
+					world.states.set(
+						entityId,
+						mkState(entityId, 'on', { friendly_name: draft.alias, last_triggered: null })
+					);
+					broadcast('state_changed', {
+						entity_id: entityId,
+						old_state: null,
+						new_state: world.states.get(entityId)
+					});
+					ok(msg.id, { automation: row });
+					break;
+				}
+
+				case 'config/automation/update': {
+					const row = world.automations.find((a) => a.id === msg.automation_id);
+					if (!row || !row.editable) {
+						fail(
+							msg.id,
+							'invalid_format',
+							`${msg.automation_id} comes from your YAML, not from the console. ` +
+								'Edit automations.yaml to change it.'
+						);
+						break;
+					}
+					const draft = msg.automation ?? {};
+					const problem = badAutomation(draft);
+					if (problem) {
+						fail(msg.id, 'invalid_format', problem);
+						break;
+					}
+					Object.assign(row, {
+						alias: draft.alias,
+						description: draft.description ?? '',
+						mode: draft.mode ?? 'single',
+						trigger: draft.trigger ?? [],
+						condition: draft.condition ?? [],
+						action: draft.action ?? []
+					});
+					const state = world.states.get(row.entity_id);
+					if (state) state.attributes.friendly_name = draft.alias;
+					broadcast('state_changed', {
+						entity_id: row.entity_id,
+						old_state: state,
+						new_state: state
+					});
+					ok(msg.id, { automation: row });
+					break;
+				}
+
+				case 'config/automation/delete': {
+					if (!String(msg.automation_id ?? '').startsWith('ui_')) {
+						fail(
+							msg.id,
+							'not_supported',
+							`${msg.automation_id} comes from your YAML, not from the console. ` +
+								'Edit automations.yaml to change it.'
+						);
+						break;
+					}
+					const index = world.automations.findIndex((a) => a.id === msg.automation_id);
+					if (index < 0) {
+						fail(msg.id, 'not_found', `unknown automation ${msg.automation_id}`);
+						break;
+					}
+					const [gone] = world.automations.splice(index, 1);
+					world.states.delete(gone.entity_id);
+					broadcast('state_changed', {
+						entity_id: gone.entity_id,
+						old_state: null,
+						new_state: null
+					});
+					ok(msg.id, { automation_id: gone.id, deleted: true });
 					break;
 				}
 

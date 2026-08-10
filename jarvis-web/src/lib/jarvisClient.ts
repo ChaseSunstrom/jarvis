@@ -30,6 +30,37 @@ export interface AreaEntry {
 	aliases?: string[];
 }
 
+/** One automation as jarvis-core reports it, YAML-authored or console-authored. */
+export interface AutomationRow {
+	id: string;
+	entity_id: string;
+	alias: string;
+	description?: string;
+	mode?: string;
+	enabled?: boolean;
+	trigger: unknown[];
+	condition: unknown[];
+	action: unknown[];
+	/**
+	 * False for automations that came from `automations.yaml`. They are listed
+	 * so the page is not empty on a box that is visibly running them, but the
+	 * console cannot edit or delete them — only the file they live in can.
+	 */
+	editable: boolean;
+	created_at?: number | null;
+	updated_at?: number | null;
+}
+
+/** What the console may send when creating or editing an automation. */
+export interface AutomationDraft {
+	alias: string;
+	description?: string;
+	mode?: string;
+	trigger: unknown[];
+	condition?: unknown[];
+	action: unknown[];
+}
+
 export interface EntityRegistryEntry {
 	entity_id: string;
 	unique_id?: string;
@@ -401,6 +432,36 @@ export class JarvisClient {
 			entity_id: entityId,
 			...changes
 		});
+	}
+
+	// --- automations -------------------------------------------------------
+	listAutomations(): Promise<AutomationRow[]> {
+		return this.command<AutomationRow[]>({ type: 'config/automation/list' });
+	}
+
+	/**
+	 * The draft goes under `automation:` rather than being spread into the
+	 * frame. jarvis-core validates it against an allowlist and refuses unknown
+	 * fields, and the frame's own `id` and `type` are not fields of an
+	 * automation — nesting keeps the transport's keys out of the payload.
+	 */
+	createAutomation(draft: AutomationDraft): Promise<{ automation: AutomationRow }> {
+		return this.command({ type: 'config/automation/create', automation: draft });
+	}
+
+	updateAutomation(
+		automationId: string,
+		draft: AutomationDraft
+	): Promise<{ automation: AutomationRow }> {
+		return this.command({
+			type: 'config/automation/update',
+			automation_id: automationId,
+			automation: draft
+		});
+	}
+
+	deleteAutomation(automationId: string): Promise<any> {
+		return this.command({ type: 'config/automation/delete', automation_id: automationId });
 	}
 
 	listDevices(): Promise<DeviceRegistryEntry[]> {
