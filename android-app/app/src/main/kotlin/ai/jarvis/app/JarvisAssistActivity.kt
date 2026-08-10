@@ -194,6 +194,11 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
                 override fun onPreDraw(): Boolean {
                     orbView.viewTreeObserver.removeOnPreDrawListener(this)
                     haptic()
+                    // Take the microphone off the wake listener before opening
+                    // one of our own. Two AudioRecords on one device is a coin
+                    // toss over which gets the audio, and losing it means the
+                    // conversation the user just triggered hears nothing.
+                    WakeWordService.pause(this@JarvisAssistActivity)
                     convo = JarvisConversation(
                         this@JarvisAssistActivity, config, this@JarvisAssistActivity,
                         inactivityMs = 8000L,
@@ -255,12 +260,20 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
     override fun onDestroy() {
         convo?.stop(); convo = null
+        // Give the microphone back. Unconditional and after the stop, so the
+        // listener never re-opens it while this one is still closing — and a
+        // resume with the setting off is a no-op, so the asymmetric case where
+        // the user turned wake-word off mid-conversation is safe too.
+        WakeWordService.resume(this)
         super.onDestroy()
     }
 
     companion object {
         private const val TAG = "JarvisAssist"
         private const val REQ_MIC = 4711
+
+        /** Set when the popup was opened by the wake word rather than by a tap. */
+        const val EXTRA_FROM_WAKE_WORD = "ai.jarvis.app.FROM_WAKE_WORD"
 
         /** Side of the orb's slot in the card. The reactor sizes itself to it. */
         private const val ORB_DP = 200

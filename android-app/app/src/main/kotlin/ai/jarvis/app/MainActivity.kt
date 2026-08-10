@@ -1,6 +1,7 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
@@ -105,6 +106,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
      */
     private fun startAutomationLayer() {
         runCatching { JarvisAutomationService.ensureRunning(this, "home") }
+        // Starting from a resumed activity is always permitted, which is why
+        // the wake listener is nudged here rather than from a receiver.
+        runCatching { WakeWordService.ensureRunning(this) }
     }
 
     // --- the power-on -------------------------------------------------------

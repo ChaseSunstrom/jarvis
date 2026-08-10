@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.AutomationPrefs
 import ai.jarvis.app.automation.policy.PolicyStore
 
@@ -49,6 +50,13 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         AutomationServiceStarter.start(app, "boot:$action")
+
+        // "Always on" has to mean across a reboot, or the first restart turns
+        // it silently off and the switch in Settings becomes a lie. Gated on
+        // its own setting inside ensureRunning, and on the same panic and
+        // automation-enabled checks above, which have already run — a killed
+        // automation stack should not leave a microphone open behind it.
+        WakeWordService.ensureRunning(app)
 
         // Let a task fire on boot itself. The real BOOT_COMPLETED broadcast is
         // long finished by the time the service has built its triggers, so a

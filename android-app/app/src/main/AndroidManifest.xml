@@ -389,6 +389,18 @@
           The device command channel: authenticated WebSocket to jarvis-core,
           device registration, command dispatch through the local policy table.
         -->
+        <!--
+          Always-on "Hey Jarvis". Holds the microphone open and streams it to
+          the user's own server, which does the detecting; nothing is stored at
+          either end. Only ever runs when `wakeWordEnabled` is set, and its
+          notification is not dismissible while it does, because an open mic
+          with no visible sign of it is not something to ship.
+        -->
+        <service
+            android:name="ai.jarvis.app.assist.WakeWordService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <service
             android:name="ai.jarvis.app.automation.JarvisAutomationService"
             android:exported="false"

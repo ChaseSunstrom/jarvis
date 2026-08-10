@@ -38,10 +38,29 @@ import java.util.concurrent.atomic.AtomicInteger
 class AssistPipelineClient(
     private val serverUrl: String,
     private val token: String,
-    private val callbacks: Callbacks
+    private val callbacks: Callbacks,
+    /**
+     * Where runs from this client begin. Defaults to the push-to-talk stage,
+     * which is what both existing callers want.
+     */
+    private val startStage: StartStage = StartStage.STT,
 ) : WebSocketListener() {
 
     enum class State { IDLE, LISTENING, THINKING, SPEAKING }
+
+    /**
+     * Where a run begins.
+     *
+     * `STT` is a turn the user has already asked for — a button, the assist
+     * gesture — so the audio that follows is speech by definition. `WAKE_WORD`
+     * puts openWakeWord in front of it, which is what always-on listening needs:
+     * the phone streams continuously and jarvis-core decides when a name was
+     * said, so no recognisable audio has to be interpreted on the device.
+     */
+    enum class StartStage(val wire: String) {
+        WAKE_WORD("wake_word"),
+        STT("stt"),
+    }
 
     interface Callbacks {
         fun onState(state: State)
@@ -51,6 +70,14 @@ class AssistPipelineClient(
         fun onTtsUrl(absoluteUrl: String)
         fun onRunEnd()
         fun onError(message: String)
+
+        /**
+         * The wake word was heard, and the run has moved on to speech.
+         *
+         * Only ever fired for a [StartStage.WAKE_WORD] run. Default so the two
+         * existing push-to-talk callers need no change.
+         */
+        fun onWakeWord(name: String) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -174,13 +201,16 @@ class AssistPipelineClient(
         val run = JSONObject()
             .put("id", id)
             .put("type", "assist_pipeline/run")
-            .put("start_stage", "stt")
+            .put("start_stage", startStage.wire)
             .put("end_stage", "tts")
             .put("input", JSONObject().put("sample_rate", 16000))
         pipelineId?.let { run.put("pipeline", it) }
         conversationId?.let { run.put("conversation_id", it) }
         ws?.send(run.toString())
-        post { callbacks.onState(State.LISTENING) }
+        // A wake-word run is not listening for a command yet — it is waiting to
+        // be addressed, and saying LISTENING here would arm the caller's VAD and
+        // its inactivity timer against audio that is meant to be ignored.
+        if (startStage == StartStage.STT) post { callbacks.onState(State.LISTENING) }
     }
 
     private fun handleEvent(event: JSONObject) {
@@ -190,6 +220,18 @@ class AssistPipelineClient(
                 val handler = data?.optJSONObject("runner_data")
                     ?.optInt("stt_binary_handler_id", -1) ?: -1
                 if (handler >= 0) sttBinaryHandlerId = handler
+            }
+            "wake_word-end" -> {
+                // openWakeWord heard the name. The run continues straight into
+                // STT on the same socket, so from here a wake run behaves
+                // exactly like a push-to-talk one — which is why LISTENING is
+                // announced here rather than at run time.
+                val name = data?.optJSONObject("wake_word_output")
+                    ?.optString("wake_word_id").orEmpty()
+                post {
+                    callbacks.onWakeWord(name)
+                    callbacks.onState(State.LISTENING)
+                }
             }
             "stt-end" -> {
                 val txt = data?.optJSONObject("stt_output")?.optString("text").orEmpty()

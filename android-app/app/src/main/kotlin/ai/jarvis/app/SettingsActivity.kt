@@ -1,5 +1,6 @@
 package ai.jarvis.app
 
+import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.automation.actions.ActionEnv
 import ai.jarvis.app.channel.DeviceChannelHost
@@ -297,6 +298,13 @@ class SettingsActivity : Activity() {
         // A phone that has just been given a server for the first time should
         // not have to wait for a reboot to connect to it.
         runCatching { JarvisAutomationService.ensureRunning(this, "settings-saved") }
+        // Saving is where wakeWordEnabled changes, so it is also where the
+        // listener has to start or stop. ensureRunning checks the setting
+        // itself; the stop is explicit because nothing else would issue it.
+        runCatching {
+            if (config.wakeWordEnabled) WakeWordService.ensureRunning(this)
+            else stopService(Intent(this, WakeWordService::class.java))
+        }
 
         check.warning?.let { toast(it) }
         toast("Saved")
