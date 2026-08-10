@@ -36,12 +36,24 @@ import androidx.core.app.ServiceCompat
  * written and nothing ever read them: every voice path needed a button first,
  * so the switch was a switch for nothing. This is the listener.
  *
- * **Detection happens on the server, not here.** The mic streams continuously
- * into an `assist_pipeline/run` that starts at the `wake_word` stage, and
- * openWakeWord in jarvis-core decides when its name was said. That is a
- * deliberate trade: it costs a constant upstream trickle of audio to a machine
- * the user owns, and it avoids shipping a detector — and a second copy of the
- * audio path — onto the phone. Nothing is written to disk at either end.
+ * **Where detection happens is now a choice, and the two differ in one
+ * important way.**
+ *
+ *  * *On the server* — the original path and still the default. The mic streams
+ *    continuously into an `assist_pipeline/run` starting at the `wake_word`
+ *    stage, and openWakeWord in jarvis-core decides. It needs no download and
+ *    no model on the phone, and it costs a permanently open socket carrying
+ *    everything the microphone hears to a machine down the hall.
+ *  * *On this phone* — [OnDeviceWakeWord], when the user has turned it on and
+ *    the weights have been fetched from their own server ([ModelStore]). No
+ *    socket exists until the name has been said, so nothing is uploaded until
+ *    there is something to say.
+ *
+ * The second is strictly better on privacy, battery and working-while-offline,
+ * and it is still opt-in, because it depends on files that may not be there —
+ * and a feature that silently depends on a missing file is one that silently
+ * stops working. [openLocalListener] returns false for every "cannot", and the
+ * server path is what happens then. Nothing is written to disk at either end.
  *
  * **Why a foreground service.** Android has given third-party apps no low-power
  * hotword path since the DSP APIs were closed off, so an open mic is the only
@@ -87,6 +99,12 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
     /** Notices a recorder that is open and handing back nothing. */
     private val silence = MicSilenceWatch()
+
+    /** The on-device detector, when the phone is doing its own listening. */
+    private var detector: OnDeviceWakeWord? = null
+
+    /** Turns its per-frame scores into one detection per utterance. */
+    private val scorer = WakeScore()
 
     /** The floating orb, when the wake word led to one. */
     private var overlay: AssistOverlay? = null
@@ -211,6 +229,8 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             return
         }
 
+        if (openLocalListener()) return
+
         client = AssistPipelineClient(
             url,
             config.token,
@@ -231,6 +251,54 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     private fun closeLink() {
         mic?.stop(); mic = null
         client?.close(); client = null
+        detector?.close(); detector = null
+        scorer.reset()
+    }
+
+    /**
+     * Listen with nothing but the microphone, if the phone can.
+     *
+     * This is the whole point of on-device detection: the server path holds a
+     * WebSocket open and pushes 32 KB of audio a second into it, permanently,
+     * so that a machine down the hall can decide whether its name was said.
+     * When the models are present that decision happens here, and the socket —
+     * and the upload — does not exist until it has.
+     *
+     * @return false when it cannot, which is the common case and never an
+     *   error: the setting is off, the weights have not been downloaded, or
+     *   ONNX Runtime has no build for this ABI. The caller falls through to the
+     *   server, which is the path that has always worked.
+     */
+    private fun openLocalListener(): Boolean {
+        if (!config.wakeWordOnDevice) return false
+        val local = OnDeviceWakeWord.open(ModelStore.directory(this)) ?: return false
+        detector = local
+        scorer.reset()
+        silence.reset()
+        updateNotification(WAITING_LOCAL)
+        mic = MicStreamer(
+            onPcm = { buf, len -> onLocalAudio(buf, len) },
+            onLevel = { level -> watchForSilence(level) },
+            onUnavailable = { reason -> onMicUnavailable(reason) },
+        ).also { it.start() }
+        Log.i(TAG, "listening on this device; no audio is leaving until the wake word")
+        return true
+    }
+
+    /**
+     * One capture buffer, scored locally.
+     *
+     * Runs on MicStreamer's capture thread, which is deliberate — the ONNX
+     * chain is about a millisecond of work per 80 ms of audio, and hopping to
+     * the main thread for every buffer would cost more than it saves. The
+     * detection itself is posted to the main thread, because everything it
+     * leads to touches the UI.
+     */
+    private fun onLocalAudio(buffer: ByteArray, length: Int) {
+        val score = detector?.score(buffer, length) ?: return
+        if (!scorer.onScore(SystemClock.uptimeMillis(), score)) return
+        Log.i(TAG, "wake word heard on device")
+        main.post { if (running) onWakeWord(LOCAL_WAKE_WORD) }
     }
 
     /**
@@ -618,6 +686,18 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         const val ACTION_RESUME = "ai.jarvis.app.WAKE_RESUME"
 
         private const val WAITING = "Say “Hey Jarvis” at any time"
+
+        /**
+         * Said when detection is local. Worth distinguishing: the difference
+         * between the two states is whether a continuous recording of the room
+         * is being uploaded, and the notification is the only place the user
+         * ever sees which one they are in.
+         */
+        private const val WAITING_LOCAL =
+            "Say “Hey Jarvis” — heard on this phone, nothing is sent until then"
+
+        /** What the local detector reports, matching the server's model name. */
+        private const val LOCAL_WAKE_WORD = "hey_jarvis"
         private const val WAITING_PAUSED = "Paused while you are talking"
 
         /**

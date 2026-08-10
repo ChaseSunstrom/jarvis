@@ -1,5 +1,7 @@
 package ai.jarvis.app
 
+import ai.jarvis.app.assist.ModelStore
+import ai.jarvis.app.assist.OnDeviceWakeWord
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.automation.actions.ActionEnv
@@ -50,6 +52,8 @@ class SettingsActivity : Activity() {
 
     private lateinit var overlayStatus: TextView
     private lateinit var listenStatus: TextView
+    private lateinit var modelStatus: TextView
+    private lateinit var wakeOnDevice: Switch
     private lateinit var updateStatus: TextView
     private lateinit var prereleaseUpdates: Switch
     private lateinit var wakeEnabled: Switch
@@ -191,6 +195,29 @@ class SettingsActivity : Activity() {
         // listening until the app was opened again.
         listenStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(listenStatus)
+
+        // --- on-device detection ---------------------------------------------
+        wakeOnDevice = switchRow(ctx, "Detect “Hey Jarvis” on this phone", config.wakeWordOnDevice)
+        col.addView(wakeOnDevice, matchWidth())
+        modelStatus = TextView(ctx).apply { textSize = 12f }
+        col.addView(modelStatus)
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "DOWNLOAD MODELS") { downloadModels() },
+                JarvisUi.ghost(ctx, "DELETE MODELS") { deleteModels() },
+            )
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Off, the microphone streams continuously to your server, which does the " +
+                    "detecting — everything the room says, all the time. On, the phone " +
+                    "decides for itself and nothing is sent until you have said the name. " +
+                    "The models are about 3.6 MB and come from YOUR server, not from the " +
+                    "internet: Jarvis mirrors them so the phone never has to talk to anyone " +
+                    "else."
+            )
+        )
         col.addView(
             row(
                 JarvisUi.ghost(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
@@ -361,6 +388,7 @@ class SettingsActivity : Activity() {
         config.deviceName = deviceNameField.text.toString()
 
         config.wakeWordEnabled = wakeEnabled.isChecked
+        config.wakeWordOnDevice = wakeOnDevice.isChecked
         config.wakeInCar = wakeInCar.isChecked
         config.wakeAtHome = wakeAtHome.isChecked
         config.wakingHourStart = wakeStartField.text.toString().trim().toIntOrNull()
@@ -458,6 +486,7 @@ class SettingsActivity : Activity() {
         super.onResume()
         if (::overlayStatus.isInitialized) refreshOverlayStatus()
         if (::listenStatus.isInitialized) refreshListenStatus()
+        if (::modelStatus.isInitialized) refreshModelStatus()
     }
 
     private fun refreshOverlayStatus() {
@@ -529,6 +558,71 @@ class SettingsActivity : Activity() {
                     "leaves a notification you have to tap before “Hey Jarvis” works again."
         }
         listenStatus.setTextColor(if (ok) JarvisUi.DIM else JarvisUi.GOLD)
+    }
+
+    /**
+     * Whether the phone can do its own listening, and what it costs if it cannot.
+     *
+     * Two independent facts — the switch and the weights — and the interesting
+     * state is the one where they disagree: the switch on with nothing
+     * downloaded silently falls back to the server, which is exactly the shape
+     * of bug where a privacy feature looks enabled and is not.
+     */
+    private fun refreshModelStatus() {
+        val have = ModelStore.isDownloaded(this, OnDeviceWakeWord.REQUIRED_MODELS)
+        val wanted = config.wakeWordOnDevice || wakeOnDevice.isChecked
+        val megabytes = ModelStore.bytesOnDisk(this) / 1024.0 / 1024.0
+        modelStatus.text = when {
+            have && wanted ->
+                "On-device detection is ready (%.1f MB). Nothing reaches your server until "
+                    .format(megabytes) + "you say the name."
+            have ->
+                "Models are downloaded (%.1f MB) but detection is still on the server. "
+                    .format(megabytes) + "Turn the switch above on to use them."
+            wanted ->
+                "Models are NOT downloaded, so detection is still happening on the server — " +
+                    "which means the microphone is streaming there continuously. Tap " +
+                    "DOWNLOAD MODELS."
+            else -> "Models are not downloaded. About 3.6 MB, from your own server."
+        }
+        modelStatus.setTextColor(if (have && wanted) JarvisUi.DIM else JarvisUi.GOLD)
+    }
+
+    private fun downloadModels() {
+        val check = ServerUrl.check(urlField.text.toString())
+        val token = tokenField.text.toString().trim()
+        if (!check.isValid || token.isEmpty()) {
+            toast("Set the server URL and token first, and SAVE.")
+            return
+        }
+        toast("Downloading from your server…")
+        Thread {
+            val problem = ModelStore.download(
+                this,
+                check.normalized,
+                token,
+                OnDeviceWakeWord.REQUIRED_MODELS,
+            )
+            runOnUiThread {
+                toast(problem ?: "On-device models ready.")
+                if (::modelStatus.isInitialized) refreshModelStatus()
+                // Restart the listener so it picks the local path up now rather
+                // than at the next reconnect.
+                if (problem == null && config.wakeWordEnabled) {
+                    runCatching { WakeWordService.ensureRunning(this, fromForeground = true) }
+                }
+            }
+        }.start()
+    }
+
+    private fun deleteModels() {
+        ModelStore.deleteAll(this)
+        // Not just the files: leaving the switch on with nothing behind it is
+        // the state this screen exists to make impossible.
+        config.wakeWordOnDevice = false
+        wakeOnDevice.isChecked = false
+        refreshModelStatus()
+        toast("Deleted. Detection is back on your server.")
     }
 
     private fun isExemptFromBatteryOptimisation(): Boolean = runCatching {

@@ -179,6 +179,10 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.okhttp)
+    // On-device wake word. See assist/OnDeviceWakeWord.kt: no session is created
+    // until the user opts in AND the weights have been fetched from their own
+    // server, so an install that never turns it on pays only the AAR's size.
+    implementation(libs.onnxruntime.android)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 

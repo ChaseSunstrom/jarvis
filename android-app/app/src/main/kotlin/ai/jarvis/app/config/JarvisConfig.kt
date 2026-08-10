@@ -151,6 +151,20 @@ class JarvisConfig(context: Context) {
         get() = prefs.getBoolean(KEY_SETUP_SHOWN, false)
         set(v) = prefs.edit().putBoolean(KEY_SETUP_SHOWN, v).apply()
 
+    /**
+     * Detect the wake word on this phone instead of on the server.
+     *
+     * Off by default, and deliberately: it needs weights the user has to
+     * download first, and a feature that silently depends on a file that may
+     * not be there is one that silently stops working. On, and with the models
+     * present, nothing leaves the phone until the name has been said — which is
+     * the whole point, since the alternative is a permanently open socket
+     * carrying everything the microphone hears.
+     */
+    var wakeWordOnDevice: Boolean
+        get() = prefs.getBoolean(KEY_WAKE_ON_DEVICE, false)
+        set(v) = prefs.edit().putBoolean(KEY_WAKE_ON_DEVICE, v).apply()
+
     /** Master switch for always-on "Hey Jarvis" detection. */
     var wakeWordEnabled: Boolean
         get() = prefs.getBoolean(KEY_WAKE_ENABLED, false)
@@ -224,6 +238,7 @@ class JarvisConfig(context: Context) {
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_SETUP_SHOWN = "setup_checklist_shown"
+        private const val KEY_WAKE_ON_DEVICE = "wake_on_device"
         private const val KEY_WAKE_ENABLED = "wake_enabled"
         private const val KEY_WAKE_IN_CAR = "wake_in_car"
         private const val KEY_WAKE_AT_HOME = "wake_at_home"

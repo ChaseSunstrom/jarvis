@@ -11,6 +11,11 @@ okhttp = "4.12.0"
 coroutines = "1.8.1"
 junit = "4.13.2"
 json = "20240303"
+# ONNX Runtime for on-device wake-word detection. Pulled in unconditionally
+# because Gradle cannot conditionally add a dependency at install time, but
+# nothing loads a session until the user turns the feature on and the weights
+# have been fetched from their own server — see api/models.py.
+onnxruntime = "1.19.2"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -25,6 +30,7 @@ kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-c
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
 json = { module = "org.json:json", version.ref = "json" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 
 [plugins]
