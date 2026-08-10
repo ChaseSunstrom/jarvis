@@ -98,6 +98,40 @@ exactly the text that talks a model out of following a note. Error paths count:
 a 500 whose body is the remote server's words is as much an injection vector
 as a 200, and is cheaper to return.
 
+## The relay is a door, and it now asks who you are
+
+`jarvis-web` holds the admin token so the browser never does, and relays the
+console's WebSocket to jarvis-core at `/ws`. Authorisation for that socket was
+a same-origin check — correct as far as it goes, because only a browser sends
+`Origin` and only a browser can be tricked into a cross-origin request.
+
+The gap was what happened when there was no `Origin` at all. `isOriginAllowed`
+returns true for a missing one, so **anything that was not a browser — the
+phone, curl, any script that could reach port 8199 — was handed the admin
+token's full control of the house without presenting anything**, while
+jarvis-core next door required a bearer token for exactly the same power. The
+firewall was the only thing in the way, which makes "LAN" a trust boundary the
+rest of this document does not otherwise grant.
+
+Now the socket asks:
+
+| client | brings | relay does |
+| --- | --- | --- |
+| browser console | same-origin `Origin`, no token (it cannot set headers) | injects the admin token, swallows the handshake — unchanged |
+| Jarvis app, scripts | `Authorization: Bearer <jarvis-core token>` | passes the token through; **jarvis-core** decides |
+| anything else | neither | `401`, before a socket exists |
+| a page on another origin | a foreign `Origin` | `403`, as before |
+
+Pass-through matters as much as the refusal. The relay does not vouch for a
+client it cannot authenticate; it forwards the credential and lets jarvis-core
+remain the single authority on tokens. A revoked token stops working
+everywhere at once, which would not be true if the relay kept minting access
+of its own.
+
+It is also what lets one URL do everything: with the handshake identical on
+both, the app can be pointed at the console and reach voice, management and
+TTS through it, instead of needing to know which of two servers is which.
+
 ## Isolation matrix
 
 | service | network | user | rootfs | mounts | caps |

@@ -153,7 +153,17 @@ class AssistPipelineClient(
         Log.i(TAG, "connecting to $kind at $url")
         authed = false
         opened = false
-        ws = http.newWebSocket(Request.Builder().url(url).build(), this)
+        ws = http.newWebSocket(
+            Request.Builder()
+                .url(url)
+                // Presented on the upgrade so jarvis-web's relay passes it
+                // through to jarvis-core instead of injecting its own admin
+                // token. jarvis-core ignores it here and asks over the socket;
+                // either way the handshake below is the same.
+                .header("Authorization", "Bearer $token")
+                .build(),
+            this,
+        )
         // `readTimeout(0)` is required — a voice socket is idle for minutes at a
         // time — but it also applies to the upgrade response, so a server that
         // accepts the TCP connection and then says nothing would stall here
@@ -232,6 +242,7 @@ class AssistPipelineClient(
 
     fun close() {
         main.removeCallbacks(handshakeWatchdog)
+        main.removeCallbacks(assumeAuthed)
         try { ws?.close(1000, null) } catch (_: Exception) {}
         ws = null
     }
@@ -246,10 +257,25 @@ class AssistPipelineClient(
         Log.i(TAG, "connected to $kind")
         onKindResolved(kind)
         serverKind = kind
-        if (kind.clientAuthenticates) return  // wait for auth_required
-        // The relay authenticated on our behalf before it ever accepted this
-        // socket, and it buffers what we send until its own handshake is done.
-        // Waiting for an `auth_ok` here would wait forever — the relay eats it.
+        // Normally the server now asks: jarvis-core always does, and jarvis-web
+        // does too once it is passing our token through. But an OLDER jarvis-web
+        // authenticates on our behalf and swallows the handshake, so nothing
+        // would ever arrive and the turn would never start — the original bug.
+        // Rather than pin the app to a matching server version, wait briefly and
+        // assume we are already authenticated if asked for nothing.
+        main.postDelayed(assumeAuthed, HANDSHAKE_QUIET_MS)
+    }
+
+    /**
+     * Start anyway when the server never asked us to authenticate.
+     *
+     * Only reachable against a jarvis-web old enough to still inject its own
+     * token. [startTurn] is idempotent via [authed], so a late `auth_required`
+     * after this has fired cannot start a second run.
+     */
+    private val assumeAuthed = Runnable {
+        if (authed || ws == null) return@Runnable
+        Log.i(TAG, "no auth handshake asked for; assuming the relay authenticated us")
         authed = true
         startTurn()
     }
@@ -258,12 +284,18 @@ class AssistPipelineClient(
         if (!isCurrent(webSocket)) return
         val msg = try { JSONObject(text) } catch (e: Exception) { return }
         when (msg.optString("type")) {
-            "auth_required" -> webSocket.send(
-                JSONObject().put("type", "auth").put("access_token", token).toString()
-            )
+            "auth_required" -> {
+                main.removeCallbacks(assumeAuthed)
+                webSocket.send(
+                    JSONObject().put("type", "auth").put("access_token", token).toString()
+                )
+            }
             "auth_ok" -> {
-                authed = true
-                startTurn()
+                main.removeCallbacks(assumeAuthed)
+                if (!authed) {
+                    authed = true
+                    startTurn()
+                }
             }
             "auth_invalid" -> post { callbacks.onError("auth failed: check the token") }
             "result" -> if (msg.optInt("id") == listRequestId) handlePipelineList(msg)
@@ -415,5 +447,11 @@ class AssistPipelineClient(
          * who typed the wrong one of two URLs is not left holding a button.
          */
         private const val HANDSHAKE_TIMEOUT_MS = 6_000L
+
+        /**
+         * How long to wait for the server to ask us to authenticate before
+         * concluding it never will. Only an older jarvis-web does that.
+         */
+        private const val HANDSHAKE_QUIET_MS = 2_000L
     }
 }

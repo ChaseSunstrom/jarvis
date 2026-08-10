@@ -104,6 +104,30 @@ export function isOriginAllowed(origin, host, allowed = []) {
 }
 
 /**
+ * The bearer token a non-browser client presented, or null.
+ *
+ * Header first. `?access_token=` is accepted too because some WebSocket
+ * clients cannot set headers on the upgrade — it is the same convention
+ * jarvis-core's own socket documents — but it is second, and a query token
+ * ends up in access logs, so the header is what the Jarvis app uses.
+ */
+export function bearerFromRequest(req) {
+	const header = req?.headers?.authorization ?? req?.headers?.Authorization;
+	if (typeof header === 'string') {
+		const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+		if (match && match[1].trim()) return match[1].trim();
+	}
+	try {
+		const url = new URL(req?.url ?? '/', 'http://internal');
+		const query = url.searchParams.get('access_token');
+		if (query && query.trim()) return query.trim();
+	} catch {
+		/* a malformed request line has no token */
+	}
+	return null;
+}
+
+/**
  * @param {import('node:http').Server} httpServer
  * @param {{ haUrl?: string, haToken?: string, url?: string, token?: string, path?: string,
  *           env?: Record<string, string|undefined>, allowedOrigins?: string[] }} [opts]
@@ -125,14 +149,46 @@ export function attachWsProxy(httpServer, opts = {}) {
 		// Resolved per connection so a restarted backend / changed env is picked up.
 		const env = opts.env ?? process.env;
 
-		// Refuse the upgrade outright for a foreign origin. Doing it here rather
-		// than inside handleUpgrade means the hostile page never gets a socket at
-		// all, so there is no window in which frames could be relayed.
-		const allowed = opts.allowedOrigins ?? parseAllowedOrigins(env.JARVIS_ALLOWED_ORIGINS);
-		if (!isOriginAllowed(req.headers?.origin, req.headers?.host, allowed)) {
-			socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-			socket.destroy();
-			return;
+		// Two kinds of client reach this socket, and they are told apart by
+		// whether they bring their own credential.
+		//
+		//   * The browser console cannot set headers on a WebSocket, so it
+		//     brings none. It is authorised by being same-origin, and the relay
+		//     injects the server-held admin token on its behalf — which is the
+		//     whole reason that token never reaches the page.
+		//   * The phone (and anything else that is not a browser) presents a
+		//     jarvis-core token. The relay does NOT inject anything for it: the
+		//     token is passed straight through and jarvis-core decides whether
+		//     it is any good. jarvis-core stays the single authority on tokens,
+		//     and this stays a pipe.
+		//
+		// A client that is neither — no Origin and no token — is refused. That
+		// case used to be ACCEPTED: `isOriginAllowed` returns true for a missing
+		// Origin, which is right for a same-origin policy (only browsers send
+		// one, and only browsers can be tricked into cross-origin requests) but
+		// meant that anything on the network that was not a browser got the
+		// admin token's full control of the house without presenting anything at
+		// all, while jarvis-core next door demanded a bearer token.
+		const presented = bearerFromRequest(req);
+		if (!presented) {
+			const allowed = opts.allowedOrigins ?? parseAllowedOrigins(env.JARVIS_ALLOWED_ORIGINS);
+			const origin = req.headers?.origin;
+			const isBrowser = origin !== undefined && origin !== null && origin !== '';
+			// Two different refusals, deliberately. A page on the wrong origin is
+			// FORBIDDEN — it already carries a credential (its cookies) that must
+			// never be honoured here. A client with no origin and no token is
+			// UNAUTHORIZED — it presented nothing, and 401 says the remedy is to
+			// bring a token.
+			if (isBrowser && !isOriginAllowed(origin, req.headers?.host, allowed)) {
+				socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+				socket.destroy();
+				return;
+			}
+			if (!isBrowser) {
+				socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+				socket.destroy();
+				return;
+			}
 		}
 
 		const backend = resolveBackend(env);
@@ -141,7 +197,9 @@ export function attachWsProxy(httpServer, opts = {}) {
 				// explicit opts win (used by tests); haUrl/haToken kept for compatibility
 				url: opts.url ?? opts.haUrl ?? backend.url,
 				token: opts.token ?? opts.haToken ?? backend.token,
-				problem: `server missing ${backend.source.url}/${backend.source.token}`
+				problem: `server missing ${backend.source.url}/${backend.source.token}`,
+				// Pass-through: the client does its own handshake.
+				clientAuthenticates: Boolean(presented)
 			});
 		});
 	});
@@ -153,14 +211,19 @@ export function attachWsProxy(httpServer, opts = {}) {
  * @param {import('ws').WebSocket} client browser-side socket
  * @param {{ url?: string, token?: string, problem?: string }} cfg
  */
-function proxyToBackend(client, { url, token, problem }) {
+function proxyToBackend(client, { url, token, problem, clientAuthenticates = false }) {
 	if (!url || !token) {
 		client.close(1011, problem ?? 'server missing backend url/token');
 		return;
 	}
 	const target = url.replace(/\/+$/, '').replace(/^http/, 'ws') + '/api/websocket';
 	const ha = new WebSocket(target);
-	let authed = false;
+	// In pass-through mode the client brought its own token, so it does the
+	// handshake itself: nothing is injected, nothing is swallowed, and frames
+	// move in both directions from the first one. Treating it as "already
+	// authed" is exactly that — there is no buffering to do and no auth_ok of
+	// ours to wait for.
+	let authed = clientAuthenticates;
 	/** @type {Array<[import('ws').RawData, boolean]>} */
 	const pendingFromClient = [];
 

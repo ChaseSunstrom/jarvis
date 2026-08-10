@@ -6,12 +6,16 @@ the two servers is at the URL the user typed, and therefore which WebSocket
 path to dial and whether this end has to authenticate.
 
 That decision is why voice used to work only inside the management WebView.
-The console (jarvis-web) serves its socket at `/ws` and *relays* — its Node
-server holds the admin token, does the handshake with jarvis-core itself, and
-swallows the `auth_required`/`auth_ok` frames. jarvis-core serves
-`/api/websocket` and expects the client to send the auth frame. Assuming
-jarvis-core against a console URL fails twice over: wrong path, and a client
-that waits forever for an `auth_ok` that the relay ate.
+The console (jarvis-web) serves its socket at `/ws`; jarvis-core serves
+`/api/websocket`. Assuming jarvis-core against a console URL failed twice over:
+wrong path, and — because the relay then injected its own token and swallowed
+the handshake — a client waiting forever for an `auth_ok` that never came.
+
+The relay now passes a PRESENTED token through to jarvis-core instead of
+injecting for everyone, so the handshake is identical on both kinds and only
+the path differs. That is both the security fix (an unauthenticated client no
+longer gets the admin token's power over the house) and what makes a single
+URL work whichever server is behind it.
 
 Checked here:
 
@@ -68,12 +72,20 @@ def ws_path(kind: str) -> str:
 
 
 def client_authenticates(kind: str) -> bool:
-    return kind == "CORE"
+    """Both, now.
+
+    jarvis-web's relay used to inject its own admin token and swallow the
+    handshake, so this end had to skip it there. It now passes a presented
+    token through to jarvis-core instead — which is both the security fix (an
+    unauthenticated client no longer gets the admin token's power) and what
+    makes one URL work for either server.
+    """
+    return True
 
 
 def candidates(known: str | None) -> list[str]:
     if known is None:
-        return ["CORE", "RELAY"]
+        return ["RELAY", "CORE"]
     return [known] + [k for k in ("CORE", "RELAY") if k != known]
 
 
@@ -146,21 +158,16 @@ def check_paths() -> int:
     if ws_path("CORE") == ws_path("RELAY"):
         print("FAIL  both kinds dial the same path; the distinction does nothing")
         failures += 1
-    if not client_authenticates("CORE"):
-        print("FAIL  jarvis-core needs the client to send the auth frame")
-        failures += 1
-    if client_authenticates("RELAY"):
-        print(
-            "FAIL  the relay swallows the handshake — a client that waits for "
-            "auth_ok there hangs forever, which is the original bug"
-        )
-        failures += 1
+    for kind in ("CORE", "RELAY"):
+        if not client_authenticates(kind):
+            print(f"FAIL  {kind} must authenticate from this end")
+            failures += 1
     return failures
 
 
 def check_candidate_order() -> int:
     failures = 0
-    if candidates(None) != ["CORE", "RELAY"]:
+    if candidates(None) != ["RELAY", "CORE"]:
         print(f"FAIL  unknown-kind order is {candidates(None)}")
         failures += 1
     for known in ("CORE", "RELAY"):
@@ -196,14 +203,14 @@ def check_kotlin_agrees(root: Path) -> int:
         print(f"FAIL  ServerEndpoint.kt keys on none of {CORE_KEYS}")
         failures += 1
 
-    # The enum must still record that only one of the two authenticates.
-    core = re.search(r"CORE\(\s*\"[^\"]+\",\s*(true|false)\s*\)", text)
-    relay = re.search(r"RELAY\(\s*\"[^\"]+\",\s*(true|false)\s*\)", text)
-    if not core or core.group(1) != "true":
-        print("FAIL  CORE must be declared as authenticating from this end")
-        failures += 1
-    if not relay or relay.group(1) != "false":
-        print("FAIL  RELAY must be declared as NOT authenticating from this end")
+    # The relay must NOT be declared as authenticating on our behalf any more.
+    # If that flag comes back, the client would skip the handshake against a
+    # server that now expects it, and hang.
+    if "clientAuthenticates" in text:
+        print(
+            "FAIL  ServerEndpoint.kt still has clientAuthenticates; the relay "
+            "passes our token through now, so both kinds handshake identically"
+        )
         failures += 1
     return failures
 

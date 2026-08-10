@@ -157,9 +157,12 @@ async function startRelay(allowedOrigins?: string[]) {
 }
 
 /** Resolves to 'open' or the failure text, whichever happens first. */
-function tryConnect(url: string, origin?: string): Promise<string> {
+function tryConnect(url: string, origin?: string, token?: string): Promise<string> {
 	return new Promise((resolve) => {
-		const ws = new WebSocket(url, origin ? { headers: { Origin: origin } } : {});
+		const headers: Record<string, string> = {};
+		if (origin) headers.Origin = origin;
+		if (token) headers.Authorization = `Bearer ${token}`;
+		const ws = new WebSocket(url, Object.keys(headers).length ? { headers } : {});
 		ws.on('open', () => {
 			ws.close();
 			resolve('open');
@@ -192,9 +195,49 @@ describe('ws-proxy upgrade', () => {
 		ws.close();
 	});
 
-	it('lets a non-browser client with no Origin through', async () => {
+	it('refuses a client that brings neither an Origin nor a token', async () => {
+		// This used to be accepted, and it is the reason this test changed name.
+		// `isOriginAllowed` returns true for a MISSING Origin, which is correct
+		// for a same-origin policy — only browsers send one, and only browsers
+		// can be tricked into a cross-origin request — but it meant that
+		// anything on the network which was not a browser got the relay's
+		// injected admin token, and with it the whole house, having presented
+		// nothing at all. jarvis-core next door demands a bearer token for the
+		// same power.
 		const { url } = await startRelay();
-		expect(await tryConnect(url)).toBe('open');
+		expect(await tryConnect(url)).toContain('401');
+	});
+
+	it('lets a non-browser client in when it brings a token, and does not inject one', async () => {
+		// The phone's path. The relay must NOT authenticate on its behalf here:
+		// it passes the client's token through and jarvis-core decides. So the
+		// client sees the handshake it would see talking to jarvis-core
+		// directly — `auth_required` reaches it rather than being swallowed —
+		// which is what makes one URL work for both servers.
+		const { url } = await startRelay();
+		const seen: string[] = [];
+		const opened = await new Promise<string>((resolve) => {
+			const ws = new WebSocket(url, {
+				headers: { Authorization: `Bearer ${MOCK_TOKEN}` }
+			});
+			ws.on('message', (raw) => {
+				const msg = JSON.parse(String(raw));
+				seen.push(msg.type);
+				if (msg.type === 'auth_required') {
+					ws.send(JSON.stringify({ type: 'auth', access_token: MOCK_TOKEN }));
+				}
+				if (msg.type === 'auth_ok') {
+					ws.close();
+					resolve('open');
+				}
+			});
+			ws.on('error', (e: Error) => resolve(e.message));
+			setTimeout(() => resolve(`timeout after ${seen.join(',') || 'nothing'}`), 4000);
+		});
+		expect(opened).toBe('open');
+		expect(seen, 'the handshake must reach the client, not be swallowed').toContain(
+			'auth_required'
+		);
 	});
 
 	it('lets an allow-listed origin through', async () => {

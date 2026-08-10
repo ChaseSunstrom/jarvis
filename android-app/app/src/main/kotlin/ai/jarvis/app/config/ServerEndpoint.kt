@@ -12,33 +12,47 @@ import org.json.JSONObject
  *    client authenticates by sending `{"type":"auth","access_token":...}` in
  *    response to `auth_required`.
  *  * **jarvis-web** (:8199) is the console. Its socket is `/ws`, and it is a
- *    *relay*: the Node server holds the admin token, does the handshake with
- *    jarvis-core itself, and **swallows** the `auth_required`/`auth_ok` frames
- *    so the browser never sees them or the token.
+ *    *relay* to jarvis-core. For the browser — which cannot set headers on a
+ *    WebSocket — it injects the server-held admin token and swallows the
+ *    handshake, which is why that token never reaches the page. For a client
+ *    that presents its own bearer token, it passes the token through and
+ *    jarvis-core validates it, so the handshake looks exactly like talking to
+ *    jarvis-core directly.
  *
- * Before this existed the app assumed jarvis-core unconditionally, which broke
- * in two independent ways against the console URL: it dialled a path that is
- * not there, and — even had it connected — it only starts a turn inside its
- * `auth_ok` branch, and on the relay that frame never arrives. The symptom was
- * that voice worked in the management WebView (a web page talking to its own
- * relay) and nowhere else, with an inert orb and no error, because a pipeline
- * that never reaches LISTENING gates the microphone off.
+ * That second mode is what makes one URL enough. The app presents its token on
+ * the upgrade, so the two kinds now differ ONLY in the path, and pointing the
+ * app at the console works for voice as well as for the management page.
  *
- * So the kind is *discovered* rather than assumed. This file is the pure half —
- * no Android, no network — so the discrimination rule can be tested on the JVM
- * and mirrored in `android-app/tools/server_endpoint_test.py`.
+ * Before this the app assumed jarvis-core unconditionally, which broke in two
+ * independent ways against the console URL: it dialled a path that is not
+ * there, and — even had it connected — it only started a turn inside its
+ * `auth_ok` branch, which the relay was eating. The symptom was that voice
+ * worked in the management WebView (a web page talking to its own relay) and
+ * nowhere else, with an inert orb and no error, because a pipeline that never
+ * reaches LISTENING gates the microphone off.
+ *
+ * The kind is still *discovered* rather than assumed, because the path differs.
+ * This file is the pure half — no Android, no network — so the rule can be
+ * tested on the JVM and mirrored in `android-app/tools/server_endpoint_test.py`.
  */
 enum class ServerKind(
     /** Where the WebSocket lives, appended to the base URL. */
     val wsPath: String,
-    /** True when this end must send the auth frame itself. */
-    val clientAuthenticates: Boolean,
 ) {
     /** jarvis-core, spoken to directly. */
-    CORE("/api/websocket", true),
+    CORE("/api/websocket"),
 
-    /** jarvis-web's relay, which authenticates on our behalf. */
-    RELAY("/ws", false),
+    /**
+     * jarvis-web's relay.
+     *
+     * It used to authenticate on the client's behalf unconditionally, which is
+     * why this end once had to skip the handshake here. It no longer does: a
+     * client that presents a bearer token is passed straight through to
+     * jarvis-core, which validates it. So the handshake is now the same on both
+     * kinds and only the path differs — which is the whole point, because it
+     * means one URL works whichever server is behind it.
+     */
+    RELAY("/ws"),
 }
 
 object ServerEndpoint {
@@ -94,12 +108,12 @@ object ServerEndpoint {
     /**
      * What to try, in order, when the kind is not known yet.
      *
-     * CORE first: it is the endpoint that needs the token, so trying it first
-     * means a misconfigured token fails loudly against the server that checks
-     * it rather than silently succeeding against a relay that does not.
+     * RELAY first. Both endpoints now authenticate identically, so the order is
+     * about which is more likely: the console is the URL a person types,
+     * because it is the one with a web page on it.
      */
     fun candidates(known: ServerKind?): List<ServerKind> = when (known) {
-        null -> listOf(ServerKind.CORE, ServerKind.RELAY)
+        null -> listOf(ServerKind.RELAY, ServerKind.CORE)
         else -> listOf(known) + ServerKind.entries.filter { it != known }
     }
 

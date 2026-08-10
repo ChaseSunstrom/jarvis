@@ -65,13 +65,17 @@ class ServerEndpointTest {
     }
 
     @Test
-    fun `the two kinds dial different paths and authenticate differently`() {
+    fun `the two kinds differ only in where the socket lives`() {
+        // Which is the point: the relay passes a presented token through to
+        // jarvis-core rather than injecting its own, so the handshake is
+        // identical on both and one URL works for either server.
         assertEquals("/api/websocket", ServerKind.CORE.wsPath)
         assertEquals("/ws", ServerKind.RELAY.wsPath)
-        assertTrue(ServerKind.CORE.clientAuthenticates)
-        // The relay eats auth_ok. A client that waits for it there hangs
-        // forever, which is the original bug.
-        assertFalse(ServerKind.RELAY.clientAuthenticates)
+        assertEquals(
+            "every kind needs its own path, or discovery cannot tell them apart",
+            ServerKind.entries.size,
+            ServerKind.entries.map { it.wsPath }.toSet().size,
+        )
     }
 
     @Test
@@ -93,7 +97,7 @@ class ServerEndpointTest {
 
     @Test
     fun `every kind stays reachable whatever is already known`() {
-        assertEquals(listOf(ServerKind.CORE, ServerKind.RELAY), ServerEndpoint.candidates(null))
+        assertEquals(listOf(ServerKind.RELAY, ServerKind.CORE), ServerEndpoint.candidates(null))
         for (known in ServerKind.entries) {
             val order = ServerEndpoint.candidates(known)
             assertEquals(known, order.first())
