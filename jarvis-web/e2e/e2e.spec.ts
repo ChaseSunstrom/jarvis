@@ -459,7 +459,20 @@ test('settings page reports the selected backend and streams events', async ({ p
 	await expect(page.getByTestId('backend-url')).toContainText('127.0.0.1');
 	await expect(page.getByTestId('backend-token')).toContainText('held server-side');
 	await expect(page.getByTestId('config-problem')).toHaveCount(0);
-	await expect(page.getByTestId('tts-voice')).toHaveText('en_GB-alan-medium');
+	// The pipeline is read-only and says so. It used to be a `<select>` whose
+	// value could not be committed anywhere, next to a second, read-only copy
+	// of a TTS voice the editable Voice group above already owns.
+	await expect(page.getByTestId('pipeline-name')).toContainText('Jarvis');
+	await expect(page.getByTestId('tts-voice')).toHaveCount(0);
+	// ...and the voice is edited exactly once, in the group that can save it.
+	await expect(page.getByTestId('setting-voice.tts_voice')).toBeVisible();
+
+	// The event stream is a diagnostic now, folded away rather than sitting
+	// open below the settings people came to change.
+	const stream = page.getByTestId('event-stream');
+	await expect(stream).not.toHaveAttribute('open', /.*/);
+	await stream.getByText('Event stream').click();
+	await expect(stream).toHaveAttribute('open', /.*/);
 
 	// the live event stream fills once something moves
 	await expect(page.getByTestId('live-filter')).toHaveText('state_changed');

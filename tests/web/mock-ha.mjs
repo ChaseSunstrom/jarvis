@@ -307,6 +307,24 @@ export function makeWorld() {
 			source: 'package',
 			unapplied_reason: null,
 			package: 'house'
+		},
+		{
+			// The one editable copy of the TTS voice. The settings page used to
+			// carry a second, read-only one in a hand-rolled "Voice pipeline"
+			// panel; this fixture is what proves the surviving one is the
+			// editable one and that it lives in the group that can save it.
+			key: 'voice.tts_voice',
+			label: 'TTS voice',
+			group: 'Voice',
+			type: 'choice',
+			apply: 'live',
+			note: 'What Jarvis sounds like.',
+			value: 'en_GB-alan-medium',
+			yaml_value: 'en_GB-alan-medium',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null,
+			choices: ['en_GB-alan-medium', 'en_US-amy-medium', 'en_GB-northern_english_male-medium']
 		}
 	];
 

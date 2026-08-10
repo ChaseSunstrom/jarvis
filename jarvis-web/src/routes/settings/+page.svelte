@@ -26,7 +26,20 @@
 	let backendConfig = $state<Record<string, any> | null>(null);
 	let pipelines = $state<any[]>([]);
 	let preferred = $state<string | null>(null);
-	let selectedPipeline = $state('');
+
+	/**
+	 * The pipelines the backend reports, named, with the preferred one marked.
+	 *
+	 * Shown as text rather than a `<select>`. There used to be a dropdown here,
+	 * and picking from it did nothing at all — the HUD reads `JARVIS_PIPELINE`
+	 * from the server's environment at load, so the control could only ever
+	 * print a note telling you to go and edit an environment variable. A
+	 * disabled-looking list of what exists is honest; a control that cannot
+	 * commit its own value is not.
+	 */
+	let pipelineNames = $derived(
+		pipelines.map((p) => (p.id === preferred ? `${p.name} (preferred)` : p.name))
+	);
 
 	/**
 	 * The editable settings jarvis-core exposes, grouped as it groups them.
@@ -174,11 +187,8 @@
 		let disposed = false;
 		fetch('/api/config')
 			.then((r) => (r.ok ? r.json() : Promise.reject(new Error(`/api/config → ${r.status}`))))
-			.then((c) => {
-				config = c;
-				selectedPipeline = c.pipeline ?? '';
-			})
-			// Was swallowed silently, which left the whole Backend panel showing
+			.then((c) => (config = c))
+			// Was swallowed silently, which left the whole panel showing
 			// placeholders with nothing to explain why.
 			.catch((e) => (hint = describeError(e)));
 
@@ -326,9 +336,18 @@
 	{/each}
 {/if}
 
-<section class="panel">
+<!--
+  This console's OWN environment, as opposed to the house settings above.
+
+  Everything in this panel is a server-side environment variable of the web
+  server, readable and not settable from a browser — the token in particular
+  never leaves the server. Keeping it visually apart from the editable groups
+  is the point: a row you cannot change, sitting among rows you can, reads as
+  a control that is broken.
+-->
+<section class="panel" data-testid="console-env">
 	<div class="panel-head">
-		<span>Backend</span>
+		<span>This console</span>
 		<span class="pill" class:on={status === 'open'} data-testid="backend-kind">
 			{config.backend ?? '…'}
 		</span>
@@ -349,45 +368,35 @@
 		<span class="name"><b>Version</b><span class="eid">reported by the backend</span></span>
 		<span class="muted">{backendConfig?.version ?? backendConfig?.ha_version ?? 'unknown'}</span>
 	</div>
+	<div class="row">
+		<span class="name"><b>Voice pipeline</b><span class="eid">JARVIS_PIPELINE</span></span>
+		<span class="muted" data-testid="pipeline-name">
+			{config.pipeline || 'not set'}{#if pipelineNames.length}
+				<span class="eid"> · available: {pipelineNames.join(', ')}</span>
+			{/if}
+		</span>
+	</div>
 	<p class="muted">
-		URL and token are server-side environment variables — the browser never receives the token.
-		Change <code>JARVIS_BACKEND</code>, <code>JARVIS_URL</code> and <code>JARVIS_TOKEN</code> where the
-		web server runs, then restart it.
+		These are server-side environment variables — the browser never receives the token. Change
+		<code>JARVIS_BACKEND</code>, <code>JARVIS_URL</code>, <code>JARVIS_TOKEN</code> or
+		<code>JARVIS_PIPELINE</code> where the web server runs, then restart it.
 	</p>
 </section>
 
-<section class="panel">
-	<div class="panel-head"><span>Voice pipeline</span></div>
-	<div class="row">
-		<span class="name"><b>Pipeline</b><span class="eid">JARVIS_PIPELINE</span></span>
-		<select data-testid="pipeline-select" aria-label="Assist pipeline" bind:value={selectedPipeline}>
-			{#each pipelines as pipeline (pipeline.id)}
-				<option value={pipeline.name}>
-					{pipeline.name}{pipeline.id === preferred ? ' (preferred)' : ''}
-				</option>
-			{/each}
-			{#if !pipelines.length}
-				<option value={selectedPipeline}>{selectedPipeline || 'none reported'}</option>
-			{/if}
-		</select>
-	</div>
-	<div class="row">
-		<span class="name"><b>TTS voice</b><span class="eid">JARVIS_TTS_VOICE</span></span>
-		<span class="muted" data-testid="tts-voice">{config.ttsVoice ?? '…'}</span>
-	</div>
-	{#if selectedPipeline && selectedPipeline !== config.pipeline}
-		<p class="notice">
-			The HUD picks its pipeline from <code>JARVIS_PIPELINE</code> at load. Set it to
-			<code>{selectedPipeline}</code> on the server to make this stick.
-		</p>
-	{/if}
-</section>
+<!--
+  A diagnostic, folded away.
 
-<section class="panel">
-	<div class="panel-head">
+  It is a raw firehose of every event on the bus, and it was sitting open at
+  the bottom of the settings page as if it were a setting — the longest panel
+  on the screen, below the things people actually came to change. Collapsed by
+  default, one click away, and the summary says what is inside so nobody has to
+  open it to find out.
+-->
+<details class="panel" data-testid="event-stream">
+	<summary class="panel-head">
 		<span>Event stream</span>
 		<span class="muted" data-testid="live-filter">{liveFilter || '(all events)'}</span>
-	</div>
+	</summary>
 	<div class="row">
 		<label class="jv-sr-only" for="event-filter">Event type filter</label>
 		<input
@@ -419,12 +428,37 @@
 	<pre data-testid="event-log" aria-label="Live event stream">{log
 			.map((e) => `${e.at}  ${e.type}  ${e.body}`)
 			.join('\n') || 'waiting for events…'}</pre>
-</section>
+</details>
 
 <style>
 	/* A setting's note belongs under its row, indented to the row's control
 	   column so it reads as belonging to that setting and not the next one. */
 	.note {
 		margin: 0 0 0.5rem;
+	}
+
+	/* The collapsed diagnostic. `.panel-head` already lays this out; the marker
+	   is replaced with one that reads as part of the console's chrome rather
+	   than as a browser default triangle. */
+	details.panel > summary {
+		cursor: pointer;
+		list-style: none;
+	}
+	details.panel > summary::-webkit-details-marker {
+		display: none;
+	}
+	details.panel > summary::after {
+		content: '▸';
+		color: var(--jv-text-faint);
+		margin-left: auto;
+		transition: transform var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	details.panel[open] > summary::after {
+		transform: rotate(90deg);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		details.panel > summary::after {
+			transition: none;
+		}
 	}
 </style>
