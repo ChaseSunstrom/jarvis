@@ -18,6 +18,15 @@
 		type EntityState,
 		type Subscription
 	} from '$lib/jarvisClient';
+	import {
+		areaOptions,
+		describeChanges,
+		entityChanges,
+		formFor,
+		isUnchanged,
+		platformNote,
+		type EntityForm
+	} from '$lib/entityAdmin';
 
 	const UNASSIGNED = '__unassigned__';
 
@@ -92,6 +101,50 @@
 			// error is what is still on screen ten seconds later.
 			err = describeError(e);
 			toasts.error(serviceFailureText(service, label), describeError(e));
+		}
+	}
+
+	// --- managing an entry ---------------------------------------------------
+	// The console could read and control entities but never manage them, so the
+	// one control that matters most — whether the assistant may see a thing —
+	// could only be changed by hand-editing a file under `.storage/`.
+	let editing = $state('');
+	let form = $state<EntityForm>(formFor(undefined));
+	let saving = $state(false);
+
+	let options = $derived(areaOptions(areas));
+	let pending = $derived(entityChanges(entryMap.get(editing), form));
+	let summary = $derived(describeChanges(pending));
+
+	function edit(entityId: string): void {
+		if (editing === entityId) {
+			editing = '';
+			return;
+		}
+		editing = entityId;
+		form = formFor(entryMap.get(entityId));
+	}
+
+	async function save(): Promise<void> {
+		if (!conn || !editing || isUnchanged(pending)) return;
+		const entityId = editing;
+		const label = labelFor(entityId);
+		saving = true;
+		err = '';
+		try {
+			await conn.client.updateEntity(entityId, pending);
+			// Re-read rather than patching the local copy: the backend normalises
+			// what it stores (an empty name becomes null), and a form that shows
+			// something the server did not keep is the start of a save loop that
+			// never settles.
+			entries = (await conn.client.listEntities()) ?? entries;
+			form = formFor(entryMap.get(entityId));
+			toasts.success(`Updated ${label}`, entityId);
+		} catch (e) {
+			err = describeError(e);
+			toasts.error(`Could not update ${label}`, describeError(e));
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -192,12 +245,104 @@
 				<span class="muted">{group.items.length}</span>
 			</div>
 			{#each group.items as state, i (state.entity_id)}
-				<EntityRow
-					{state}
-					index={i}
-					name={friendlyName(state, entryMap.get(state.entity_id))}
-					call={(service, data) => call(state.entity_id, service, data)}
-				/>
+				<div class="row-wrap">
+					<EntityRow
+						{state}
+						index={i}
+						name={friendlyName(state, entryMap.get(state.entity_id))}
+						call={(service, data) => call(state.entity_id, service, data)}
+					/>
+					<button
+						type="button"
+						class="btn ghost manage"
+						data-testid="manage-{state.entity_id}"
+						aria-expanded={editing === state.entity_id}
+						aria-label="Manage {friendlyName(state, entryMap.get(state.entity_id))}"
+						onclick={() => edit(state.entity_id)}
+					>
+						{editing === state.entity_id ? 'CLOSE' : 'MANAGE'}
+					</button>
+				</div>
+
+				{#if editing === state.entity_id}
+					<div class="editor" data-testid="editor-{state.entity_id}">
+						<p class="entity-id">{state.entity_id}</p>
+						{#if platformNote(entryMap.get(state.entity_id))}
+							<p class="notice origin" data-testid="origin-{state.entity_id}">
+								{platformNote(entryMap.get(state.entity_id))}
+							</p>
+						{/if}
+
+						<div class="field">
+							<label for="name-{state.entity_id}">Name</label>
+							<input
+								id="name-{state.entity_id}"
+								type="text"
+								data-testid="name-{state.entity_id}"
+								placeholder={entryMap.get(state.entity_id)?.original_name ?? state.entity_id}
+								bind:value={form.name}
+							/>
+						</div>
+
+						<div class="field">
+							<label for="area-{state.entity_id}">Area</label>
+							<select id="area-{state.entity_id}" data-testid="area-{state.entity_id}" bind:value={form.areaId}>
+								{#each options as option (option.id)}
+									<option value={option.id}>{option.name}</option>
+								{/each}
+							</select>
+						</div>
+
+						<div class="field">
+							<label for="aliases-{state.entity_id}">Aliases</label>
+							<input
+								id="aliases-{state.entity_id}"
+								type="text"
+								data-testid="aliases-{state.entity_id}"
+								placeholder="other names to call it, comma separated"
+								bind:value={form.aliases}
+							/>
+						</div>
+
+						<div class="toggles">
+							<label>
+								<input
+									type="checkbox"
+									data-testid="exposed-{state.entity_id}"
+									bind:checked={form.exposed}
+								/>
+								Visible to the assistant
+							</label>
+							<label>
+								<input type="checkbox" data-testid="hidden-{state.entity_id}" bind:checked={form.hidden} />
+								Hidden from dashboards
+							</label>
+							<label>
+								<input
+									type="checkbox"
+									data-testid="disabled-{state.entity_id}"
+									bind:checked={form.disabled}
+								/>
+								Disabled
+							</label>
+						</div>
+
+						<div class="actions">
+							<button
+								type="button"
+								class="btn"
+								data-testid="save-{state.entity_id}"
+								disabled={saving || isUnchanged(pending)}
+								onclick={save}
+							>
+								{saving ? 'SAVING…' : 'SAVE'}
+							</button>
+							<span class="summary" data-testid="summary-{state.entity_id}">
+								{summary || 'No changes yet.'}
+							</span>
+						</div>
+					</div>
+				{/if}
 			{/each}
 		</section>
 	{:else}
