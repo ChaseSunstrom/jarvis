@@ -57,6 +57,56 @@ build is not also your first R8 debugging session. Turn minification on later;
 | viewBinding | off — every screen is built programmatically |
 | dependencies | androidx core/appcompat/activity/lifecycle/work/datastore, OkHttp 4.12, coroutines |
 
+## Updates, releases and signing
+
+Every push that touches `android-app/` publishes a **prerelease** on GitHub
+with `jarvis-release.apk` attached, tagged `v<name>+<versionCode>`. A tagged
+release publishes a full release the same way. The app checks these itself:
+**Settings → Updates → CHECK FOR UPDATES**, with a "include test builds"
+switch that decides whether the per-push prereleases count. Installation goes
+through the platform's `PackageInstaller`, so the system asks before anything
+is replaced — the app cannot silently update itself, which is the point.
+
+Two things make this work, and both are easy to break:
+
+**`versionCode` must increase.** Android refuses to install a package whose
+code is not greater than the installed one, so CI passes `JARVIS_VERSION_CODE`
+(the workflow run number) and `build.gradle.kts` reads it. A local build stays
+at 1. The code is repeated in the git tag because that is the only way a phone
+can know a release's version *without downloading the whole APK first* —
+`tools/release_feed_test.py` fails if the workflow stops emitting it.
+
+**The signing key must be stable.** Android refuses an update whose signature
+differs from the installed app, whatever the version says. CI therefore signs
+with `ci-keystore.jks`, which is committed to this repository, and pushes build
+the `release` variant rather than `debug` — a debug APK is signed with the
+runner's own auto-generated `~/.android/debug.keystore`, which differs on every
+machine and would produce a stream of APKs that each refuse to install over the
+last.
+
+That committed key is a deliberate trade, and here is exactly what it costs.
+Its password (`jarvis`) is in the workflow, so **anyone who can read this
+repository can build an APK that installs over your Jarvis as an update**. That
+is acceptable for a private repository and a phone you sideload yourself; it is
+not acceptable for a public one. It protects nothing about the app's own
+security model — the tier gates, the untrusted-content fence and the token all
+work the same either way — it only decides who can hand you a replacement.
+
+To use your own key instead, set these repository secrets; the workflow prefers
+them and ignores the committed one:
+
+| Secret | What it is |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 my-release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | store password |
+| `ANDROID_KEY_ALIAS` | key alias |
+| `ANDROID_KEY_PASSWORD` | key password |
+
+Switching keys is a one-way door for existing installs: an APK signed with the
+new key will not update one signed with the old, so the app has to be
+uninstalled and reinstalled once. The updater says so by name when it sees
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, rather than reporting a generic failure.
+
 ## Install and grant the roles
 
 Installing is not enough: on GrapheneOS the assistant role is a Secure Setting,

@@ -1,5 +1,7 @@
 package ai.jarvis.app.assist
 
+import ai.jarvis.app.config.ServerEndpoint
+import ai.jarvis.app.config.ServerKind
 import ai.jarvis.app.config.ServerUrl
 import android.os.Handler
 import android.os.Looper
@@ -15,9 +17,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Voice pipeline client for jarvis-core's WebSocket API at `/api/websocket` —
- * the same protocol the browser HUD speaks, so the phone and the browser stay
- * in lockstep:
+ * Voice pipeline client, speaking the same protocol the browser HUD speaks so
+ * the phone and the browser stay in lockstep:
  *
  *  1. auth handshake (auth_required -> auth -> auth_ok)
  *  2. assist_pipeline/pipeline/list -> resolve the named pipeline's id
@@ -27,6 +28,15 @@ import java.util.concurrent.atomic.AtomicInteger
  *  4. dispatch events: run-start, stt-end, intent-progress (delta),
  *     intent-end (final speech + conversation_id), tts-start, tts-end (url),
  *     run-end, error.
+ *
+ * **It talks to either server.** Step 1 is not the same on both, and assuming
+ * it was is why voice used to work only inside the management WebView. See
+ * [ServerKind]: jarvis-core wants `/api/websocket` and the auth frame from this
+ * end, while jarvis-web's console relays `/ws` and swallows the handshake
+ * entirely. Pointed at the console, the old client dialled a path that was not
+ * there — and even reaching it would not have helped, because it only began a
+ * turn inside its `auth_ok` branch and that frame never arrives on a relay.
+ * The kind is discovered on first connect and remembered by the caller.
  *
  * All callbacks are delivered on the main thread. OkHttp for the socket,
  * org.json for messages — no extra dependencies.
@@ -44,6 +54,17 @@ class AssistPipelineClient(
      * which is what both existing callers want.
      */
     private val startStage: StartStage = StartStage.STT,
+    /**
+     * The kind of server last known to be at [serverUrl], or null to discover
+     * it. Passing what was learned last time skips a failed connect.
+     */
+    private var serverKind: ServerKind? = null,
+    /**
+     * Called when discovery settles which server is there, so the caller can
+     * remember it. Not a callback on [Callbacks] because it is configuration
+     * bookkeeping rather than something the UI reacts to.
+     */
+    private val onKindResolved: (ServerKind) -> Unit = {},
 ) : WebSocketListener() {
 
     enum class State { IDLE, LISTENING, THINKING, SPEAKING }
@@ -94,6 +115,13 @@ class AssistPipelineClient(
     private var listRequestId = -1
     private var authed = false
 
+    /** Server kinds still to try for this connection, in order. */
+    private var attempts: List<ServerKind> = emptyList()
+    private var attempt = 0
+    /** True once this dial got its upgrade answer, so the watchdog stands down. */
+    private var opened = false
+    private val currentKind: ServerKind? get() = attempts.getOrNull(attempt)
+
     @Volatile var sttBinaryHandlerId: Int? = null
         private set
     private var conversationId: String? = null
@@ -101,12 +129,77 @@ class AssistPipelineClient(
 
     fun connect(pipelineName: String) {
         this.pipelineName = pipelineName
-        val url = serverUrl
-            .replaceFirst("https://", "wss://")
-            .replaceFirst("http://", "ws://")
-            .trimEnd('/') + "/api/websocket"
-        val req = Request.Builder().url(url).build()
-        ws = http.newWebSocket(req, this)
+        attempts = ServerEndpoint.candidates(serverKind)
+        attempt = 0
+        dial()
+    }
+
+    /**
+     * Open the socket for the current candidate.
+     *
+     * Built through [ServerUrl.websocketUrl] rather than by string replacement,
+     * so a base URL with a reverse-proxy path prefix — or without a scheme —
+     * cannot produce a URL that is subtly wrong instead of obviously invalid.
+     */
+    private fun dial() {
+        val kind = attempts.getOrNull(attempt) ?: run {
+            post { callbacks.onError(unreachableMessage()) }
+            return
+        }
+        val url = ServerEndpoint.websocketUrl(serverUrl, kind) ?: run {
+            post { callbacks.onError("That server address is not usable: $serverUrl") }
+            return
+        }
+        Log.i(TAG, "connecting to $kind at $url")
+        authed = false
+        opened = false
+        ws = http.newWebSocket(Request.Builder().url(url).build(), this)
+        // `readTimeout(0)` is required — a voice socket is idle for minutes at a
+        // time — but it also applies to the upgrade response, so a server that
+        // accepts the TCP connection and then says nothing would stall here
+        // forever and never let the other candidate be tried. jarvis-web does
+        // exactly that for a path its relay does not handle: the upgrade
+        // listener returns without answering and the socket is left open.
+        main.removeCallbacks(handshakeWatchdog)
+        main.postDelayed(handshakeWatchdog, HANDSHAKE_TIMEOUT_MS)
+    }
+
+    /** Fires when a dial neither opened nor failed in time. */
+    private val handshakeWatchdog = Runnable {
+        if (opened) return@Runnable
+        Log.w(TAG, "no upgrade answer from ${currentKind}; moving on")
+        if (!tryNextCandidate()) callbacks.onError(unreachableMessage())
+    }
+
+    /**
+     * Move to the next candidate, or give up.
+     *
+     * Returns true when another attempt was started, so the failure handler
+     * knows to stay quiet: reporting "connection error" for a probe that was
+     * always going to fail is how a working setup looks broken.
+     */
+    private fun tryNextCandidate(): Boolean {
+        if (authed || attempt >= attempts.lastIndex) return false
+        attempt++
+        try { ws?.cancel() } catch (_: Exception) {}
+        dial()
+        return true
+    }
+
+    /**
+     * True when [webSocket] is the dial currently in flight.
+     *
+     * A socket that has been abandoned for the next candidate can still deliver
+     * a late `onFailure`, and acting on it would report "can't reach Jarvis"
+     * over the top of an attempt that is about to succeed — or, worse, resolve
+     * the server kind from the wrong socket.
+     */
+    private fun isCurrent(webSocket: WebSocket): Boolean = webSocket === ws
+
+    private fun unreachableMessage(): String {
+        val origin = ServerUrl.originOf(serverUrl)?.toString() ?: serverUrl
+        return "Can't reach Jarvis at $origin. Check the address in Settings, " +
+            "and that the phone is on the same network or VPN."
     }
 
     /** Begin a turn: resolve the pipeline (once) then run stt->tts. */
@@ -138,13 +231,31 @@ class AssistPipelineClient(
     }
 
     fun close() {
+        main.removeCallbacks(handshakeWatchdog)
         try { ws?.close(1000, null) } catch (_: Exception) {}
         ws = null
     }
 
     // --- WebSocketListener -------------------------------------------------
 
+    override fun onOpen(webSocket: WebSocket, response: Response) {
+        if (!isCurrent(webSocket)) return
+        opened = true
+        main.removeCallbacks(handshakeWatchdog)
+        val kind = currentKind ?: return
+        Log.i(TAG, "connected to $kind")
+        onKindResolved(kind)
+        serverKind = kind
+        if (kind.clientAuthenticates) return  // wait for auth_required
+        // The relay authenticated on our behalf before it ever accepted this
+        // socket, and it buffers what we send until its own handshake is done.
+        // Waiting for an `auth_ok` here would wait forever — the relay eats it.
+        authed = true
+        startTurn()
+    }
+
     override fun onMessage(webSocket: WebSocket, text: String) {
+        if (!isCurrent(webSocket)) return
         val msg = try { JSONObject(text) } catch (e: Exception) { return }
         when (msg.optString("type")) {
             "auth_required" -> webSocket.send(
@@ -161,8 +272,14 @@ class AssistPipelineClient(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        Log.w(TAG, "ws failure", t)
-        post { callbacks.onError("connection error: ${t.message ?: "unreachable"}") }
+        if (!isCurrent(webSocket)) return
+        main.removeCallbacks(handshakeWatchdog)
+        Log.w(TAG, "ws failure (${currentKind}, http ${response?.code})", t)
+        // A refused upgrade is the expected answer from the *other* server, so
+        // move on quietly rather than reporting a failure the next attempt is
+        // about to disprove.
+        if (tryNextCandidate()) return
+        post { callbacks.onError(unreachableMessage()) }
     }
 
     // --- protocol ----------------------------------------------------------
@@ -291,5 +408,12 @@ class AssistPipelineClient(
 
     companion object {
         private const val TAG = "JarvisPipeline"
+
+        /**
+         * How long one candidate gets to answer the upgrade before the other is
+         * tried. Generous enough for a sleepy LAN box, short enough that a user
+         * who typed the wrong one of two URLs is not left holding a button.
+         */
+        private const val HANDSHAKE_TIMEOUT_MS = 6_000L
     }
 }

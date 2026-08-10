@@ -60,6 +60,17 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
     private val reconnect = Runnable { if (running) openLink() }
 
+    /**
+     * Take the microphone back when a wake word led nowhere.
+     *
+     * Cancelled by ACTION_PAUSE, which the assist activity sends as it starts.
+     */
+    private val rearm = Runnable {
+        if (!running || !config.wakeWordEnabled) return@Runnable
+        Log.i(TAG, "no conversation took the mic; listening again")
+        resume()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -78,6 +89,8 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
                 return START_NOT_STICKY
             }
             ACTION_PAUSE -> {
+                // A conversation took the mic, so the re-arm safety net is not needed.
+                main.removeCallbacks(rearm)
                 pause()
                 return START_STICKY
             }
@@ -107,6 +120,7 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     override fun onDestroy() {
         running = false
         main.removeCallbacks(reconnect)
+        main.removeCallbacks(rearm)
         closeLink()
         super.onDestroy()
     }
@@ -129,6 +143,8 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             config.token,
             this,
             AssistPipelineClient.StartStage.WAKE_WORD,
+            serverKind = config.serverKind,
+            onKindResolved = { config.serverKind = it },
         ).also { it.connect(config.pipeline) }
 
         mic = MicStreamer(
@@ -196,17 +212,32 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(JarvisAssistActivity.EXTRA_FROM_WAKE_WORD, true)
         }
+        // Both, in this order, on purpose.
+        //
+        // A direct start is what puts the popup up instantly, and it works when
+        // the app is already foreground or the user has granted "display over
+        // other apps". Android 10+ silently refuses it otherwise — and silently
+        // is the problem: the call does not throw, the activity simply never
+        // appears, so a `try/catch` around it is not the safety net it looks
+        // like. The full-screen intent is the mechanism the platform actually
+        // provides for this (it is how an incoming call gets on screen), so it
+        // is posted every time rather than only in a catch block that may never
+        // run. If the direct start worked, the notification is redundant and
+        // the user never sees it; if it did not, this is what they get.
         try {
             startActivity(intent)
         } catch (t: Throwable) {
-            // Android 10+ refuses background activity starts unless the app has
-            // an exemption. The notification is the fallback: a full-screen
-            // intent the user can tap, rather than a wake word that silently
-            // does nothing.
-            Log.w(TAG, "could not start the assist popup from the background", t)
-            showHeard()
-            resume()
+            Log.w(TAG, "could not start the assist popup directly", t)
         }
+        showHeard(intent)
+
+        // The mic was handed over above. If nothing takes it — a heads-up the
+        // user ignored, a start the system dropped — the listener would sit
+        // paused forever and the wake word would appear to stop working until
+        // the phone was rebooted. The activity cancels this by sending
+        // ACTION_PAUSE as it starts.
+        main.removeCallbacks(rearm)
+        main.postDelayed(rearm, HANDOFF_GRACE_MS)
     }
 
     override fun onState(state: AssistPipelineClient.State) {
@@ -296,14 +327,65 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
-    private fun showHeard() = updateNotification("Heard you — tap to talk")
+    /**
+     * Put the conversation on screen from the background.
+     *
+     * A full-screen intent on a HIGH-importance channel is the platform's own
+     * answer to "something is happening now and the user must see it" — the
+     * incoming-call mechanism. Locked, it takes over the screen; unlocked, it
+     * arrives as a heads-up the user can tap. Either way the wake word leads
+     * somewhere, which a background `startActivity` that the system quietly
+     * dropped does not.
+     */
+    private fun showHeard(open: Intent) {
+        ensureAlertChannel()
+        val full = PendingIntent.getActivity(
+            this,
+            2,
+            open,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val note = Notification.Builder(this, CHANNEL_ALERT)
+            .setSmallIcon(R.drawable.ic_jarvis_status)
+            .setContentTitle("Jarvis is listening")
+            .setContentText("Heard you — tap to talk")
+            .setContentIntent(full)
+            .setCategory(Notification.CATEGORY_CALL)
+            .setAutoCancel(true)
+            // `true`: this is the whole point — without it the platform treats
+            // the full-screen intent as optional and shows only the heads-up.
+            .setFullScreenIntent(full, true)
+            .build()
+        getSystemService(NotificationManager::class.java)?.notify(ALERT_ID, note)
+    }
+
+    private fun ensureAlertChannel() {
+        if (Build.VERSION.SDK_INT < 26) return
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(CHANNEL_ALERT) != null) return
+        // Separate from the ongoing "listening" channel, and HIGH rather than
+        // LOW: a full-screen intent on a low-importance channel is ignored, and
+        // making the always-there notification high would buzz on every start.
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ALERT,
+                "Jarvis heard you",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Shown for a moment when the wake word starts a conversation."
+                setShowBadge(false)
+            }
+        )
+    }
 
     private fun showProblem(reason: String) = updateNotification(reason)
 
     companion object {
         private const val TAG = "JarvisWake"
         private const val CHANNEL = "jarvis-wake"
+        private const val CHANNEL_ALERT = "jarvis-wake-heard"
         private const val NOTIFICATION_ID = 0x4A57 // 'JW'
+        private const val ALERT_ID = 0x4A58 // 'JX'
 
         const val ACTION_STOP = "ai.jarvis.app.WAKE_STOP"
         const val ACTION_PAUSE = "ai.jarvis.app.WAKE_PAUSE"
@@ -311,6 +393,12 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
         private const val WAITING = "Say “Hey Jarvis” at any time"
         private const val WAITING_PAUSED = "Paused while you are talking"
+
+        /**
+         * How long a wake word gets to become a conversation before the mic is
+         * taken back. Long enough to walk to the phone and tap the heads-up.
+         */
+        private const val HANDOFF_GRACE_MS = 30_000L
 
         private const val BACKOFF_BASE_MS = 2_000L
         private const val BACKOFF_MAX_MS = 60_000L

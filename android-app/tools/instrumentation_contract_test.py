@@ -217,6 +217,10 @@ NON_UI_SUBPACKAGES = {
     "compat",
     "config",
     "crash",
+    # Fetches and installs the app's own updates. Its failure sentences reach
+    # the user, but SettingsActivity is what draws them — same shape as
+    # `assist`, whose errors are also rendered by somebody else's screen.
+    "update",
 }
 
 

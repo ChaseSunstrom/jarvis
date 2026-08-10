@@ -6,6 +6,7 @@ import ai.jarvis.app.automation.actions.ActionEnv
 import ai.jarvis.app.channel.DeviceChannelHost
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.config.ServerUrl
+import ai.jarvis.app.update.UpdateChecker
 import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.JarvisUi
 import android.app.Activity
@@ -44,6 +45,8 @@ class SettingsActivity : Activity() {
     private lateinit var pipelineField: EditText
     private lateinit var deviceNameField: EditText
 
+    private lateinit var updateStatus: TextView
+    private lateinit var prereleaseUpdates: Switch
     private lateinit var wakeEnabled: Switch
     private lateinit var wakeInCar: Switch
     private lateinit var wakeAtHome: Switch
@@ -229,6 +232,25 @@ class SettingsActivity : Activity() {
             )
         )
 
+        // --- updates ----------------------------------------------------------
+
+        col.addView(JarvisUi.spacer(ctx, 16))
+        col.addView(JarvisUi.label(ctx, "Updates"))
+        updateStatus = TextView(ctx).apply {
+            text = "Version ${appVersionName()} (build ${appVersionCode()})"
+            setTextColor(JarvisUi.DIM)
+            textSize = 12f
+        }
+        col.addView(updateStatus)
+        prereleaseUpdates = switchRow(ctx, "Include test builds", config.allowPrereleaseUpdates)
+        col.addView(prereleaseUpdates)
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "CHECK FOR UPDATES") { checkForUpdates() },
+                JarvisUi.ghost(ctx, "RELEASES") { openReleasesPage() },
+            )
+        )
+
         // --- save -----------------------------------------------------------
 
         col.addView(JarvisUi.spacer(ctx, 16))
@@ -278,6 +300,7 @@ class SettingsActivity : Activity() {
         config.serverUrl = check.normalized
         config.token = token
         config.pipeline = pipelineField.text.toString()
+        config.allowPrereleaseUpdates = prereleaseUpdates.isChecked
         config.deviceName = deviceNameField.text.toString()
 
         config.wakeWordEnabled = wakeEnabled.isChecked
@@ -356,6 +379,72 @@ class SettingsActivity : Activity() {
         }
         tokenField.setText(scanned)
         toast("Scanned ${scanned.length} characters")
+    }
+
+    // --- updates -----------------------------------------------------------
+
+    private fun appVersionName(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
+            .getOrNull() ?: "?"
+
+    /**
+     * The installed build number, which is the only thing Android compares.
+     *
+     * `longVersionCode` since 28; minSdk is 29, so there is no legacy branch
+     * to keep and no deprecation to suppress.
+     */
+    private fun appVersionCode(): Long =
+        runCatching { packageManager.getPackageInfo(packageName, 0).longVersionCode }
+            .getOrDefault(0L)
+
+    /**
+     * Ask GitHub for a newer build, and install it if the user agrees.
+     *
+     * On a plain thread rather than a coroutine: this Activity has no other
+     * async machinery and one thread for one blocking check is less to explain
+     * than a scope, a dispatcher and a lifecycle to cancel it against. The
+     * result is posted back with `runOnUiThread`, and every path ends by
+     * writing a sentence into [updateStatus] — a check that says nothing is
+     * indistinguishable from a button that does nothing.
+     */
+    private fun checkForUpdates() {
+        updateStatus.text = "Checking GitHub…"
+        val allowPrerelease = prereleaseUpdates.isChecked
+        val installed = appVersionCode()
+        Thread {
+            val checker = UpdateChecker(applicationContext)
+            val found = checker.check(installed, allowPrerelease)
+            if (found !is UpdateChecker.Result.Offered) {
+                runOnUiThread { updateStatus.text = describe(found) }
+                return@Thread
+            }
+            runOnUiThread {
+                updateStatus.text = "Downloading ${found.update.versionName}…"
+            }
+            val installedResult = checker.install(found.update)
+            runOnUiThread { updateStatus.text = describe(installedResult) }
+        }.start()
+    }
+
+    private fun describe(result: UpdateChecker.Result): String = when (result) {
+        is UpdateChecker.Result.UpToDate ->
+            "Up to date — version ${appVersionName()} (build ${appVersionCode()})"
+        is UpdateChecker.Result.Offered ->
+            "Ready to install ${result.update.versionName} — confirm the system prompt."
+        is UpdateChecker.Result.Failed -> result.message
+    }
+
+    private fun openReleasesPage() {
+        try {
+            startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://github.com/${UpdateChecker.DEFAULT_REPO}/releases")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: ActivityNotFoundException) {
+            toast("No browser to open the releases page")
+        }
     }
 
     // --- system settings deep links ----------------------------------------

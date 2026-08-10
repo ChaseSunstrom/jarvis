@@ -44,9 +44,23 @@ jobs:
       run:
         working-directory: android-app
     env:
-      # A published release gets a signed build; everything else defaults to
-      # debug (installable, needs no secrets).
-      BUILD_TYPE: ${{ github.event_name == 'release' && 'release' || (github.event.inputs.build_type || 'debug') }}
+      # Anything published — a tagged release, or the per-push prerelease below
+      # — must be a `release` build, because that is the only path that signs
+      # with a STABLE key.
+      #
+      # A debug APK is signed with the runner's `~/.android/debug.keystore`,
+      # which Android generates on first use and which is therefore different
+      # on every CI machine. Publishing those would produce a stream of APKs
+      # that each refuse to install over the last one, and the failure surfaces
+      # only at the very end, in the system installer, as "app not installed".
+      # Hand-dispatched builds keep the choice.
+      BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type || 'debug') || 'release' }}
+      # Every build must be newer than the last one or the in-app updater has
+      # nothing to compare: Android refuses a package whose versionCode is not
+      # greater than the installed one. `run_number` is monotonic per workflow
+      # and never reused, which is exactly the property needed.
+      JARVIS_VERSION_CODE: ${{ github.run_number }}
+      JARVIS_VERSION_NAME: 1.0.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -77,9 +91,13 @@ jobs:
           fi
 
       # `assemble` never touches src/test, so those sources could rot
-      # indefinitely without anyone noticing. Compile them too.
-      - name: Compile unit test sources
-        run: gradle :app:compileDebugUnitTestKotlin --no-daemon --stacktrace
+      # indefinitely without anyone noticing. Run them — compiling alone proves
+      # they still build, which is not the same as proving they still pass, and
+      # the pure-logic classes they cover (URL/endpoint resolution, release
+      # picking, policy tiering) are exactly the ones where a silent regression
+      # is expensive and a device is not needed to catch it.
+      - name: Unit tests (src/test)
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
 
       # Wrong Build.VERSION.SDK_INT guards are invisible to the compiler and
       # only bite on a real device (minSdk is 29). Lint is the only thing that
@@ -146,12 +164,16 @@ jobs:
             if [ -n "${KEYSTORE_B64:-}" ]; then
               echo "$KEYSTORE_B64" | base64 -d > ks.jks
             else
-              echo "::warning::No ANDROID_KEYSTORE_BASE64 secret — signing with an EPHEMERAL key. The APK installs, but in-place updates (Obtainium) will need an uninstall first. See android-app/README.md."
+              # The committed CI key, NOT an ephemeral one. A fresh key per run
+              # produces APKs that cannot install over each other — Android
+              # refuses a signature change — which would make the in-app
+              # updater permanently useless while looking like it worked right
+              # up to the install prompt. Its password is in the repo on
+              # purpose; see android-app/README.md for what that does and does
+              # not protect, and set ANDROID_KEYSTORE_BASE64 to supersede it.
+              echo "::notice::Signing with the committed CI key (android-app/ci-keystore.jks). Set ANDROID_KEYSTORE_BASE64 to use your own."
+              cp ci-keystore.jks ks.jks
               KS_PASS=jarvis; KEY_ALIAS=jarvis; KEY_PASS=jarvis
-              keytool -genkeypair -v -keystore ks.jks -alias "$KEY_ALIAS" \
-                -keyalg RSA -keysize 4096 -validity 10000 \
-                -storepass "$KS_PASS" -keypass "$KEY_PASS" \
-                -dname "CN=Jarvis, OU=Jarvis, O=Jarvis, C=US"
             fi
             zipalign -f 4 "$SRC" aligned.apk
             OUT="jarvis-release.apk"
@@ -211,3 +233,44 @@ jobs:
             gh release create "$TAG" --title "Jarvis $TAG" \
               --notes "Standalone Jarvis APK. Package: ${{ steps.apk.outputs.pkg }}"
           gh release upload "$TAG" "${{ steps.apk.outputs.path }}" android-app/adb-setup.txt --clobber
+
+      # Every push that changes the app becomes an installable release, because
+      # an artifact is not one: artifacts need a logged-in browser session and
+      # expire, so a phone cannot fetch them. The in-app updater reads this.
+      #
+      # Marked prerelease, and the app only offers those when the user has
+      # ticked "include test builds" — so a per-push build reaches somebody who
+      # asked for per-push builds, and a hand-published release reaches
+      # everyone. `+<versionCode>` in the tag is load-bearing: it is the only
+      # way a client can know a release's version without downloading the whole
+      # APK, and `release_feed_test.py` fails if it disappears.
+      - name: Publish this build as a prerelease
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ env.JARVIS_VERSION_CODE }}
+          VERSION_NAME: ${{ env.JARVIS_VERSION_NAME }}
+        working-directory: .
+        run: |
+          set -eu
+          TAG="v${VERSION_NAME}+${VERSION_CODE}"
+          SHORT="$(git rev-parse --short HEAD)"
+
+          NOTES="$(printf '%s\n' \
+            "Automatic build of \`${GITHUB_REF_NAME}\` at \`${SHORT}\`." \
+            "" \
+            "- Package: \`${{ steps.apk.outputs.pkg }}\`" \
+            "- versionCode: \`${VERSION_CODE}\`" \
+            "" \
+            "Installs over a previous Jarvis build without uninstalling, as long as" \
+            "both were signed by the same key. Jarvis checks for these from" \
+            "Settings when \"include test builds\" is on.")"
+
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "Jarvis ${VERSION_NAME}" \
+              --notes "$NOTES" \
+              --prerelease \
+              --target "$GITHUB_SHA"
+          gh release upload "$TAG" \
+            "${{ steps.apk.outputs.path }}" android-app/adb-setup.txt --clobber

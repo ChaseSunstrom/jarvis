@@ -15,6 +15,13 @@ test-results/
 playwright-report/
 *.keystore
 *.jks
+
+# The ONE keystore that is deliberately committed. Signing every CI
+# build with a stable key is what lets an update install over the
+# previous one — Android refuses a signature change — so an ignored
+# keystore here would silently break the in-app updater. Its password is
+# public; see android-app/README.md for what that does and does not mean.
+!android-app/ci-keystore.jks
 # Written by the evals on every run.
 evals/last_persona_run.json
 evals/last_decomposition_run.json

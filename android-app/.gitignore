@@ -18,6 +18,13 @@ gradlew.bat
 
 # Signing material never belongs in the repo.
 *.jks
+
+# The ONE keystore that is deliberately committed. Signing every CI
+# build with a stable key is what lets an update install over the
+# previous one — Android refuses a signature change — so an ignored
+# keystore here would silently break the in-app updater. Its password is
+# public; see android-app/README.md for what that does and does not mean.
+!ci-keystore.jks
 *.keystore
 keystore.properties
 

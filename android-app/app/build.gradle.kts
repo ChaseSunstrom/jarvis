@@ -43,8 +43,15 @@ android {
         applicationId = "ai.jarvis.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // Overridable from CI so every build is newer than the last one.
+        //
+        // An in-app updater compares versionCode and nothing else — Android
+        // refuses to install a package whose code is not greater — so a
+        // hardcoded 1 makes "update from GitHub" permanently impossible: every
+        // release looks the same age as the installed app. CI passes the run
+        // number; a local build stays at 1, which is what a developer wants.
+        versionCode = (System.getenv("JARVIS_VERSION_CODE") ?: "1").toInt()
+        versionName = System.getenv("JARVIS_VERSION_NAME") ?: "1.0.0"
 
         // Instrumented tests (src/androidTest) run the real APK on a real
         // emulator. The JVM unit tests in src/test still cover the pure-logic
@@ -176,6 +183,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
+    // The REAL org.json on the unit-test classpath. `isReturnDefaultValues`
+    // makes the stubbed android.jar copy return null instead of throwing, so
+    // without this a test of JSON-parsing logic passes while proving nothing.
+    testImplementation(libs.json)
     testImplementation(libs.kotlinx.coroutines.test)
 
     // --- instrumented tests (src/androidTest, real device/emulator) ----------

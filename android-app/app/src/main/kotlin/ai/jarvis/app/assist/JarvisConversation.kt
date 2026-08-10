@@ -144,7 +144,13 @@ class JarvisConversation(
             // no reference signal cancels nothing. See TtsPlayer.communicationRoute.
             it.communicationRoute = profile.useVoiceCommunication
         }
-        client = AssistPipelineClient(config.serverUrl, config.token, this).also {
+        client = AssistPipelineClient(
+            config.serverUrl,
+            config.token,
+            this,
+            serverKind = config.serverKind,
+            onKindResolved = { config.serverKind = it },
+        ).also {
             it.connect(config.pipeline)
         }
         mic = MicStreamer(

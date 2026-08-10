@@ -28,15 +28,60 @@ class JarvisConfig(context: Context) {
 
     // --- connection --------------------------------------------------------
 
-    /** Base URL of jarvis-core, e.g. `http://192.168.2.10:8123`. No trailing slash. */
+    /**
+     * Base URL of the Jarvis server, e.g. `http://192.168.2.10:8080`.
+     * No trailing slash.
+     *
+     * May be either jarvis-core or the jarvis-web console — [serverKind]
+     * records which, once discovered.
+     */
     var serverUrl: String
         get() = ServerUrl.normalize(prefs.getString(KEY_SERVER_URL, "") ?: "")
-        set(v) = prefs.edit().putString(KEY_SERVER_URL, ServerUrl.normalize(v)).apply()
+        set(v) {
+            val next = ServerUrl.normalize(v)
+            val changed = next != ServerUrl.normalize(prefs.getString(KEY_SERVER_URL, "") ?: "")
+            prefs.edit().apply {
+                putString(KEY_SERVER_URL, next)
+                // A remembered kind describes the OLD address. Carrying it over
+                // would make the app skip discovery and dial a path the new
+                // server may not have — the exact failure this pair exists to
+                // prevent, reintroduced by an edit.
+                if (changed) remove(KEY_SERVER_KIND)
+            }.apply()
+        }
 
     /** Long-lived access token issued by jarvis-core. */
     var token: String
         get() = prefs.getString(KEY_TOKEN, "") ?: ""
         set(v) = prefs.edit().putString(KEY_TOKEN, v.trim()).apply()
+
+    /**
+     * Which server is at [serverUrl], once discovered — see [ServerKind].
+     *
+     * Remembered rather than re-probed so the common case is one connect
+     * instead of a failed one followed by a good one. Cleared whenever
+     * [serverUrl] changes, because the answer belongs to that address and
+     * keeping it across an edit is how the app would confidently dial the
+     * wrong path at a new server.
+     */
+    var serverKind: ServerKind?
+        get() = prefs.getString(KEY_SERVER_KIND, null)
+            ?.let { name -> ServerKind.entries.firstOrNull { it.name == name } }
+        set(v) = prefs.edit().apply {
+            if (v == null) remove(KEY_SERVER_KIND) else putString(KEY_SERVER_KIND, v.name)
+        }.apply()
+
+    /**
+     * Whether the updater offers the per-push builds CI publishes.
+     *
+     * Off by default: those are every commit, not a considered release. On,
+     * the user is asking to run whatever was built last, which is a reasonable
+     * thing to want from a box you own and a bad default for one you do not
+     * watch.
+     */
+    var allowPrereleaseUpdates: Boolean
+        get() = prefs.getBoolean(KEY_PRERELEASE, false)
+        set(v) = prefs.edit().putBoolean(KEY_PRERELEASE, v).apply()
 
     /** Named voice pipeline on the server. */
     var pipeline: String
@@ -161,6 +206,8 @@ class JarvisConfig(context: Context) {
         private const val FILE = "jarvis_config"
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_TOKEN = "token"
+        private const val KEY_SERVER_KIND = "server_kind"
+        private const val KEY_PRERELEASE = "allow_prerelease_updates"
         private const val KEY_PIPELINE = "pipeline"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_DEVICE_ID = "device_id"
