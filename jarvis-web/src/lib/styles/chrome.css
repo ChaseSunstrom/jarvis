@@ -960,6 +960,26 @@
 	letter-spacing: var(--jv-track-tight);
 	color: var(--jv-text-dim);
 }
+/*
+ * "There is nothing here yet", inside a panel that is still worth showing.
+ *
+ * Dimmer than .notice, which is a warning. This is the shape of an answer —
+ * a panel that hides itself when empty cannot tell you the difference between
+ * "nothing has connected" and "this console has no such feature".
+ */
+.console .empty {
+	font-family: var(--jv-font-chrome);
+	font-size: var(--jv-fs-xs);
+	letter-spacing: var(--jv-track-tight);
+	line-height: 1.7;
+	color: var(--jv-text-dim);
+	padding: var(--jv-space-3);
+	margin: 0;
+}
+.console .empty b {
+	color: var(--jv-text);
+	font-weight: 600;
+}
 .console .notice {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-xs);

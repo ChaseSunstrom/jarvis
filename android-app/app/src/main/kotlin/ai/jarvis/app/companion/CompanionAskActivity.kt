@@ -477,7 +477,7 @@ class CompanionAskActivity : Activity() {
         listening = true
         micButton?.text = MIC_LISTENING_LABEL
         orb.setMode(JarvisOrbView.Mode.LISTENING)
-        val client = CompanionVoiceClient(config.serverUrl, config.token)
+        val client = CompanionVoiceClient(config.serverUrl, config.token, config.serverKind)
         voice = client
         client.listen(
             onLevel = { level -> orb.setAmplitude(level) },
@@ -518,7 +518,7 @@ class CompanionAskActivity : Activity() {
 
     private fun speakIt() {
         if (questionText.isBlank() || !config.isConfigured) return
-        val client = CompanionVoiceClient(config.serverUrl, config.token)
+        val client = CompanionVoiceClient(config.serverUrl, config.token, config.serverKind)
         voice = client
         client.speak(questionText) { url ->
             if (url == null) return@speak

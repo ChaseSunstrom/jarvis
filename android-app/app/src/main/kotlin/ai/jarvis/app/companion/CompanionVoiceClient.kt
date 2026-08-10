@@ -1,6 +1,8 @@
 package ai.jarvis.app.companion
 
 import ai.jarvis.app.assist.MicStreamer
+import ai.jarvis.app.config.ServerEndpoint
+import ai.jarvis.app.config.ServerKind
 import ai.jarvis.app.config.ServerUrl
 import android.os.Handler
 import android.os.Looper
@@ -51,6 +53,18 @@ import java.util.concurrent.atomic.AtomicInteger
 class CompanionVoiceClient(
     private val serverUrl: String,
     private val token: String,
+    /**
+     * Which server is at [serverUrl], if the channel has worked it out.
+     *
+     * This class used to append `/api/websocket` unconditionally, which is
+     * jarvis-core's path. Against the console URL that is a 404 and the spoken
+     * question silently became a notification instead — a fallback so graceful
+     * that the bug behind it was invisible. There is no discovery loop here
+     * because this is a one-shot client; it uses what the command channel
+     * already learned, and null still resolves to the more likely candidate
+     * rather than to a fixed guess.
+     */
+    private val serverKind: ServerKind? = null,
 ) : WebSocketListener() {
 
     private val main = Handler(Looper.getMainLooper())
@@ -135,10 +149,14 @@ class CompanionVoiceClient(
             deliver(null)
             return
         }
-        val url = base
-            .replaceFirst("https://", "wss://")
-            .replaceFirst("http://", "ws://")
-            .trimEnd('/') + "/api/websocket"
+        val url = ServerEndpoint.websocketUrl(
+            base,
+            serverKind ?: ServerEndpoint.candidates(null).first(),
+        )
+        if (url == null) {
+            deliver(null)
+            return
+        }
         ws = try {
             http.newWebSocket(Request.Builder().url(url).build(), this)
         } catch (t: Throwable) {

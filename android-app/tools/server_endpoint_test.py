@@ -265,6 +265,88 @@ def check_web_fixture_is_real(repo: Path) -> int:
     return failures
 
 
+#: Every class that opens a WebSocket to the CONFIGURED server. Each must build
+#: its URL through ServerEndpoint, because the path depends on which of the two
+#: servers is there and no single literal is right for both.
+SOCKET_CLIENTS = (
+    "assist/AssistPipelineClient.kt",
+    "channel/ChannelConfig.kt",
+    "companion/CompanionVoiceClient.kt",
+)
+
+
+def check_no_client_hardcodes_a_socket_path(android: Path) -> int:
+    """The regression this whole file exists for, generalised.
+
+    `AssistPipelineClient` learned to discover the server kind and the other two
+    did not. `ChannelConfig` kept `WEBSOCKET_PATH = "/api/websocket"` and
+    `CompanionVoiceClient` appended the same literal by hand, so pointing the app
+    at the console URL — the one it now tells people to use — meant the command
+    channel dialled a path that is not there. It never connected, so
+    `jarvis/device/register` never ran, so the console could not see the phone:
+    "I have a mobile device connected, but the web app doesn't know about it."
+
+    The rule is structural rather than behavioural on purpose. Any *new* client
+    is one literal away from the same bug, and a literal is something this can
+    check without a device.
+    """
+    root = android / "app/src/main/kotlin/ai/jarvis/app"
+    failures = 0
+    for rel in SOCKET_CLIENTS:
+        path = root / rel
+        if not path.is_file():
+            print(f"FAIL  {rel} is missing")
+            failures += 1
+            continue
+        # Comments may name the paths — that is how they are explained. Code
+        # may not contain them as literals.
+        src = re.sub(r"/\*.*?\*/", " ", path.read_text(encoding="utf-8"), flags=re.S)
+        src = re.sub(r"//[^\n]*", " ", src)
+        for literal in (CORE_PATH, RELAY_PATH):
+            if f'"{literal}"' in src:
+                print(
+                    f"FAIL  {rel} hardcodes the socket path {literal!r}; it must "
+                    "come from ServerEndpoint, or it is wrong against one of the "
+                    "two servers"
+                )
+                failures += 1
+        if "ServerEndpoint" not in src:
+            print(f"FAIL  {rel} does not go through ServerEndpoint at all")
+            failures += 1
+    return failures
+
+
+def check_the_channel_rediscovers_on_failure(android: Path) -> int:
+    """A remembered kind is an optimisation; a wrong one must not be permanent.
+
+    The command channel is long-lived and reconnects on its own, so it can
+    afford to try the other path rather than sit blocked — but only when the
+    failure could plausibly BE the path. A rejected token reached a real server,
+    and rotating on that would turn one clear "check your token" into an endless
+    alternation between two paths.
+    """
+    src = (android / "app/src/main/kotlin/ai/jarvis/app/channel/JarvisChannel.kt").read_text(
+        encoding="utf-8"
+    )
+    failures = 0
+    if "ServerEndpoint.candidates" not in src:
+        print("FAIL  JarvisChannel never rotates through the candidate paths")
+        failures += 1
+    if "kindAttempt++" not in src:
+        print("FAIL  a failed attempt does not advance to the other candidate")
+        failures += 1
+    if not re.search(r"if \(!current\.authed && !outcome\.penalise\) kindAttempt\+\+", src):
+        print("FAIL  the channel rotates on a rejected token, not only on a dead path")
+        failures += 1
+    if "kindAttempt = 0" not in src:
+        print("FAIL  a successful handshake does not pin the discovered kind")
+        failures += 1
+    if "onKindResolved" not in src:
+        print("FAIL  the discovered kind is never persisted for the next connection")
+        failures += 1
+    return failures
+
+
 def main() -> int:
     here = Path(__file__).resolve()
     android = here.parents[1]
@@ -277,6 +359,8 @@ def main() -> int:
         + check_media_routing(android)
         + check_kotlin_agrees(android)
         + check_web_fixture_is_real(repo)
+        + check_no_client_hardcodes_a_socket_path(android)
+        + check_the_channel_rediscovers_on_failure(android)
     )
     total = len(CASES) + 3 + 3 + 6 + len(RELAY_KEYS)
     if failures:

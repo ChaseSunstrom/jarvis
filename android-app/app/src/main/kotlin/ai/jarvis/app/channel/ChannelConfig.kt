@@ -2,6 +2,8 @@ package ai.jarvis.app.channel
 
 import android.content.Context
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.ServerEndpoint
+import ai.jarvis.app.config.ServerKind
 import ai.jarvis.app.config.ServerUrl
 
 /**
@@ -34,6 +36,24 @@ data class ChannelConfig(
     val acknowledgedCleartextHosts: Set<String> = emptySet(),
 
     /**
+     * Which of the two servers is at [serverUrl], if it has been worked out.
+     *
+     * This channel used to hardcode `/api/websocket`, which is jarvis-core's
+     * path and not the console's. So pointing the app at the jarvis-web URL —
+     * the one with a web page on it, and the one the app now tells people to
+     * use — meant this socket dialled a path that is not there and never
+     * connected. Voice worked, because the assist client had already learned to
+     * discover the kind; the command channel had not, so `jarvis/device/register`
+     * never ran and the console could not see the phone at all. That is the
+     * reported symptom: "I have a mobile device connected, but the web app
+     * doesn't know about it."
+     *
+     * Null means "not discovered yet", and [JarvisChannel] then tries the
+     * candidates in turn and persists whichever authenticates.
+     */
+    val serverKind: ServerKind? = null,
+
+    /**
      * Hard ceiling on one command, measured from admission to reply.
      *
      * Generous on purpose: a Tier-3 command spends up to 60 s on the consent
@@ -60,9 +80,21 @@ data class ChannelConfig(
     val sendManifest: Boolean = true
 ) {
 
-    /** `ws(s)://host[:port]/api/websocket`, or null when [serverUrl] is unusable. */
-    val websocketUrl: String? get() =
-        ServerUrl.websocketUrl(serverUrl, WEBSOCKET_PATH)?.let { collapseIpv6Brackets(it) }
+    /**
+     * The socket URL for the server we believe is there, or null when
+     * [serverUrl] is unusable.
+     *
+     * Undiscovered falls back to the first candidate rather than to a fixed
+     * path, so the "which server is this" question has exactly one answer in
+     * this class and [JarvisChannel] rotates through the rest on failure.
+     */
+    val websocketUrl: String? get() = websocketUrlFor(
+        serverKind ?: ServerEndpoint.candidates(null).first()
+    )
+
+    /** The socket URL if [kind] is what is at [serverUrl]. */
+    fun websocketUrlFor(kind: ServerKind): String? =
+        ServerEndpoint.websocketUrl(serverUrl, kind)?.let { collapseIpv6Brackets(it) }
 
     /**
      * The host every socket is pinned to. Taken from the *configured* URL, not
@@ -109,7 +141,9 @@ data class ChannelConfig(
             "version=$appVersion, token=${Redact.token(token)})"
 
     companion object {
-        const val WEBSOCKET_PATH = "/api/websocket"
+        // The socket path is no longer a constant here: it depends on which of
+        // the two servers is at the configured URL, and that is
+        // ai.jarvis.app.config.ServerKind's business — see [serverKind].
 
         const val DEFAULT_COMMAND_TIMEOUT_MS = 180_000L      // 3 min
         const val DEFAULT_HEARTBEAT_MS = 45_000L             // 45 s
@@ -147,7 +181,8 @@ data class ChannelConfig(
                 deviceId = config.deviceId,
                 deviceName = config.deviceName,
                 appVersion = appVersion,
-                acknowledgedCleartextHosts = ack
+                acknowledgedCleartextHosts = ack,
+                serverKind = config.serverKind,
             )
         }
 

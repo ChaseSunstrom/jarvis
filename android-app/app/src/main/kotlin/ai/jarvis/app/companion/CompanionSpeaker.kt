@@ -93,7 +93,7 @@ class OrbSpeechHost(
             orb?.setStateLabel(IDLE_LABEL)
         }
 
-        val client = CompanionVoiceClient(config.serverUrl, config.token)
+        val client = CompanionVoiceClient(config.serverUrl, config.token, config.serverKind)
         voice = client
         client.speak(body) { url ->
             if (url == null) {

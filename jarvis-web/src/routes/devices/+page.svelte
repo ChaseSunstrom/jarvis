@@ -251,12 +251,25 @@
 	{/if}
 </div>
 
-{#if companionsSupported && companions.length}
+{#if companionsSupported}
 	<section class="panel" data-testid="companions">
 		<div class="panel-head">
 			<span>Companions</span>
 			<span class="muted">phones, desktops and satellites running Jarvis</span>
 		</div>
+		<!--
+			Shown even when empty, on purpose. Hiding it made "my phone is
+			connected and the console does not know about it" indistinguishable
+			from "this console has no such feature" — and the honest answer,
+			when a phone has not registered, is to say so and say where to look.
+		-->
+		{#if !companions.length}
+			<p class="empty" data-testid="companions-empty">
+				No phone or desktop has registered yet. The app registers over its command
+				channel as soon as it connects — check the server URL and token in its
+				Settings, and that the connection there reads <b>READY</b>.
+			</p>
+		{/if}
 		{#each companions as device (device.device_id)}
 			<div class="row" data-testid="companion-{device.device_id}">
 				<span class="name">

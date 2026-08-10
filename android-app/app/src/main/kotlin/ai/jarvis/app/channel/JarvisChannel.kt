@@ -8,6 +8,8 @@ import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.companion.CompanionProtocol
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.ServerEndpoint
+import ai.jarvis.app.config.ServerKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -92,6 +94,14 @@ class JarvisChannel(
     /** Injected for tests; production reads [AutomationBridge.dispatcher]. */
     private val dispatcherProvider: () -> AutomationBridge.ActionDispatcher? =
         { AutomationBridge.dispatcher },
+    /**
+     * Remember which of the two servers answered, so the next connection dials
+     * the right path first instead of rediscovering it. Injected so a test can
+     * observe the discovery without a `SharedPreferences`.
+     */
+    private val onKindResolved: (Context, ServerKind) -> Unit = { ctx, kind ->
+        JarvisConfig(ctx).serverKind = kind
+    },
     /** Monotonic milliseconds. Never wall clock — see [TokenBucket]. */
     private val clock: () -> Long = { SystemClock.elapsedRealtime() }
 ) : AutomationBridge.ChannelHandle, AutomationBridge.DeviceEventSubscriber {
@@ -172,6 +182,16 @@ class JarvisChannel(
     private val gate = CommandGate()
     private val backoff = Backoff()
     private val random = Random()
+
+    /**
+     * Which candidate path the next attempt uses, as an index into
+     * [ServerEndpoint.candidates].
+     *
+     * Only ever touched from the connect loop's single coroutine. Reset to 0 by
+     * a successful handshake, so a server that has been identified is not
+     * rediscovered on every reconnect.
+     */
+    private var kindAttempt = 0
     private val nextRequestId = AtomicInteger(1)
     private val running = AtomicBoolean(false)
 
@@ -331,13 +351,19 @@ class JarvisChannel(
                 if (!running.get()) break
             }
 
-            val url = cfg.websocketUrl
+            // Which server is at that URL decides the path, and the two do not
+            // share one. Rotate through the candidates on each failed attempt
+            // until one authenticates; a remembered kind puts itself first, so
+            // the steady state is a single attempt.
+            val candidates = ServerEndpoint.candidates(cfg.serverKind)
+            val kind = candidates[kindAttempt.mod(candidates.size)]
+            val url = cfg.websocketUrlFor(kind)
             if (url == null) {
                 blocked("the server URL does not parse into a WebSocket URL")
                 waitBeforeRetry(RECHECK_CONFIG_MS)
                 continue
             }
-            val current = Session(cfg)
+            val current = Session(cfg, kind)
             session = current
             setState(State.CONNECTING)
             Log.i(TAG, "connecting to ${cfg.pinnedHost} ($cfg)")
@@ -354,6 +380,13 @@ class JarvisChannel(
             val outcome = current.finished.await()
             teardown(current)
             if (!running.get()) break
+
+            // A socket that never authenticated may simply have been the wrong
+            // path — jarvis-core's on the console, or the reverse — so the next
+            // attempt tries the other one. A rejected token is NOT that: it
+            // reached a real server, and rotating would turn one clear "check
+            // your token" into an endless alternation between two paths.
+            if (!current.authed && !outcome.penalise) kindAttempt++
 
             if (outcome.penalise) backoff.penalise()
             val delayMs = backoff.next(random.nextDouble())
@@ -592,6 +625,13 @@ class JarvisChannel(
 
             ChannelFrames.TYPE_AUTH_OK -> {
                 current.authed = true
+                // This attempt's guess was right. Pin it so the next connection
+                // — and the voice client, which reads the same setting — dials
+                // the correct path first rather than rediscovering it.
+                kindAttempt = 0
+                if (current.cfg.serverKind != current.kind) {
+                    runCatching { onKindResolved(appContext, current.kind) }
+                }
                 // Off the reader thread: building the manifest asks every action
                 // whether it is available right now, which can touch the package
                 // manager. Reading the socket must not wait for that.
@@ -1015,7 +1055,11 @@ class JarvisChannel(
      * touching shared state, so a straggling callback from a socket we already
      * gave up on cannot resurrect it or corrupt the next one.
      */
-    private inner class Session(val cfg: ChannelConfig) : WebSocketListener() {
+    private inner class Session(
+        val cfg: ChannelConfig,
+        /** Which server this attempt assumed was at the URL. */
+        val kind: ServerKind,
+    ) : WebSocketListener() {
 
         val finished = CompletableDeferred<Outcome>()
 
