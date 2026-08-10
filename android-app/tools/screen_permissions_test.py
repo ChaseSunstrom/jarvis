@@ -186,10 +186,33 @@ def check_the_screen_says_which_is_missing(android: Path) -> int:
         if probe not in body:
             print(f"FAIL  the wake-word status line ignores {probe}")
             failures += 1
-    for button in ("FULL SCREEN", "NOTIFICATION SETTINGS", "OVERLAY"):
-        if f'"{button}"' not in src:
-            print(f"FAIL  Settings has no {button} button, so the fix is unreachable")
-            failures += 1
+    # Every fix the status line names must be one tap away.
+    #
+    # This used to demand three named buttons ON this screen. Settings carried
+    # its own grid of raw Settings shortcuts — ASSISTANT, ACCESSIBILITY,
+    # NOTIFICATIONS, OVERLAY, FULL SCREEN, NOTIFICATION SETTINGS, BATTERY, APP
+    # INFO — with no indication of which were granted, two of them opening the
+    # same screen as buttons already higher up, and two more with near-identical
+    # names and unrelated meanings. That is not reachability, it is a maze.
+    #
+    # The invariant that actually matters: the ONE grant that changes how the
+    # wake word appears is on this screen, and everything else is reachable
+    # through the checklist, whose rows each carry their own settings action.
+    if '"DISPLAY OVER APPS"' not in src:
+        print("FAIL  Settings cannot grant 'display over other apps', which is the "
+              "grant that decides whether the orb is drawn directly")
+        failures += 1
+    if "SystemCheckActivity" not in src:
+        print("FAIL  Settings no longer offers the checklist, so the remaining "
+              "grants are unreachable from here")
+        failures += 1
+    checklist = (android / "app/src/main/kotlin/ai/jarvis/app/ui/SystemCheckActivity.kt").read_text(
+        encoding="utf-8"
+    )
+    if "GrapheneCompat.openSettingsFor" not in checklist:
+        print("FAIL  the checklist rows no longer open anything; every grant it "
+              "lists became unreachable at once")
+        failures += 1
     return failures
 
 

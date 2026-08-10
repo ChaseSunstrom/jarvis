@@ -344,6 +344,47 @@ object JarvisUi {
             setOnClickListener { onClick() }
         }
 
+    /**
+     * A value with a knowable set of options: pick from a list, do not type it.
+     *
+     * A free-text box for "hour of the day" accepts `25`, `nine`, and the empty
+     * string, and every one of those has to be validated, rejected and
+     * explained — for a value with exactly twenty-four possibilities. The web
+     * console made the same move for the same reason; this is its counterpart.
+     *
+     * A dialog rather than a `Spinner`: the platform Spinner's dropdown takes
+     * its colours from the theme's popup attributes, which this app does not
+     * set (it parents off the bare platform theme so the assist popup can draw
+     * without inflating AppCompat), so it renders as black text on black.
+     *
+     * @param labels what the user reads, in the order they are offered.
+     * @param selected index into [labels], or -1 for "nothing chosen".
+     * @param onPick the chosen index. The caller updates its own state; this
+     *   view only reports.
+     */
+    fun chooser(
+        context: Context,
+        title: String,
+        labels: List<String>,
+        selected: Int,
+        onPick: (Int) -> Unit,
+    ): Button = ghost(context, labels.getOrNull(selected) ?: "—", {}).apply {
+        isAllCaps = false
+        var current = selected
+        setOnClickListener {
+            android.app.AlertDialog.Builder(context)
+                .setTitle(title)
+                .setSingleChoiceItems(labels.toTypedArray(), current) { dialog, which ->
+                    current = which
+                    text = labels[which]
+                    onPick(which)
+                    dialog.dismiss()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
     /** Consent buttons. [tone] is [APPROVE] or [DENY]. */
     fun consentButton(context: Context, label: String, tone: Int, onClick: () -> Unit): Button =
         Button(context).apply {

@@ -335,13 +335,23 @@ class NavigationTest {
     }
 
     private companion object {
+        /**
+         * The buttons on Settings that leave the app, and must come back.
+         *
+         * This used to be eight raw Settings shortcuts sitting in a grid on the
+         * Settings screen, with no indication of which were granted, two of them
+         * opening a screen a button higher up already opened, and two more with
+         * near-identical names and unrelated meanings. They now live on the
+         * checklist, which shows each one's state and what breaks without it —
+         * so what is left to walk from here is APP INFO plus the two grants
+         * Settings still offers directly, because those decide whether a wake
+         * word can put anything on screen at all. The checklist itself is walked
+         * by `settingsOpensTheDiagnosticScreensItOwns`.
+         */
         val SYSTEM_ACCESS_BUTTONS = listOf(
-            "ASSISTANT",
-            "ACCESSIBILITY",
-            "NOTIFICATIONS",
-            "OVERLAY",
-            "BATTERY",
             "APP INFO",
+            "ALLOW BACKGROUND",
+            "DISPLAY OVER APPS",
         )
 
         const val MAX_BACK_PRESSES = 4

@@ -23,7 +23,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.EditText
@@ -62,8 +61,20 @@ class SettingsActivity : Activity() {
     private lateinit var wakeEnabled: Switch
     private lateinit var wakeInCar: Switch
     private lateinit var wakeAtHome: Switch
-    private lateinit var wakeStartField: EditText
-    private lateinit var wakeEndField: EditText
+    /** How many required grants are missing, refreshed on resume. */
+    private lateinit var permissionStatus: TextView
+
+    /**
+     * Waking hours, as indices rather than text.
+     *
+     * They used to be two `EditText`s that accepted "25", "nine" and the empty
+     * string for a value with twenty-four possibilities, each needing its own
+     * parse, fallback and explanatory hint. Start is 0..23; end is 1..24, where
+     * 24 means midnight — see `WakeWordGate`, which treats the window as
+     * half-open.
+     */
+    private var wakingStart = 0
+    private var wakingEnd = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,63 +140,16 @@ class SettingsActivity : Activity() {
             JarvisUi.hint(ctx, "Shown on the server when this device registers. Device id: ${config.deviceId}")
         )
 
-        // --- wake word ------------------------------------------------------
+        // --- voice ----------------------------------------------------------
 
-        col.addView(JarvisUi.label(ctx, "Wake word"))
+        col.addView(JarvisUi.label(ctx, "Voice"))
+        wakeEnabled = switchRow(ctx, "Listen for \"Hey Jarvis\"", config.wakeWordEnabled)
+        col.addView(wakeEnabled, matchWidth())
         col.addView(
             JarvisUi.hint(
                 ctx,
                 "Android gives third-party apps no low-power hotword path, so always-on " +
-                    "detection means a genuinely open mic and real battery cost. These options " +
-                    "limit when that happens."
-            )
-        )
-        wakeEnabled = switchRow(ctx, "Listen for \"Hey Jarvis\"", config.wakeWordEnabled)
-        col.addView(wakeEnabled, matchWidth())
-        wakeInCar = switchRow(ctx, "…while car Bluetooth is connected", config.wakeInCar)
-        col.addView(wakeInCar, matchWidth())
-        wakeAtHome = switchRow(ctx, "…while at home, during waking hours", config.wakeAtHome)
-        col.addView(wakeAtHome, matchWidth())
-
-        val hours = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        wakeStartField = hourField(config.wakingHourStart)
-        wakeEndField = hourField(config.wakingHourEnd)
-        hours.addView(
-            TextView(ctx).apply {
-                text = "Waking hours"
-                setTextColor(JarvisUi.DIM)
-                textSize = 14f
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        hours.addView(wakeStartField, LinearLayout.LayoutParams(JarvisUi.dp(ctx, 64), ViewGroup.LayoutParams.WRAP_CONTENT))
-        hours.addView(
-            TextView(ctx).apply {
-                text = " to "
-                setTextColor(JarvisUi.FAINT)
-                textSize = 14f
-            }
-        )
-        hours.addView(wakeEndField, LinearLayout.LayoutParams(JarvisUi.dp(ctx, 64), ViewGroup.LayoutParams.WRAP_CONTENT))
-        col.addView(hours, matchWidth())
-        col.addView(JarvisUi.hint(ctx, "Hours are 0-23 for the start and 0-24 for the end; a window that wraps midnight (22 to 6) is fine."))
-        // Said out loud rather than left to be discovered. `WakeWordGate` needs
-        // to know whether the phone is at home, and nothing on this device
-        // produces that signal yet — there is no home-presence source anywhere
-        // in the app. Enforcing the gate without one would mean "not at home"
-        // always, which would silence the wake word everywhere except a car.
-        // So these three are stored and not yet applied, and a settings screen
-        // that implied otherwise would be lying.
-        col.addView(
-            JarvisUi.hint(
-                ctx,
-                "The three limits above are saved but not yet enforced: Jarvis has no " +
-                    "home-presence signal on this device, so applying them would silence " +
-                    "the wake word everywhere except the car. Until that exists, the " +
-                    "master switch is what decides."
+                    "detection means a genuinely open mic and real battery cost."
             )
         )
 
@@ -198,9 +162,34 @@ class SettingsActivity : Activity() {
         // listening until the app was opened again.
         listenStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(listenStatus)
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
+                JarvisUi.ghost(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
+            )
+        )
+        overlayStatus = TextView(ctx).apply {
+            setTextColor(JarvisUi.DIM)
+            textSize = 12f
+        }
+        col.addView(overlayStatus)
 
-        // --- on-device detection ---------------------------------------------
-        wakeOnDevice = switchRow(ctx, "Detect “Hey Jarvis” on this phone", config.wakeWordOnDevice)
+        // --- on this phone ----------------------------------------------------
+
+        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.label(ctx, "On this phone"))
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Off, the microphone streams continuously to your server, which does the " +
+                    "detecting — everything the room says, all the time. On, the phone " +
+                    "decides for itself and nothing is sent until you have said the name. " +
+                    "The models are about 3.6 MB and come from YOUR server, not from the " +
+                    "internet: Jarvis mirrors them so the phone never has to talk to anyone " +
+                    "else."
+            )
+        )
+        wakeOnDevice = switchRow(ctx, "Detect \u201CHey Jarvis\u201D on this phone", config.wakeWordOnDevice)
         col.addView(wakeOnDevice, matchWidth())
         modelStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(modelStatus)
@@ -214,26 +203,70 @@ class SettingsActivity : Activity() {
         col.addView(sttOnDevice, matchWidth())
         sttStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(sttStatus)
+
+        // --- when to listen ---------------------------------------------------
+        //
+        // Kept together and labelled for what they are. `WakeWordGate` needs to
+        // know whether the phone is at home, and nothing on this device produces
+        // that signal — there is no home-presence source anywhere in the app.
+        // Enforcing the gate without one would mean "not at home" always, which
+        // would silence the wake word everywhere except a car. So these are
+        // stored and not yet applied, and a settings screen that implied
+        // otherwise would be lying. One admission, in one place, instead of the
+        // two paragraphs this used to spend saying it.
+
+        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.label(ctx, "When to listen — saved, not yet in effect"))
+        wakeInCar = switchRow(ctx, "While car Bluetooth is connected", config.wakeInCar)
+        col.addView(wakeInCar, matchWidth())
+        wakeAtHome = switchRow(ctx, "While at home, during waking hours", config.wakeAtHome)
+        col.addView(wakeAtHome, matchWidth())
+        col.addView(hourRow(ctx), matchWidth())
         col.addView(
             JarvisUi.hint(
                 ctx,
-                "Off, the microphone streams continuously to your server, which does the " +
-                    "detecting — everything the room says, all the time. On, the phone " +
-                    "decides for itself and nothing is sent until you have said the name. " +
-                    "The models are about 3.6 MB and come from YOUR server, not from the " +
-                    "internet: Jarvis mirrors them so the phone never has to talk to anyone " +
-                    "else."
+                "Jarvis has no home-presence signal on this device yet, so these are " +
+                    "remembered but not applied — the switch above is what decides. A window " +
+                    "that wraps midnight (22 to 6) is fine."
+            )
+        )
+
+        // --- permissions ------------------------------------------------------
+        //
+        // One button, not a grid of ten. This screen used to carry its own row
+        // of raw Settings shortcuts — ASSISTANT, ACCESSIBILITY, NOTIFICATIONS,
+        // OVERLAY, FULL SCREEN, NOTIFICATION SETTINGS, BATTERY, APP INFO — with
+        // no indication of which were granted, two of them opening the same
+        // screen as buttons already above, and two more with almost the same
+        // name and completely different meanings. SystemCheckActivity lists
+        // every one of them WITH its state, whether it is required, and what
+        // breaks without it. Sending people there is strictly better than a
+        // worse copy of it.
+
+        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.label(ctx, "Permissions"))
+        permissionStatus = TextView(ctx).apply { textSize = 12f }
+        col.addView(permissionStatus)
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "SYSTEM CHECK") {
+                    startActivity(Intent(this, ai.jarvis.app.ui.SystemCheckActivity::class.java))
+                },
+                JarvisUi.ghost(ctx, "APP INFO") { openAppInfo() },
             )
         )
         col.addView(
-            row(
-                JarvisUi.ghost(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
-                JarvisUi.ghost(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
+            JarvisUi.hint(
+                ctx,
+                "System check lists every permission and special access Jarvis can use, " +
+                    "whether it is granted, and what stops working without it. None of them " +
+                    "changes what tier an action is — they only decide whether it is possible."
             )
         )
 
         // --- other screens --------------------------------------------------
 
+        col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "More"))
         col.addView(
             row(
@@ -246,17 +279,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.hint(
-                ctx,
-                "The audit log records every action this device actually executed, with its " +
-                    "tier and how it was authorised. It is local and yours."
-            )
-        )
-        col.addView(
             row(
-                JarvisUi.ghost(ctx, "SYSTEM CHECK") {
-                    startActivity(Intent(this, ai.jarvis.app.ui.SystemCheckActivity::class.java))
-                },
                 JarvisUi.ghost(ctx, "CRASH LOGS") {
                     startActivity(Intent(this, ai.jarvis.app.ui.CrashLogActivity::class.java))
                 },
@@ -265,61 +288,8 @@ class SettingsActivity : Activity() {
         col.addView(
             JarvisUi.hint(
                 ctx,
-                "System check lists every permission and special access Jarvis can use and what " +
-                    "breaks without it. Crash logs are written to this device and go nowhere else."
-            )
-        )
-
-        // --- system access --------------------------------------------------
-
-        col.addView(JarvisUi.label(ctx, "System access"))
-        col.addView(
-            JarvisUi.hint(
-                ctx,
-                "Each of these is off until you turn it on, and none of them changes what tier " +
-                    "an action is — they only decide whether it is possible at all."
-            )
-        )
-        col.addView(
-            row(
-                JarvisUi.ghost(ctx, "ASSISTANT") { openSetting(Settings.ACTION_VOICE_INPUT_SETTINGS) },
-                JarvisUi.ghost(ctx, "ACCESSIBILITY") { openSetting(Settings.ACTION_ACCESSIBILITY_SETTINGS) },
-            )
-        )
-        col.addView(
-            row(
-                JarvisUi.ghost(ctx, "NOTIFICATIONS") {
-                    openSetting(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                },
-                JarvisUi.ghost(ctx, "OVERLAY") { openOverlaySetting() },
-            )
-        )
-        col.addView(
-            row(
-                JarvisUi.ghost(ctx, "FULL SCREEN") {
-                    openSetting(GrapheneCompat.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
-                },
-                JarvisUi.ghost(ctx, "NOTIFICATION SETTINGS") { openNotificationSettings() },
-            )
-        )
-        // Said out loud because nothing else does. "Display over other apps" is
-        // the one permission that decides whether a wake word can put Jarvis in
-        // front of whatever you are looking at: without it Android silently
-        // drops the background activity start — silently, so a try/catch never
-        // sees it — and the conversation arrives as a notification you have to
-        // tap. The switch is a Settings trip, not a prompt, so nobody finds it
-        // by accident.
-        overlayStatus = TextView(ctx).apply {
-            setTextColor(JarvisUi.DIM)
-            textSize = 12f
-        }
-        col.addView(overlayStatus)
-        col.addView(
-            row(
-                JarvisUi.ghost(ctx, "BATTERY") {
-                    openSetting(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                },
-                JarvisUi.ghost(ctx, "APP INFO") { openAppInfo() },
+                "The audit log records every action this device actually executed, with its " +
+                    "tier and how it was authorised. Both it and the crash logs are local and yours."
             )
         )
 
@@ -374,6 +344,50 @@ class SettingsActivity : Activity() {
         return root
     }
 
+    /**
+     * "Waking hours  [08]  to  [22]", both pickers.
+     *
+     * The end offers 24 and the start does not, because the window is
+     * half-open: `WakeWordGate` includes the start hour and excludes the end,
+     * so an end of 24 is midnight and an end of 0 would be an empty window on
+     * every day that does not wrap.
+     */
+    private fun hourRow(ctx: Context): LinearLayout {
+        wakingStart = config.wakingHourStart.coerceIn(0, 23)
+        wakingEnd = config.wakingHourEnd.coerceIn(1, 24)
+        val starts = (0..23).map { "%02d:00".format(it) }
+        val ends = (1..24).map { "%02d:00".format(it % 24) }
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                TextView(ctx).apply {
+                    text = "Waking hours"
+                    setTextColor(JarvisUi.DIM)
+                    textSize = 14f
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            )
+            addView(
+                JarvisUi.chooser(ctx, "Start of waking hours", starts, wakingStart) {
+                    wakingStart = it
+                }
+            )
+            addView(
+                TextView(ctx).apply {
+                    text = " to "
+                    setTextColor(JarvisUi.FAINT)
+                    textSize = 14f
+                }
+            )
+            addView(
+                JarvisUi.chooser(ctx, "End of waking hours", ends, wakingEnd - 1) {
+                    wakingEnd = it + 1
+                }
+            )
+        }
+    }
+
     // --- persistence --------------------------------------------------------
 
     private fun save() {
@@ -399,10 +413,8 @@ class SettingsActivity : Activity() {
         config.sttOnDevice = sttOnDevice.isChecked
         config.wakeInCar = wakeInCar.isChecked
         config.wakeAtHome = wakeAtHome.isChecked
-        config.wakingHourStart = wakeStartField.text.toString().trim().toIntOrNull()
-            ?: config.wakingHourStart
-        config.wakingHourEnd = wakeEndField.text.toString().trim().toIntOrNull()
-            ?: config.wakingHourEnd
+        config.wakingHourStart = wakingStart
+        config.wakingHourEnd = wakingEnd
 
         // Both of these run once at startup and then never again, so without
         // this the app keeps the values it read before the user typed anything:
@@ -493,9 +505,28 @@ class SettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::overlayStatus.isInitialized) refreshOverlayStatus()
+        if (::permissionStatus.isInitialized) refreshPermissionStatus()
         if (::listenStatus.isInitialized) refreshListenStatus()
         if (::modelStatus.isInitialized) refreshModelStatus()
         if (::sttStatus.isInitialized) refreshSttStatus()
+    }
+
+    /**
+     * One line for the whole permission set, so the section is worth tapping.
+     *
+     * The grid this replaces gave no indication of what was already granted, so
+     * the only way to find out was to open each of the eight screens in turn.
+     */
+    private fun refreshPermissionStatus() {
+        val requirements = GrapheneCompat.requirements(this)
+        val missing = requirements.count { it.essential && !it.satisfied }
+        val optional = requirements.count { !it.essential && !it.satisfied }
+        permissionStatus.text = when {
+            missing > 0 -> "$missing required item(s) missing, $optional optional off."
+            optional > 0 -> "Everything required is granted. $optional optional item(s) are off."
+            else -> "Everything is granted."
+        }
+        permissionStatus.setTextColor(if (missing > 0) JarvisUi.GOLD else JarvisUi.DIM)
     }
 
     private fun refreshOverlayStatus() {
@@ -509,36 +540,25 @@ class SettingsActivity : Activity() {
         overlayStatus.text = when {
             !notify ->
                 "Notifications are OFF. Jarvis cannot show you anything at all — not the " +
-                    "wake word, not an approval waiting for your answer. Tap NOTIFICATION " +
-                    "SETTINGS to allow them."
+                    "wake word, not an approval waiting for your answer. Turn them on from " +
+                    "SYSTEM CHECK, under Permissions."
             overlay ->
                 "Wake word: opens over whatever you are using. This is the good one — the " +
                     "orb is drawn directly, with no notification in the way."
             fullScreen ->
                 "Wake word: takes over the screen via a full-screen notification. Turn on " +
-                    "OVERLAY as well for the orb to be drawn directly instead."
+                    "DISPLAY OVER APPS as well for the orb to be drawn directly instead."
             else ->
                 "Wake word: arrives as a notification you have to TAP. Android will not let " +
-                    "Jarvis put anything on screen by itself without one of OVERLAY " +
-                    "(“display over other apps”) or FULL SCREEN — on Android 14 the second " +
-                    "is reserved for calling and alarm apps unless you grant it by hand."
+                    "Jarvis put anything on screen by itself without DISPLAY OVER APPS above, " +
+                    "or the full-screen grant in SYSTEM CHECK — on Android 14 the second is " +
+                    "reserved for calling and alarm apps unless you grant it by hand."
         }
         overlayStatus.setTextColor(
             if (notify && (overlay || fullScreen)) JarvisUi.DIM else JarvisUi.GOLD
         )
     }
 
-    /** The app's notification settings, where POST_NOTIFICATIONS is undone. */
-    private fun openNotificationSettings() {
-        try {
-            startActivity(
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-            )
-        } catch (e: ActivityNotFoundException) {
-            openAppInfo()
-        }
-    }
 
     /**
      * Whether always-on listening will survive a restart.
@@ -826,20 +846,6 @@ class SettingsActivity : Activity() {
             textSize = 14f
             setPadding(0, JarvisUi.dp(ctx, 10), 0, JarvisUi.dp(ctx, 2))
         }
-
-    private fun hourField(value: Int): EditText = EditText(this).apply {
-        setText(value.toString())
-        inputType = InputType.TYPE_CLASS_NUMBER
-        setSingleLine(true)
-        gravity = Gravity.CENTER
-        setTextColor(android.graphics.Color.WHITE)
-        setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
-        background = JarvisUi.panel(this@SettingsActivity, fill = 0xFF080D13.toInt())
-        setPadding(
-            JarvisUi.dp(this@SettingsActivity, 8), JarvisUi.dp(this@SettingsActivity, 10),
-            JarvisUi.dp(this@SettingsActivity, 8), JarvisUi.dp(this@SettingsActivity, 10)
-        )
-    }
 
     private fun toast(message: String) =
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
