@@ -91,6 +91,34 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // view on the cold-start critical path. The sequence's onComplete
         // refreshes it the moment there is something to see.
         if (!booting) refreshStatusBanner()
+        openSystemCheckOnceIfSetupIsIncomplete()
+    }
+
+    /**
+     * Take the user to the checklist the first time something essential is off.
+     *
+     * A banner at the bottom of the home screen was not enough, and the field
+     * report says why: "the overlay isn't popping up still, only the
+     * notification". Every one of those symptoms is a special access that has
+     * to be granted on a Settings screen the user has never heard of, and an
+     * app that waits to be asked about it is an app that stays broken. The
+     * checklist already names each one, says what breaks without it and opens
+     * the exact page — it just needed to be somewhere other than behind a
+     * button nobody presses.
+     *
+     * Once per install, and only when something ESSENTIAL is missing, so this
+     * is a setup step rather than a nag. The banner covers every later change.
+     */
+    private fun openSystemCheckOnceIfSetupIsIncomplete() {
+        if (config.setupChecklistShown) return
+        if (GrapheneCompat.missingEssentials(this).isEmpty()) {
+            // Nothing to walk them through — and remember that, so a permission
+            // revoked in six months does not trigger a first-run flow.
+            config.setupChecklistShown = true
+            return
+        }
+        config.setupChecklistShown = true
+        runCatching { openSystemCheck() }
     }
 
     /**

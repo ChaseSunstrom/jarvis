@@ -145,6 +145,10 @@ def check_the_checklist_ranks_them_honestly(android: Path) -> int:
     )
     wanted = {
         "ID_POST_NOTIFICATIONS": True,
+        # The disjunction: "can a wake word put anything in front of you".
+        # Essential, because with neither grant the answer is no.
+        "ID_ON_SCREEN": True,
+        # Each individually optional BECAUSE either satisfies the one above.
         "ID_FULL_SCREEN": False,
         "ID_OVERLAY": False,
     }
@@ -186,6 +190,70 @@ def check_the_screen_says_which_is_missing(android: Path) -> int:
         if f'"{button}"' not in src:
             print(f"FAIL  Settings has no {button} button, so the fix is unreachable")
             failures += 1
+    return failures
+
+
+def check_neither_grant_alone_is_load_bearing(android: Path) -> int:
+    """The gap that let the phone sit broken with nothing saying so.
+
+    Overlay and full-screen are each optional, correctly — either one lets a
+    wake word reach the screen. But that made the state where NEITHER is granted
+    invisible: nothing on the checklist was both essential and missing, so the
+    home screen showed no banner, and the only symptom was that saying "Hey
+    Jarvis" did nothing.
+
+    The fix is a requirement whose `satisfied` is a disjunction, and this pins
+    that it stays one — an `and` here would demand both, and a copy of either
+    single check would put the hole straight back.
+    """
+    src = (android / "app/src/main/kotlin/ai/jarvis/app/compat/GrapheneCompat.kt").read_text(
+        encoding="utf-8"
+    )
+    block = re.search(r"id = ID_ON_SCREEN,(.*?)\n        \),", src, re.S)
+    if not block:
+        print("FAIL  there is no 'can Jarvis appear on screen' requirement")
+        return 1
+    if not re.search(
+        r"satisfied = status\.canDrawOverlays \|\| status\.fullScreenIntents", block.group(1)
+    ):
+        print(
+            "FAIL  'appear on screen' is not the OR of the two grants; either "
+            "half alone re-opens the hole it exists to close"
+        )
+        return 1
+    return 0
+
+
+def check_the_user_is_walked_through_it_once(android: Path) -> int:
+    """A banner nobody reads is not a setup flow.
+
+    Reported twice, a build apart: "the overlay isn't popping up still". Every
+    one of these is a Settings screen the user has never heard of, so the app
+    has to take them there rather than mention it.
+    """
+    src = (android / "app/src/main/kotlin/ai/jarvis/app/MainActivity.kt").read_text(
+        encoding="utf-8"
+    )
+    failures = 0
+    walk = re.search(
+        r"private fun openSystemCheckOnceIfSetupIsIncomplete\(\).*?\n    \}", src, re.S
+    )
+    if not walk:
+        print("FAIL  the home screen never opens the checklist by itself")
+        return 1
+    body = walk.group(0)
+    if "missingEssentials" not in body:
+        print("FAIL  the walkthrough does not key on what is actually missing")
+        failures += 1
+    if "setupChecklistShown" not in body:
+        print("FAIL  the walkthrough has no once-only guard, so it is a nag loop")
+        failures += 1
+    if body.count("setupChecklistShown = true") < 2:
+        print(
+            "FAIL  the flag is not set on BOTH paths; a phone with everything "
+            "granted would re-check on every resume forever"
+        )
+        failures += 1
     return failures
 
 
@@ -243,6 +311,8 @@ def main() -> int:
         + check_each_route_is_probed_not_assumed(android)
         + check_the_checklist_ranks_them_honestly(android)
         + check_the_screen_says_which_is_missing(android)
+        + check_neither_grant_alone_is_load_bearing(android)
+        + check_the_user_is_walked_through_it_once(android)
         + check_the_wake_alert_does_not_overpromise(android)
         + check_the_surfaces_are_not_boxes(android)
     )

@@ -344,6 +344,7 @@ object GrapheneCompat {
     const val ID_BATTERY = "battery"
     const val ID_OVERLAY = "overlay"
     const val ID_POST_NOTIFICATIONS = "post_notifications"
+    const val ID_ON_SCREEN = "on_screen"
     const val ID_FULL_SCREEN = "full_screen"
     const val ID_EXACT_ALARMS = "exact_alarms"
 
@@ -437,6 +438,29 @@ object GrapheneCompat {
             satisfied = status.postNotifications,
             essential = true,
             settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
+        Requirement(
+            id = ID_ON_SCREEN,
+            label = "Appear on screen",
+            why = "Whether saying “Hey Jarvis” can put anything in front of you. " +
+                "Needs EITHER “display over other apps” or “full screen " +
+                "notifications” — either one is enough, and with neither the wake " +
+                "word can only leave a notification for you to tap.",
+            // The disjunction is the point, and it is why this entry exists at
+            // all. The two below are each optional BECAUSE either satisfies
+            // this — which meant that with neither granted, nothing on the
+            // checklist was both essential and missing, no banner appeared, and
+            // the phone sat in exactly the broken state that was reported with
+            // nothing anywhere saying so.
+            //
+            // The action points at the overlay switch: it is the better of the
+            // two — the orb is drawn directly, with no notification in the way —
+            // and it doubles as the exemption that lets listening restart after
+            // a reboot.
+            satisfied = status.canDrawOverlays || status.fullScreenIntents,
+            essential = true,
+            settingsAction = Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             needsPackageUri = true,
         ),
         Requirement(

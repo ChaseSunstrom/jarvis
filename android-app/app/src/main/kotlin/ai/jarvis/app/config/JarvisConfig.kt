@@ -139,6 +139,18 @@ class JarvisConfig(context: Context) {
     // always-on detection costs real battery and holds an open mic. These
     // settings feed [WakeWordGate], which decides when it is worth it.
 
+    /**
+     * Whether the first-run checklist has been shown.
+     *
+     * Not "setup is complete" — the user may have looked at it and decided they
+     * do not want Jarvis drawing over other apps, and that is their call. This
+     * only stops the home screen opening it a second time; the banner is what
+     * carries the message from then on.
+     */
+    var setupChecklistShown: Boolean
+        get() = prefs.getBoolean(KEY_SETUP_SHOWN, false)
+        set(v) = prefs.edit().putBoolean(KEY_SETUP_SHOWN, v).apply()
+
     /** Master switch for always-on "Hey Jarvis" detection. */
     var wakeWordEnabled: Boolean
         get() = prefs.getBoolean(KEY_WAKE_ENABLED, false)
@@ -211,6 +223,7 @@ class JarvisConfig(context: Context) {
         private const val KEY_PIPELINE = "pipeline"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_SETUP_SHOWN = "setup_checklist_shown"
         private const val KEY_WAKE_ENABLED = "wake_enabled"
         private const val KEY_WAKE_IN_CAR = "wake_in_car"
         private const val KEY_WAKE_AT_HOME = "wake_at_home"
