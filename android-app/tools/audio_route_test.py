@@ -76,9 +76,12 @@ def capture_profile(kind: str, opt_in: bool, sco_available: bool) -> tuple[bool,
     """Returns (use_voice_communication, request_communication_device)."""
     if not captures_through_headset(kind, opt_in, sco_available):
         return (False, False)
-    if has_echo_loop(kind, opt_in, sco_available):
-        return (True, True)
-    return (False, True)
+    # Two branches, not three. Capturing through a headset implies ear-worn,
+    # because every kind with a mic is also ear-worn — see
+    # test_every_capturing_headset_is_ear_worn. CaptureProfile.forRoute used to
+    # carry a third branch for "headset mic, not ear-worn" that nothing could
+    # reach; both copies dropped it together.
+    return (True, True)
 
 
 # --- the table, written out by hand ----------------------------------------
@@ -94,6 +97,22 @@ TABLE_OPTED_IN = {
     "BLE_HEADSET": (True, True, True, True, True),
     "USB_HEADSET": (True, True, True, True, True),
 }
+
+
+def test_every_capturing_headset_is_ear_worn() -> None:
+    """What lets capture_profile have two branches instead of three.
+
+    A headset with a mic that is NOT in the ear would want the raw source
+    kept rather than AEC applied, and there is no longer a branch for it. If
+    this fails, restore the third branch in BOTH copies rather than relaxing
+    it — the Kotlin has a comment waiting where it goes.
+    """
+    for kind, (has_mic, is_ear_worn, _needs_sco) in KINDS.items():
+        if has_mic:
+            assert is_ear_worn, (
+                f"{kind} can capture but is not ear-worn; capture_profile has "
+                "no branch for that any more"
+            )
 
 
 def test_table_matches_the_rules() -> None:
@@ -186,11 +205,21 @@ def test_kotlin_keeps_the_opt_in_gate() -> None:
 
 
 def test_kotlin_keeps_both_capture_sources() -> None:
-    """Both branches must still exist; collapsing to one is the regression."""
+    """Both branches must still exist; collapsing to one is the regression.
+
+    Two, not three. `forRoute` used to have a third branch for a headset mic
+    that is not ear-worn, and nothing could reach it — every kind with a mic is
+    ear-worn. It no longer looks at `hasEchoLoop`, because with that invariant
+    "captures through a headset" and "has an echo loop" are the same condition,
+    and testing for it twice suggested a distinction the enum cannot express.
+    What must not happen is the PHONE branch disappearing, which would put AEC
+    on the built-in microphone and cost transcription accuracy on every turn.
+    """
     src = SRC.read_text()
-    assert "useVoiceCommunication = true" in src
-    assert "useVoiceCommunication = false" in src
-    assert "hasEchoLoop" in src.split("fun forRoute", 1)[1]
+    body = src.split("fun forRoute", 1)[1]
+    assert "useVoiceCommunication = true" in body, "the headset branch is gone"
+    assert "useVoiceCommunication = false" in body, "the phone branch is gone"
+    assert "capturesThroughHeadset" in body, "forRoute stopped asking about the headset"
 
 
 def test_kotlin_warm_link_is_tied_to_the_echo_loop() -> None:

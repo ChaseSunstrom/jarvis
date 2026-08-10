@@ -127,14 +127,46 @@ class AudioRouteTest {
     @Test
     fun `each capture profile branch is reachable and explains itself`() {
         val phone = CaptureProfile.forRoute(AudioRoute())
+        // SCO needs its link up, or this is still the phone's own microphone.
         val worn = CaptureProfile.forRoute(
-            AudioRoute(kind = HeadsetKind.BLUETOOTH_SCO, headsetModeEnabled = true)
+            AudioRoute(
+                kind = HeadsetKind.BLUETOOTH_SCO,
+                headsetModeEnabled = true,
+                scoAvailable = true,
+            )
         )
-        val headphones = CaptureProfile.forRoute(
-            AudioRoute(kind = HeadsetKind.WIRED_HEADPHONES, headsetModeEnabled = true)
+        val wired = CaptureProfile.forRoute(
+            AudioRoute(kind = HeadsetKind.WIRED_HEADSET, headsetModeEnabled = true)
         )
-        val reasons = listOf(phone, worn, headphones).map { it.reason }
-        assertEquals("each branch should give its own reason", 3, reasons.toSet().size)
+
+        val reasons = listOf(phone, worn, wired).map { it.reason }
         for (r in reasons) assertTrue("a reason should be human-readable", r.length > 20)
+
+        // Two branches, not three. Every headset that can capture is ear-worn
+        // (see the invariant below), so the two headsets share a profile and
+        // the phone gets its own.
+        assertEquals("phone and headset must differ", 2, reasons.toSet().size)
+        assertEquals(worn.reason, wired.reason)
+        assertFalse("the phone mic has no echo loop to cancel", phone.useVoiceCommunication)
+        assertTrue("an ear-worn headset needs AEC", worn.useVoiceCommunication)
+    }
+
+    @Test
+    fun `every headset that can capture is also ear-worn`() {
+        // This is what lets `forRoute` have two branches instead of three. A
+        // headset with a mic that is NOT in the ear — the cable-clip case
+        // `isEarWorn` describes — would need the raw source kept rather than
+        // AEC applied, and there is no longer a branch that does that.
+        //
+        // So if this fails, do not relax it: put the third branch back in
+        // CaptureProfile.forRoute, where a comment is waiting.
+        for (kind in HeadsetKind.entries) {
+            if (!kind.hasMic) continue
+            assertTrue(
+                "$kind can capture but is not ear-worn; CaptureProfile.forRoute " +
+                    "has no branch for that any more",
+                kind.isEarWorn
+            )
+        }
     }
 }

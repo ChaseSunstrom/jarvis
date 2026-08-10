@@ -100,9 +100,18 @@ class SsrfGuardTest {
         assertFalse(SsrfGuard.check("http://192.168.1.50:8123/", jarvis).allowed)
         assertTrue(SsrfGuard.check("http://192.168.1.50:8123/", setOf("192.168.1.50")).allowed)
 
-        // The exemption is exact — no suffix games.
-        assertFalse(SsrfGuard.check("http://evil-jarvis.lan/", jarvis).allowed)
-        assertFalse(SsrfGuard.check("http://jarvis.lan.evil.com/", jarvis).allowed)
+        // The exemption is exact — no suffix games. What that means is that
+        // these get NO free pass, not that they are refused outright: an
+        // unrecognised NAME is deferred to DNS, and `http_request` resolves it
+        // and runs every address through isBlockedIp before connecting. So
+        // `evil-jarvis.lan` reaches that check and dies there on its LAN
+        // address. Asserting `!allowed` here would be asserting that Jarvis
+        // refuses every hostname on the internet.
+        for (host in listOf("evil-jarvis.lan", "jarvis.lan.evil.com", "notjarvis.lan")) {
+            val check = SsrfGuard.check("http://$host/", jarvis)
+            assertFalse("$host must not inherit the exemption", check.exempt)
+            assertTrue("$host must still be resolved and re-checked", check.needsDnsCheck)
+        }
     }
 
     @Test

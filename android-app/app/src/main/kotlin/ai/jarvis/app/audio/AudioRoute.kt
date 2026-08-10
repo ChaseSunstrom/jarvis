@@ -183,18 +183,22 @@ data class CaptureProfile(
                 reason = "phone microphone; raw source for transcription accuracy"
             )
 
-            route.hasEchoLoop -> CaptureProfile(
+            // Capturing through a headset at all implies ear-worn, because
+            // every `HeadsetKind` with `hasMic` also has `isEarWorn` — see the
+            // invariant pinned in AudioRouteTest. There used to be a third
+            // branch here for "headset microphone, not ear-worn; no echo loop
+            // to cancel", and it could never be reached: `capturesThroughHeadset`
+            // requires `hasMic`, and no such kind is anything but ear-worn. It
+            // was removed rather than left as reassuring dead code.
+            //
+            // If a kind is ever added with a mic that is NOT in the ear — the
+            // cable-clip case `isEarWorn` describes — that test fails, and this
+            // is where the branch goes back.
+            else -> CaptureProfile(
                 useVoiceCommunication = true,
                 requestCommunicationDevice = true,
                 reason = "ear-worn headset; echo cancellation required so the " +
                     "reply is not heard as a new question"
-            )
-
-            else -> CaptureProfile(
-                useVoiceCommunication = false,
-                requestCommunicationDevice = true,
-                reason = "headset microphone, not ear-worn; no echo loop to " +
-                    "cancel, so the raw source is kept"
             )
         }
     }
