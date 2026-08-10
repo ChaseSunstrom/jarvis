@@ -52,6 +52,18 @@ export interface ToolDraft {
 	service: Record<string, any>;
 }
 
+/** A tier-3 action held until a human says yes. */
+export interface PendingApproval {
+	request_id?: string;
+	id?: string;
+	tool: string;
+	description?: string;
+	arguments?: Record<string, any>;
+	tier?: number;
+	created?: number;
+	expires_at?: number;
+}
+
 /** One editable setting, with where its current value came from. */
 export interface SettingRow {
 	key: string;
@@ -506,6 +518,28 @@ export class JarvisClient {
 
 	deleteTool(name: string): Promise<any> {
 		return this.command({ type: 'config/tool/delete', name });
+	}
+
+	// --- approvals ---------------------------------------------------------
+	/**
+	 * Approve or deny a held tier-3 action.
+	 *
+	 * Single use and enforced server-side: the request is popped before it runs,
+	 * so a double-click cannot execute it twice and a replayed id does nothing.
+	 */
+	resolveApproval(requestId: string, approved: boolean): Promise<any> {
+		return this.command({ type: 'jarvis/approve', request_id: requestId, approved });
+	}
+
+	/** What is waiting on a human right now. */
+	async pendingApprovals(): Promise<PendingApproval[]> {
+		const result = await this.callService('llm', 'pending_requests', {}, {
+			returnResponse: true
+		});
+		const list = Array.isArray(result)
+			? result
+			: (result?.response ?? result?.result ?? result?.requests ?? []);
+		return Array.isArray(list) ? list : [];
 	}
 
 	// --- settings ----------------------------------------------------------

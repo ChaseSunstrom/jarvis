@@ -10,6 +10,7 @@
 	import BootSequence from '$lib/components/BootSequence.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
+	import Approvals from '$lib/components/Approvals.svelte';
 	import { ConsoleLink, statusLabel, type LinkSnapshot } from '$lib/consoleLink';
 	import { ChordTracker, isBareKey, isPaletteShortcut, isTypingTarget } from '$lib/shortcuts';
 
@@ -32,6 +33,10 @@
 	let snapshot = $state<LinkSnapshot>(link.current);
 	let linkStarted = false;
 	const unsubscribe = link.subscribe((s) => (snapshot = s));
+
+	// Derived from the snapshot rather than read once: `link` reconnects on its
+	// own, and a surface holding the old Connection would go quietly deaf.
+	let approvalConn = $derived(snapshot.status === 'connected' ? link.connection : null);
 
 	$effect(() => {
 		if (!isHud && !linkStarted) {
@@ -159,6 +164,10 @@
 		</header>
 
 		<main class="console-body" id="console-main" tabindex="-1">
+			<!-- Above the routed page and outside the {#key} block: an approval
+			     must survive navigation, because the action is still waiting
+			     whatever page you wandered to. -->
+			<Approvals conn={approvalConn} />
 			{#key page.url.pathname}
 				<div class="jv-route" data-testid="route" data-route={page.url.pathname}>
 					{@render children()}

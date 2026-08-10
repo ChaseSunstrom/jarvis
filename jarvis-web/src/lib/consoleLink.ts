@@ -94,6 +94,20 @@ export class ConsoleLink {
 	private readonly random: () => number;
 	private readonly connect: typeof openConnection;
 
+	/**
+	 * The live connection, or null while down.
+	 *
+	 * Exposed so layout-level surfaces — the approvals banner — can subscribe to
+	 * bus events on the socket this class is already keeping up, instead of
+	 * opening a second one per tab and doubling the relay's connections.
+	 * Deliberately read-only: reconnection stays this class's job, and a caller
+	 * that held on to a stale Connection across a reconnect would silently stop
+	 * receiving events.
+	 */
+	get connection(): Connection | null {
+		return this.conn;
+	}
+
 	constructor(opts: ConsoleLinkOptions = {}) {
 		this.setTimeoutFn = opts.setTimeoutFn ?? setTimeout;
 		this.clearTimeoutFn = opts.clearTimeoutFn ?? clearTimeout;

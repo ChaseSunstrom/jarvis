@@ -328,7 +328,7 @@ export function makeWorld() {
 		}
 	];
 
-	return { areas, devices, entities, states, automations, settings, tools, calls: [] };
+	return { areas, devices, entities, states, automations, settings, tools, approvals: [], calls: [] };
 }
 
 const SERVICES = {
@@ -649,6 +649,12 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				case 'call_service': {
 					const domain = msg.domain;
 					const service = msg.service;
+					// The approvals banner asks for what is already waiting when it
+					// mounts, so a reload does not lose a held action.
+					if (domain === 'llm' && service === 'pending_requests') {
+						ok(msg.id, { response: world.approvals });
+						break;
+					}
 					if (!SERVICES[domain]?.[service]) {
 						fail(msg.id, 'service_not_found', `unknown service ${domain}.${service}`);
 						break;
@@ -656,6 +662,49 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					const data = { ...(msg.service_data ?? {}), ...(msg.target ?? {}) };
 					const changed = callService(domain, service, data);
 					ok(msg.id, { context: { id: 'ctx-mock' }, changed_states: changed });
+					break;
+				}
+
+				// Answering a held tier-3 action. Single use, like jarvis-core:
+				// the request is removed before anything runs, so a second click
+				// cannot execute it twice.
+				case 'jarvis/approve': {
+					const index = world.approvals.findIndex((a) => a.request_id === msg.request_id);
+					if (index < 0) {
+						ok(msg.id, {
+							status: 'error',
+							error: 'unknown, expired or already-used approval request'
+						});
+						break;
+					}
+					const [req] = world.approvals.splice(index, 1);
+					broadcast('jarvis_approval_resolved', {
+						...req,
+						approved: Boolean(msg.approved)
+					});
+					ok(msg.id, {
+						status: msg.approved ? 'executed' : 'denied',
+						request_id: req.request_id
+					});
+					break;
+				}
+
+				// Test hook: raise one, so the e2e suite can drive the banner the
+				// way the assistant would. Not a jarvis-core command — the real
+				// event is fired by the tool registry when a gate holds an action.
+				case 'test/raise_approval': {
+					const req = {
+						request_id: msg.request_id ?? `req-${world.approvals.length + 1}`,
+						tool: msg.tool ?? 'lock_control',
+						description: 'Lock or unlock a door.',
+						arguments: msg.arguments ?? { action: 'unlock', entity_id: ['lock.front_door'] },
+						tier: 3,
+						created: Date.now() / 1000,
+						expires_at: Date.now() / 1000 + 300
+					};
+					world.approvals.push(req);
+					broadcast('jarvis_approval_required', req);
+					ok(msg.id, { raised: req.request_id });
 					break;
 				}
 

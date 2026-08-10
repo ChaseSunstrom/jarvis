@@ -193,6 +193,56 @@ test('automations page shows last_triggered, toggles and runs now', async ({ pag
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
 
+test('a held action can be approved from the console, on any page', async ({ page }) => {
+	// The console had no way to answer an approval at all: the gate fired, the
+	// model was told to wait, and only the phone could say yes.
+	await page.goto('/devices');
+	await expect(page.getByTestId('entity-light.lab_lights')).toBeVisible({ timeout: 15_000 });
+
+	// Raise one the way the assistant would — the backend fires
+	// `jarvis_approval_required` when a tier-3 tool is held.
+	const raise = async (tool: string, id: string) =>
+		page.evaluate(
+			([t, rid]) =>
+				new Promise((resolve) => {
+					const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+					ws.onopen = () =>
+						ws.send(JSON.stringify({ id: 99, type: 'test/raise_approval', tool: t, request_id: rid }));
+					ws.onmessage = () => {
+						ws.close();
+						resolve(null);
+					};
+				}),
+			[tool, id]
+		);
+
+	await raise('lock_control', 'req-1');
+
+	const banner = page.getByTestId('approvals');
+	await expect(banner).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('approval-lock_control')).toBeVisible();
+	// What is being agreed to must be on screen — the request was pinned to
+	// concrete entity ids server-side, and this is where a human sees them.
+	await expect(page.getByTestId('approval-args-lock_control')).toContainText('lock.front_door');
+
+	// It must survive navigation: the action is still waiting whatever page you
+	// wander to, and an approval that expires unseen looks like Jarvis ignoring
+	// you.
+	await page.getByTestId('nav-automations').click();
+	await expect(page.getByTestId('approvals')).toBeVisible();
+
+	await page.getByTestId('approve-lock_control').click();
+	await expect(page.getByTestId('approvals')).toHaveCount(0, { timeout: 10_000 });
+
+	// And denying works, and is not the same as approving.
+	await raise('lock_control', 'req-2');
+	await expect(page.getByTestId('approvals')).toBeVisible({ timeout: 10_000 });
+	await page.getByTestId('deny-lock_control').click();
+	await expect(page.getByTestId('approvals')).toHaveCount(0, { timeout: 10_000 });
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
 test('tools page creates, edits and deletes a tool, and protects the built-ins', async ({
 	page
 }) => {
