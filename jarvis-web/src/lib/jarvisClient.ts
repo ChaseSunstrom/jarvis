@@ -30,6 +30,41 @@ export interface AreaEntry {
 	aliases?: string[];
 }
 
+/** One editable setting, with where its current value came from. */
+export interface SettingRow {
+	key: string;
+	label: string;
+	group: string;
+	type: 'string' | 'number' | 'integer' | 'boolean' | 'choice';
+	/** 'live' | 'restart' | 'split' — when a change takes effect. */
+	apply: string;
+	note?: string;
+	value: unknown;
+	/** What configuration.yaml says, which is what a reset falls back to. */
+	yaml_value: unknown;
+	/** 'overlay' | 'yaml' | 'package' | 'default' | 'unapplied'. */
+	source: string;
+	unapplied_reason?: string | null;
+	package?: string | null;
+	choices?: string[];
+}
+
+export interface UnappliedSetting {
+	key: string;
+	value: unknown;
+	reason: string;
+}
+
+export interface SettingResult {
+	key: string;
+	value: unknown;
+	/** Whether it reached the running system, or only the store. */
+	applied: boolean;
+	apply: string;
+	restart_required: boolean;
+	settings: SettingRow[];
+}
+
 /** One automation as jarvis-core reports it, YAML-authored or console-authored. */
 export interface AutomationRow {
 	id: string;
@@ -432,6 +467,20 @@ export class JarvisClient {
 			entity_id: entityId,
 			...changes
 		});
+	}
+
+	// --- settings ----------------------------------------------------------
+	listSettings(): Promise<{ settings: SettingRow[]; unapplied: UnappliedSetting[] }> {
+		return this.command({ type: 'config/settings/list' });
+	}
+
+	setSetting(key: string, value: unknown): Promise<SettingResult> {
+		return this.command({ type: 'config/settings/set', key, value });
+	}
+
+	/** Drop an override so the value in configuration.yaml shows through again. */
+	resetSetting(key: string): Promise<SettingResult> {
+		return this.command({ type: 'config/settings/reset', key });
 	}
 
 	// --- automations -------------------------------------------------------

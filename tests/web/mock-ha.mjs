@@ -219,7 +219,78 @@ export function makeWorld() {
 		}
 	];
 
-	return { areas, devices, entities, states, automations, calls: [] };
+	// One of each interesting shape: a live choice, a restart-only number, a
+	// plain string, and one a package owns so the locked path is exercised.
+	const settings = [
+		{
+			key: 'llm.model',
+			label: 'Model',
+			group: 'Assistant',
+			type: 'choice',
+			apply: 'live',
+			note: 'The Ollama model every conversation runs on.',
+			value: 'qwen3:8b',
+			yaml_value: 'qwen3:8b',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null,
+			choices: ['qwen3:8b', 'qwen3:14b', 'llama3.2:3b']
+		},
+		{
+			key: 'llm.options.temperature',
+			label: 'Temperature',
+			group: 'Assistant',
+			type: 'number',
+			apply: 'live',
+			note: 'Higher is more inventive.',
+			value: 0.7,
+			yaml_value: 0.7,
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null
+		},
+		{
+			key: 'llm.timeout',
+			label: 'Model timeout',
+			group: 'Assistant',
+			type: 'number',
+			apply: 'restart',
+			note: 'Baked into the shared HTTP client, so this one needs a restart.',
+			value: 60,
+			yaml_value: 60,
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null
+		},
+		{
+			key: 'jarvis.name',
+			label: 'Name',
+			group: 'House',
+			type: 'string',
+			apply: 'live',
+			note: 'What this instance calls itself.',
+			value: 'Jarvis',
+			yaml_value: 'Jarvis',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null
+		},
+		{
+			key: 'jarvis.time_zone',
+			label: 'Time zone',
+			group: 'House',
+			type: 'string',
+			apply: 'live',
+			note: 'Used by every time trigger and by {{ now() }}.',
+			value: 'Europe/London',
+			yaml_value: null,
+			source: 'package',
+			unapplied_reason: null,
+			package: 'house'
+		}
+	];
+
+	return { areas, devices, entities, states, automations, settings, calls: [] };
 }
 
 const SERVICES = {
@@ -618,6 +689,72 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					}
 					broadcast('area_registry_updated', { action: 'remove', area_id: msg.area_id });
 					ok(msg.id, { area_id: msg.area_id, deleted: true });
+					break;
+				}
+
+				// Settings. The console's contract is that `set` answers with the
+				// whole refreshed list plus whether the change is already in
+				// effect, so the page never has to guess or re-fetch.
+				case 'config/settings/list':
+					ok(msg.id, { settings: world.settings, unapplied: [] });
+					break;
+
+				case 'config/settings/set': {
+					const row = world.settings.find((s) => s.key === msg.key);
+					if (!row) {
+						fail(msg.id, 'not_found', `${msg.key} is not an editable setting`);
+						break;
+					}
+					if (row.source === 'package') {
+						fail(msg.id, 'invalid_format', `packages/${row.package}.yaml sets this`);
+						break;
+					}
+					if (row.type === 'number' || row.type === 'integer') {
+						const n = Number(msg.value);
+						if (!Number.isFinite(n)) {
+							fail(msg.id, 'invalid_format', 'Expected a number.');
+							break;
+						}
+						if (row.key === 'llm.options.temperature' && (n < 0 || n > 2)) {
+							fail(msg.id, 'invalid_format', 'Must be between 0.0 and 2.0.');
+							break;
+						}
+						row.value = n;
+					} else {
+						if (!String(msg.value ?? '').trim()) {
+							fail(msg.id, 'invalid_format', 'This cannot be empty.');
+							break;
+						}
+						row.value = msg.value;
+					}
+					row.source = 'overlay';
+					ok(msg.id, {
+						key: row.key,
+						value: row.value,
+						applied: row.apply === 'live',
+						apply: row.apply,
+						restart_required: row.apply !== 'live',
+						settings: world.settings
+					});
+					break;
+				}
+
+				case 'config/settings/reset': {
+					const row = world.settings.find((s) => s.key === msg.key);
+					if (!row) {
+						fail(msg.id, 'not_found', `${msg.key} is not an editable setting`);
+						break;
+					}
+					row.value = row.yaml_value;
+					row.source = row.yaml_value == null ? 'default' : 'yaml';
+					ok(msg.id, {
+						key: row.key,
+						value: row.value,
+						applied: row.apply === 'live',
+						apply: row.apply,
+						restart_required: row.apply !== 'live',
+						settings: world.settings
+					});
 					break;
 				}
 

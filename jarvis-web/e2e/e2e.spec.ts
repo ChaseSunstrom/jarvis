@@ -193,6 +193,48 @@ test('automations page shows last_triggered, toggles and runs now', async ({ pag
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
 
+test('settings page edits a setting, resets it, and is honest about restarts', async ({
+	page
+}) => {
+	await page.goto('/settings');
+	const model = page.getByTestId('setting-llm.model');
+	await expect(model).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('source-llm.model')).toHaveText('yaml');
+
+	// SAVE is disabled until something actually changes — a button that always
+	// looks clickable teaches people to click it and learn nothing.
+	await expect(page.getByTestId('save-llm.model')).toBeDisabled();
+
+	await page.getByTestId('input-llm.model').selectOption('qwen3:14b');
+	await page.getByTestId('save-llm.model').click();
+	await expect(page.getByTestId('source-llm.model')).toHaveText('overlay', { timeout: 10_000 });
+	// A `live` setting must not claim a restart is needed.
+	await expect(page.getByTestId('restart-needed')).toHaveCount(0);
+
+	// A restart-only setting says so, rather than pretending to be in effect.
+	await page.getByTestId('input-llm.timeout').fill('45');
+	await page.getByTestId('save-llm.timeout').click();
+	await expect(page.getByTestId('restart-needed')).toContainText('llm.timeout', {
+		timeout: 10_000
+	});
+
+	// A refused value reports against its own field, not the top of the page.
+	await page.getByTestId('input-llm.options.temperature').fill('9');
+	await page.getByTestId('save-llm.options.temperature').click();
+	await expect(page.getByTestId('error-llm.options.temperature')).toContainText('between');
+
+	// Reset puts the file's value back and drops the override.
+	await page.getByTestId('reset-llm.model').click();
+	await expect(page.getByTestId('source-llm.model')).toHaveText('yaml', { timeout: 10_000 });
+	await expect(page.getByTestId('input-llm.model')).toHaveValue('qwen3:8b');
+
+	// A package owns this one: no way to edit it, and the file to edit is named.
+	await expect(page.getByTestId('input-jarvis.time_zone')).toBeDisabled();
+	await expect(page.getByTestId('package-jarvis.time_zone')).toContainText('packages/house.yaml');
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
 test('automations page creates, edits and deletes an automation', async ({ page }) => {
 	await page.goto('/automations');
 	await expect(page.getByTestId('automation-automation.night_mode')).toBeVisible({
