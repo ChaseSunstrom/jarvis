@@ -276,10 +276,12 @@ jobs:
             echo "JARVIS_HARNESS_URL=http://127.0.0.1:${PORT}"
           } >> "$GITHUB_ENV"
 
-      # A cold AVD creation is several minutes every run. The two-phase pattern
-      # below is the one from the emulator-runner README: on a cache miss, boot
-      # once with a script that does nothing so a snapshot is written, then let
-      # the real run start from it.
+      # Creating the AVD from scratch is several minutes every run, so it is
+      # cached. What is NOT cached is a boot snapshot: the emulator step cold
+      # boots on purpose (see `-no-snapshot-load` below for the crash that
+      # bought), so a snapshot would be a gigabyte of restore time and disk —
+      # on a job that has already run the runner out of space once — in
+      # exchange for nothing.
       - name: AVD cache
         uses: actions/cache@v4
         id: avd-cache
@@ -287,9 +289,12 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ matrix.api-level }}-${{ env.EMULATOR_TARGET }}-${{ env.EMULATOR_ARCH }}-${{ env.EMULATOR_PROFILE }}-v1
+          # v2: v1 caches hold a `default_boot` snapshot from when this job
+          # restored one. Nothing loads it now, so a v1 entry would be a
+          # gigabyte restored on every run for no reason.
+          key: avd-${{ matrix.api-level }}-${{ env.EMULATOR_TARGET }}-${{ env.EMULATOR_ARCH }}-${{ env.EMULATOR_PROFILE }}-v2
 
-      - name: Create AVD and generate a snapshot for caching
+      - name: Create the AVD for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -298,11 +303,13 @@ jobs:
           arch: ${{ env.EMULATOR_ARCH }}
           profile: ${{ env.EMULATOR_PROFILE }}
           force-avd-creation: false
-          # No -no-snapshot-save here: writing the snapshot is the entire point.
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # `-no-snapshot-save`: this step exists to create the AVD, which is
+          # what the cache holds and what is slow to rebuild. The snapshot it
+          # used to write is deliberately not wanted — see the emulator step.
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           emulator-boot-timeout: 1200
           disable-animations: false
-          script: echo "AVD snapshot generated for API ${{ matrix.api-level }}."
+          script: echo "AVD created for API ${{ matrix.api-level }}."
 
       - name: Instrumented suite on the emulator
         id: emulator
@@ -318,7 +325,30 @@ jobs:
           arch: ${{ env.EMULATOR_ARCH }}
           profile: ${{ env.EMULATOR_PROFILE }}
           force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # `-no-snapshot-load` is doing real work here; do not "optimise" it
+          # away. Restoring the cached snapshot made this job fail on EVERY run
+          # once the AVD cache started hitting, with the emulator action's own
+          # boot sequence dying before `script` ever ran:
+          #
+          #   Successfully loaded snapshot 'default_boot' using 6438 ms
+          #   adb ... shell getprop sys.boot_completed -> 1
+          #   Emulator booted.
+          #   adb ... shell input keyevent 82
+          #   java.lang.RuntimeException: android.os.DeadSystemException
+          #
+          # `sys.boot_completed` is part of the state the snapshot restores, so
+          # it reads `1` the instant the snapshot loads and says nothing about
+          # whether THIS boot's system_server is alive. The action's readiness
+          # gate is therefore vacuous on a restore, and the unlock keyevent it
+          # sends immediately afterwards lands on a system that is still coming
+          # back up. That unlock is inside the action, before `script`, so it
+          # cannot be worked around from our side — the only lever we have is
+          # to refuse the snapshot and make the gate meaningful again.
+          #
+          # A cold boot costs about a minute. The AVD cache still earns its
+          # keep: it skips `avdmanager create` and the system-image unpack,
+          # which are the expensive parts.
+          emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           emulator-boot-timeout: 1200
           disable-animations: true
           working-directory: android-app

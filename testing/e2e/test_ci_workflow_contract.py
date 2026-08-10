@@ -453,6 +453,53 @@ def _emulator_program() -> str:
     return program
 
 
+def test_the_instrumented_emulator_step_cold_boots():
+    """`-no-snapshot-load`, or the job fails before a single test runs.
+
+    Restoring the cached snapshot broke this job on every run once the AVD
+    cache started hitting: `sys.boot_completed` is restored as part of the
+    snapshot, so it reads `1` immediately and the emulator action's boot gate
+    proves nothing. The unlock keyevent the action sends next then landed on a
+    system_server that was still coming back, and the step died with
+    `android.os.DeadSystemException` before `script` was reached.
+
+    That unlock is inside the action, so no amount of care in our own script
+    can defend against it. Refusing the snapshot is the only lever there is.
+    """
+    step = next(
+        step
+        for step in _e2e()["jobs"]["android"]["steps"]
+        if step.get("id") == "emulator"
+    )
+    assert "android-emulator-runner" in str(step.get("uses", "")), (
+        "the `emulator` step is no longer the emulator action, so this check "
+        "is looking at the wrong thing"
+    )
+    options = str((step.get("with") or {}).get("emulator-options", ""))
+    assert "-no-snapshot-load" in options, (
+        "the instrumented emulator step must cold boot; restoring a snapshot "
+        "makes the action's readiness check vacuous and the run dies with "
+        "DeadSystemException before any test executes"
+    )
+
+
+def test_no_emulator_step_saves_a_snapshot_nothing_loads():
+    """Every emulator step passes `-no-snapshot-save`.
+
+    Once the instrumented step cold boots, a written snapshot is a gigabyte of
+    disk and restore time buying nothing — on a job that has already run the
+    runner out of space once.
+    """
+    for step in _e2e()["jobs"]["android"]["steps"]:
+        if "android-emulator-runner" not in str(step.get("uses", "")):
+            continue
+        options = str((step.get("with") or {}).get("emulator-options", ""))
+        assert "-no-snapshot-save" in options, (
+            f"emulator step {step.get('name')!r} still writes a boot snapshot, "
+            "but nothing loads one any more"
+        )
+
+
 def test_the_e2e_workflow_has_the_three_jobs_it_claims():
     jobs = _e2e()["jobs"]
     assert set(jobs) == {"harness", "android", "desktop"}, sorted(jobs)
