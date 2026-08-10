@@ -235,3 +235,92 @@ def test_the_companion_route_is_wired_to_both_transports():
     paths = {getattr(route, "path", "") for route in rest.api_router.routes}
     assert "/api/config/companion/list" in paths
     assert "config/companion/list" in websocket.WebSocketHandler._HANDLERS
+
+
+# ===========================================================================
+# The assistant building the house
+# ===========================================================================
+# "Jarvis should be able to create them as well." The interesting half is not
+# that it can, but what each creation is WORTH — and the three answers are
+# deliberately different.
+
+
+async def test_the_assistant_can_make_a_room(jarvis):
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    tool = registry.get("create_area")
+    assert tool is not None and tool.tier == 1, (
+        "an area is a label; creating one cannot do anything to anything"
+    )
+
+    result = await tool.handler({"name": "Study", "aliases": ["office"]}, None)
+    assert result["status"] == "ok"
+    assert jarvis.areas.get_by_name("office") is not None, "the alias did not stick"
+
+
+async def test_creating_an_automation_costs_what_it_will_eventually_do(jarvis):
+    """The tier is a property of the actions, not of the act of writing them.
+
+    An automation is a standing instruction that runs later, unattended. So
+    `create_automation` is gated by exactly the function that decides whether
+    RUNNING one needs a human — anything else would be a way to schedule a
+    door unlock without ever being asked about a door unlock.
+    """
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    tool = registry.get("create_automation")
+    assert tool is not None
+    assert tool.gate is not None, "creating an automation is not gated at all"
+
+    harmless = {"action": [{"service": "light.turn_on", "target": {"entity_id": "light.x"}}]}
+    assert tool.gate(harmless) is False
+
+    for dangerous in (
+        {"action": [{"service": "lock.unlock", "target": {"entity_id": "lock.front"}}]},
+        # A script hides whatever is inside it, so its reach is unknowable from
+        # here and the answer has to be "ask".
+        {"action": [{"service": "script.mystery"}]},
+        # Templated service names are the same problem wearing a disguise.
+        {"action": [{"service": "{{ whatever }}"}]},
+        # Buried inside a choose, which is where a naive walk stops looking.
+        {"action": [{"choose": [{"sequence": [{"service": "lock.unlock"}]}]}]},
+    ):
+        assert tool.gate(dangerous) is True, dangerous
+
+
+async def test_writing_a_new_tool_always_needs_a_human(jarvis):
+    """Not a gate — a tier, and unconditionally.
+
+    A YAML tool can name an endpoint to call. A model that can write its own
+    tools can write itself a way out of every constraint in the registry, so
+    there must be no argument that makes this happen unattended.
+    """
+    from jarvis.llm.tools import TIER_APPROVAL, ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    tool = registry.get("create_tool")
+    assert tool is not None
+    assert tool.tier == TIER_APPROVAL
+    assert tool.gate is None, (
+        "a gate can be argued with by choosing arguments; this must not be"
+    )
+
+
+async def test_there_is_no_way_to_invent_a_device(jarvis):
+    """Devices come from integrations, and pretending otherwise is a lie.
+
+    A bulb exists because a bridge said so. A tool that made a `light.foo` with
+    nothing behind it would produce an entity that controls nothing and cannot
+    be told apart from one that is merely offline.
+    """
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    assert registry.get("create_device") is None
+    assert registry.get("create_entity") is None

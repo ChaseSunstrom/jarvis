@@ -1767,6 +1767,163 @@ def register_builtin_tools(
         tier=TIER_BACKGROUND,
     )
 
+    # --- building the house -------------------------------------------------
+    #
+    # "Jarvis should be able to create them as well." These are the console's
+    # own create endpoints, offered to the assistant, so that setting a house up
+    # is a conversation rather than a form.
+    #
+    # The tier boundary is the whole design, and it is NOT uniform:
+    #
+    #   * An **area** is a label. Creating one cannot do anything to anything,
+    #     and deleting it is one tap. Tier 1.
+    #   * An **automation** is a standing instruction that will act on the house
+    #     later, unattended. Creating one is therefore worth exactly as much as
+    #     what it will eventually do — which `automation/reach.py` already
+    #     computes for RUNNING one, so the same function decides both. An
+    #     automation that turns a lamp on is Tier 1; one that touches a lock, or
+    #     whose reach cannot be determined, needs a human.
+    #   * A **tool** is a new capability, and a YAML tool can name an HTTP
+    #     endpoint. A model that can write its own tools can write itself a way
+    #     out of every constraint in this file, so it is Tier 3 unconditionally
+    #     and the human sees the whole manifest before saying yes.
+    #
+    # There is deliberately no `create_device`. Devices arrive from
+    # integrations — a bulb exists because a bridge told Jarvis about it — and a
+    # tool that pretended otherwise would invent entities that control nothing.
+
+    async def _create_area(args: dict[str, Any], context: Any) -> Any:
+        from ..api.common import ApiError, async_create_area
+
+        name = str(args.get("name") or "").strip()
+        if not name:
+            return {"status": "error", "error": "an area needs a name"}
+        aliases = args.get("aliases")
+        payload: dict[str, Any] = {"name": name}
+        if isinstance(aliases, list):
+            payload["aliases"] = [str(a) for a in aliases if str(a).strip()]
+        try:
+            result = await async_create_area(jarvis, payload)
+        except ApiError as exc:
+            return {"status": "error", "error": exc.message}
+        return {"status": "ok", "area": result.get("area", result)}
+
+    registry.register(
+        name="create_area",
+        description=(
+            "Create a room. Areas are how the user says 'the lights in the "
+            "study', so making one is usually the first step before assigning "
+            "devices to it."
+        ),
+        parameters=schema_object(
+            {
+                "name": {"type": "string", "description": "What the room is called."},
+                "aliases": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Other names for it, e.g. lounge for Living Room.",
+                },
+            },
+            required=["name"],
+        ),
+        handler=_create_area,
+    )
+
+    def _created_automation_is_gated(args: dict[str, Any]) -> bool:
+        """Worth what it will do, not what making it costs."""
+        from ..automation.reach import needs_approval
+
+        return needs_approval(args.get("action"))
+
+    async def _create_automation(args: dict[str, Any], context: Any) -> Any:
+        from ..api.common import ApiError, async_create_automation
+
+        config = {
+            key: args[key]
+            for key in ("alias", "description", "trigger", "condition", "action", "mode")
+            if args.get(key) is not None
+        }
+        if not config.get("alias"):
+            return {"status": "error", "error": "an automation needs an alias"}
+        try:
+            result = await async_create_automation(jarvis, {"automation": config})
+        except ApiError as exc:
+            return {"status": "error", "error": exc.message}
+        return {"status": "ok", "automation": result.get("automation", result)}
+
+    registry.register(
+        name="create_automation",
+        description=(
+            "Write a new automation — a trigger and the actions it runs. Use the "
+            "same shape the user would write by hand: trigger is a list of "
+            "{platform: ...} objects, action a list of {service: ..., target: "
+            "...} objects. Ask for anything you are not sure about rather than "
+            "guessing an entity id."
+        ),
+        parameters=schema_object(
+            {
+                "alias": {"type": "string", "description": "A short name for it."},
+                "description": {"type": "string", "description": "What it is for."},
+                "trigger": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Triggers, e.g. [{platform: time, at: '21:00:00'}].",
+                },
+                "condition": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional conditions that must hold.",
+                },
+                "action": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "What it does, e.g. [{service: light.turn_on, "
+                    "target: {entity_id: light.porch}}].",
+                },
+                "mode": {"type": "string", "description": "single, restart, queued or parallel."},
+            },
+            required=["alias", "trigger", "action"],
+        ),
+        handler=_create_automation,
+        gate=_created_automation_is_gated,
+    )
+
+    async def _create_tool(args: dict[str, Any], context: Any) -> Any:
+        from ..api.common import ApiError, async_create_tool
+
+        try:
+            result = await async_create_tool(jarvis, {"tool": args.get("tool") or args})
+        except ApiError as exc:
+            return {"status": "error", "error": exc.message}
+        return {"status": "ok", "tool": result.get("tool", result)}
+
+    registry.register(
+        name="create_tool",
+        description=(
+            "Teach yourself a new capability by writing a tool manifest. Always "
+            "needs the user's explicit approval, and they see the whole manifest "
+            "first, because a tool can name an endpoint to call."
+        ),
+        parameters=schema_object(
+            {
+                "name": {"type": "string", "description": "snake_case, unique."},
+                "description": {
+                    "type": "string",
+                    "description": "What it does, as the model will read it.",
+                },
+                "service": {"type": "string", "description": "The service to call, domain.name."},
+                "fields": {"type": "object", "description": "Parameters, by name."},
+                "tier": {"type": "integer", "description": "1, 2 or 3."},
+            },
+            required=["name", "description"],
+        ),
+        handler=_create_tool,
+        # Unconditional, and not a `gate`: a gate can be argued with, a tier
+        # cannot. Nothing about the arguments can make writing a new capability
+        # into something that happens without a human.
+        tier=TIER_APPROVAL,
+    )
+
 
 # ===========================================================================
 # YAML-defined tools
