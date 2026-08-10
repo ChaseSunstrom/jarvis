@@ -1,6 +1,7 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.assist.WakeStartPolicy
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.compat.GrapheneCompat
@@ -44,6 +45,8 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
     private lateinit var talkButton: Button
+    private lateinit var listenButton: Button
+    private lateinit var listenReason: TextView
     private lateinit var config: JarvisConfig
 
     /** Everything that is not the orb: transcript, reply, controls, nav. */
@@ -91,6 +94,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // view on the cold-start critical path. The sequence's onComplete
         // refreshes it the moment there is something to see.
         if (!booting) refreshStatusBanner()
+        if (::listenButton.isInitialized) refreshListening()
         openSystemCheckOnceIfSetupIsIncomplete()
     }
 
@@ -277,6 +281,22 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         responseView = JarvisUi.responseView(this)
         talkButton = JarvisUi.pill(this, "TAP TO SPEAK") { toggleTalk() }
 
+        // The always-on listener's actual state, on the screen the user opens.
+        //
+        // Reported three times as "I have to select start listening in the app
+        // before it works". There was nothing here to select: the only control
+        // was a switch in Settings behind a SAVE button, and nothing anywhere
+        // said whether the listener was running. So the app both LOOKED
+        // stateless and gave no way to change the state — and every diagnosis
+        // of it was guesswork about somebody else's phone.
+        listenButton = JarvisUi.ghost(this, "…") { toggleListening() }
+        listenReason = TextView(this).apply {
+            setTextColor(JarvisUi.DIM)
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setPadding(0, JarvisUi.dp(this@MainActivity, 4), 0, 0)
+        }
+
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -304,6 +324,14 @@ class MainActivity : Activity(), JarvisConversation.Ui {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = JarvisUi.dp(this@MainActivity, 22) }
         )
+        col.addView(
+            listenButton,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = JarvisUi.dp(this@MainActivity, 10) }
+        )
+        col.addView(listenReason, fullWidthParams())
         col.addView(nav)
 
         root.addView(
@@ -315,6 +343,67 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             )
         )
         return root
+    }
+
+    private fun fullWidthParams() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+
+    // --- the always-on listener ---------------------------------------------
+
+    /**
+     * Say whether Jarvis is listening for its name, and why not when it is not.
+     *
+     * Every part of this is a sentence somebody needed and did not have. "Off"
+     * is a setting they can turn on from here. "On but Android will not let it
+     * start" names the grant that fixes it. "On but no microphone permission"
+     * is not the same problem and does not send them to the same screen.
+     */
+    private fun refreshListening() {
+        val route = WakeStartPolicy.route(
+            enabled = config.wakeWordEnabled,
+            hasMicPermission = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED,
+            // Asked from a resumed Activity, which is the one caller that may.
+            fromForeground = true,
+            sdkInt = Build.VERSION.SDK_INT,
+            ignoringBatteryOptimizations = GrapheneCompat.isIgnoringBatteryOptimizations(this),
+            canDrawOverlays = GrapheneCompat.canDrawOverlays(this),
+        )
+        val on = config.wakeWordEnabled
+        listenButton.text = if (on) "LISTENING — TAP TO STOP" else "START LISTENING"
+        listenButton.setTextColor(if (on) JarvisUi.ACCENT else JarvisUi.DIM)
+        listenReason.text = when {
+            !on -> "Jarvis is not listening for its name."
+            route == WakeStartPolicy.Route.NEEDS_MIC_PERMISSION ->
+                "Waiting on the microphone permission."
+            route == WakeStartPolicy.Route.NEEDS_A_TAP ->
+                "On, but Android will not restart it by itself — see SYSTEM CHECK."
+            config.wakeWordOnDevice ->
+                "Listening on this phone. Nothing is sent until you say the name."
+            else -> "Listening. Audio streams to your server, which does the detecting."
+        }
+    }
+
+    private fun toggleListening() {
+        if (config.wakeWordEnabled) {
+            config.wakeWordEnabled = false
+            runCatching { WakeWordService.cancelHeartbeat(this) }
+            runCatching { WakeWordService.clearAttention(this) }
+            runCatching { stopService(Intent(this, WakeWordService::class.java)) }
+            refreshListening()
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC_FOR_WAKE)
+            return
+        }
+        config.wakeWordEnabled = true
+        runCatching { WakeWordService.ensureRunning(this, fromForeground = true) }
+        refreshListening()
     }
 
     private fun navSpacer(): View = View(this).apply {
@@ -397,6 +486,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // Either answer changes the checklist, and the banner is the only place
         // the home screen says anything about its own health.
         if (requestCode == REQ_NOTIFICATIONS && !booting) refreshStatusBanner()
+        if (requestCode == REQ_MIC_FOR_WAKE &&
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        ) toggleListening()
     }
 
     private fun openSettings() =
@@ -486,6 +578,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     companion object {
         private const val REQ_MIC = 4712
         private const val REQ_NOTIFICATIONS = 4713
+        private const val REQ_MIC_FOR_WAKE = 4714
 
         /**
          * Spelled out rather than `Manifest.permission.POST_NOTIFICATIONS`,
