@@ -13,6 +13,10 @@ export const TOKENS = {
 	'--jv-panel-solid': '#06121a',
 	'--jv-field': 'rgba(4, 12, 18, 0.85)',
 	'--jv-accent': '#3fd8ff',
+	// Held, not failed: an approval waiting on a human, and an automation whose
+	// run needs one. Distinct from the error red, which means something went
+	// wrong rather than something is waiting.
+	'--jv-warn': '#ffb347',
 	'--jv-accent-deep': '#2bb0d8',
 	'--jv-accent-ink': '#04121a',
 	'--jv-amber': '#ff9e2c',

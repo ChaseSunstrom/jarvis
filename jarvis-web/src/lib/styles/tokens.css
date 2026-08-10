@@ -20,7 +20,6 @@
 	   automation whose run needs one. Distinct from the error red, which
 	   means something went wrong rather than something is waiting. */
 	--jv-warn: #ffb347;
-	--jv-ok: #35d08a;
 	--jv-accent-deep: #2bb0d8;
 	--jv-accent-ink: #04121a;
 	--jv-amber: #ff9e2c;
