@@ -45,6 +45,7 @@ class SettingsActivity : Activity() {
     private lateinit var pipelineField: EditText
     private lateinit var deviceNameField: EditText
 
+    private lateinit var overlayStatus: TextView
     private lateinit var updateStatus: TextView
     private lateinit var prereleaseUpdates: Switch
     private lateinit var wakeEnabled: Switch
@@ -223,6 +224,18 @@ class SettingsActivity : Activity() {
                 JarvisUi.ghost(ctx, "OVERLAY") { openOverlaySetting() },
             )
         )
+        // Said out loud because nothing else does. "Display over other apps" is
+        // the one permission that decides whether a wake word can put Jarvis in
+        // front of whatever you are looking at: without it Android silently
+        // drops the background activity start — silently, so a try/catch never
+        // sees it — and the conversation arrives as a notification you have to
+        // tap. The switch is a Settings trip, not a prompt, so nobody finds it
+        // by accident.
+        overlayStatus = TextView(ctx).apply {
+            setTextColor(JarvisUi.DIM)
+            textSize = 12f
+        }
+        col.addView(overlayStatus)
         col.addView(
             row(
                 JarvisUi.ghost(ctx, "BATTERY") {
@@ -379,6 +392,26 @@ class SettingsActivity : Activity() {
         }
         tokenField.setText(scanned)
         toast("Scanned ${scanned.length} characters")
+    }
+
+    /**
+     * Re-read on resume: granting the permission happens in another app, so the
+     * only moment this can be correct is when we come back from it.
+     */
+    override fun onResume() {
+        super.onResume()
+        if (::overlayStatus.isInitialized) refreshOverlayStatus()
+    }
+
+    private fun refreshOverlayStatus() {
+        val granted = Settings.canDrawOverlays(this)
+        overlayStatus.text = if (granted) {
+            "Display over other apps: on — “Hey Jarvis” can open over whatever you are using."
+        } else {
+            "Display over other apps: OFF — a wake word will arrive as a notification " +
+                "instead of opening over the app you are in. Tap OVERLAY to change it."
+        }
+        overlayStatus.setTextColor(if (granted) JarvisUi.DIM else JarvisUi.GOLD)
     }
 
     // --- updates -----------------------------------------------------------

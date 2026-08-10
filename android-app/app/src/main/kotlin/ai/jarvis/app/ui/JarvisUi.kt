@@ -35,6 +35,15 @@ object JarvisUi {
     const val APPROVE = 0xFF35D08A.toInt()
     const val DENY = 0xFFFF5C5C.toInt()
 
+    /**
+     * Wants attention, but nothing is broken.
+     *
+     * DENY reads as "this failed"; a permission you have simply not granted has
+     * not failed. Matches `--jv-warn` in the console, which marks the same idea
+     * there — held, not wrong.
+     */
+    const val GOLD = 0xFFFFB347.toInt()
+
     fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).toInt()
 
