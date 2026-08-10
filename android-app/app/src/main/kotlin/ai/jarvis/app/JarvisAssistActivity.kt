@@ -1,6 +1,8 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.assist.ToolActivityView
+import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
@@ -39,6 +41,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     private lateinit var captionView: TextView
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
+    private lateinit var toolActivityView: ToolActivityView
     private lateinit var config: JarvisConfig
     private var convo: JarvisConversation? = null
 
@@ -162,6 +165,13 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         }
         root.addView(captionView, fullWidth())
 
+        // What the turn is DOING, above what it is saying. Hidden until there
+        // is something to show, so an ordinary question looks exactly as it did.
+        toolActivityView = ToolActivityView(this).apply {
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 10), 0, 0)
+        }
+        root.addView(toolActivityView, fullWidth())
+
         transcriptView = JarvisUi.transcriptView(this).apply {
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
@@ -242,6 +252,8 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         captionView.setTextColor(JarvisOrbView.Mode.ERROR.color)
         orbView.setMode(JarvisOrbView.Mode.ERROR)
     }
+
+    override fun onTools(run: ToolRun) = toolActivityView.render(run)
 
     override fun onIdle() { if (!isFinishing) finish() }
 

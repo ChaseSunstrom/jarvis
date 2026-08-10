@@ -6,6 +6,10 @@ import ai.jarvis.app.support.JarvisTestRule
 import ai.jarvis.app.support.Screenshots
 import ai.jarvis.app.ui.SiriOrbView
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
@@ -124,6 +128,80 @@ class AssistOverlayTest {
                     root.background,
                 )
             }
+        } finally {
+            onMain { overlay?.detach() }
+        }
+    }
+
+    /**
+     * The two complaints that survived the panel being deleted, asked of pixels.
+     *
+     * "It is too transparent, and there's still a box around the orb." Neither
+     * is answerable by looking for a `background` — the first is about what the
+     * orb paints and the second turned out to be too: the halo grows with the
+     * microphone level, a View's canvas is clipped to its bounds, and a loud
+     * voice pushed the bloom past the edge so the clip cut it into a bright
+     * square. It appeared only WHILE somebody was speaking, which is why no
+     * still of a quiet orb ever showed it.
+     *
+     * So: draw the real view at full amplitude into a bitmap and look. The
+     * corners must be empty and the middle must be solid.
+     */
+    @Test
+    fun theOrbIsSolidInTheMiddleAndEmptyInTheCorners() {
+        var overlay: AssistOverlay? = null
+        try {
+            onMain {
+                overlay = AssistOverlay(context) { }
+                assertTrue(overlay!!.attach())
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val orb = onMainResult { firstOfType(rootOf(overlay!!)!!, SiriOrbView::class.java) }
+            assertNotNull("no orb in the overlay", orb)
+
+            // Let the entrance finish — it fades up over 420 ms, and a bitmap
+            // taken before it does says "transparent" about an orb that is
+            // simply still arriving.
+            SystemClock.sleep(900)
+            // Full microphone level: the loudest the orb ever draws, which is
+            // both the worst case for the halo overflowing and the moment the
+            // user is looking at it.
+            onMain { orb!!.setAmplitude(1f) }
+            SystemClock.sleep(400)
+
+            val shot = onMainResult {
+                val bitmap = Bitmap.createBitmap(orb!!.width, orb.height, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(Color.TRANSPARENT)
+                orb.draw(Canvas(bitmap))
+                bitmap
+            }
+            assertTrue("the orb has no size to draw", shot.width > 8 && shot.height > 8)
+
+            val middle = Color.alpha(shot.getPixel(shot.width / 2, shot.height / 2))
+            assertTrue(
+                "the centre of the orb is $middle/255 opaque — it is a smudge of " +
+                    "whatever is behind it rather than an object on top of it",
+                middle >= 200,
+            )
+
+            // Every corner, one pixel in. Anything drawn here is the square clip
+            // of something that wanted to be round.
+            val inset = 1
+            for ((x, y) in listOf(
+                inset to inset,
+                shot.width - 1 - inset to inset,
+                inset to shot.height - 1 - inset,
+                shot.width - 1 - inset to shot.height - 1 - inset,
+            )) {
+                val corner = Color.alpha(shot.getPixel(x, y))
+                assertTrue(
+                    "the orb paints ${corner}/255 into its corner at ($x, $y). A circle " +
+                        "cannot reach a corner, so this is the box: something is being " +
+                        "clipped to the view's bounds instead of fitting inside them.",
+                    corner == 0,
+                )
+            }
+            shot.recycle()
         } finally {
             onMain { overlay?.detach() }
         }

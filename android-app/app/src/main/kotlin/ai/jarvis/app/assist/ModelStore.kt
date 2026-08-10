@@ -91,9 +91,7 @@ object ModelStore {
             val partial = File(dir, "$name.part")
             try {
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        return "The server answered ${response.code} for $name."
-                    }
+                    if (!response.isSuccessful) return explain(response.code, name, base)
                     val body = response.body ?: return "The server sent nothing for $name."
                     partial.outputStream().use { out -> body.byteStream().copyTo(out) }
 
@@ -119,6 +117,28 @@ object ModelStore {
             }
         }
         return null
+    }
+
+    /**
+     * What a failed download means, in a sentence somebody can act on.
+     *
+     * "The server answered 404" was the whole message, and it was reported as
+     * exactly that: *"I can't download the models either, I get a 404 error on
+     * my phone."* A 404 here has one likely cause and one fix — the server is
+     * older than the model mirror — and saying so is the difference between a
+     * setting somebody can finish and one they abandon.
+     */
+    private fun explain(code: Int, name: String, base: String): String = when (code) {
+        404 ->
+            "$base has no model mirror (404). Update Jarvis on your server — the " +
+                "mirror is what lets the phone download wake-word models without " +
+                "talking to anyone else."
+        401, 403 ->
+            "$base refused the token (${code}). Check the token in Settings."
+        502, 503, 504 ->
+            "Your server could not fetch $name (${code}). It needs internet access " +
+                "the first time, to mirror the models; after that it serves them itself."
+        else -> "The server answered $code for $name."
     }
 
     private fun sha256(file: File): String {

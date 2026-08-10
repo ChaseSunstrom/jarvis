@@ -4,7 +4,8 @@ import {
 	backendProblem,
 	toWsUrl,
 	normalizeKind,
-	mediaProxyTarget
+	mediaProxyTarget,
+	modelProxyTarget
 } from './backend';
 
 describe('resolveBackend', () => {
@@ -150,5 +151,53 @@ describe('mediaProxyTarget', () => {
 		expect(mediaProxyTarget('/api/tts_proxy/a.wav', cfg.url)).toBe(
 			'https://ha.example/api/tts_proxy/a.wav'
 		);
+	});
+});
+
+describe('modelProxyTarget', () => {
+	const BASE = 'http://backend:8123';
+
+	// The bug: the phone asks its own Jarvis for wake-word weights at
+	// /api/models/<name>, and the URL people configure is the console's. The
+	// console had no such route, so the download 404'd and the on-device wake
+	// word could not be set up at all.
+	it('resolves a model name against the backend', () => {
+		expect(modelProxyTarget('melspectrogram.onnx', BASE)).toBe(
+			'http://backend:8123/api/models/melspectrogram.onnx'
+		);
+		expect(modelProxyTarget('hey_jarvis_v0.1.onnx', BASE)).toBe(
+			'http://backend:8123/api/models/hey_jarvis_v0.1.onnx'
+		);
+		// The catalogue listing rides the same route.
+		expect(modelProxyTarget('list', BASE)).toBe('http://backend:8123/api/models/list');
+	});
+
+	it('keeps a sub-path backend prefix', () => {
+		expect(modelProxyTarget('embedding_model.onnx', 'http://backend:8123/jarvis/')).toBe(
+			'http://backend:8123/jarvis/api/models/embedding_model.onnx'
+		);
+	});
+
+	it('refuses anything that is not one plain file name', () => {
+		for (const name of [
+			'',
+			'..',
+			'../../api/states',
+			'a/b',
+			'%2e%2e',
+			'.hidden',
+			'a b.onnx',
+			'a?x=1',
+			'a#b',
+			'x'.repeat(65)
+		]) {
+			expect(modelProxyTarget(name, BASE), JSON.stringify(name)).toBeNull();
+		}
+	});
+
+	it('rejects an unusable base url, and one carrying credentials', () => {
+		expect(modelProxyTarget('a.onnx', '')).toBeNull();
+		expect(modelProxyTarget('a.onnx', 'not a url')).toBeNull();
+		expect(modelProxyTarget('a.onnx', 'http://user:pass@backend:8123')).toBeNull();
 	});
 });

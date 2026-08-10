@@ -354,10 +354,63 @@ def check_the_clock_runs(android: Path) -> int:
     return failures
 
 
+def check_the_orb_is_solid_and_fits(android: Path) -> int:
+    """The two complaints that outlived the panel: washed out, and boxed in.
+
+    **Washed out.** Three translucent gradients screen-blended over whatever is
+    behind them have nothing to add to, so over a white app the orb was a pale
+    smudge. The fix is structural rather than a tuned alpha: a nearly opaque
+    ball is drawn inside the layer FIRST, and the colours are lit against it.
+    An orb with no substrate is transparent again no matter what the other
+    alphas say, so the draw order is what is pinned here.
+
+    **Boxed in.** A View's canvas is clipped to its bounds by its parent, and
+    the halo is the only thing here that can exceed them — it grows with the
+    microphone level, and at full level it reached ~1.29x the half-width and got
+    cut into a bright square. The clamp is the fix, and it has to stay.
+    """
+    path = android / "app/src/main/kotlin/ai/jarvis/app/ui/SiriOrbView.kt"
+    if not path.is_file():
+        print(f"FAIL  {path} is missing")
+        return 1
+    src = path.read_text(encoding="utf-8")
+    failures = 0
+
+    if "min(radius * (HALO_FRACTION + 0.25f * smoothed), span)" not in src:
+        print(
+            "FAIL  the halo is no longer clamped to the view. At full microphone "
+            "level it exceeds the bounds and the parent's clip turns it into a box."
+        )
+        failures += 1
+
+    order = src.find("drawSubstrate(canvas")
+    blobs = src.find("drawBlob(canvas")
+    if order < 0:
+        print("FAIL  there is no substrate; the orb is transparent over a bright app")
+        failures += 1
+    elif not (0 < order < blobs):
+        print("FAIL  the substrate is not drawn before the blobs, so nothing is lit")
+        failures += 1
+
+    if "const val SUBSTRATE_ALPHA = 0.90f" not in src:
+        print("FAIL  the substrate is no longer nearly opaque at the middle")
+        failures += 1
+
+    # It must be inside the layer, or it grounds the whole window rather than
+    # the orb — a dark rectangle over the app behind, which is the box again.
+    layer = src.find("canvas.saveLayer(null, null)")
+    restore = src.find("canvas.restoreToCount(layer)")
+    if not (0 < layer < order < restore):
+        print("FAIL  the substrate is drawn outside the additive layer")
+        failures += 1
+    return failures
+
+
 def main() -> int:
     android = Path(__file__).resolve().parents[1]
     failures = (
         check_palette(android)
+        + check_the_orb_is_solid_and_fits(android)
         + check_every_mode_has_a_tone(android)
         + check_window_flags(android)
         + check_the_fallback_survives(android)

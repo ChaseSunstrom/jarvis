@@ -36,6 +36,16 @@ class JarvisConversation(
         fun onError(message: String)
         /** Conversation ended (inactivity/stop): no mic running anymore. */
         fun onIdle()
+
+        /**
+         * What the turn is touching, as it touches it.
+         *
+         * Called with the same [ToolRun] instance every time — it is a live
+         * model, not a snapshot — so a surface that draws it should read it
+         * immediately rather than keeping it for later. Defaulted: a surface
+         * with nowhere to put this is a valid surface.
+         */
+        fun onTools(run: ToolRun) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -45,6 +55,15 @@ class JarvisConversation(
 
     /** Non-null only while this phone is transcribing a turn itself. */
     private var localStt: LocalTranscriber? = null
+
+    /** What the current turn has called. Cleared when a new turn begins. */
+    private val tools = ToolRun()
+
+    /** Wipes the tool rows a while after the last one finished. See [ToolRun.holdMs]. */
+    private val clearTools = Runnable {
+        tools.clear()
+        ui.onTools(tools)
+    }
 
     /**
      * Headset discovery. Started with the conversation and stopped with it, so
@@ -269,6 +288,8 @@ class JarvisConversation(
         main.removeCallbacks(inactivity)
         main.removeCallbacks(handshake)
         main.removeCallbacks(turnCap)
+        main.removeCallbacks(clearTools)
+        tools.clear()
         stopLocalStt()
         mic?.stop(); mic = null
         tts?.stop(); tts = null
@@ -293,9 +314,12 @@ class JarvisConversation(
         aboveSince = 0L
         turnActive = true
         main.removeCallbacks(turnCap)
+        main.removeCallbacks(clearTools)
+        tools.clear()
         main.post {
             ui.onTranscript("")
             ui.onResponse("")
+            ui.onTools(tools)
         }
         client?.startTurn()
     }
@@ -415,6 +439,35 @@ class JarvisConversation(
     override fun onError(message: String) {
         ui.onError(message)
         main.postDelayed({ stopWith(idle = true) }, 2500)
+    }
+
+    override fun onToolStarted(
+        name: String,
+        round: Int,
+        index: Int,
+        total: Int,
+        arguments: List<Pair<String, String>>,
+    ) {
+        main.removeCallbacks(clearTools)
+        tools.started(name, round, index, total, ToolRun.summarise(arguments))
+        ui.onTools(tools)
+    }
+
+    override fun onToolFinished(
+        name: String,
+        round: Int,
+        index: Int,
+        total: Int,
+        ok: Boolean,
+        error: String?,
+        durationMs: Int,
+    ) {
+        main.removeCallbacks(clearTools)
+        tools.finished(name, round, index, total, ok, error, durationMs)
+        ui.onTools(tools)
+        // Leave the last round up for a moment once nothing is running, so what
+        // just happened can be read. A failure gets longer — see ToolRun.holdMs.
+        if (!tools.running) main.postDelayed(clearTools, tools.holdMs())
     }
 
     companion object {

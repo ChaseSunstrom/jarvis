@@ -549,6 +549,10 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             main.postDelayed({ endOverlayConversation(giveMicBack = true) }, ERROR_LINGER_MS)
         }
 
+        override fun onTools(run: ToolRun) {
+            overlay?.setTools(run)
+        }
+
         override fun onIdle() {
             endOverlayConversation(giveMicBack = true)
         }

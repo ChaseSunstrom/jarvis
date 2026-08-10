@@ -55,6 +55,7 @@ class AssistOverlay(
     private var caption: TextView? = null
     private var transcript: TextView? = null
     private var response: TextView? = null
+    private var toolActivity: ToolActivityView? = null
 
     val isShowing: Boolean get() = root != null
 
@@ -107,6 +108,7 @@ class AssistOverlay(
         caption = null
         transcript = null
         response = null
+        toolActivity = null
         val windows = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
         try {
             windows?.removeView(view)
@@ -135,6 +137,18 @@ class AssistOverlay(
     fun setResponse(text: String) {
         response?.text = text
         response?.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * What the turn is touching, under the orb.
+     *
+     * The overlay is the surface that is up when a wake word starts a turn from
+     * a locked phone on a shelf — which is exactly when nobody can see a console
+     * — so it is the surface that most needs to say "this just unlocked the
+     * front door" rather than only speaking a sentence about it.
+     */
+    fun setTools(run: ToolRun) {
+        toolActivity?.render(run)
     }
 
     // --- construction --------------------------------------------------------
@@ -176,6 +190,15 @@ class AssistOverlay(
         caption = captionView
         legible(captionView)
         column.addView(captionView, fullWidth())
+
+        // Between the caption and the words: what Jarvis is DOING sits above
+        // what it is saying, because the doing is what a person in the room
+        // needs to be able to stop.
+        val tools = ToolActivityView(context).apply {
+            setPadding(0, JarvisUi.dp(context, 10), 0, 0)
+        }
+        toolActivity = tools
+        column.addView(tools, fullWidth())
 
         val transcriptView = JarvisUi.transcriptView(context).apply {
             maxLines = 3

@@ -111,6 +111,43 @@ export function mediaProxyTarget(path: string, baseUrl: string): string | null {
 }
 
 /**
+ * A model file name the mirror is allowed to be asked for.
+ *
+ * One path segment, and a conservative alphabet. `..` cannot appear, so a
+ * traversal cannot be spelled — and nor can `%2e%2e`, because a percent sign is
+ * not in the alphabet either and SvelteKit has already decoded the segment by
+ * the time it gets here. The real authority is jarvis-core, which serves only
+ * the names in its own catalogue; this is the door, not the lock.
+ */
+const MODEL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+
+/**
+ * Where a model download goes, or null when the name is not one.
+ *
+ * The phone asks its own Jarvis for wake-word weights at `/api/models/<name>`.
+ * Pointed at jarvis-core that is a real route; pointed at the console — which
+ * is the URL a person types, because it is the one with a web page on it — it
+ * was a 404, and the reported symptom was exactly that: "I can't download the
+ * models, I get a 404 error on my phone".
+ *
+ * So the console serves the same path. Unlike [mediaProxyTarget] this one does
+ * NOT get the server-held admin token attached: the caller presents its own
+ * bearer token and jarvis-core validates it, the same arrangement the `/ws`
+ * relay uses for a client that brings its own. See `api/models/[name]`.
+ */
+export function modelProxyTarget(name: string, baseUrl: string): string | null {
+	if (!MODEL_NAME.test(name)) return null;
+	let base: URL;
+	try {
+		base = new URL(baseUrl);
+	} catch {
+		return null;
+	}
+	if (base.username || base.password) return null;
+	return `${base.href.replace(/\/+$/, '')}/api/models/${name}`;
+}
+
+/**
  * Origin control for the `/ws` relay.
  *
  * The relay attaches the server-held backend token to whatever connects, so a

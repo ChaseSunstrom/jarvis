@@ -113,6 +113,34 @@ class AssistPipelineClient(
          * existing push-to-talk callers need no change.
          */
         fun onWakeWord(name: String) {}
+
+        /**
+         * A tool call started, and then finished.
+         *
+         * Bus events rather than pipeline events — jarvis-core fires them from
+         * the agent loop, so they arrive on the same socket but in a different
+         * envelope. Defaulted: a caller that draws no activity panel wants
+         * neither, and the subscription costs one frame at the start of a turn.
+         */
+        fun onToolStarted(
+            name: String,
+            round: Int,
+            index: Int,
+            total: Int,
+            arguments: List<Pair<String, String>>,
+        ) {
+        }
+
+        fun onToolFinished(
+            name: String,
+            round: Int,
+            index: Int,
+            total: Int,
+            ok: Boolean,
+            error: String?,
+            durationMs: Int,
+        ) {
+        }
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -128,6 +156,8 @@ class AssistPipelineClient(
     private var pipelineId: String? = null
     private var listRequestId = -1
     private var authed = false
+    /** True once this connection has asked to hear about tool calls. */
+    private var subscribed = false
 
     /** Server kinds still to try for this connection, in order. */
     private var attempts: List<ServerKind> = emptyList()
@@ -167,6 +197,8 @@ class AssistPipelineClient(
         Log.i(TAG, "connecting to $kind at $url")
         authed = false
         opened = false
+        // A new socket has none of the old one's subscriptions.
+        subscribed = false
         ws = http.newWebSocket(
             Request.Builder()
                 .url(url)
@@ -226,9 +258,36 @@ class AssistPipelineClient(
             "and that the phone is on the same network or VPN."
     }
 
+    /**
+     * Ask to be told about tool calls, once per connection.
+     *
+     * Bus subscriptions, not pipeline events: jarvis-core fires these from the
+     * agent loop around each tool call, so they are the only way to know what a
+     * turn is actually touching while it touches it. Sent before the run so no
+     * call in the first round is missed.
+     *
+     * Failure is not handled and does not need to be. An older jarvis-core
+     * answers with an error result and fires nothing, which is exactly the
+     * behaviour before this existed: the panel stays empty.
+     */
+    private fun subscribeToToolCalls() {
+        if (subscribed) return
+        subscribed = true
+        for (event in listOf(ToolRun.EVENT_STARTED, ToolRun.EVENT_FINISHED)) {
+            ws?.send(
+                JSONObject()
+                    .put("id", nextId.getAndIncrement())
+                    .put("type", "subscribe_events")
+                    .put("event_type", event)
+                    .toString()
+            )
+        }
+    }
+
     /** Begin a turn: resolve the pipeline (once) then run stt->tts. */
     fun startTurn() {
         if (!authed) return
+        subscribeToToolCalls()
         if (pipelineId == null && listRequestId < 0) {
             pendingRunAfterList = true
             listPipelines()
@@ -385,6 +444,15 @@ class AssistPipelineClient(
 
     private fun handleEvent(event: JSONObject) {
         val data = event.optJSONObject("data")
+        // Two shapes arrive down this one channel. A pipeline event names itself
+        // with `type`; a bus event — which is what a tool call is — names itself
+        // with `event_type`. Checking the bus key first is what keeps a future
+        // bus event called "run-end" from being mistaken for the pipeline's.
+        val busType = event.optString("event_type")
+        if (busType.isNotEmpty()) {
+            handleBusEvent(busType, data)
+            return
+        }
         when (event.optString("type")) {
             "run-start" -> {
                 val handler = data?.optJSONObject("runner_data")
@@ -443,6 +511,60 @@ class AssistPipelineClient(
                 post { callbacks.onError("$code: $message") }
             }
         }
+    }
+
+    /** What the agent loop is doing, as it does it. See [ToolRun]. */
+    private fun handleBusEvent(type: String, data: JSONObject?) {
+        if (data == null) return
+        when (type) {
+            ToolRun.EVENT_STARTED -> {
+                val name = data.optString("name").ifEmpty { "tool" }
+                post {
+                    callbacks.onToolStarted(
+                        name,
+                        data.optInt("round", 1),
+                        data.optInt("index", 0),
+                        data.optInt("total", 1),
+                        flatten(data.optJSONObject("arguments")),
+                    )
+                }
+            }
+            ToolRun.EVENT_FINISHED -> {
+                val name = data.optString("name").ifEmpty { "tool" }
+                post {
+                    callbacks.onToolFinished(
+                        name,
+                        data.optInt("round", 1),
+                        data.optInt("index", 0),
+                        data.optInt("total", 1),
+                        data.optBoolean("ok", true),
+                        data.optString("error").takeIf { it.isNotEmpty() && it != "null" },
+                        data.optInt("duration_ms", 0),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * A tool call's arguments as ordered `key to value` pairs.
+     *
+     * Order matters and is preserved: the first argument of a tool call is
+     * almost always the interesting one — the entity, the area, the query — and
+     * only the first few fit on a row. Nested values are re-serialised rather
+     * than walked, because the row has one line either way.
+     */
+    private fun flatten(args: JSONObject?): List<Pair<String, String>> {
+        if (args == null) return emptyList()
+        val out = ArrayList<Pair<String, String>>(args.length())
+        val keys = args.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val value = args.opt(key)
+            if (value == null || value === JSONObject.NULL) continue
+            out.add(key to value.toString())
+        }
+        return out
     }
 
     /**

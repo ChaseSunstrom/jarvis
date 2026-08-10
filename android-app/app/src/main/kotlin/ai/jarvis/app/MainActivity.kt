@@ -1,6 +1,8 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.assist.ToolActivityView
+import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeStartPolicy
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
@@ -44,6 +46,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private lateinit var orbView: JarvisOrbView
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
+    private lateinit var toolActivityView: ToolActivityView
     private lateinit var talkButton: Button
     private lateinit var listenButton: Button
     private lateinit var listenReason: TextView
@@ -279,6 +282,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         bannerSlot = FrameLayout(this)
         transcriptView = JarvisUi.transcriptView(this)
         responseView = JarvisUi.responseView(this)
+        toolActivityView = ToolActivityView(this)
         talkButton = JarvisUi.pill(this, "TAP TO SPEAK") { toggleTalk() }
 
         // The always-on listener's actual state, on the screen the user opens.
@@ -314,6 +318,13 @@ class MainActivity : Activity(), JarvisConversation.Ui {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 14) }
+        )
+        col.addView(
+            toolActivityView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
         )
         col.addView(transcriptView)
         col.addView(responseView)
@@ -470,6 +481,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         }
         transcriptView.text = ""
         responseView.text = ""
+        toolActivityView.hide()
         talkButton.text = "LISTENING… (TAP TO STOP)"
         convo = JarvisConversation(this, config, this, inactivityMs = 12000L).also { it.start() }
     }
@@ -556,6 +568,8 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         orbView.setStateLabel("ERROR")
         orbView.setMode(JarvisOrbView.Mode.ERROR)
     }
+
+    override fun onTools(run: ToolRun) = toolActivityView.render(run)
 
     override fun onIdle() = showIdle()
 

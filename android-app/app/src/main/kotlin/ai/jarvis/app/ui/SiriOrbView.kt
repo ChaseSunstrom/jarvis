@@ -91,6 +91,9 @@ class SiriOrbView @JvmOverloads constructor(
         xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
     }
     private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** No xfermode: this is the ground, not one of the things blended onto it. */
+    private val substratePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
     }
@@ -206,12 +209,13 @@ class SiriOrbView @JvmOverloads constructor(
         val radius = span * BALL_FRACTION * (0.4f + 0.6f * arrive) * (1f + 0.16f * smoothed)
         val alpha = arrive
 
-        drawHalo(canvas, cx, cy, radius, alpha)
+        drawHalo(canvas, cx, cy, radius, alpha, span)
 
         // One layer for the additive pass. Screen-blending straight onto the
         // window would brighten whatever app is behind the overlay, not the
         // blobs — the layer is what confines the blend to the orb.
         val layer = canvas.saveLayer(null, null)
+        drawSubstrate(canvas, cx, cy, radius, alpha)
         for (i in 0 until SiriPalette.BLOB_COUNT) {
             drawBlob(canvas, cx, cy, radius, alpha, i)
         }
@@ -219,6 +223,35 @@ class SiriOrbView @JvmOverloads constructor(
         canvas.restoreToCount(layer)
 
         drawRim(canvas, cx, cy, radius, alpha)
+    }
+
+    /**
+     * The dark ball the colours live inside.
+     *
+     * Without it the orb is three translucent gradients and a rim, and over a
+     * white app — a browser, a chat, a photo — that is a pale smudge rather
+     * than an object. Reported as "the orb is too transparent", and the cause
+     * is structural rather than a matter of tuning any one alpha: additive
+     * blending has nothing to add to, so every part of it stayed as bright as
+     * whatever was behind it.
+     *
+     * Drawn INSIDE the layer and BEFORE the blobs, with no xfermode, so it is
+     * the ground they screen against — which is what makes the colours read as
+     * lit rather than as washed. Its own edge fades to nothing well before the
+     * ball's radius, so the orb still has no hard outline.
+     */
+    private fun drawSubstrate(canvas: Canvas, cx: Float, cy: Float, radius: Float, alpha: Float) {
+        substratePaint.shader = RadialGradient(
+            cx, cy, radius,
+            intArrayOf(
+                withAlpha(SUBSTRATE_COLOR, SUBSTRATE_ALPHA * alpha),
+                withAlpha(SUBSTRATE_COLOR, SUBSTRATE_ALPHA * 0.92f * alpha),
+                withAlpha(SUBSTRATE_COLOR, 0f),
+            ),
+            SUBSTRATE_STOPS,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(cx, cy, radius, substratePaint)
     }
 
     private fun drawBlob(canvas: Canvas, cx: Float, cy: Float, radius: Float, alpha: Float, i: Int) {
@@ -264,8 +297,23 @@ class SiriOrbView @JvmOverloads constructor(
     }
 
     /** The bloom outside the ball, which is what makes it read as light. */
-    private fun drawHalo(canvas: Canvas, cx: Float, cy: Float, radius: Float, alpha: Float) {
-        val haloRadius = radius * (HALO_FRACTION + 0.25f * smoothed)
+    private fun drawHalo(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        alpha: Float,
+        span: Float,
+    ) {
+        // Clamped to the view, and this is the whole of "there is still a box
+        // around the orb". A View's canvas is clipped to its bounds by its
+        // parent, and this halo is the only thing here that can exceed them:
+        // at 1.55x the ball plus a quarter more with the microphone level, a
+        // loud voice pushed it to ~1.29x the half-width and the clip cut it
+        // into a bright SQUARE. Which meant the box appeared exactly while
+        // somebody was talking — the seconds they were looking at it — and was
+        // not there in any screenshot taken of a quiet orb.
+        val haloRadius = min(radius * (HALO_FRACTION + 0.25f * smoothed), span)
         haloPaint.shader = RadialGradient(
             cx, cy, haloRadius,
             intArrayOf(
@@ -310,15 +358,45 @@ class SiriOrbView @JvmOverloads constructor(
         private const val CORE_FRACTION = 0.34f
         private const val HALO_FRACTION = 1.55f
 
-        private const val BLOB_ALPHA = 0.85f
-        private const val CORE_ALPHA = 0.92f
-        private const val HALO_ALPHA = 0.30f
-        private const val RIM_ALPHA = 0.55f
-        private const val RIM_WIDTH_DP = 1.2f
+        private const val BLOB_ALPHA = 0.92f
+        private const val CORE_ALPHA = 0.95f
+
+        /**
+         * The bloom, and the rim.
+         *
+         * Both raised with the substrate rather than instead of it. The halo is
+         * the only part that is *meant* to be faint — it is light in the air —
+         * but at 0.30 over a bright app it was invisible, which left the orb
+         * with a hard edge and no glow.
+         */
+        private const val HALO_ALPHA = 0.42f
+        private const val RIM_ALPHA = 0.72f
+        private const val RIM_WIDTH_DP = 1.4f
+
+        /**
+         * The ball behind the colours. Deep navy rather than black: black over a
+         * dark wallpaper is a hole, and this has to read as an object on both.
+         */
+        private val SUBSTRATE_COLOR = 0xFF060B16.toInt()
+
+        /**
+         * Nearly opaque at the middle. This is the number that answers "too
+         * transparent": at 0 the orb was whatever was behind it, tinted.
+         */
+        private const val SUBSTRATE_ALPHA = 0.90f
 
         private val BLOB_STOPS = floatArrayOf(0f, 0.45f, 1f)
         private val CORE_STOPS = floatArrayOf(0f, 1f)
         private val HALO_STOPS = floatArrayOf(0f, 0.55f, 1f)
+
+        /**
+         * Flat to 78% of the ball, then out to nothing.
+         *
+         * The fade has to happen inside the ball's own radius or the substrate
+         * gets a visible circular edge, which is the "box" complaint in a
+         * rounder form.
+         */
+        private val SUBSTRATE_STOPS = floatArrayOf(0f, 0.78f, 1f)
 
         private val ORBIT_RATES = floatArrayOf(1f, 0.73f, 1.31f)
         private val ORBIT_OFFSETS = floatArrayOf(0f, TWO_PI / 3f, 2f * TWO_PI / 3f)
