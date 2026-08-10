@@ -129,19 +129,17 @@ class AssistOverlay(
     // --- construction --------------------------------------------------------
 
     private fun build(): ViewGroup {
-        val pad = JarvisUi.dp(context, 18)
+        val pad = JarvisUi.dp(context, 8)
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(pad, pad, pad, pad)
-            background = JarvisUi.panel(
-                context,
-                // Darker and more opaque than the in-app panels: this one sits
-                // over arbitrary content, and a translucent card over a white
-                // app is unreadable.
-                fill = 0xF00A0F16.toInt(),
-                stroke = 0x553FD8FF,
-            ).apply { cornerRadius = JarvisUi.dp(context, 26).toFloat() }
+            // NO background. This was a panel — a dark rounded card with a cyan
+            // stroke — and it read as exactly what it was: a box with an orb
+            // inside it, sitting on someone's home screen. The orb is the
+            // surface; anything drawn behind it is a frame around the thing
+            // people actually wanted. Legibility comes from the orb's own glow
+            // and from a shadow on the text, not from a slab.
             setOnClickListener { onDismiss() }
         }
 
@@ -165,6 +163,7 @@ class AssistOverlay(
             setPadding(0, JarvisUi.dp(context, 8), 0, 0)
         }
         caption = captionView
+        legible(captionView)
         column.addView(captionView, fullWidth())
 
         val transcriptView = JarvisUi.transcriptView(context).apply {
@@ -178,6 +177,8 @@ class AssistOverlay(
             ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
         }
+        legible(transcriptView)
+        legible(responseView)
         transcript = transcriptView
         response = responseView
         column.addView(transcriptView, fullWidth())
@@ -190,6 +191,23 @@ class AssistOverlay(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT,
     )
+
+    /**
+     * What replaces the card: a hard shadow under the glyphs.
+     *
+     * Text with no ground behind it has to survive being drawn over a white
+     * app, a photo, or a video. A dark blurred shadow does that at a fraction
+     * of the visual weight of a panel, and it is what every system overlay on
+     * the platform does for the same reason.
+     */
+    private fun legible(view: TextView) {
+        view.setShadowLayer(
+            JarvisUi.dp(context, 6).toFloat(),
+            0f,
+            JarvisUi.dp(context, 1).toFloat(),
+            0xF0000308.toInt(),
+        )
+    }
 
     private fun params(): WindowManager.LayoutParams {
         val screen = context.resources.displayMetrics.widthPixels

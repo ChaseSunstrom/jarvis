@@ -334,6 +334,8 @@ REQUIREMENT_TABLE = [
     ("accessibility", False, "ACTION_ACCESSIBILITY_SETTINGS", False),
     ("notifications", False, "ACTION_NOTIFICATION_LISTENER_SETTINGS", False),
     ("battery", True, "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", True),
+    ("post_notifications", True, "ACTION_APPLICATION_DETAILS_SETTINGS", True),
+    ("full_screen", False, "ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT", True),
     ("overlay", False, "ACTION_MANAGE_OVERLAY_PERMISSION", True),
     ("exact_alarms", False, "ACTION_REQUEST_SCHEDULE_EXACT_ALARM", True),
 ]
@@ -347,6 +349,7 @@ SETTINGS_ACTIONS = {
     "ACTION_NOTIFICATION_LISTENER_SETTINGS": "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS",
     "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS": "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
     "ACTION_MANAGE_OVERLAY_PERMISSION": "android.settings.action.MANAGE_OVERLAY_PERMISSION",
+    "ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT": "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT",
     "ACTION_REQUEST_SCHEDULE_EXACT_ALARM": "android.settings.REQUEST_SCHEDULE_EXACT_ALARM",
 }
 
@@ -359,6 +362,8 @@ STATUS_FIELDS = [
     "batteryExempt",
     "batteryRestricted",
     "canDrawOverlays",
+    "postNotifications",
+    "fullScreenIntents",
     "exactAlarms",
 ]
 
@@ -377,6 +382,13 @@ def evaluate(status: dict):
         # The other half of "does listening survive a reboot", and the whole
         # of "does the wake word draw an orb over the app you are in".
         "overlay": status["canDrawOverlays"],
+        # Runtime since Android 13 and never requested until now, which is why a
+        # wake word could not put anything on screen at all.
+        "post_notifications": status["postNotifications"],
+        # Android 14 grants this at install only to calling and alarm apps.
+        # Without it setFullScreenIntent silently becomes a heads-up, and the
+        # conversation waits in the shade for a tap.
+        "full_screen": status["fullScreenIntents"],
         "exact_alarms": status["exactAlarms"],
     }
     out = []
@@ -832,6 +844,8 @@ def test_the_checklist_covers_exactly_the_documented_surface():
         "accessibility",
         "notifications",
         "battery",
+        "post_notifications",
+        "full_screen",
         "overlay",
         "exact_alarms",
     ], ids
@@ -849,6 +863,8 @@ def test_verdicts_follow_the_status_for_every_combination():
         assert by_id["notifications"]["satisfied"] == status["notificationListener"]
         assert by_id["exact_alarms"]["satisfied"] == status["exactAlarms"]
         assert by_id["overlay"]["satisfied"] == status["canDrawOverlays"]
+        assert by_id["post_notifications"]["satisfied"] == status["postNotifications"]
+        assert by_id["full_screen"]["satisfied"] == status["fullScreenIntents"]
         # Battery needs BOTH: exempt from doze and not background-restricted.
         assert by_id["battery"]["satisfied"] == (
             status["batteryExempt"] and not status["batteryRestricted"]
@@ -874,12 +890,21 @@ def test_all_granted_leaves_nothing_unsatisfied():
 def test_nothing_granted_flags_every_essential():
     reqs = evaluate(all_status(False))
     missing = [r["id"] for r in reqs if r["essential"] and not r["satisfied"]]
-    assert missing == ["network", "microphone", "battery"], missing
+    assert missing == ["network", "microphone", "battery", "post_notifications"], missing
 
 
 def test_essential_and_optional_are_split_the_way_the_docs_claim():
     reqs = {r["id"]: r["essential"] for r in evaluate(all_status(False))}
     assert reqs["network"] and reqs["microphone"] and reqs["battery"]
+    # Essential: without it Jarvis cannot show the listening notification, the
+    # wake-word alert, or a Tier-3 approval — and an approval that cannot be
+    # delivered times out and is denied.
+    assert reqs["post_notifications"]
+    # NOT essential: "display over other apps" makes Jarvis draw the orb
+    # directly, which needs no full-screen intent at all. Only one of the two
+    # has to be granted, so neither can be the one that fails the checklist.
+    assert not reqs["full_screen"]
+    assert not reqs["overlay"]
     assert not reqs["assistant"]
     assert not reqs["accessibility"]
     assert not reqs["notifications"]

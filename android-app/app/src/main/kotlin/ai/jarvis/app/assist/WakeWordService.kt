@@ -3,6 +3,7 @@ package ai.jarvis.app.assist
 import ai.jarvis.app.JarvisAssistActivity
 import ai.jarvis.app.ListenTrampolineActivity
 import ai.jarvis.app.R
+import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import android.Manifest
@@ -558,10 +559,22 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             open,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // Whether the takeover will actually happen, asked before claiming it.
+        // Android 14 grants USE_FULL_SCREEN_INTENT at install only to calling
+        // and alarm apps; everyone else holds the permission, is silently
+        // downgraded to a heads-up, and gets a notification that waits in the
+        // shade for a tap. That is the reported symptom, and a wake word that
+        // says "heard you" while doing nothing visible is worse than one that
+        // says what is stopping it.
+        val willTakeOver = GrapheneCompat.canUseFullScreenIntent(this)
         val note = Notification.Builder(this, CHANNEL_ALERT)
             .setSmallIcon(R.drawable.ic_jarvis_status)
             .setContentTitle("Jarvis is listening")
-            .setContentText("Heard you — tap to talk")
+            .setContentText(
+                if (willTakeOver) "Heard you — tap to talk"
+                else "Heard you — tap to talk. Turn on “display over other apps” " +
+                    "to have this open by itself."
+            )
             .setContentIntent(full)
             .setCategory(Notification.CATEGORY_CALL)
             .setAutoCancel(true)

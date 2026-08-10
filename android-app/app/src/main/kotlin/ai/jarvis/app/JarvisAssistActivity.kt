@@ -123,21 +123,22 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(pad, pad, pad, pad)
-            background = JarvisUi.panel(
-                this@JarvisAssistActivity,
-                fill = 0xF20A0F16.toInt(),
-                stroke = 0x553FD8FF,
-            ).apply { cornerRadius = JarvisUi.dp(this@JarvisAssistActivity, 24).toFloat() }
+            // No panel. This used to be a dark rounded card with a cyan stroke
+            // and it read as a box with an orb in it — the frame was the first
+            // thing you saw. The theme's own dim is the ground now, which is
+            // what a floating window is for, and the text carries a shadow so
+            // it survives whatever the dim is over.
         }
 
         orbView = JarvisOrbView(this).apply {
             // The chrome is screen-scale: corner brackets 18dp from the VIEW
             // edges and a wordmark anchored to the resting outer radius, both
-            // of which are nonsense inside a 200dp box. The scrim is worse — a
-            // near-opaque vignette the size of the view is exactly what turned
-            // this popup into a blackout, and the card's own panel is the
-            // ground now.
+            // of which are nonsense inside a 200dp box.
             chromeEnabled = false
+            // The scrim stays off with it. A near-opaque vignette the size of
+            // the view is what turned this popup into a blackout, and now that
+            // there is no card behind the orb it would BE the box this surface
+            // just lost. The window's dim is the ground.
             scrimEnabled = false
         }
         root.addView(
@@ -169,6 +170,17 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         responseView = JarvisUi.responseView(this).apply {
             maxLines = 4
             ellipsize = TextUtils.TruncateAt.END
+        }
+        for (view in arrayOf(captionView, transcriptView, responseView)) {
+            // What replaces the card: a hard shadow, so the text survives being
+            // drawn over whatever the dim is over rather than needing a slab
+            // behind it.
+            view.setShadowLayer(
+                JarvisUi.dp(this, 6).toFloat(),
+                0f,
+                JarvisUi.dp(this, 1).toFloat(),
+                0xF0000308.toInt(),
+            )
         }
         root.addView(transcriptView, fullWidth())
         root.addView(responseView, fullWidth())

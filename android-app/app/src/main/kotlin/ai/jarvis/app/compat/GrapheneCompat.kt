@@ -343,6 +343,8 @@ object GrapheneCompat {
     const val ID_NOTIFICATIONS = "notifications"
     const val ID_BATTERY = "battery"
     const val ID_OVERLAY = "overlay"
+    const val ID_POST_NOTIFICATIONS = "post_notifications"
+    const val ID_FULL_SCREEN = "full_screen"
     const val ID_EXACT_ALARMS = "exact_alarms"
 
     /** Everything [evaluate] needs, so the verdicts can be tested without a device. */
@@ -355,6 +357,8 @@ object GrapheneCompat {
         val batteryExempt: Boolean,
         val batteryRestricted: Boolean,
         val canDrawOverlays: Boolean,
+        val postNotifications: Boolean,
+        val fullScreenIntents: Boolean,
         val exactAlarms: Boolean,
     )
 
@@ -424,6 +428,31 @@ object GrapheneCompat {
             needsPackageUri = true,
         ),
         Requirement(
+            id = ID_POST_NOTIFICATIONS,
+            label = "Show notifications",
+            why = "A runtime permission since Android 13, and nothing had ever " +
+                "asked for it. Denied, Jarvis cannot show the listening " +
+                "notification, the wake-word alert, or a Tier-3 approval — which " +
+                "means approvals time out unanswered.",
+            satisfied = status.postNotifications,
+            essential = true,
+            settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
+        Requirement(
+            id = ID_FULL_SCREEN,
+            label = "Full screen notifications",
+            why = "What makes a wake word take over the screen instead of waiting " +
+                "in the shade for a tap. Android 14 grants it only to calling and " +
+                "alarm apps, so it has to be turned on by hand.",
+            satisfied = status.fullScreenIntents,
+            // Not essential: with "display over other apps" granted, Jarvis
+            // draws the orb directly and never needs this path at all.
+            essential = false,
+            settingsAction = ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+            needsPackageUri = true,
+        ),
+        Requirement(
             id = ID_OVERLAY,
             label = "Display over other apps",
             why = "Lets the wake word draw Jarvis over whatever you are using, and " +
@@ -458,8 +487,50 @@ object GrapheneCompat {
         batteryExempt = isIgnoringBatteryOptimizations(context),
         batteryRestricted = isRestrictedBattery(context),
         canDrawOverlays = canDrawOverlays(context),
+        postNotifications = canPostNotifications(context),
+        fullScreenIntents = canUseFullScreenIntent(context),
         exactAlarms = canScheduleExactAlarms(context),
     )
+
+    /**
+     * Whether Jarvis may show a notification at all.
+     *
+     * A runtime permission since Android 13 (API 33), and — until this — one
+     * nothing in the app had ever asked for. Below 33 it is granted by being
+     * declared, so the check is version-gated rather than always run.
+     */
+    @JvmStatic
+    fun canPostNotifications(context: Context): Boolean = try {
+        if (Build.VERSION.SDK_INT < 33) {
+            true
+        } else {
+            hasPermission(context, "android.permission.POST_NOTIFICATIONS")
+        }
+    } catch (t: Throwable) {
+        Log.w(TAG, "notification permission check failed", t)
+        false
+    }
+
+    /**
+     * Whether a full-screen intent will actually take over the screen.
+     *
+     * Below 34 the manifest declaration is the whole story. From 34 the
+     * platform grants it at install only to calling and alarm apps and asks
+     * everyone else to turn it on by hand, silently downgrading
+     * `setFullScreenIntent` to a heads-up until they do.
+     */
+    @JvmStatic
+    fun canUseFullScreenIntent(context: Context): Boolean = try {
+        if (Build.VERSION.SDK_INT < 34) {
+            hasPermission(context, "android.permission.USE_FULL_SCREEN_INTENT")
+        } else {
+            context.getSystemService(NotificationManager::class.java)
+                ?.canUseFullScreenIntent() ?: false
+        }
+    } catch (t: Throwable) {
+        Log.w(TAG, "full-screen intent check failed", t)
+        false
+    }
 
     /**
      * "Display over other apps".
@@ -544,6 +615,19 @@ object GrapheneCompat {
      */
     const val ACTION_REQUEST_SCHEDULE_EXACT_ALARM =
         "android.settings.REQUEST_SCHEDULE_EXACT_ALARM"
+
+    /**
+     * `Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` is API 34+, written
+     * out for the same reason as the constant above.
+     *
+     * This is the screen behind the reported symptom: on Android 14 the
+     * permission is declared in the manifest, held, and *not granted* — the
+     * platform reserves the install-time grant for calling and alarm apps.
+     * Everything else gets a heads-up notification instead of a takeover, so a
+     * wake word "just sits in the notification bar" until it is tapped.
+     */
+    const val ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT =
+        "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT"
 
     /**
      * Declared in AndroidManifest.xml and implemented by the automation module.

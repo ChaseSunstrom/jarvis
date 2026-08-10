@@ -57,6 +57,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     /** Set before the layout is built, so the orb knows not to play its entrance. */
     private var coldStart = false
 
+    /** One notification prompt per launch. See [askForNotificationsOnce]. */
+    private var askedForNotifications = false
+
     /** True while the power-on is playing. */
     private val booting: Boolean get() = boot != null
 
@@ -78,6 +81,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     override fun onResume() {
         super.onResume()
+        askForNotificationsOnce()
         startAutomationLayer()
         // Settings may have changed the server behind our back.
         if (convo?.isRunning != true && !booting) showIdle()
@@ -87,6 +91,29 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // view on the cold-start critical path. The sequence's onComplete
         // refreshes it the moment there is something to see.
         if (!booting) refreshStatusBanner()
+    }
+
+    /**
+     * Ask for POST_NOTIFICATIONS, which nothing ever did.
+     *
+     * It is declared in the manifest and has been since the app was written,
+     * which on Android 12 and below is the whole story. On 13+ it is a runtime
+     * permission, and a runtime permission nobody requests is a runtime
+     * permission you do not have — so on a modern phone Jarvis could not show
+     * the listening notification, the "heard you" alert, or a Tier-3 approval.
+     * The last one matters most: an approval that cannot be delivered times out
+     * and is denied, so the app looked like it was ignoring the user.
+     *
+     * Asked from the home screen rather than at the first notification, because
+     * this is an ordinary Activity that can hold the round trip — and asked
+     * once per launch at most, because a dialog that reappears on every resume
+     * is how people learn to hit Deny.
+     */
+    private fun askForNotificationsOnce() {
+        if (Build.VERSION.SDK_INT < 33 || askedForNotifications) return
+        if (checkSelfPermission(POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        askedForNotifications = true
+        runCatching { requestPermissions(arrayOf(POST_NOTIFICATIONS), REQ_NOTIFICATIONS) }
     }
 
     /**
@@ -339,6 +366,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         if (requestCode == REQ_MIC &&
             grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         ) toggleTalk()
+        // Either answer changes the checklist, and the banner is the only place
+        // the home screen says anything about its own health.
+        if (requestCode == REQ_NOTIFICATIONS && !booting) refreshStatusBanner()
     }
 
     private fun openSettings() =
@@ -427,6 +457,14 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     companion object {
         private const val REQ_MIC = 4712
+        private const val REQ_NOTIFICATIONS = 4713
+
+        /**
+         * Spelled out rather than `Manifest.permission.POST_NOTIFICATIONS`,
+         * which is API 33+. The string is stable, and writing it means no
+         * version guard at the constant.
+         */
+        private const val POST_NOTIFICATIONS = "android.permission.POST_NOTIFICATIONS"
 
         /**
          * The orb's caption while idle. A state word, deliberately NOT the

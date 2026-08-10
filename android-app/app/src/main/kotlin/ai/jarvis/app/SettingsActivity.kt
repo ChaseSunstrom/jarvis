@@ -4,6 +4,7 @@ import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.automation.actions.ActionEnv
 import ai.jarvis.app.channel.DeviceChannelHost
+import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.update.UpdateChecker
@@ -259,6 +260,14 @@ class SettingsActivity : Activity() {
                 JarvisUi.ghost(ctx, "OVERLAY") { openOverlaySetting() },
             )
         )
+        col.addView(
+            row(
+                JarvisUi.ghost(ctx, "FULL SCREEN") {
+                    openSetting(GrapheneCompat.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+                },
+                JarvisUi.ghost(ctx, "NOTIFICATION SETTINGS") { openNotificationSettings() },
+            )
+        )
         // Said out loud because nothing else does. "Display over other apps" is
         // the one permission that decides whether a wake word can put Jarvis in
         // front of whatever you are looking at: without it Android silently
@@ -452,14 +461,45 @@ class SettingsActivity : Activity() {
     }
 
     private fun refreshOverlayStatus() {
-        val granted = Settings.canDrawOverlays(this)
-        overlayStatus.text = if (granted) {
-            "Display over other apps: on — “Hey Jarvis” can open over whatever you are using."
-        } else {
-            "Display over other apps: OFF — a wake word will arrive as a notification " +
-                "instead of opening over the app you are in. Tap OVERLAY to change it."
+        val overlay = Settings.canDrawOverlays(this)
+        val notify = GrapheneCompat.canPostNotifications(this)
+        val fullScreen = GrapheneCompat.canUseFullScreenIntent(this)
+        // Three separate grants decide whether a wake word puts anything on
+        // screen, and until now the screen only mentioned one of them. Reported
+        // together because the useful question is not "which of these do I
+        // have" but "will saying my name do anything".
+        overlayStatus.text = when {
+            !notify ->
+                "Notifications are OFF. Jarvis cannot show you anything at all — not the " +
+                    "wake word, not an approval waiting for your answer. Tap NOTIFICATION " +
+                    "SETTINGS to allow them."
+            overlay ->
+                "Wake word: opens over whatever you are using. This is the good one — the " +
+                    "orb is drawn directly, with no notification in the way."
+            fullScreen ->
+                "Wake word: takes over the screen via a full-screen notification. Turn on " +
+                    "OVERLAY as well for the orb to be drawn directly instead."
+            else ->
+                "Wake word: arrives as a notification you have to TAP. Android will not let " +
+                    "Jarvis put anything on screen by itself without one of OVERLAY " +
+                    "(“display over other apps”) or FULL SCREEN — on Android 14 the second " +
+                    "is reserved for calling and alarm apps unless you grant it by hand."
         }
-        overlayStatus.setTextColor(if (granted) JarvisUi.DIM else JarvisUi.GOLD)
+        overlayStatus.setTextColor(
+            if (notify && (overlay || fullScreen)) JarvisUi.DIM else JarvisUi.GOLD
+        )
+    }
+
+    /** The app's notification settings, where POST_NOTIFICATIONS is undone. */
+    private fun openNotificationSettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            )
+        } catch (e: ActivityNotFoundException) {
+            openAppInfo()
+        }
     }
 
     /**
