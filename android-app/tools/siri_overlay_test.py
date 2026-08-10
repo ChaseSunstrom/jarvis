@@ -213,13 +213,23 @@ def check_the_fallback_survives(android: Path) -> int:
         print("FAIL  WakeWordService never tries to show the floating orb")
         return 1
     body = start.group(0)
-    for guard, why in (
-        ("AssistOverlay.canShow", "the permission is not granted"),
-        ("isLocked()", "overlay windows are never shown above the keyguard"),
-    ):
-        if guard not in body:
-            print(f"FAIL  the overlay is shown even when {why}")
-            failures += 1
+    if "AssistOverlay.canShow" not in body:
+        print("FAIL  the overlay is attached without checking for its permission")
+        failures += 1
+    # And explicitly NOT gated on the keyguard, which was the bug.
+    #
+    # `isKeyguardLocked()` is true whenever the keyguard is up, which on any
+    # phone with a secure lock includes the screen merely being OFF. Using it to
+    # decide whether to attach meant the overlay was skipped in exactly the
+    # scenario always-on listening exists for — phone on a table, say the name —
+    # and the wake word arrived as a notification every single time.
+    if "isLocked()" in body:
+        print(
+            "FAIL  startOverlayConversation is gated on the keyguard again. That "
+            "skips the overlay whenever the screen is off, which is most of the "
+            "time a wake word is used."
+        )
+        failures += 1
 
     wake = re.search(r"override fun onWakeWord\(.*?\n    \}", text, re.S)
     if not wake:
@@ -239,8 +249,21 @@ def check_the_fallback_survives(android: Path) -> int:
     if wake_body.index("startOverlayConversation()") > wake_body.index("showHeard(intent)"):
         print("FAIL  the notification fallback runs before the overlay is tried")
         failures += 1
-    if "return" not in wake_body.split("startOverlayConversation()", 1)[1].split("showHeard", 1)[0]:
-        print("FAIL  a successful overlay still posts the full-screen intent")
+    # The overlay short-circuits ONLY when unlocked. Locked, both fire: an
+    # overlay window does not draw above the lock screen, and the full-screen
+    # intent is the platform's own mechanism for that case.
+    if "showedOverlay && !isLocked()" not in wake_body:
+        print(
+            "FAIL  the wake handler does not post the full-screen intent when the "
+            "phone is locked, where the overlay cannot draw"
+        )
+        failures += 1
+    if "wakeTheScreen()" not in wake_body:
+        print(
+            "FAIL  nothing turns the screen on. An orb drawn on a dark panel is "
+            "not an orb anybody sees, and a wake word is for the phone you are "
+            "not holding."
+        )
         failures += 1
     return failures
 

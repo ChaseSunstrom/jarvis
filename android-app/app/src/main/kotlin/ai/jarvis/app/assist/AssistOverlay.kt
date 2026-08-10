@@ -59,6 +59,17 @@ class AssistOverlay(
     val isShowing: Boolean get() = root != null
 
     /**
+     * The attached view tree, for the instrumented test.
+     *
+     * A seam rather than a feature. Whether `TYPE_APPLICATION_OVERLAY` is
+     * accepted, and whether what it accepts has a size, is not knowable by
+     * reading code — it depends on an appop, a window type and a set of flags —
+     * and this surface has now been reported broken three times. `AssistOverlayTest`
+     * asks the real WindowManager, and needs a handle on what it added.
+     */
+    val rootForTest: ViewGroup? get() = root
+
+    /**
      * Put the orb on screen.
      *
      * @return false if it could not be shown — no permission, or the window
@@ -225,7 +236,20 @@ class AssistOverlay(
                 // Screen blending inside a saveLayer on a software canvas is
                 // slow enough to drop frames on the exact surface whose whole
                 // job is to look alive.
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                // A wake word is for the phone you are NOT holding, so the
+                // screen is usually off and the keyguard usually up. These are
+                // deprecated for Activities — replaced by setShowWhenLocked()
+                // and setTurnScreenOn(), which only exist on Activity — and are
+                // still the only way to say it for a window put up by a
+                // service. Where a build ignores them the overlay simply sits
+                // behind the keyguard, which is why WakeWordService posts the
+                // full-screen intent as well whenever the phone is locked.
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL

@@ -1,0 +1,199 @@
+package ai.jarvis.app
+
+import ai.jarvis.app.assist.AssistOverlay
+import ai.jarvis.app.support.Device
+import ai.jarvis.app.support.JarvisTestRule
+import ai.jarvis.app.support.Screenshots
+import ai.jarvis.app.ui.SiriOrbView
+import android.content.Context
+import android.provider.Settings
+import android.view.View
+import android.view.ViewGroup
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+
+/**
+ * The floating orb, put on a real screen by a real WindowManager.
+ *
+ * This test exists because of a specific and repeated failure: the overlay was
+ * reported not working three times, and each time the reasoning about *why* was
+ * done by reading code rather than by running it. Reading code found a
+ * plausible cause each time and was wrong twice. `TYPE_APPLICATION_OVERLAY` is
+ * exactly the kind of thing that cannot be verified by inspection — whether a
+ * window is accepted depends on an appop, a window type, a set of flags, and
+ * the platform's mood about all three.
+ *
+ * So this asks Android. It grants the overlay appop through the shell the same
+ * way the suite grants runtime permissions, attaches the real
+ * [AssistOverlay] through the real `WindowManager`, and asserts the view is
+ * genuinely attached and laid out with a non-zero size — which is the thing
+ * that was not happening.
+ *
+ * It runs on the emulator job in `.github/workflows/e2e.yml`, so a regression
+ * here fails in CI rather than on somebody's phone.
+ */
+class AssistOverlayTest {
+
+    @get:Rule
+    val jarvis = JarvisTestRule()
+
+    private val context: Context
+        get() = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Before
+    fun grantOverlay() {
+        // The one permission that decides whether any of this is possible, and
+        // the one a user has to grant on a Settings screen. `appops` is how the
+        // shell grants it; `pm grant` does not work for SYSTEM_ALERT_WINDOW.
+        Device.shell("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+        Device.wakeAndUnlock()
+    }
+
+    @Test
+    fun theOverlayIsActuallyAcceptedByTheWindowManager() {
+        assertTrue(
+            "SYSTEM_ALERT_WINDOW was not granted by the shell, so this test " +
+                "cannot say anything about the overlay. Grant it by hand:\n" +
+                "  adb shell appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow",
+            Settings.canDrawOverlays(context),
+        )
+
+        var overlay: AssistOverlay? = null
+        try {
+            onMain {
+                overlay = AssistOverlay(context) { }
+                assertTrue(
+                    "WindowManager refused the overlay window. This is the failure " +
+                        "the user has reported three times; whatever changed about " +
+                        "the window type or flags, changed it back.",
+                    overlay!!.attach(),
+                )
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+            onMain {
+                assertTrue("attach() returned true but isShowing is false", overlay!!.isShowing)
+                val root = rootOf(overlay!!)
+                assertNotNull("the overlay has no view tree", root)
+                assertTrue("the overlay view is not attached to a window", root!!.isAttachedToWindow)
+                // The bug that produced "only the notification" would leave a
+                // window that exists and measures to nothing.
+                assertTrue(
+                    "the overlay laid out to ${root.width}x${root.height}; a zero " +
+                        "dimension is a window nobody can see",
+                    root.width > 0 && root.height > 0,
+                )
+                assertEquals("the overlay is not visible", View.VISIBLE, root.visibility)
+
+                val orb = firstOfType(root, SiriOrbView::class.java)
+                assertNotNull("the overlay is on screen without the orb in it", orb)
+                assertTrue("the orb has no size", orb!!.width > 0 && orb.height > 0)
+            }
+            // The artifact worth having. "The overlay is not popping up" is a
+            // report about something visible, and a picture of the emulator
+            // with the orb floating on it is the only answer to it that does
+            // not require taking someone's word.
+            Screenshots.take("assist-overlay-on-screen")
+        } finally {
+            onMain { overlay?.detach() }
+        }
+    }
+
+    @Test
+    fun theOrbIsNotInsideABox() {
+        // "It is surrounded by boxes, instead of just being the arc reactor
+        // circle." The card is gone; this is what stops it coming back.
+        var overlay: AssistOverlay? = null
+        try {
+            onMain {
+                overlay = AssistOverlay(context) { }
+                assertTrue(overlay!!.attach())
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            onMain {
+                val root = rootOf(overlay!!)!!
+                assertNull(
+                    "the overlay draws a background behind the orb again",
+                    root.background,
+                )
+            }
+        } finally {
+            onMain { overlay?.detach() }
+        }
+    }
+
+    @Test
+    fun detachingRemovesTheWindow() {
+        var overlay: AssistOverlay? = null
+        onMain {
+            overlay = AssistOverlay(context) { }
+            assertTrue(overlay!!.attach())
+        }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        val root = onMainResult { rootOf(overlay!!) }
+        onMain { overlay!!.detach() }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        onMain {
+            assertFalse("isShowing is still true after detach", overlay!!.isShowing)
+            assertFalse(
+                "the view is still attached to a window; the overlay leaked",
+                root!!.isAttachedToWindow,
+            )
+        }
+        // Detaching twice must not throw: the conversation can end from several
+        // places at once, and a crash in a foreground service holding the
+        // microphone is the worst possible outcome of a double-free.
+        onMain { overlay!!.detach() }
+    }
+
+    @Test
+    fun withoutThePermissionItRefusesInsteadOfCrashing() {
+        Device.shell("appops set ${context.packageName} SYSTEM_ALERT_WINDOW deny")
+        try {
+            assertFalse(Settings.canDrawOverlays(context))
+            onMain {
+                val overlay = AssistOverlay(context) { }
+                assertFalse(
+                    "attach() claimed success without the permission, so the " +
+                        "caller would never fall back to the notification",
+                    overlay.attach(),
+                )
+                assertFalse(overlay.isShowing)
+            }
+        } finally {
+            Device.shell("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+        }
+    }
+
+    // --- helpers -------------------------------------------------------------
+
+    /** The overlay's root view, via the WindowManager it was added to. */
+    private fun rootOf(overlay: AssistOverlay): ViewGroup? = overlay.rootForTest
+
+    private fun <T : View> firstOfType(root: View, type: Class<T>): T? {
+        if (type.isInstance(root)) return type.cast(root)
+        if (root !is ViewGroup) return null
+        for (i in 0 until root.childCount) {
+            firstOfType(root.getChildAt(i), type)?.let { return it }
+        }
+        return null
+    }
+
+    private fun onMain(block: () -> Unit) =
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
+
+    private fun <T> onMainResult(block: () -> T): T {
+        var result: T? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { result = block() }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
+    }
+
+}

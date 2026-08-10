@@ -523,6 +523,16 @@ class Tool:
     #: that freeze *what* was approved, so the action executed later is the
     #: one the human was shown rather than a fuzzy name re-resolved minutes on.
     pin: TargetPin | None = None
+    #: The ONE argument a human may fill in when they resolve this request.
+    #:
+    #: Almost always None, and that is the point. `approve_request` accepts an
+    #: `answer` so that a held request can be a *question* rather than an
+    #: action, but merging free text into the arguments of an arbitrary held
+    #: action would undo the freeze above: approve "turn on the lamp", and the
+    #: answer field rewrites the target to the front door. Naming the single
+    #: writable key here, per tool, is what keeps that impossible — a tool that
+    #: does not opt in cannot be answered, only approved or denied.
+    answerable: str | None = None
 
     def schema(self) -> dict[str, Any]:
         """Ollama / OpenAI function-calling schema for this tool."""
@@ -604,6 +614,7 @@ class ToolRegistry:
         domain: str | None = None,
         gate: GateCheck | None = None,
         pin: TargetPin | None = None,
+        answerable: str | None = None,
     ) -> Tool:
         if tool is None:
             if not name:
@@ -614,6 +625,7 @@ class ToolRegistry:
                 parameters=parameters or {"type": "object", "properties": {}},
                 handler=handler,
                 tier=tier,
+                answerable=answerable,
                 domain=domain,
                 gate=gate,
                 pin=pin,
@@ -743,8 +755,17 @@ class ToolRegistry:
             ),
         }
 
-    async def approve_request(self, request_id: str, approved: bool = True) -> dict[str, Any]:
-        """Execute (or discard) a pending gated action. Single use."""
+    async def approve_request(
+        self, request_id: str, approved: bool = True, answer: Any = None
+    ) -> dict[str, Any]:
+        """Execute (or discard) a pending gated action. Single use.
+
+        `answer` carries what the human typed or picked, for the one kind of
+        held request that is a question rather than an action. It is merged into
+        exactly one argument — the one the tool named in `Tool.answerable` — and
+        silently ignored for every other tool, because an answer that could
+        write anywhere would undo the pin that makes an approval mean something.
+        """
         self.purge_expired()
         request = self._pending.pop(request_id, None)  # popped first: no replay
         if request is None:
@@ -768,7 +789,18 @@ class ToolRegistry:
                 "request_id": request_id,
                 "error": f"tool {request.tool!r} is no longer registered",
             }
-        result = await self._execute(tool, request.arguments, request.context)
+        arguments = request.arguments
+        if answer is not None:
+            if tool.answerable:
+                # One key, named by the tool, on a copy — the frozen arguments
+                # are what the human was shown and stay that way.
+                arguments = {**arguments, tool.answerable: answer}
+            else:
+                _LOGGER.warning(
+                    "Ignoring an answer supplied for %s, which does not take one",
+                    tool.name,
+                )
+        result = await self._execute(tool, arguments, request.context)
         self._fire(
             EVENT_APPROVAL_RESOLVED,
             {**request.as_dict(), "approved": True},

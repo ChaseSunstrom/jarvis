@@ -106,6 +106,9 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     /** Turns its per-frame scores into one detection per utterance. */
     private val scorer = WakeScore()
 
+    /** Held only while a wake word is turning into a conversation. */
+    private var screenLock: PowerManager.WakeLock? = null
+
     /** The floating orb, when the wake word led to one. */
     private var overlay: AssistOverlay? = null
 
@@ -392,13 +395,24 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         // the mic only until something else takes it.
         pause()
 
-        if (startOverlayConversation()) {
+        // The screen may well be off — that is the whole point of a wake word —
+        // and an orb drawn on a dark panel is not an orb anybody sees. Taken
+        // before the overlay goes up, released when the conversation ends.
+        wakeTheScreen()
+
+        val showedOverlay = startOverlayConversation()
+        if (showedOverlay && !isLocked()) {
             // The orb is on screen over whatever the user is doing, and the
             // conversation is running in this process. Nothing to hand off to,
             // no re-arm timer: onIdle gives the mic back itself.
             return
         }
 
+        // Locked, or no overlay. An overlay window does not draw above the lock
+        // screen, so on a locked phone the full-screen intent is the only thing
+        // that reaches the user — and it is the platform's own mechanism for
+        // exactly this. Posting both is deliberate: whichever one the device
+        // actually honours, the wake word leads somewhere.
         val intent = Intent(this, JarvisAssistActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(JarvisAssistActivity.EXTRA_FROM_WAKE_WORD, true)
@@ -427,8 +441,14 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         // paused forever and the wake word would appear to stop working until
         // the phone was rebooted. The activity cancels this by sending
         // ACTION_PAUSE as it starts.
-        main.removeCallbacks(rearm)
-        main.postDelayed(rearm, HANDOFF_GRACE_MS)
+        //
+        // Not armed when the overlay took the conversation: that path owns the
+        // microphone and hands it back from onIdle, and a re-arm firing under
+        // it would take the mic away mid-sentence.
+        if (!showedOverlay) {
+            main.removeCallbacks(rearm)
+            main.postDelayed(rearm, HANDOFF_GRACE_MS)
+        }
     }
 
     override fun onState(state: AssistPipelineClient.State) {
@@ -465,9 +485,18 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
      */
     private fun startOverlayConversation(): Boolean {
         if (!AssistOverlay.canShow(this)) return false
-        if (isLocked()) return false
         if (!config.isConfigured) return false
 
+        // NO keyguard check. There used to be one, and it was the reason the
+        // overlay "still doesn't work": `isKeyguardLocked()` is true whenever
+        // the keyguard is up, which on any phone with a secure lock includes
+        // the screen simply being OFF. So in the one scenario always-on
+        // listening exists for — phone face-down on a table, say the name — the
+        // overlay was skipped every single time and the wake word arrived as a
+        // notification. The fact behind the check was right (an overlay window
+        // does not draw above the lock screen) and using it as a gate was
+        // wrong: the answer to being locked is to also post the full-screen
+        // intent, which `onWakeWord` does, not to refuse to draw at all.
         endOverlayConversation(giveMicBack = false)
         val surface = AssistOverlay(this) { endOverlayConversation(giveMicBack = true) }
         if (!surface.attach()) return false
@@ -482,6 +511,7 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         val hadOne = overlay != null
         convo?.stop(); convo = null
         overlay?.detach(); overlay = null
+        releaseScreen()
         if (hadOne && giveMicBack) resume()
     }
 
@@ -522,6 +552,37 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         override fun onIdle() {
             endOverlayConversation(giveMicBack = true)
         }
+    }
+
+    /**
+     * Light the screen, so there is something to draw the orb on.
+     *
+     * A wake word is for the phone you are not holding, which usually means a
+     * screen that is off. `FLAG_TURN_SCREEN_ON` on the overlay window covers
+     * the common case; this covers the rest, and it is deliberately a short
+     * timed lock rather than one this service has to remember to release —
+     * a foreground service that holds the screen on because a code path
+     * returned early is a dead battery by morning.
+     */
+    private fun wakeTheScreen() {
+        try {
+            val power = getSystemService(PowerManager::class.java) ?: return
+            @Suppress("DEPRECATION") // No non-deprecated way to wake the screen.
+            val lock = power.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "jarvis:wake-word",
+            )
+            lock.acquire(SCREEN_WAKE_MS)
+            screenLock?.let { runCatching { if (it.isHeld) it.release() } }
+            screenLock = lock
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not turn the screen on", t)
+        }
+    }
+
+    private fun releaseScreen() {
+        screenLock?.let { runCatching { if (it.isHeld) it.release() } }
+        screenLock = null
     }
 
     private fun isLocked(): Boolean =
@@ -705,6 +766,13 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
          * taken back. Long enough to walk to the phone and tap the heads-up.
          */
         private const val HANDOFF_GRACE_MS = 30_000L
+
+        /**
+         * How long the screen is forced on for a wake word. Long enough to see
+         * the orb arrive and start talking; short enough that a detection
+         * nobody followed up on costs seconds of screen, not a night of it.
+         */
+        private const val SCREEN_WAKE_MS = 15_000L
 
         /** How long a failed turn stays readable on the floating orb. */
         private const val ERROR_LINGER_MS = 2_600L
