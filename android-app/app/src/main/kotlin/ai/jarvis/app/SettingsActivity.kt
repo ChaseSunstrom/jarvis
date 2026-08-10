@@ -1,5 +1,6 @@
 package ai.jarvis.app
 
+import ai.jarvis.app.assist.LocalTranscriber
 import ai.jarvis.app.assist.ModelStore
 import ai.jarvis.app.assist.OnDeviceWakeWord
 import ai.jarvis.app.assist.WakeWordService
@@ -54,6 +55,8 @@ class SettingsActivity : Activity() {
     private lateinit var listenStatus: TextView
     private lateinit var modelStatus: TextView
     private lateinit var wakeOnDevice: Switch
+    private lateinit var sttOnDevice: Switch
+    private lateinit var sttStatus: TextView
     private lateinit var updateStatus: TextView
     private lateinit var prereleaseUpdates: Switch
     private lateinit var wakeEnabled: Switch
@@ -207,6 +210,10 @@ class SettingsActivity : Activity() {
                 JarvisUi.ghost(ctx, "DELETE MODELS") { deleteModels() },
             )
         )
+        sttOnDevice = switchRow(ctx, "Transcribe on this phone", config.sttOnDevice)
+        col.addView(sttOnDevice, matchWidth())
+        sttStatus = TextView(ctx).apply { textSize = 12f }
+        col.addView(sttStatus)
         col.addView(
             JarvisUi.hint(
                 ctx,
@@ -389,6 +396,7 @@ class SettingsActivity : Activity() {
 
         config.wakeWordEnabled = wakeEnabled.isChecked
         config.wakeWordOnDevice = wakeOnDevice.isChecked
+        config.sttOnDevice = sttOnDevice.isChecked
         config.wakeInCar = wakeInCar.isChecked
         config.wakeAtHome = wakeAtHome.isChecked
         config.wakingHourStart = wakeStartField.text.toString().trim().toIntOrNull()
@@ -487,6 +495,7 @@ class SettingsActivity : Activity() {
         if (::overlayStatus.isInitialized) refreshOverlayStatus()
         if (::listenStatus.isInitialized) refreshListenStatus()
         if (::modelStatus.isInitialized) refreshModelStatus()
+        if (::sttStatus.isInitialized) refreshSttStatus()
     }
 
     private fun refreshOverlayStatus() {
@@ -588,6 +597,30 @@ class SettingsActivity : Activity() {
         modelStatus.setTextColor(if (have && wanted) JarvisUi.DIM else JarvisUi.GOLD)
     }
 
+    /**
+     * Whether what the user asked for is what is happening.
+     *
+     * The setting is a preference; `LocalTranscriber.isAvailable` is a fact.
+     * When they disagree the audio is still being streamed, and saying so is
+     * the entire point — a privacy switch that looks on while the thing it
+     * turns off is still running is worse than no switch.
+     */
+    private fun refreshSttStatus() {
+        val possible = LocalTranscriber.isAvailable(this)
+        val wanted = sttOnDevice.isChecked
+        sttStatus.text = when {
+            wanted && possible ->
+                "Speech is turned into text on this phone. The recording never leaves it — " +
+                    "only the words do."
+            wanted ->
+                "This phone has NO offline speech recognition, so audio is still being sent " +
+                    "to your server for every turn. Android needs an on-device recogniser " +
+                    "and the language pack installed."
+            else -> "Audio is streamed to your server, which transcribes it."
+        }
+        sttStatus.setTextColor(if (wanted && possible) JarvisUi.DIM else JarvisUi.GOLD)
+    }
+
     private fun downloadModels() {
         val check = ServerUrl.check(urlField.text.toString())
         val token = tokenField.text.toString().trim()
@@ -606,6 +639,7 @@ class SettingsActivity : Activity() {
             runOnUiThread {
                 toast(problem ?: "On-device models ready.")
                 if (::modelStatus.isInitialized) refreshModelStatus()
+        if (::sttStatus.isInitialized) refreshSttStatus()
                 // Restart the listener so it picks the local path up now rather
                 // than at the next reconnect.
                 if (problem == null && config.wakeWordEnabled) {

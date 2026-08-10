@@ -55,6 +55,11 @@ class AssistPipelineClient(
      */
     private val startStage: StartStage = StartStage.STT,
     /**
+     * What to say, for a [StartStage.INTENT] run. Ignored by the other stages,
+     * which get their input from the microphone.
+     */
+    private val inputText: String? = null,
+    /**
      * The kind of server last known to be at [serverUrl], or null to discover
      * it. Passing what was learned last time skips a failed connect.
      */
@@ -81,6 +86,15 @@ class AssistPipelineClient(
     enum class StartStage(val wire: String) {
         WAKE_WORD("wake_word"),
         STT("stt"),
+
+        /**
+         * Skip transcription: the phone already did it, and sends the sentence.
+         *
+         * Used when [LocalTranscriber] handled the audio, which is the whole
+         * point of on-device speech to text — the utterance never leaves the
+         * device, only what it said does.
+         */
+        INTENT("intent"),
     }
 
     interface Callbacks {
@@ -352,7 +366,14 @@ class AssistPipelineClient(
             .put("type", "assist_pipeline/run")
             .put("start_stage", startStage.wire)
             .put("end_stage", "tts")
-            .put("input", JSONObject().put("sample_rate", 16000))
+            .put(
+                "input",
+                if (startStage == StartStage.INTENT) {
+                    JSONObject().put("text", inputText.orEmpty())
+                } else {
+                    JSONObject().put("sample_rate", 16000)
+                },
+            )
         pipelineId?.let { run.put("pipeline", it) }
         conversationId?.let { run.put("conversation_id", it) }
         ws?.send(run.toString())

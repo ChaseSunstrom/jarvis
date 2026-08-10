@@ -43,6 +43,9 @@ class JarvisConversation(
     private var mic: MicStreamer? = null
     private var tts: TtsPlayer? = null
 
+    /** Non-null only while this phone is transcribing a turn itself. */
+    private var localStt: LocalTranscriber? = null
+
     /**
      * Headset discovery. Started with the conversation and stopped with it, so
      * Jarvis is not registered for audio-device callbacks while idle.
@@ -130,6 +133,8 @@ class JarvisConversation(
         running = true
         responseBuffer = StringBuilder()
 
+        if (startLocalTurn()) return
+
         // Resolve the audio route once per conversation. A headset connected
         // mid-turn takes effect on the next one rather than tearing this one
         // down under the user.
@@ -176,6 +181,61 @@ class JarvisConversation(
     }
 
     /**
+     * Transcribe on this phone, and send the server the sentence.
+     *
+     * The default path streams the microphone to jarvis-core for every turn —
+     * the whole utterance, as PCM. When the phone can do it itself, it should:
+     * the audio never leaves, only the words do. That is the same trade the
+     * on-device wake word makes, one stage further along, and together they
+     * mean a voice assistant that sends recordings of a house nowhere.
+     *
+     * @return true when the local path took the turn. False is normal — no
+     *   on-device recogniser (a degoogled build with nothing providing one),
+     *   or the user has not asked for it — and the caller carries on with the
+     *   streaming path exactly as before.
+     */
+    private fun startLocalTurn(): Boolean {
+        if (!config.sttOnDevice) return false
+        if (!LocalTranscriber.isAvailable(context)) return false
+
+        ui.onMode(JarvisOrbView.Mode.LISTENING, "LISTENING")
+        val transcriber = LocalTranscriber(context)
+        localStt = transcriber
+        transcriber.listen(config.sttLanguage) { text, error ->
+            localStt = null
+            if (!running) return@listen
+            if (text == null) {
+                // Named rather than generic, and NOT silently retried on the
+                // server: falling back would send the audio after promising it
+                // would not, which is the one failure this feature must never
+                // have.
+                ui.onError(error ?: "nothing was recognised on this phone")
+                main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
+                return@listen
+            }
+            ui.onTranscript(text)
+            speakToServer(text)
+        }
+        return true
+    }
+
+    /** Hand the transcript to the assistant and play back what it says. */
+    private fun speakToServer(text: String) {
+        reachedListening = true  // there was never a listening stage to reach
+        ui.onMode(JarvisOrbView.Mode.THINKING, "PROCESSING")
+        tts = TtsPlayer(context, config.token, config.serverUrl)
+        client = AssistPipelineClient(
+            config.serverUrl,
+            config.token,
+            this,
+            AssistPipelineClient.StartStage.INTENT,
+            inputText = text,
+            serverKind = config.serverKind,
+            onKindResolved = { config.serverKind = it },
+        ).also { it.connect(config.pipeline) }
+    }
+
+    /**
      * The pipeline did not start in time. Names the server, because the usual
      * cause is the app pointed at the wrong one — jarvis-web's console on 8199
      * rather than jarvis-core's API on 8080 — and the two are easy to confuse
@@ -189,6 +249,18 @@ class JarvisConversation(
 
     fun stop() = stopWith(idle = false)
 
+    /**
+     * Cancel a transcription in flight.
+     *
+     * Called from [stopWith]. A recogniser left running holds the microphone,
+     * and the wake listener is about to ask for it back — two owners of one
+     * AudioRecord is the coin toss this whole area exists to avoid.
+     */
+    private fun stopLocalStt() {
+        localStt?.stop()
+        localStt = null
+    }
+
     private fun stopWith(idle: Boolean) {
         if (!running && !idle) return
         running = false
@@ -197,6 +269,7 @@ class JarvisConversation(
         main.removeCallbacks(inactivity)
         main.removeCallbacks(handshake)
         main.removeCallbacks(turnCap)
+        stopLocalStt()
         mic?.stop(); mic = null
         tts?.stop(); tts = null
         client?.close(); client = null

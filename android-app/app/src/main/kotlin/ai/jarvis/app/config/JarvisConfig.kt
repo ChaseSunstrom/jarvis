@@ -165,6 +165,27 @@ class JarvisConfig(context: Context) {
         get() = prefs.getBoolean(KEY_WAKE_ON_DEVICE, false)
         set(v) = prefs.edit().putBoolean(KEY_WAKE_ON_DEVICE, v).apply()
 
+    /**
+     * Transcribe on this phone rather than streaming the audio to the server.
+     *
+     * Defaults ON. The streaming path sends the whole utterance as PCM for
+     * every turn, and a phone that can turn it into a sentence itself should
+     * send the sentence. Where no on-device recogniser exists — a degoogled
+     * build with nothing providing one — `LocalTranscriber.isAvailable` is
+     * false and the streaming path runs anyway; the setting is what the user
+     * WANTS, and the app says which is actually happening rather than letting
+     * the two be confused.
+     */
+    var sttOnDevice: Boolean
+        get() = prefs.getBoolean(KEY_STT_ON_DEVICE, true)
+        set(v) = prefs.edit().putBoolean(KEY_STT_ON_DEVICE, v).apply()
+
+    /** BCP-47 tag the on-device recogniser is asked for. */
+    var sttLanguage: String
+        get() = prefs.getString(KEY_STT_LANGUAGE, null)?.takeIf { it.isNotBlank() }
+            ?: java.util.Locale.getDefault().toLanguageTag()
+        set(v) = prefs.edit().putString(KEY_STT_LANGUAGE, v.trim()).apply()
+
     /** Master switch for always-on "Hey Jarvis" detection. */
     var wakeWordEnabled: Boolean
         get() = prefs.getBoolean(KEY_WAKE_ENABLED, false)
@@ -239,6 +260,8 @@ class JarvisConfig(context: Context) {
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_SETUP_SHOWN = "setup_checklist_shown"
         private const val KEY_WAKE_ON_DEVICE = "wake_on_device"
+        private const val KEY_STT_ON_DEVICE = "stt_on_device"
+        private const val KEY_STT_LANGUAGE = "stt_language"
         private const val KEY_WAKE_ENABLED = "wake_enabled"
         private const val KEY_WAKE_IN_CAR = "wake_in_car"
         private const val KEY_WAKE_AT_HOME = "wake_at_home"
