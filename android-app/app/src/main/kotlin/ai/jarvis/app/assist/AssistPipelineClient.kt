@@ -434,7 +434,7 @@ class AssistPipelineClient(
      * pinned to the configured origin instead.
      */
     private fun absolute(pathOrUrl: String): String? =
-        ServerUrl.resolveOnServer(serverUrl, pathOrUrl)
+        ServerEndpoint.mediaUrl(serverUrl, currentKind ?: serverKind, pathOrUrl)
 
     private fun post(block: () -> Unit) = main.post(block)
 

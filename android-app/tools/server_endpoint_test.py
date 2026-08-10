@@ -181,6 +181,36 @@ def check_candidate_order() -> int:
     return failures
 
 
+def check_media_routing(android: Path) -> int:
+    """TTS must go through the console's proxy when the console is the server.
+
+    Only jarvis-core serves `/api/tts_proxy/`. Against the console that path is
+    a 404 and the reply is silent, which for a voice assistant is the same as
+    broken.
+    """
+    src = android / "app/src/main/kotlin/ai/jarvis/app/config/ServerEndpoint.kt"
+    text = src.read_text(encoding="utf-8")
+    failures = 0
+    if "fun mediaUrl" not in text:
+        print("FAIL  ServerEndpoint.kt lost mediaUrl; TTS would 404 via the console")
+        failures += 1
+    if "/api/tts?path=" not in text:
+        print("FAIL  ServerEndpoint.kt no longer routes media through the relay proxy")
+        failures += 1
+    if "resolveOnServer" not in text:
+        print(
+            "FAIL  mediaUrl stopped origin-checking the pipeline's URL, which is "
+            "what stops the bearer token being sent to an injected host"
+        )
+        failures += 1
+    # And the console must still serve that route.
+    proxy = android.parent / "jarvis-web/src/routes/api/tts/+server.ts"
+    if not proxy.is_file():
+        print(f"FAIL  {proxy} is missing; the phone's TTS route via the console is gone")
+        failures += 1
+    return failures
+
+
 def check_kotlin_agrees(root: Path) -> int:
     """The Kotlin still says what this file says."""
     src = root / "app/src/main/kotlin/ai/jarvis/app/config/ServerEndpoint.kt"
@@ -244,6 +274,7 @@ def main() -> int:
         check_rules()
         + check_paths()
         + check_candidate_order()
+        + check_media_routing(android)
         + check_kotlin_agrees(android)
         + check_web_fixture_is_real(repo)
     )

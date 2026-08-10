@@ -106,6 +106,44 @@ class ServerEndpointTest {
     }
 
     @Test
+    fun `media goes direct to jarvis-core and through the console's proxy`() {
+        val core = "http://box.lan:8080"
+        assertEquals(
+            "http://box.lan:8080/api/tts_proxy/abc.mp3",
+            ServerEndpoint.mediaUrl(core, ServerKind.CORE, "/api/tts_proxy/abc.mp3")
+        )
+
+        // Only jarvis-core serves /api/tts_proxy/. Against the console that is a
+        // 404 and a silent reply, so it goes through the media proxy instead.
+        val relay = "http://box.lan:8199"
+        assertEquals(
+            "http://box.lan:8199/api/tts?path=%2Fapi%2Ftts_proxy%2Fabc.mp3",
+            ServerEndpoint.mediaUrl(relay, ServerKind.RELAY, "/api/tts_proxy/abc.mp3")
+        )
+
+        // An absolute URL already on the server resolves the same way, so the
+        // two spellings cannot behave differently.
+        assertEquals(
+            "http://box.lan:8199/api/tts?path=%2Fapi%2Ftts_proxy%2Fabc.mp3",
+            ServerEndpoint.mediaUrl(
+                relay, ServerKind.RELAY, "http://box.lan:8199/api/tts_proxy/abc.mp3"
+            )
+        )
+    }
+
+    @Test
+    fun `a media url pointing off the server is refused on both kinds`() {
+        // The pipeline is assumed to be prompt-injectable, and the phone
+        // attaches its bearer token to whatever this returns.
+        for (kind in ServerKind.entries) {
+            assertNull(ServerEndpoint.mediaUrl("http://box.lan:8199", kind, "http://evil.test/x.mp3"))
+            assertNull(ServerEndpoint.mediaUrl("http://box.lan:8199", kind, "//evil.test/x.mp3"))
+            assertNull(ServerEndpoint.mediaUrl("http://box.lan:8199", kind, "relative.mp3"))
+            assertNull(ServerEndpoint.mediaUrl("http://box.lan:8199", kind, ""))
+        }
+    }
+
+    @Test
     fun `only the console can show a management page`() {
         assertTrue(ServerEndpoint.servesConsole(ServerKind.RELAY))
         assertFalse(ServerEndpoint.servesConsole(ServerKind.CORE))

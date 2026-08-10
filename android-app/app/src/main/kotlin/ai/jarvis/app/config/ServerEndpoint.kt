@@ -118,6 +118,34 @@ object ServerEndpoint {
     }
 
     /**
+     * Where to fetch a media URL the pipeline handed back.
+     *
+     * jarvis-core answers with one of its own paths (`/api/tts_proxy/…`), which
+     * only jarvis-core serves. Pointed at the console that path is a 404, and
+     * the reply would be silent — for a voice assistant, the same as broken. The
+     * console serves the same bytes through its media proxy at `/api/tts?path=`,
+     * which attaches the server-held token and refuses anything that is not a
+     * media path, so the relayed case goes through that instead.
+     *
+     * Returns null when [pathOrUrl] is not on the configured server, which is
+     * the existing refusal: the pipeline is the component this project assumes
+     * can be prompt-injected, and "it told us to fetch this" is not a reason to
+     * send the bearer token somewhere else.
+     */
+    fun mediaUrl(base: String, kind: ServerKind?, pathOrUrl: String): String? {
+        val resolved = ServerUrl.resolveOnServer(base, pathOrUrl) ?: return null
+        if (kind != ServerKind.RELAY) return resolved
+
+        // The relay wants the PATH, not the whole URL. Take it back off the
+        // resolved form rather than off the raw input, so an absolute URL and a
+        // bare path end up at the same place and both have been origin-checked.
+        val prefix = ServerUrl.normalize(base)
+        val path = resolved.removePrefix(prefix)
+        if (!path.startsWith("/")) return null
+        return "$prefix/api/tts?path=" + java.net.URLEncoder.encode(path, "UTF-8")
+    }
+
+    /**
      * Whether a management WebView can show a console at this URL.
      *
      * Only the relay serves one. Pointed at jarvis-core the WebView would load
