@@ -4,8 +4,10 @@ import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.config.Origin
 import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.ui.JarvisUi
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
@@ -141,7 +143,12 @@ class ManagementActivity : Activity() {
             allowContentAccess = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
-            mediaPlaybackRequiresUserGesture = true
+            // Jarvis speaks its replies. With a gesture requirement the browser
+            // HUD's WebAudio playback stays suspended and every answer is
+            // silent, which for a voice assistant is the same as broken. The
+            // page can still only reach the mic through onPermissionRequest
+            // below, so relaxing autoplay does not widen what it can capture.
+            mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             setGeolocationEnabled(false)
             builtInZoomControls = true
@@ -207,9 +214,44 @@ class ManagementActivity : Activity() {
     private fun lockedChromeClient() = object : WebChromeClient() {
 
         override fun onPermissionRequest(request: PermissionRequest) {
-            // The page never gets the camera or the microphone. Voice goes
-            // through the native assist path, which the user can see running.
-            request.deny()
+            // The page may use the MICROPHONE — and nothing else — when it is
+            // the user's own jarvis-web console (same origin as the pinned
+            // server) and the app itself already holds RECORD_AUDIO. That is the
+            // browser HUD's push-to-talk, running inside the app the user
+            // pointed at their own server. Denying it outright was the reason
+            // the in-app voice button did nothing.
+            //
+            // Note the getUserMedia constraint the platform imposes on top of
+            // this: `navigator.mediaDevices` only exists in a secure context, so
+            // the mic works here over https or over http to localhost, but not
+            // over plain http to a LAN IP. A cleartext LAN server needs TLS (see
+            // the mkcert note in jarvis-web) for in-WebView voice to reach the
+            // page at all — this grant is necessary but not on its own
+            // sufficient.
+            //
+            // The camera is never granted. A request that bundles it in is
+            // refused whole rather than partially satisfied: a management
+            // console has no business with the camera, and a mixed request is
+            // not one to reason about resource by resource.
+            val wantsCamera = request.resources.any {
+                it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
+            }
+            val wantsAudio = request.resources.any {
+                it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+            }
+            // Into a local: `request.origin` is a Java getter, so reading it
+            // twice is two calls and Kotlin will not smart-cast the platform
+            // type between them.
+            val origin = request.origin
+            val sameOrigin = origin != null && isAllowed(origin)
+            val appHasMic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+
+            if (wantsAudio && !wantsCamera && sameOrigin && appHasMic) {
+                request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+            } else {
+                request.deny()
+            }
         }
 
         override fun onGeolocationPermissionsShowPrompt(

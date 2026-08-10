@@ -63,6 +63,10 @@ class JarvisConversation(
     private var aboveSince = 0L
     private var sawSpeech = false
     private var turnActive = false
+    /** Loudest smoothed level seen this conversation, for the dead-mic hint. */
+    private var peakLevel = 0f
+    /** True once the pipeline reached LISTENING at least once this conversation. */
+    private var reachedListening = false
     private var responseBuffer = StringBuilder()
 
     /**
@@ -80,9 +84,30 @@ class JarvisConversation(
         if (sawSpeech) {
             stopWith(idle = true)
         } else {
-            ui.onError(NOTHING_HEARD)
+            // Three different faults used to arrive here wearing the same
+            // sentence, which sent the owner of this app after a microphone
+            // permission that was never the problem. They are distinguishable
+            // and so they are distinguished: the peak level says whether any
+            // audio arrived at all, which is the fork nothing else can tell you
+            // from the outside.
+            ui.onError(silenceDiagnosis())
             main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
         }
+    }
+
+    /**
+     * Why a turn ended with no speech, told apart by the evidence available.
+     *
+     * [peakLevel] is the loudest smoothed RMS the mic produced since the
+     * conversation started. It is the discriminator: capture runs independently
+     * of the socket (see [start]), so a peak of a flat zero means the recorder
+     * handed back digital silence, and any real peak means audio arrived and it
+     * was the threshold or the room that fell short.
+     */
+    private fun silenceDiagnosis(): String = when {
+        peakLevel <= DEAD_MIC_LEVEL -> DEAD_MIC
+        peakLevel < START_THRESHOLD -> TOO_QUIET.format(peakLevel, START_THRESHOLD)
+        else -> NOTHING_HEARD
     }
 
     /**
@@ -133,7 +158,27 @@ class JarvisConversation(
                 main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
             },
         ).also { it.start() }
-        // LISTENING is signalled once the pipeline run starts (onState).
+
+        // LISTENING is signalled once the pipeline run starts (onState). If it
+        // never arrives, nothing used to say so: the mic ran, the orb sat there,
+        // and the surface closed on its own timer with no message, which is
+        // indistinguishable from "it did not hear me" and was read that way for
+        // a long time. The VAD is gated on LISTENING (see isListening), so a
+        // pipeline that never starts can never produce speech no matter how
+        // loudly anyone talks — that is a connection fault and it should say so.
+        main.postDelayed(handshake, HANDSHAKE_MS)
+    }
+
+    /**
+     * The pipeline did not start in time. Names the server, because the usual
+     * cause is the app pointed at the wrong one — jarvis-web's console on 8199
+     * rather than jarvis-core's API on 8080 — and the two are easy to confuse
+     * when both are "Jarvis" and both answer on the same host.
+     */
+    private val handshake = Runnable {
+        if (!running || reachedListening) return@Runnable
+        ui.onError(NO_PIPELINE.format(config.serverUrl))
+        main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
     }
 
     fun stop() = stopWith(idle = false)
@@ -141,7 +186,10 @@ class JarvisConversation(
     private fun stopWith(idle: Boolean) {
         if (!running && !idle) return
         running = false
+        peakLevel = 0f
+        reachedListening = false
         main.removeCallbacks(inactivity)
+        main.removeCallbacks(handshake)
         main.removeCallbacks(turnCap)
         mic?.stop(); mic = null
         tts?.stop(); tts = null
@@ -175,6 +223,7 @@ class JarvisConversation(
 
     private fun onMicLevel(level: Float) {
         ui.onAmplitude(level)
+        if (level > peakLevel) peakLevel = level
         val now = System.currentTimeMillis()
 
         // Barge-in: talking over the reply cancels it and starts a new turn.
@@ -237,6 +286,8 @@ class JarvisConversation(
                 turnActive = true
                 sawSpeech = false
                 aboveSince = 0L
+                reachedListening = true
+                main.removeCallbacks(handshake)
                 main.removeCallbacks(turnCap)
                 ui.onMode(JarvisOrbView.Mode.LISTENING, "LISTENING")
                 if (inactivityMs > 0) {
@@ -343,11 +394,54 @@ class JarvisConversation(
         private const val ERROR_LINGER_MS = 2_000L
 
         /**
+         * How long the pipeline has to reach LISTENING before the surface says
+         * it did not. Generous: a cold jarvis-core loading a wake-word model
+         * takes a couple of seconds, and a false accusation about the server is
+         * worse than a slow true one.
+         */
+        private const val HANDSHAKE_MS = 6_000L
+
+        /**
+         * A peak at or below this is digital silence, not a quiet room. Not
+         * exactly zero: a recorder that is "working" but muted still emits
+         * dither and the odd non-zero sample, and calling that a live mic would
+         * put the user back to hunting a permission that is already granted.
+         */
+        private const val DEAD_MIC_LEVEL = 0.0005f
+
+        /**
          * Said when the microphone ran and the VAD heard nothing at all. Not a
          * pipeline error — an honest report that there was no audio, which is
          * the one thing the old silent-close path never told anybody.
          */
         private const val NOTHING_HEARD =
-            "I did not hear anything. Check the microphone permission, or speak a little closer."
+            "I did not hear anything. Try speaking a little closer to the phone."
+
+        /**
+         * Said when capture produced literal silence. On GrapheneOS the usual
+         * cause is not the Microphone permission — which the user has almost
+         * certainly already granted, and been told to check again by every
+         * previous version of this message — but the separate per-app Sensors
+         * toggle, which is off by default and yields empty buffers rather than
+         * an error.
+         */
+        private const val DEAD_MIC =
+            "The microphone produced no sound at all. On GrapheneOS check " +
+                "Settings → Apps → Jarvis → Sensors, which is separate from the " +
+                "Microphone permission, then make sure nothing else is holding the mic."
+
+        /** Audio arrived, and it never reached the start threshold. */
+        private const val TOO_QUIET =
+            "I heard sound, but too faintly to be sure it was speech (peak %.3f, " +
+                "needs %.2f). Move closer, or check that the right microphone is selected."
+
+        /**
+         * Said when the socket never got as far as listening. Names the server,
+         * because the usual cause is the app pointed at jarvis-web's console
+         * (8199) instead of jarvis-core's API (8080).
+         */
+        private const val NO_PIPELINE =
+            "%s never started listening. Check that this is jarvis-core's address " +
+                "(usually port 8080, not the web console on 8199) and that the token is valid."
     }
 }
