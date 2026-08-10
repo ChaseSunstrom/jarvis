@@ -100,6 +100,21 @@ function badAutomation(draft) {
 	return null;
 }
 
+/** The checks `authored_tools.validate` applies that the console can trip. */
+function badTool(draft) {
+	if (!draft || typeof draft !== 'object') return 'A tool must be an object.';
+	if (!/^[a-z][a-z0-9_]{2,47}$/.test(String(draft.name ?? ''))) {
+		return 'The name must be 3-48 characters, lowercase letters, digits and underscores.';
+	}
+	if (!String(draft.description ?? '').trim()) {
+		return 'Describe what it does, or the model cannot use it.';
+	}
+	if (![1, 2, 3].includes(Number(draft.tier ?? 1))) return 'Tier must be 1, 2 or 3.';
+	const url = String(draft.service?.url ?? '');
+	if (!/^https?:\/\//i.test(url)) return 'The url must start with http:// or https://.';
+	return null;
+}
+
 /** Areas, devices, entity registry entries and states, as a fresh world. */
 export function makeWorld() {
 	const areas = [
@@ -290,7 +305,30 @@ export function makeWorld() {
 		}
 	];
 
-	return { areas, devices, entities, states, automations, settings, calls: [] };
+	// Two built-ins, so a console tool has something it must refuse to shadow
+	// and something it must refuse to delete.
+	const tools = [
+		{
+			name: 'lock_control',
+			description: 'Lock or unlock a door',
+			tier: 3,
+			domain: 'lock',
+			parameters: null,
+			editable: false,
+			service: null
+		},
+		{
+			name: 'turn_on',
+			description: 'Turn something on',
+			tier: 1,
+			domain: null,
+			parameters: null,
+			editable: false,
+			service: null
+		}
+	];
+
+	return { areas, devices, entities, states, automations, settings, tools, calls: [] };
 }
 
 const SERVICES = {
@@ -689,6 +727,82 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					}
 					broadcast('area_registry_updated', { action: 'remove', area_id: msg.area_id });
 					ok(msg.id, { area_id: msg.area_id, deleted: true });
+					break;
+				}
+
+				// Tools. Identity is the name, so the interesting cases are a
+				// console tool refusing to take a built-in's name and a delete
+				// refusing to reach one.
+				case 'config/tool/list':
+					ok(msg.id, world.tools);
+					break;
+
+				case 'config/tool/create': {
+					const draft = msg.tool ?? {};
+					const problem = badTool(draft);
+					if (problem) {
+						fail(msg.id, 'invalid_format', problem);
+						break;
+					}
+					if (world.tools.some((t) => t.name === draft.name)) {
+						fail(
+							msg.id,
+							'invalid_format',
+							`${draft.name} is already a tool. Pick another name.`
+						);
+						break;
+					}
+					world.tools.push({
+						name: draft.name,
+						description: draft.description,
+						tier: draft.tier ?? 1,
+						domain: null,
+						parameters: null,
+						editable: true,
+						service: draft.service
+					});
+					ok(msg.id, { tool: world.tools[world.tools.length - 1] });
+					break;
+				}
+
+				case 'config/tool/update': {
+					const row = world.tools.find((t) => t.name === msg.name);
+					if (!row || !row.editable) {
+						fail(msg.id, 'invalid_format', `${msg.name} is not a tool this console created.`);
+						break;
+					}
+					const draft = msg.tool ?? {};
+					if (draft.name !== row.name) {
+						fail(msg.id, 'invalid_format', "A tool's name cannot be changed.");
+						break;
+					}
+					const problem = badTool(draft);
+					if (problem) {
+						fail(msg.id, 'invalid_format', problem);
+						break;
+					}
+					Object.assign(row, {
+						description: draft.description,
+						tier: draft.tier ?? 1,
+						service: draft.service
+					});
+					ok(msg.id, { tool: row });
+					break;
+				}
+
+				case 'config/tool/delete': {
+					const index = world.tools.findIndex((t) => t.name === msg.name);
+					if (index < 0 || !world.tools[index].editable) {
+						fail(
+							msg.id,
+							'not_supported',
+							`${msg.name} is not a tool this console created — it is built in ` +
+								'or comes from your YAML, so it cannot be deleted here.'
+						);
+						break;
+					}
+					world.tools.splice(index, 1);
+					ok(msg.id, { name: msg.name, deleted: true });
 					break;
 				}
 

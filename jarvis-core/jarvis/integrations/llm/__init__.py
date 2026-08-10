@@ -62,6 +62,7 @@ from ...llm.memory import (
     ConversationStore,
 )
 from ...llm.ollama import DEFAULT_MODEL, DEFAULT_TIMEOUT, DEFAULT_URL, OllamaClient
+from ...llm.authored_tools import get_authored_tools
 from ...llm.tools import (
     DEFAULT_APPROVAL_TTL,
     Exposure,
@@ -175,6 +176,15 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     if specs:
         built = build_yaml_tools(registry, specs, client_factory=lambda: client)
         _LOGGER.info("Registered %d YAML-defined tool(s)", len(built))
+
+    # Console-created tools, built last so `validate`'s refusal to shadow an
+    # existing name is enforced by the same ordering at boot as at create time:
+    # everything else is already registered by the time these are added.
+    authored = get_authored_tools(jarvis)
+    authored_specs = await authored.async_load()
+    if authored_specs:
+        made = build_yaml_tools(registry, authored_specs, client_factory=lambda: client)
+        _LOGGER.info("Registered %d console-defined tool(s)", len(made))
 
     conversation_options = _as_dict(options.get("conversation"))
     memory = ConversationStore(

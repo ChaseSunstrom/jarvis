@@ -366,15 +366,6 @@
 	{/each}
 {/if}
 
-<style>
-	.toolbar {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		margin-bottom: 0.9rem;
-	}
-	.toolbar input {
-		flex: 1 1 18rem;
-		max-width: 26rem;
-	}
-</style>
+<!-- `.toolbar` now lives in chrome.css: Devices, Automations and Tools all use
+     it, and only this page had it styled. -->
+

@@ -30,6 +30,28 @@ export interface AreaEntry {
 	aliases?: string[];
 }
 
+/** One registered tool, with whether the console created it. */
+export interface ToolRow {
+	name: string;
+	description: string;
+	tier: number;
+	domain?: string | null;
+	parameters?: Record<string, any> | null;
+	/** False for built-ins and tools from the user's `*.tool.yaml`. */
+	editable: boolean;
+	service?: Record<string, any> | null;
+	created_at?: number | null;
+	updated_at?: number | null;
+}
+
+/** What the console may send when creating or editing a tool. */
+export interface ToolDraft {
+	name: string;
+	description: string;
+	tier: number;
+	service: Record<string, any>;
+}
+
 /** One editable setting, with where its current value came from. */
 export interface SettingRow {
 	key: string;
@@ -467,6 +489,23 @@ export class JarvisClient {
 			entity_id: entityId,
 			...changes
 		});
+	}
+
+	/** The manageable view of tools, with `editable` and the service block. */
+	listToolRows(): Promise<ToolRow[]> {
+		return this.command<ToolRow[]>({ type: 'config/tool/list' });
+	}
+
+	createTool(draft: ToolDraft): Promise<{ tool: ToolRow }> {
+		return this.command({ type: 'config/tool/create', tool: draft });
+	}
+
+	updateTool(name: string, draft: ToolDraft): Promise<{ tool: ToolRow }> {
+		return this.command({ type: 'config/tool/update', name, tool: draft });
+	}
+
+	deleteTool(name: string): Promise<any> {
+		return this.command({ type: 'config/tool/delete', name });
 	}
 
 	// --- settings ----------------------------------------------------------

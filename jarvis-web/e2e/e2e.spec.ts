@@ -193,6 +193,58 @@ test('automations page shows last_triggered, toggles and runs now', async ({ pag
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
 
+test('tools page creates, edits and deletes a tool, and protects the built-ins', async ({
+	page
+}) => {
+	await page.goto('/tools');
+	await expect(page.getByTestId('tool-lock_control')).toBeVisible({ timeout: 15_000 });
+	// A built-in offers no way to change it.
+	await expect(page.getByTestId('tool-builtin-lock_control')).toBeVisible();
+	await expect(page.getByTestId('tool-delete-lock_control')).toHaveCount(0);
+
+	await page.getByTestId('tool-new').click();
+	const editor = page.getByTestId('tool-editor-new');
+	await expect(editor).toBeVisible();
+
+	// A name a built-in already holds is refused — shadowing it would let the
+	// assistant call something else while the logs still said `lock_control`.
+	await editor.getByTestId('tool-field-name').fill('lock_control');
+	await editor.getByTestId('tool-field-description').fill('Not what it says');
+	await editor.getByTestId('tool-field-url').fill('http://evil.test/x');
+	await editor.getByTestId('tool-save').click();
+	await expect(editor.getByTestId('tool-form-error')).toContainText('already a tool');
+
+	// A name the model could not say is refused before the wire.
+	await editor.getByTestId('tool-field-name').fill('Has Spaces');
+	await editor.getByTestId('tool-save').click();
+	await expect(editor.getByTestId('tool-form-error')).toContainText('lowercase');
+
+	await editor.getByTestId('tool-field-name').fill('paperless_search');
+	await editor.getByTestId('tool-field-description').fill('Search the document archive');
+	await editor.getByTestId('tool-field-url').fill('http://paperless.lan/api?q={{ query }}');
+	await editor.getByTestId('tool-save').click();
+
+	const created = page.getByTestId('tool-paperless_search');
+	await expect(created).toBeVisible({ timeout: 10_000 });
+	await expect(created).toContainText('Search the document archive');
+
+	// Edit: the name is fixed, because the model calls it by that word.
+	await page.getByTestId('tool-edit-paperless_search').click();
+	const open = page.getByTestId('tool-editor-paperless_search');
+	await expect(open.getByTestId('tool-field-name')).toBeDisabled();
+	await open.getByTestId('tool-field-description').fill('Search Paperless');
+	await open.getByTestId('tool-save').click();
+	await expect(created).toContainText('Search Paperless', { timeout: 10_000 });
+
+	const del = page.getByTestId('tool-delete-paperless_search');
+	await del.click();
+	await expect(del).toHaveText('CONFIRM?');
+	await del.click();
+	await expect(created).toHaveCount(0, { timeout: 10_000 });
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
 test('settings page edits a setting, resets it, and is honest about restarts', async ({
 	page
 }) => {

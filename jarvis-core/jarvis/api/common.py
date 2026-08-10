@@ -418,6 +418,143 @@ async def async_delete_area(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     return {"area_id": area_id, "deleted": True}
 
 
+# --- tools --------------------------------------------------------------------
+def _tool_registry(jarvis: "Jarvis") -> Any:
+    registry = jarvis.data.get("llm_tools")
+    if registry is None:
+        raise ApiError(
+            "not_found",
+            "the assistant is not configured, so it has no tools to manage",
+            404,
+        )
+    return registry
+
+
+def tool_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
+    """Every registered tool, marked with whether the console may edit it.
+
+    Built-ins and tools from the user's YAML are listed read-only, for the same
+    reason YAML automations are: an empty list on an assistant that visibly has
+    tools would be a lie.
+    """
+    from ..llm.authored_tools import get_authored_tools
+
+    registry = jarvis.data.get("llm_tools")
+    if registry is None:
+        return []
+    authored = get_authored_tools(jarvis)
+    rows: list[dict[str, Any]] = []
+    for name in registry.names():
+        tool = registry.get(name)
+        entry = authored.items.get(name)
+        rows.append(
+            {
+                "name": name,
+                "description": getattr(tool, "description", ""),
+                "tier": getattr(tool, "tier", 1),
+                "domain": getattr(tool, "domain", None),
+                "parameters": getattr(tool, "parameters", None),
+                "editable": entry is not None,
+                "service": (entry or {}).get("service"),
+                "created_at": (entry or {}).get("created_at"),
+                "updated_at": (entry or {}).get("updated_at"),
+            }
+        )
+    rows.sort(key=lambda row: (not row["editable"], row["name"]))
+    return rows
+
+
+def _taken_names(jarvis: "Jarvis") -> set[str]:
+    """Names held by something that is not the authored store."""
+    from ..llm.authored_tools import get_authored_tools
+
+    registry = jarvis.data.get("llm_tools")
+    if registry is None:
+        return set()
+    ours = set(get_authored_tools(jarvis).items)
+    return {name for name in registry.names() if name not in ours}
+
+
+def _register_authored(jarvis: "Jarvis", spec: dict[str, Any]) -> None:
+    """Build one authored tool onto the running registry.
+
+    Registered live rather than by rebuilding the agent: the registry has
+    `register`/`remove`, and rebuilding would drop every in-flight approval
+    request along with it.
+    """
+    from ..llm.tools import build_yaml_tools
+
+    registry = _tool_registry(jarvis)
+    client = jarvis.data.get("llm_client")
+    factory = (lambda: client) if client is not None else None
+    build_yaml_tools(registry, [spec], client_factory=factory)
+
+
+async def async_create_tool(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    from ..llm.authored_tools import AuthoredToolError, get_authored_tools
+
+    _tool_registry(jarvis)  # refuse early rather than storing an unusable tool
+    try:
+        entry = await get_authored_tools(jarvis).async_create(
+            _tool_spec(payload), _taken_names(jarvis)
+        )
+    except AuthoredToolError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+    _register_authored(jarvis, {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")})
+    return {"tool": entry}
+
+
+async def async_update_tool(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    from ..llm.authored_tools import AuthoredToolError, get_authored_tools
+
+    registry = _tool_registry(jarvis)
+    name = str(payload.get("name") or "").strip().lower()
+    if not name:
+        raise ApiError("invalid_format", "name is required", 400)
+    try:
+        entry = await get_authored_tools(jarvis).async_update(
+            name, _tool_spec(payload), _taken_names(jarvis)
+        )
+    except AuthoredToolError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+    # Remove before rebuilding: `register` replaces by name, but going through
+    # remove makes the "it is gone if the rebuild throws" case honest.
+    registry.remove(name)
+    _register_authored(jarvis, {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")})
+    return {"tool": entry}
+
+
+async def async_delete_tool(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    from ..llm.authored_tools import get_authored_tools
+
+    registry = _tool_registry(jarvis)
+    name = str(payload.get("name") or "").strip().lower()
+    if not name:
+        raise ApiError("invalid_format", "name is required", 400)
+    store = get_authored_tools(jarvis)
+    if name not in store.items:
+        # Refuses rather than silently doing nothing: the caller is asking to
+        # delete a built-in or a YAML tool, and a quiet no-op looks like it
+        # worked until the model calls the tool again.
+        raise ApiError(
+            "not_supported",
+            f"{name} is not a tool this console created — it is built in or "
+            "comes from your YAML, so it cannot be deleted here.",
+            400,
+        )
+    await store.async_delete(name)
+    registry.remove(name)
+    return {"name": name, "deleted": True}
+
+
+def _tool_spec(payload: dict[str, Any]) -> dict[str, Any]:
+    """The tool out of an API payload, without the transport's own keys."""
+    spec = payload.get("tool")
+    if isinstance(spec, dict):
+        return dict(spec)
+    return {key: value for key, value in payload.items() if key not in ("id", "type")}
+
+
 # --- settings ---------------------------------------------------------------
 def settings_payload(jarvis: "Jarvis") -> dict[str, Any]:
     """Every editable setting, with where its current value came from.

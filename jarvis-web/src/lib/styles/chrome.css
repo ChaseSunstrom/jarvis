@@ -828,6 +828,21 @@
 	box-shadow: var(--jv-glow-lg);
 }
 
+/* The strip above a panel holding the page's one primary action and a line of
+   explanation. Global rather than per-page: Devices, Automations and Tools all
+   have one, and two of them had it unstyled. */
+.console .toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--jv-space-3);
+	flex-wrap: wrap;
+	margin-bottom: var(--jv-space-3);
+}
+.console .toolbar input {
+	flex: 1 1 18rem;
+	max-width: 26rem;
+}
+
 /* The editor panel that drops out of a row on Devices and Automations. It is
    a full-width sibling of `.row`, not a cell inside it, so the row's flex
    layout never has to accommodate a form. */

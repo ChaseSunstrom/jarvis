@@ -396,6 +396,35 @@ async def area_registry_delete(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/config/tool/list")
+async def tool_list(request: Request) -> list[dict[str, Any]]:
+    return common.tool_list_payload(get_jarvis(request))
+
+
+@api_router.post("/config/tool/create")
+async def tool_create(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_create_tool(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/tool/update")
+async def tool_update(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_update_tool(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/tool/delete")
+async def tool_delete(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_delete_tool(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/config/settings/list")
 async def settings_list(request: Request) -> dict[str, Any]:
     return common.settings_payload(get_jarvis(request))
