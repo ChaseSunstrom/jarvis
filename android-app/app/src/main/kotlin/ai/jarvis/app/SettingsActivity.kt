@@ -164,6 +164,22 @@ class SettingsActivity : Activity() {
         hours.addView(wakeEndField, LinearLayout.LayoutParams(JarvisUi.dp(ctx, 64), ViewGroup.LayoutParams.WRAP_CONTENT))
         col.addView(hours, matchWidth())
         col.addView(JarvisUi.hint(ctx, "Hours are 0-23 for the start and 0-24 for the end; a window that wraps midnight (22 to 6) is fine."))
+        // Said out loud rather than left to be discovered. `WakeWordGate` needs
+        // to know whether the phone is at home, and nothing on this device
+        // produces that signal yet — there is no home-presence source anywhere
+        // in the app. Enforcing the gate without one would mean "not at home"
+        // always, which would silence the wake word everywhere except a car.
+        // So these three are stored and not yet applied, and a settings screen
+        // that implied otherwise would be lying.
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "The three limits above are saved but not yet enforced: Jarvis has no " +
+                    "home-presence signal on this device, so applying them would silence " +
+                    "the wake word everywhere except the car. Until that exists, the " +
+                    "master switch is what decides."
+            )
+        )
 
         // Whether listening can come back on its own after a restart, which is
         // a different question from whether it is switched on and has nowhere
@@ -359,6 +375,13 @@ class SettingsActivity : Activity() {
         runCatching {
             if (config.wakeWordEnabled) {
                 WakeWordService.ensureRunning(this, fromForeground = true)
+                // Said at the moment it becomes relevant, rather than left on a
+                // status line further up the screen the user has already
+                // scrolled past. Without one of these two, listening works
+                // until the next reboot and then quietly does not.
+                if (!isExemptFromBatteryOptimisation() && !Settings.canDrawOverlays(this)) {
+                    toast("Listening will stop at the next restart — see ALLOW BACKGROUND above")
+                }
             } else {
                 WakeWordService.cancelHeartbeat(this)
                 WakeWordService.clearAttention(this)

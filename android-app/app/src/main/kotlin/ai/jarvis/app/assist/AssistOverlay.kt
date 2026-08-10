@@ -89,7 +89,13 @@ class AssistOverlay(
     fun detach() {
         val view = root ?: return
         root = null
+        // All of them, not just the orb: a late callback from a conversation
+        // that is still winding down would otherwise write into views that are
+        // no longer on screen and keep the whole tree alive.
         orb = null
+        caption = null
+        transcript = null
+        response = null
         val windows = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
         try {
             windows?.removeView(view)
@@ -139,13 +145,17 @@ class AssistOverlay(
             setOnClickListener { onDismiss() }
         }
 
-        orb = SiriOrbView(context)
+        // Locals first, fields second. `addView` takes a non-null View, and
+        // handing it the nullable field would be both a compile risk and a
+        // needless null check on a value that was just constructed.
+        val orbView = SiriOrbView(context)
+        orb = orbView
         column.addView(
-            orb,
+            orbView,
             LinearLayout.LayoutParams(JarvisUi.dp(context, ORB_DP), JarvisUi.dp(context, ORB_DP))
         )
 
-        caption = TextView(context).apply {
+        val captionView = TextView(context).apply {
             text = "LISTENING"
             setTextColor(JarvisOrbView.Mode.LISTENING.color)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
@@ -154,21 +164,24 @@ class AssistOverlay(
             gravity = Gravity.CENTER
             setPadding(0, JarvisUi.dp(context, 8), 0, 0)
         }
-        column.addView(caption, fullWidth())
+        caption = captionView
+        column.addView(captionView, fullWidth())
 
-        transcript = JarvisUi.transcriptView(context).apply {
+        val transcriptView = JarvisUi.transcriptView(context).apply {
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
             setPadding(0, JarvisUi.dp(context, 10), 0, 0)
         }
-        response = JarvisUi.responseView(context).apply {
+        val responseView = JarvisUi.responseView(context).apply {
             maxLines = 4
             ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
         }
-        column.addView(transcript, fullWidth())
-        column.addView(response, fullWidth())
+        transcript = transcriptView
+        response = responseView
+        column.addView(transcriptView, fullWidth())
+        column.addView(responseView, fullWidth())
 
         return column
     }

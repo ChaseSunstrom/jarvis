@@ -13,13 +13,17 @@ popup) were ported over verbatim into `ai.jarvis.app.*`; the fork is gone.
 app/src/main/kotlin/ai/jarvis/app/
   MainActivity.kt            orb, tap-to-talk, live transcript, bottom nav
   JarvisAssistActivity.kt    the assist-gesture popup (transparent, lock-screen)
+  ListenTrampolineActivity.kt  one frame of Activity, so starting the mic is legal
   SettingsActivity.kt        server URL, token, pipeline, device name, wake gating
   ManagementActivity.kt      origin-locked WebView onto jarvis-core's own UI
   ApprovalActivity.kt        THE TIER-3 CONSENT SCREEN
   JarvisApp.kt               Application; notification channels
-  ui/     JarvisOrbView · JarvisUi · ApprovalBridge · JarvisScreens
+  ui/     JarvisOrbView · SiriOrbView · SiriPalette · JarvisUi · ApprovalBridge
+          JarvisScreens
   config/ JarvisConfig · ServerUrl · WakeWordGate
   assist/ AssistPipelineClient · MicStreamer · TtsPlayer · JarvisConversation
+          WakeWordService · WakeStartPolicy · MicSilenceWatch · AssistOverlay
+          WakeTileService · WakeHeartbeatReceiver
           JarvisVoiceInteraction{Service,SessionService,Session} · JarvisRecognitionService
   automation/                owned by the automation module, not by this one
 ```
@@ -320,6 +324,74 @@ Also shared:
   JUnit 4 and `kotlinx-coroutines-test`, so no other module needs to touch the
   build file to add tests.
 
+## Always-on listening, and why it needs help
+
+"Hey Jarvis" with the phone face-down on a table means an open microphone,
+because Android has given third-party apps no low-power hotword path since the
+DSP APIs were closed off. An open microphone means a foreground service typed
+`microphone`, and that type carries a rule worth writing down, because it has no
+visible failure mode:
+
+> **A foreground service typed `microphone` cannot be started while the app is
+> in the background.** `BOOT_COMPLETED` is an exemption from the *general*
+> background-start restriction and explicitly **not** one for the while-in-use
+> types (camera, microphone, location).
+
+So `BootReceiver` calls `startForegroundService`, the platform throws, and
+always-on listening is simply off until the app is next opened. Worse, on
+Android 11+ a while-in-use service that *does* start from the background gets a
+recorder that opens, reads happily, and returns digital zero — no exception, no
+callback.
+
+Both halves are handled rather than hidden:
+
+* **`WakeStartPolicy`** decides in advance whether a start will be allowed, from
+  (enabled, mic permission, caller is an Activity, SDK level, battery-optimisation
+  exemption, `SYSTEM_ALERT_WINDOW`). Either of the last two is a documented
+  exemption; Settings reports which, and offers both.
+* **`ListenTrampolineActivity`** is a one-frame invisible Activity that starts
+  the service. A start from a resumed Activity is the one route the platform
+  never refuses, so every one-tap repair goes through it — the notification, the
+  quick-settings tile.
+* **`WakeTileService`** puts it in the quick-settings shade, so turning it back
+  on is a swipe rather than a trip through Settings.
+* **`WakeHeartbeatReceiver`** re-checks every quarter of an hour. `START_STICKY`
+  is not enough on its own: the restart the system performs after a kill is
+  itself a background start of a microphone service and may be refused.
+* **`MicSilenceWatch`** notices the recorder that returns nothing. The test is
+  *exactly zero*, not a threshold — this runs for hours in whatever room the
+  phone is in, and a quiet room's RMS really does sit near the 0.0005 that
+  `JarvisConversation` calls dead.
+* A failure to open the microphone **retries** instead of stopping. It used to
+  call `stopSelf()`, which turned a phone call or another app recording for a
+  moment into listening that was permanently off.
+
+## The floating orb
+
+`AssistOverlay` is a real `TYPE_APPLICATION_OVERLAY` window, put up by
+`WakeWordService` when the wake word fires, hosting `SiriOrbView`: three coloured
+blobs on offset elliptical orbits, screen-blended inside one saved layer so
+overlaps brighten, swelling and speeding with the microphone level, with the
+palette (`SiriPalette`) shifting per state. It runs the conversation in the same
+service that holds the wake microphone, so there is still exactly one owner of
+the recorder.
+
+It is deliberately **not** the arc-reactor `JarvisOrbView`, which stays what the
+app's own screens show. Rings, ticks and a radar sweep read as a HUD — right
+inside Jarvis, wrong floating over somebody's messages.
+
+Two limits, both with fallbacks:
+
+* it needs "display over other apps", which is a Settings trip the user has to
+  make;
+* overlay windows are never shown above the keyguard.
+
+Either case falls back to the full-screen intent on a HIGH-importance channel —
+the platform's own "an incoming call is happening" mechanism — so a wake word
+always leads somewhere. The window is sized to the card rather than the screen,
+because `FLAG_NOT_TOUCH_MODAL` passes through touches *outside* the window only:
+a screen-sized overlay would eat every tap on the app behind it.
+
 ## Ported from the old overlay
 
 These came from `android/overlay/.../jarvis/`, repackaged to `ai.jarvis.app.*`
@@ -352,8 +424,9 @@ Plain JVM unit tests, JUnit 4, no device and no network. The build file wires
 `src/test/kotlin` and the `junit` + `kotlinx-coroutines-test` dependencies, so
 the automation module's tests and this module's run together.
 
-From this module: `config/ServerUrlTest` (24), `config/WakeWordGateTest` (5) and
-`ui/ConsentGateTest` (7) — 36 tests covering origin parsing and port defaulting,
+From this module: `config/ServerUrlTest` (24), `config/WakeWordGateTest` (5),
+`ui/ConsentGateTest` (7), `ui/SiriPaletteTest` (7), `assist/WakeStartPolicyTest`
+(8) and `assist/MicSilenceWatchTest` (8) — covering origin parsing and port defaulting,
 same-origin comparison, private-host classification, cleartext refusal,
 WebSocket URL derivation including a reverse-proxy path prefix, the wake gate
 including midnight-wrapping windows and out-of-range rejection, `resolveOnServer`
@@ -406,6 +479,9 @@ python3 -m pytest android-app/tools -q
 | `policy_truth_table_test.py` | `PolicyEngine`: the tier/policy truth table, the panic and master switches, trust levels, and what may be written to the policy store |
 | `dispatch_spec_test.py` | `ActionRegistry.dispatch` as a state machine — 1152 dispatches — asserting what actually **executed**, plus the ORDER of the steps in the Kotlin |
 | `action_table_test.py` | every action's tier against the brief and against `docs/actions.md`, no duplicate ids, and that content-returning actions declare `untrustedOutput` |
+| `wake_start_policy_test.py` | when a microphone-typed service may be started, that only Activities claim a foreground start, that a transient mic failure retries rather than stops, and that the heartbeat is cancelled when listening is turned off |
+| `mic_silence_test.py` | the open-but-silent recorder: exactly-zero rather than a threshold, one report per run, and a clock that went backwards |
+| `siri_overlay_test.py` | the floating orb: a palette per state, window flags that neither take focus nor swallow the screen, the keyguard and permission fallbacks, and that every way a conversation ends gives the microphone back |
 | `channel_protocol_test.py`, `screen_prune_test.py`, `task_vars_test.py`, `schedule_calc_test.py`, `geofence_test.py` | the other modules' equivalents |
 
 The truth table alone is necessary and not sufficient: "a Tier-3 action never
