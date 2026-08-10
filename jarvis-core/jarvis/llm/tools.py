@@ -68,6 +68,21 @@ if TYPE_CHECKING:  # pragma: no cover
 _LOGGER = logging.getLogger(__name__)
 
 # --- events ----------------------------------------------------------------
+#: Fired around every tool the assistant runs, so a surface can show what it is
+#: doing while it does it.
+#:
+#: Until these existed a turn was a spinner: the model called five tools, took
+#: nine seconds, and the only thing anybody saw was that it had not answered
+#: yet. Tool calls are the most interesting thing a turn does and they were the
+#: least visible.
+#:
+#: `jarvis_tool_started` carries {name, arguments, round, index, total}; `total`
+#: is how many calls this round asked for, which is what makes a progress bar
+#: honest rather than decorative. `jarvis_tool_finished` adds {ok, error,
+#: duration_ms}.
+EVENT_TOOL_STARTED = "jarvis_tool_started"
+EVENT_TOOL_FINISHED = "jarvis_tool_finished"
+
 EVENT_APPROVAL_REQUIRED = "jarvis_approval_required"
 EVENT_APPROVAL_RESOLVED = "jarvis_approval_resolved"
 EVENT_BACKGROUND_TASK = "jarvis_background_task"
@@ -812,6 +827,15 @@ class ToolRegistry:
             "tool": request.tool,
             "result": result,
         }
+
+    def announce(self, event_type: str, data: dict[str, Any], context: Any = None) -> None:
+        """Fire a tool-lifecycle event. Public because the agent runs the loop.
+
+        Exception-safe like every other `_fire` here: a surface that is not
+        listening, or one that throws, must not fail the tool call it was only
+        meant to be watching.
+        """
+        self._fire(event_type, data, context)
 
     def pending_requests(self) -> list[dict[str, Any]]:
         self.purge_expired()

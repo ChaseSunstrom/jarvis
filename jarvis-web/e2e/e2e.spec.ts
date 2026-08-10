@@ -831,3 +831,61 @@ test('the arc reactor is served as the tab icon', async ({ page, request }) => {
 	expect(decoded.ok).toBe(true);
 	expect(decoded.w).toBe(64);
 });
+
+test('a turn shows every tool it calls, with real progress and a reason when one fails', async ({
+	page
+}) => {
+	// The bug this replaces: a turn that called four tools and took nine seconds
+	// rendered a spinner. Tool calls are the moment the assistant touches the
+	// house, and they were the one thing the console never showed.
+	await page.goto('/devices');
+	// Wait for the page's own connection to be live before asking the mock to
+	// broadcast — an event fired before the layout subscribes reaches nobody,
+	// and the test would fail for a reason that has nothing to do with the panel.
+	await expect(page.getByTestId('entity-light.lab_lights')).toBeVisible({ timeout: 15_000 });
+
+	// Ask the mock to run a round of four, with the third one failing. A second
+	// socket is how the rest of this suite drives the backend: the page's own
+	// client is not reachable from here, and reaching into it would test the
+	// test rather than the console.
+	await page.evaluate(
+		(names) =>
+			new Promise((resolve) => {
+				const ws = new WebSocket(
+					`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+				);
+				ws.onopen = () =>
+					ws.send(
+						JSON.stringify({ id: 98, type: 'jarvis/test/tool_run', tools: names, fail_at: 2 })
+					);
+				ws.onmessage = () => {
+					ws.close();
+					resolve(null);
+				};
+			}),
+		['get_state', 'turn_on', 'lock_control', 'set_temperature']
+	);
+
+	const panel = page.getByTestId('tool-activity');
+	await expect(panel).toBeVisible({ timeout: 10_000 });
+
+	// Every call is named. A summary that said "4 tools" would not tell you
+	// which one touched the lock.
+	for (const name of ['get_state', 'turn_on', 'lock_control', 'set_temperature']) {
+		await expect(page.getByTestId(`tool-row-${name}`)).toBeVisible();
+	}
+
+	// The progress is the model's own count, not a timer.
+	await expect(page.getByTestId('tool-progress-count')).toHaveText('4 / 4', { timeout: 10_000 });
+	const bar = panel.getByRole('progressbar');
+	await expect(bar).toHaveAttribute('aria-valuenow', '100');
+
+	// The failure keeps its reason, and is not drawn as a success.
+	await expect(page.getByTestId('tool-error-lock_control')).toHaveText('no such entity');
+	// ...and the calls that worked are not tarred with it.
+	await expect(page.getByTestId('tool-error-turn_on')).toHaveCount(0);
+
+	// The panel is transient: it clears itself rather than leaving a stale
+	// record of a turn that finished a minute ago sitting over the house.
+	await expect(panel).toHaveCount(0, { timeout: 20_000 });
+});

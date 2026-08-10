@@ -11,6 +11,7 @@
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
 	import Approvals from '$lib/components/Approvals.svelte';
+	import ToolActivity from '$lib/components/ToolActivity.svelte';
 	import { ConsoleLink, statusLabel, type LinkSnapshot } from '$lib/consoleLink';
 	import { ChordTracker, isBareKey, isPaletteShortcut, isTypingTarget } from '$lib/shortcuts';
 
@@ -168,6 +169,10 @@
 			     must survive navigation, because the action is still waiting
 			     whatever page you wandered to. -->
 			<Approvals conn={approvalConn} />
+			<!-- Same reasoning as the approvals banner: a turn keeps running
+			     while you navigate, so what it is doing has to be visible
+			     wherever you are. -->
+			<ToolActivity conn={approvalConn} />
 			{#key page.url.pathname}
 				<div class="jv-route" data-testid="route" data-route={page.url.pathname}>
 					{@render children()}

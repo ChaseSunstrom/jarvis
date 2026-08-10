@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -34,7 +35,14 @@ from ..bus import Context
 from ..state import split_entity_id
 from .memory import ConversationStore
 from .ollama import DEFAULT_MODEL, ChatResult, OllamaClient, OllamaError
-from .tools import ToolRegistry, _area_name, _friendly_name, build_candidates
+from .tools import (
+    EVENT_TOOL_FINISHED,
+    EVENT_TOOL_STARTED,
+    ToolRegistry,
+    _area_name,
+    _friendly_name,
+    build_candidates,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..core import Jarvis
@@ -426,9 +434,43 @@ class ConversationAgent:
         result: ConversationResult,
     ) -> None:
         messages.append(chat_result.as_assistant_message())
-        for call in chat_result.tool_calls:
+        total = len(chat_result.tool_calls)
+        for index, call in enumerate(chat_result.tool_calls):
             _LOGGER.debug("Tool call: %s(%s)", call.name, call.arguments)
+            # Announced BEFORE it runs, which is the whole point: a tool that
+            # takes nine seconds should be visible for nine seconds, not
+            # reported once it is over.
+            started = time.monotonic()
+            self.tools.announce(
+                EVENT_TOOL_STARTED,
+                {
+                    "name": call.name,
+                    "arguments": call.arguments,
+                    "round": result.rounds,
+                    "index": index,
+                    "total": total,
+                },
+                context,
+            )
             output = await self.tools.call(call.name, call.arguments, context=context)
+            status = output.get("status") if isinstance(output, dict) else None
+            self.tools.announce(
+                EVENT_TOOL_FINISHED,
+                {
+                    "name": call.name,
+                    "round": result.rounds,
+                    "index": index,
+                    "total": total,
+                    # Not just "did it throw": a tool that answers
+                    # `{"status": "error"}` did not work, and a surface that
+                    # showed it as a tick would be lying about the house.
+                    "ok": status not in ("error", "denied"),
+                    "status": status,
+                    "error": output.get("error") if isinstance(output, dict) else None,
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                },
+                context,
+            )
             result.tool_calls.append(
                 {"name": call.name, "arguments": call.arguments, "result": output}
             )

@@ -761,6 +761,42 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					break;
 				}
 
+				// A turn's worth of tool calls, on demand, so the console's
+				// tool activity can be driven from a test rather than by
+				// waiting for a model to decide to call something.
+				case 'jarvis/test/tool_run': {
+					const names = Array.isArray(msg.tools) && msg.tools.length
+						? msg.tools
+						: ['get_state', 'turn_on'];
+					const failAt = Number.isInteger(msg.fail_at) ? msg.fail_at : -1;
+					ok(msg.id, { started: names.length });
+					names.forEach((name, index) => {
+						setTimeout(() => {
+							broadcast('jarvis_tool_started', {
+								name,
+								arguments: { name: 'kitchen lamp' },
+								round: 1,
+								index,
+								total: names.length
+							});
+							setTimeout(() => {
+								const failed = index === failAt;
+								broadcast('jarvis_tool_finished', {
+									name,
+									round: 1,
+									index,
+									total: names.length,
+									ok: !failed,
+									status: failed ? 'error' : 'ok',
+									error: failed ? 'no such entity' : null,
+									duration_ms: 40 + index * 10
+								});
+							}, 60);
+						}, index * 40);
+					});
+					break;
+				}
+
 				case 'config/area_registry/list':
 					ok(msg.id, world.areas);
 					break;
