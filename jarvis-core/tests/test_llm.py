@@ -1681,3 +1681,114 @@ async def test_a_failed_yaml_tool_fetch_is_fenced_too(tmp_path):
 
     await client.aclose()
     await shutdown(jarvis)
+
+
+# ===========================================================================
+# automation_control: the tier comes from the automation, not the tool
+# ===========================================================================
+async def _house_with_automations(tmp_path, configs):
+    """A real house plus a real automation engine holding `configs`."""
+    jarvis, objects = await build_house(tmp_path)
+    from jarvis.integrations.automation import async_setup as automation_setup
+
+    await automation_setup(jarvis, configs)
+    return jarvis, objects
+
+
+async def test_running_a_harmless_automation_is_tier_1(tmp_path):
+    jarvis, objects = await _house_with_automations(
+        tmp_path,
+        [
+            {
+                "id": "evening",
+                "alias": "Evening lights",
+                "trigger": [{"platform": "time", "at": "21:00:00"}],
+                "action": [{"service": "light.turn_on", "target": {"entity_id": "light.reading_lamp"}}],
+            }
+        ],
+    )
+    registry = make_registry(jarvis)
+
+    result = await registry.call("automation_control", {"action": "run", "name": "Evening lights"})
+
+    assert result["status"] == "ok", result
+    await shutdown(jarvis)
+
+
+async def test_running_an_automation_that_can_unlock_is_held_for_a_human(tmp_path):
+    """The escalation that matters.
+
+    `automation.trigger` is one tool call, and without reading the action list
+    it would look exactly as safe as turning on a lamp — while unlocking the
+    front door. The tier has to come from what the automation reaches.
+    """
+    jarvis, objects = await _house_with_automations(
+        tmp_path,
+        [
+            {
+                "id": "letmein",
+                "alias": "Let me in",
+                "trigger": [{"platform": "time", "at": "21:00:00"}],
+                "action": [{"service": "lock.unlock", "target": {"entity_id": "lock.front_door"}}],
+            }
+        ],
+    )
+    registry = make_registry(jarvis)
+    lock = objects["lock.front_door"]
+
+    held = await registry.call("automation_control", {"action": "run", "name": "Let me in"})
+
+    assert held["status"] == "approval_required", held
+    assert lock.actions == [], "the door moved before anyone was asked"
+
+    # And approving it does run the thing that was described.
+    done = await registry.approve_request(held["request_id"], True)
+    assert done["status"] == "executed", done
+    await shutdown(jarvis)
+
+
+async def test_enabling_an_automation_is_not_held_even_when_it_could_unlock(tmp_path):
+    """Enabling does not run anything, so it does not need the gate.
+
+    Worth stating: it would be easy to escalate the whole tool and make
+    "disable the door automation" require an approval, which is the wrong
+    trade — it discourages the safe action.
+    """
+    jarvis, _objects = await _house_with_automations(
+        tmp_path,
+        [
+            {
+                "id": "letmein",
+                "alias": "Let me in",
+                "trigger": [{"platform": "time", "at": "21:00:00"}],
+                "action": [{"service": "lock.unlock", "target": {"entity_id": "lock.front_door"}}],
+            }
+        ],
+    )
+    registry = make_registry(jarvis)
+
+    for action in ("disable", "enable"):
+        result = await registry.call("automation_control", {"action": action, "name": "Let me in"})
+        assert result["status"] == "ok", (action, result)
+
+    await shutdown(jarvis)
+
+
+async def test_an_automation_calling_a_script_is_held_because_it_cannot_be_read(tmp_path):
+    jarvis, _objects = await _house_with_automations(
+        tmp_path,
+        [
+            {
+                "id": "bedtime",
+                "alias": "Bedtime",
+                "trigger": [{"platform": "time", "at": "23:00:00"}],
+                "action": [{"service": "script.whatever"}],
+            }
+        ],
+    )
+    registry = make_registry(jarvis)
+
+    held = await registry.call("automation_control", {"action": "run", "name": "Bedtime"})
+
+    assert held["status"] == "approval_required", held
+    await shutdown(jarvis)

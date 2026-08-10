@@ -88,6 +88,16 @@ DEFAULT_EXPOSED_DOMAINS = frozenset(
         "script", "lock", "sensor", "binary_sensor", "number", "select",
         "button", "text", "vacuum", "siren", "person", "weather", "todo",
         "calendar",
+        # `automation` was missing, and with it the assistant's entire view of
+        # the user's automations: `list_entities` never showed one, so "turn off
+        # the hallway automation" could not even be attempted. Seeing them is
+        # cheap; ACTING on one is gated by what its actions reach — see
+        # `automation/reach.py` and `automation_control`.
+        "automation",
+        # The input helpers, which `set_value`, `select_option` and the
+        # turn_on/off pair all handle. Left unexposed they were tools with
+        # nothing to point at.
+        "input_boolean", "input_number", "input_select", "input_text",
     }
 )
 
@@ -1471,6 +1481,271 @@ def register_builtin_tools(
             "description": description,
             "message": "Accepted. Acknowledge briefly now; the result arrives later.",
         }
+
+    # --- automation_control -------------------------------------------------
+    #
+    # The tier here cannot come from the tool. Running an automation runs
+    # whatever the user put in it, so `automation.trigger` would be a tier-1
+    # shaped hole straight through to `lock.unlock`. `automation/reach.py`
+    # reads the action list and this escalates when it can reach a gated
+    # domain — or when it cannot tell, which is the same answer.
+    #
+    # Enabling and disabling do not run anything, so they stay tier 1.
+
+    def _automation_config(entity_id: str) -> dict[str, Any]:
+        from ..automation.reach import configs_by_entity
+
+        return configs_by_entity(jarvis).get(entity_id, {})
+
+    def _automation_run_is_gated(args: dict[str, Any]) -> bool:
+        from ..automation.reach import needs_approval
+
+        action = str(args.get("action") or "run").strip().lower()
+        if action in ("enable", "on", "turn_on", "disable", "off", "turn_off"):
+            return False
+        try:
+            resolution = _resolve(args, domain="automation")
+        except Exception:  # pragma: no cover - fail closed
+            return True
+        if not resolution.ok or not resolution.entity_ids:
+            # Nothing resolved: refuse to promise it is safe.
+            return True
+        return any(
+            needs_approval(_automation_config(entity_id).get("action"))
+            for entity_id in resolution.entity_ids
+        )
+
+    async def _automation_control(args: dict[str, Any], context: Any) -> Any:
+        action = str(args.get("action") or "run").strip().lower()
+        service = {
+            "run": "trigger",
+            "trigger": "trigger",
+            "enable": "turn_on",
+            "on": "turn_on",
+            "turn_on": "turn_on",
+            "disable": "turn_off",
+            "off": "turn_off",
+            "turn_off": "turn_off",
+        }.get(action)
+        if service is None:
+            return {"status": "error", "error": "action must be run, enable or disable"}
+        resolution = _resolve(args, domain="automation")
+        if not resolution.ok:
+            return {"status": "error", "error": resolution.error}
+        changed: list[dict[str, Any]] = []
+        failed: dict[str, str] = {}
+        data: dict[str, Any] = {"entity_id": resolution.entity_ids}
+        if service == "trigger":
+            # The conditions are part of what the user wrote; "run it" means run
+            # it, and the engine's own default here is to skip them.
+            data["skip_condition"] = True
+        try:
+            result = await _call_service(jarvis, "automation", service, data, context)
+        except ToolError as exc:
+            return {"status": "error", "error": str(exc)}
+        _merge_service_result(jarvis, result, changed, failed)
+        outcome = _outcome(changed, failed)
+        if outcome.get("status") == "error" and not failed:
+            # trigger/turn_on report no state change of their own; the call
+            # having not raised is the success signal.
+            return {"status": "ok", "automations": resolution.entity_ids, "action": action}
+        return outcome
+
+    registry.register(
+        name="automation_control",
+        description=(
+            "Run, enable or disable one of the user's automations. Running one "
+            "does whatever that automation does, so it may need approval."
+        ),
+        parameters=schema_object(
+            {
+                "action": {"type": "string", "description": "run, enable or disable."},
+                "name": {"type": "string", "description": "The automation's name."},
+                "entity_id": {"type": "string", "description": "automation.<id>, if known."},
+            },
+            required=["action"],
+        ),
+        handler=_automation_control,
+        gate=_automation_run_is_gated,
+        pin=lambda args: _pin_targets(args, domain="automation"),
+    )
+
+    # --- the rest of the house ---------------------------------------------
+    #
+    # Every service domain the platform registers should be reachable, or the
+    # assistant can see an entity in `list_entities` and have no way to act on
+    # it — which reads as "Jarvis is broken" rather than "that tool does not
+    # exist". These close the gaps: button, number/text, select, vacuum, the
+    # cover stop, and the climate fan mode.
+
+    async def _press_button(args: dict[str, Any], context: Any) -> Any:
+        resolution = _resolve(args, domain="button")
+        if not resolution.ok:
+            return {"status": "error", "error": resolution.error}
+        changed: list[dict[str, Any]] = []
+        failed: dict[str, str] = {}
+        try:
+            result = await _call_service(
+                jarvis, "button", "press", {"entity_id": resolution.entity_ids}, context
+            )
+        except ToolError as exc:
+            return {"status": "error", "error": str(exc)}
+        _merge_service_result(jarvis, result, changed, failed)
+        return _outcome(changed, failed)
+
+    registry.register(
+        name="press_button",
+        description="Press a button entity — a doorbell, a 'restart' button, a saved routine.",
+        parameters=schema_object(
+            {
+                "name": {"type": "string", "description": "The button's name."},
+                "entity_id": {"type": "string", "description": "button.<id>, if known."},
+                "area": {"type": "string", "description": "Restrict to an area."},
+            }
+        ),
+        handler=_press_button,
+    )
+
+    async def _set_value(args: dict[str, Any], context: Any) -> Any:
+        """number/input_number, and text/input_text, by whichever accepts it."""
+        value = args.get("value")
+        if value is None or str(value).strip() == "":
+            return {"status": "error", "error": "value is required"}
+        resolution = _resolve(args)
+        if not resolution.ok:
+            return {"status": "error", "error": resolution.error}
+        changed: list[dict[str, Any]] = []
+        failed: dict[str, str] = {}
+        for entity_id in resolution.entity_ids:
+            domain = split_entity_id(entity_id)[0]
+            if domain not in ("number", "input_number", "text", "input_text"):
+                failed[entity_id] = f"{domain} has no value to set"
+                continue
+            # A number entity refuses a non-number, so coerce here and say so
+            # plainly rather than letting the service fail with a type error.
+            payload: Any = value
+            if domain in ("number", "input_number"):
+                try:
+                    payload = float(value)
+                except (TypeError, ValueError):
+                    failed[entity_id] = f"{value!r} is not a number"
+                    continue
+            try:
+                result = await _call_service(
+                    jarvis, domain, "set_value",
+                    {"entity_id": [entity_id], "value": payload}, context,
+                )
+            except ToolError as exc:
+                failed[entity_id] = str(exc)
+                continue
+            _merge_service_result(jarvis, result, changed, failed)
+        return _outcome(changed, failed)
+
+    registry.register(
+        name="set_value",
+        description=(
+            "Set a number or text helper to a value — a target, a limit, a note. "
+            "Not for lights or thermostats; those have their own tools."
+        ),
+        parameters=schema_object(
+            {
+                "value": {"type": "string", "description": "The new value."},
+                "name": {"type": "string", "description": "Which helper."},
+                "entity_id": {"type": "string", "description": "number.<id> / text.<id>."},
+            },
+            required=["value"],
+        ),
+        handler=_set_value,
+    )
+
+    async def _select_option(args: dict[str, Any], context: Any) -> Any:
+        option = str(args.get("option") or args.get("value") or "").strip()
+        if not option:
+            return {"status": "error", "error": "option is required"}
+        resolution = _resolve(args)
+        if not resolution.ok:
+            return {"status": "error", "error": resolution.error}
+        changed: list[dict[str, Any]] = []
+        failed: dict[str, str] = {}
+        for entity_id in resolution.entity_ids:
+            domain = split_entity_id(entity_id)[0]
+            if domain not in ("select", "input_select"):
+                failed[entity_id] = f"{domain} has no options to choose from"
+                continue
+            # Match the entity's own spelling when it has one, so "eco" picks
+            # "Eco" instead of failing on case.
+            chosen = option
+            state = jarvis.states.get(entity_id)
+            for candidate in (state.attributes.get("options") if state else None) or []:
+                if str(candidate).strip().lower() == option.lower():
+                    chosen = str(candidate)
+                    break
+            try:
+                result = await _call_service(
+                    jarvis, domain, "select_option",
+                    {"entity_id": [entity_id], "option": chosen}, context,
+                )
+            except ToolError as exc:
+                failed[entity_id] = str(exc)
+                continue
+            _merge_service_result(jarvis, result, changed, failed)
+        return _outcome(changed, failed)
+
+    registry.register(
+        name="select_option",
+        description="Choose an option on a select/dropdown helper, e.g. a mode or a preset.",
+        parameters=schema_object(
+            {
+                "option": {"type": "string", "description": "The option to choose."},
+                "name": {"type": "string", "description": "Which selector."},
+                "entity_id": {"type": "string", "description": "select.<id>, if known."},
+            },
+            required=["option"],
+        ),
+        handler=_select_option,
+    )
+
+    async def _vacuum_control(args: dict[str, Any], context: Any) -> Any:
+        action = str(args.get("action") or "start").strip().lower()
+        service = {
+            "start": "start",
+            "clean": "start",
+            "stop": "turn_off",
+            "pause": "turn_off",
+            "home": "return_to_base",
+            "dock": "return_to_base",
+            "return": "return_to_base",
+            "return_to_base": "return_to_base",
+        }.get(action)
+        if service is None:
+            return {"status": "error", "error": "action must be start, stop or home"}
+        resolution = _resolve(args, domain="vacuum")
+        if not resolution.ok:
+            return {"status": "error", "error": resolution.error}
+        changed: list[dict[str, Any]] = []
+        failed: dict[str, str] = {}
+        try:
+            result = await _call_service(
+                jarvis, "vacuum", service, {"entity_id": resolution.entity_ids}, context
+            )
+        except ToolError as exc:
+            return {"status": "error", "error": str(exc)}
+        _merge_service_result(jarvis, result, changed, failed)
+        return _outcome(changed, failed)
+
+    registry.register(
+        name="vacuum_control",
+        description="Start, stop, or send a vacuum back to its dock.",
+        parameters=schema_object(
+            {
+                "action": {"type": "string", "description": "start, stop, or home."},
+                "name": {"type": "string", "description": "Which vacuum."},
+                "entity_id": {"type": "string", "description": "vacuum.<id>, if known."},
+            },
+            required=["action"],
+        ),
+        handler=_vacuum_control,
+    )
 
     registry.register(
         name="run_background_task",
