@@ -1,6 +1,7 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.ServerKind
 import ai.jarvis.app.config.Origin
 import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.ui.JarvisUi
@@ -30,8 +31,13 @@ import android.widget.Toast
 import java.io.ByteArrayInputStream
 
 /**
- * jarvis-core serves its own management UI; this is a window onto it, pinned to
- * that one origin.
+ * A window onto the jarvis-web console, pinned to that one origin.
+ *
+ * **The console is jarvis-web, not jarvis-core.** This comment used to say
+ * otherwise, and that belief is what made voice work here and nowhere else:
+ * everything else in the app assumed the configured URL was jarvis-core and
+ * dialled its socket path, while this screen quietly worked because a web page
+ * talking to its own relay is the one case that does. See [ServerKind].
  *
  * The WebView is the one place in this app where remote content executes, so it
  * is fenced in:
@@ -74,6 +80,24 @@ class ManagementActivity : Activity() {
             return
         }
         serverOrigin = origin
+
+        // Only the jarvis-web console has a management page. Pointed at
+        // jarvis-core the WebView would load the API's JSON index, which looks
+        // like a broken app rather than like a URL aimed at the wrong one of
+        // two servers — so say which it is. `null` means the voice path has not
+        // discovered it yet, and guessing wrong here would send someone to
+        // Settings to "fix" a URL that was right.
+        if (config.serverKind == ServerKind.CORE) {
+            Toast.makeText(
+                this,
+                "That address is jarvis-core, which has no management page. " +
+                    "Point Jarvis at the web console to manage from here.",
+                Toast.LENGTH_LONG,
+            ).show()
+            startActivity(Intent(this, SettingsActivity::class.java))
+            finish()
+            return
+        }
 
         val view = WebView(this)
         webView = view

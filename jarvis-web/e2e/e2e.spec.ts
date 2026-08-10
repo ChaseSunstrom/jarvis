@@ -611,6 +611,54 @@ test('the console is usable at phone width without sideways scrolling', async ({
 	await page.keyboard.press('Escape');
 });
 
+test('every management editor fits a phone, which is where the app shows them', async ({
+	page
+}) => {
+	// The Android app's Manage screen is a WebView onto this console, so these
+	// editors ARE the phone UI. An editor that overflows is unusable there in a
+	// way it never is on a desktop, and nothing else in this suite would notice.
+	await page.setViewportSize({ width: 390, height: 844 });
+
+	const noOverflow = async (where: string) => {
+		const overflow = await page.evaluate(
+			() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+		);
+		expect(overflow, where).toBeLessThanOrEqual(1);
+	};
+
+	// Automations: open the create form, which has the widest content (three
+	// JSON textareas).
+	await page.goto('/automations');
+	await page.getByTestId('new').click();
+	await expect(page.getByTestId('editor-new')).toBeVisible({ timeout: 15_000 });
+	await noOverflow('automations · new');
+	for (const id of ['field-alias', 'field-trigger', 'save']) {
+		const box = (await page.getByTestId(id).boundingBox())!;
+		expect(box.x + box.width, `automations · ${id}`).toBeLessThanOrEqual(391);
+		expect(box.x, `automations · ${id}`).toBeGreaterThanOrEqual(-1);
+	}
+
+	// Tools: same shape, more fields.
+	await page.goto('/tools');
+	await page.getByTestId('tool-new').click();
+	await expect(page.getByTestId('tool-editor-new')).toBeVisible({ timeout: 15_000 });
+	await noOverflow('tools · new');
+	const url = (await page.getByTestId('tool-field-url').boundingBox())!;
+	expect(url.x + url.width).toBeLessThanOrEqual(391);
+
+	// Settings: a row per setting, each with a control and two buttons — the
+	// most likely thing to wrap badly.
+	await page.goto('/settings');
+	await expect(page.getByTestId('setting-llm.model')).toBeVisible({ timeout: 15_000 });
+	await noOverflow('settings');
+	for (const id of ['input-llm.model', 'save-llm.model']) {
+		const box = (await page.getByTestId(id).boundingBox())!;
+		expect(box.x + box.width, `settings · ${id}`).toBeLessThanOrEqual(391);
+	}
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
 test('keyboard focus is visible, and icon-only controls are labelled', async ({ page }) => {
 	await page.goto('/devices');
 	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
