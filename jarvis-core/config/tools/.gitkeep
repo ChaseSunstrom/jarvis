@@ -1,0 +1,3 @@
+Every *.tool.yaml here becomes a tool the assistant can call. The directory
+ships empty on purpose; ../examples/house/example.tool.yaml is a worked one,
+and the console can write tools into this directory for you.

@@ -1,24 +1,9 @@
 # Jarvis Core — default configuration.
 #
-# This file boots as-is into an EMPTY house: the server, the voice pipeline,
-# the local LLM, and a handful of sensors that watch Jarvis itself. There are no
-# rooms, no devices, no automations and no people, because inventing them would
-# mean filling your console with things you do not own and cannot switch on.
-#
-# The house is yours to build, and you have three ways to build it:
-#
-#   * plug in real hardware — `mqtt:` below picks up most of it by itself;
-#   * use the console (Devices / Areas / Automations / Tools), which writes
-#     into .storage/ and needs no YAML at all;
-#   * ask Jarvis to do it. It can create areas, helpers, automations and tools,
-#     and will ask you for anything it needs rather than guess.
-#
-# A complete worked example — a full fake house with lights, a thermostat, a
-# lock, automations, scripts, scenes and a package — lives in examples/house/.
-# Copy its files over this directory to get it, and delete them to get rid of
-# it again:
-#
-#   cp examples/house/configuration.yaml examples/house/*.yaml .
+# This file boots as-is: `docker compose up -d` gives you a working house made
+# of demo devices, a voice pipeline pointed at the Wyoming containers, and a
+# local LLM agent, with nothing to fill in first. Delete the `demo:` block once
+# real devices arrive.
 #
 # Reference for every key: ../docs/configuration.md
 #
@@ -43,9 +28,7 @@
 jarvis:
   name: Jarvis
   # Used by the sun integration, person presence (home vs away), and anything
-  # that reasons about daylight. These are a placeholder in central London —
-  # set them to your actual house, in the console under Settings > House or by
-  # editing them here.
+  # that reasons about daylight. Set them to your actual house.
   latitude: 51.5072
   longitude: -0.1276
   elevation: 11
@@ -78,17 +61,18 @@ jarvis:
   # to demand a bearer token as well.
   webhook_require_auth: false
 
-  # Rooms. Deliberately absent rather than pre-filled with a guess at your
-  # floor plan: an area you did not create, cannot delete from the console and
-  # have no devices in is clutter that never goes away.
-  #
-  # Create them in the console under Areas, or say "add an area called the
-  # study". Adding them here works too:
-  #
-  # areas:
-  #   - name: Living Room
-  #     aliases: [lounge, front room]
-  #   - name: Kitchen
+  # Rooms. Devices get assigned to these, and voice commands use them:
+  # "turn off the lights in the study" resolves through this list.
+  areas:
+    - name: Living Room
+      aliases: [lounge, front room]
+    - name: Kitchen
+    - name: Bedroom
+      aliases: [master bedroom]
+    - name: Hallway
+    - name: Study
+      aliases: [office]
+    - name: Garage
 
 # ---------------------------------------------------------------------------
 # Recorder — the history database.
@@ -135,9 +119,8 @@ voice:
     host: 127.0.0.1
     port: 10200
     # Must equal PIPER_VOICE in docker-compose.yml — that is the voice the
-    # container actually loads. The console reads the list of voices Piper is
-    # serving and offers them as a dropdown, so this is one you can pick rather
-    # than one you have to spell.
+    # container actually loads. Naming a different one here makes every
+    # utterance depend on Piper being able to download it.
     voice: en_GB-alan-medium
   wake:
     host: 127.0.0.1
@@ -151,6 +134,14 @@ voice:
       voice: en_GB-alan-medium   # the voice the persona is written for
       wake_word: hey_jarvis
       language: en
+    # A second pipeline naming a voice Piper was not started with: the
+    # container downloads it on first use, so the first Guest reply is slow —
+    # and fails if the box has no internet. Change PIPER_VOICE instead if this
+    # is the one you actually want loaded.
+    - name: Guest
+      voice: en_US-lessac-medium
+      wake_word: ok_nabu
+      language: en
 
 # ---------------------------------------------------------------------------
 # LLM — the local model that runs the conversation.
@@ -158,11 +149,12 @@ voice:
 llm:
   # Ollama usually runs on the host, but it does not have to — an LXC container
   # or another box on the LAN works, and OLLAMA_URL in .env is how you say so.
+  # This was hardcoded to loopback, so setting that variable did nothing at all
+  # and the log cheerfully reported url=http://127.0.0.1:11434 either way.
   url: !env_var OLLAMA_URL http://127.0.0.1:11434
   # The chat model. PLANNER_MODEL/CODER_MODEL in .env are the orchestrator's,
   # not this one — setting those and expecting the conversation to change is an
-  # easy and unrewarding mistake to make. The console offers whatever Ollama
-  # reports it has as a dropdown.
+  # easy and unrewarding mistake to make.
   model: !env_var OLLAMA_MODEL qwen3:8b
   persona_file: prompts/jarvis.txt
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
@@ -178,10 +170,6 @@ llm:
   # every tool, read-only ones included — this is the blast radius, so keep it
   # deliberate. Locks are exposed but still gated: `lock` is in GATED_DOMAINS,
   # so `lock_control` always needs a human approval outside the conversation.
-  #
-  # Domains rather than a list of entity ids, because on a fresh install there
-  # are no entities to list yet, and a whitelist you have to remember to extend
-  # every time you buy a bulb is one that quietly stops matching your house.
   expose:
     domains:
       - light
@@ -193,45 +181,48 @@ llm:
       - scene
       - script
       - lock
-      - automation
-      - input_boolean
-      - input_number
-      - input_select
-      - input_text
-    # Individual entities to add on top of those domains, and — more usefully —
-    # individual entities to take away. Exclusion is checked inside the tool
-    # registry, so it holds against every tool including the read-only ones.
-    #
-    # READ THIS BEFORE ADDING TO exclude_entities. It covers tools that resolve
-    # a target: turn_on, set_cover_position, get_state and friends. It does NOT
-    # cover `run_script` and `activate_scene`, which resolve the *script or
-    # scene* and then execute whatever is inside it. So an entity is only
-    # really excluded while no model-runnable script or scene touches it.
-    # `test_excluded_entities_are_not_reachable_through_a_script_or_scene`
-    # enforces that for whatever you end up with.
-    #
-    # entities:
-    #   - sensor.outside_temperature
-    # exclude_entities:
-    #   - cover.garage_door
+    entities:
+      - sensor.outside_temperature
+      - sensor.outside_humidity
+      - binary_sensor.front_door
+      - person.chris
+    exclude_entities:
+      # A model with a plausible-sounding reason must not be able to open the
+      # garage. Exclusion is checked inside the tool registry, so this holds
+      # against every tool including the read-only ones — `get_state` on it
+      # comes back "no exposed entity", and `list_entities` never mentions it.
+      #
+      # READ THIS BEFORE ADDING TO THIS LIST. Exclusion covers tools that
+      # resolve a target: turn_on, set_cover_position, get_state and friends.
+      # It does NOT cover `run_script` and `activate_scene`, which resolve the
+      # *script or scene* entity and then execute whatever is inside it. So an
+      # entity is only really excluded while no model-runnable script or scene
+      # touches it. Nothing in scripts.yaml or scenes.yaml names the garage
+      # door as a target — only as a template read inside `script.house_status`,
+      # which is a curated report and not control. `test_excluded_entities_are_
+      # not_reachable_through_a_script_or_scene` in tests/test_packaging.py
+      # enforces that for the whole shipped configuration.
+      #
+      # `switch.coffee_machine` is deliberately NOT here, even though it is the
+      # obvious candidate: `script.good_morning` turns it on and `scene.away`
+      # turns it off, and both are model-runnable, so listing it would state a
+      # guarantee this configuration does not keep.
+      - cover.garage_door
 
   # How Jarvis decides whether to speak, text, or stay quiet. These entity ids
-  # feed the `get_user_context` tool. Left empty because none of them can exist
-  # on a fresh install; fill in the ones you have and leave out the rest.
-  #
-  # user_context:
-  #   presence: person.you
-  #   driving: binary_sensor.your_phone_driving
-  #   awake: input_boolean.you_awake
-  #   active_device: sensor.your_active_device
+  # feed the `get_user_context` tool; leave out the ones you do not have.
+  user_context:
+    presence: person.chris
+    driving: binary_sensor.chris_driving
+    awake: input_boolean.chris_awake
+    active_device: sensor.chris_active_device
 
   conversation:
     ttl: 900
     max_turns: 20
 
-  # Every *.tool.yaml in this directory becomes a tool the model can call. No
-  # Python, no restart of anything but Jarvis. The console writes here too, and
-  # examples/house/example.tool.yaml is a worked one.
+  # Every *.tool.yaml in this directory becomes a tool the model can call.
+  # No Python, no restart of anything but Jarvis. See tools/example.tool.yaml.
   tools_dir: tools
 
 # ---------------------------------------------------------------------------
@@ -309,11 +300,9 @@ orchestrator:
 # ---------------------------------------------------------------------------
 # MQTT — the one integration that covers most real hardware.
 # ---------------------------------------------------------------------------
-# Discovery is why this matters, and why it is the first thing to try on an
-# empty house: Zigbee2MQTT, Tasmota, ESPHome and Shelly all publish Home
-# Assistant-format discovery messages, and Jarvis speaks that format. Point
-# them at the same broker and their devices simply appear — named, in domains,
-# ready to be put in an area.
+# Discovery is why this matters: Zigbee2MQTT, Tasmota, ESPHome and Shelly all
+# publish Home Assistant-format discovery messages, and Jarvis speaks that
+# format. Point them at the same broker and their devices simply appear.
 mqtt:
   broker: 127.0.0.1
   port: 1883
@@ -342,12 +331,62 @@ mqtt:
   #     device_class: temperature
 
 # ---------------------------------------------------------------------------
-# Jarvis watching itself.
+# Demo devices — a whole house with no hardware.
 # ---------------------------------------------------------------------------
-# The only entities that ship. Everything below needs no hardware, no broker
-# and no setup, works on the day you install it, and answers a question you
-# will actually ask — "is the model loaded, and is this box healthy?" That is
-# the whole test for what belongs in a default configuration.
+# Lights, switches, sensors, a thermostat, covers, a lock, a fan, a speaker, a
+# vacuum and more, spread across three areas, every one implementing the real
+# method contract. This is what the automations and scenes below act on, and
+# what makes the voice pipeline testable before anything is wired up.
+#
+# DELETE THIS BLOCK once you have real devices.
+demo:
+  create_areas: true
+
+# ---------------------------------------------------------------------------
+# Template entities — derived state, no hardware.
+# ---------------------------------------------------------------------------
+template:
+  - sensor:
+      - name: Feels Like Outside
+        # Wind chill is not modelled here; this is the humidity-adjusted
+        # apparent temperature, which is what "does it feel cold" wants.
+        # The `{%-` / `-%}` are load-bearing: without them the folded block
+        # leaves whitespace around the number and the state stops parsing as
+        # numeric, which quietly breaks graphs and numeric_state triggers.
+        state: >-
+          {%- set t = states('sensor.outside_temperature') | float(0) -%}
+          {%- set h = states('sensor.outside_humidity') | float(50) -%}
+          {{ (t + (0.33 * (h / 100) * 6.105 * 2.71828 ** (17.27 * t / (237.7 + t))) - 4.0) | round(1) }}
+        unit_of_measurement: "°C"
+        device_class: temperature
+
+      - name: House Power
+        state: "{{ states('sensor.power_consumption') | float(0) | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        attributes:
+          # Rough running cost at the current draw, for the LLM to quote.
+          hourly_cost: "{{ (states('sensor.power_consumption') | float(0) / 1000 * 0.27) | round(3) }}"
+
+    binary_sensor:
+      - name: Anyone Home
+        state: "{{ is_state('person.chris', 'home') }}"
+        device_class: presence
+
+      - name: House Insecure
+        # Something is open or unlocked that should not be, at night.
+        state: >-
+          {{ is_state('lock.front_door_lock', 'unlocked')
+             or is_state('cover.garage_door', 'open')
+             or is_state('binary_sensor.front_door', 'on') }}
+        device_class: problem
+
+# ---------------------------------------------------------------------------
+# REST — any HTTP API as entities.
+# ---------------------------------------------------------------------------
+# One request per block feeds every entity in it. This example watches the
+# local Ollama so you can see at a glance whether the model is warm, which is
+# the difference between a 300 ms reply and a 6 s one.
 rest:
   # Same OLLAMA_URL as the `llm:` block above — these two pointing at
   # different places is how you get an assistant that talks to a model while
@@ -375,9 +414,12 @@ rest:
   #     - name: Documents Filed
   #       value_template: "{{ value_json.documents_total }}"
 
+# ---------------------------------------------------------------------------
+# Command line — shell commands as entities.
+# ---------------------------------------------------------------------------
 # These run inside the jarvis-core container, so they see the container's
-# filesystem and its tools. They deliberately stick to coreutils and /proc,
-# which are present in the image with no extra packages.
+# filesystem and its tools. The commands below deliberately stick to coreutils
+# and /proc, which are present in the image with no extra packages.
 command_line:
   - sensor:
       name: Disk Free
@@ -405,37 +447,47 @@ command_line:
 # ---------------------------------------------------------------------------
 # People and presence.
 # ---------------------------------------------------------------------------
-# A person's state is aggregated from their trackers, and the phone app posts
-# to `device_tracker.see`, which creates the tracker entity on first report —
-# so a tracker id here can name a device that does not exist yet.
-#
-# No one is defined by default, because a `person.chris` on your install would
-# be a stranger in your house. Add yourself once the app has connected and you
-# know what your tracker is called:
-#
-# person:
-#   - name: Your Name
-#     id: you
-#     device_trackers:
-#       - device_tracker.your_phone
+# A person's state is aggregated from their trackers. The phone app posts to
+# `device_tracker.see`, which creates the tracker entity on first report — so
+# the tracker ids below can name devices that do not exist yet.
+person:
+  - name: Chris
+    id: chris
+    device_trackers:
+      - device_tracker.chris_phone
+      - device_tracker.chris_watch
 
 # ---------------------------------------------------------------------------
 # Input helpers — the knobs automations and voice commands read and write.
 # ---------------------------------------------------------------------------
-# None ship, for the same reason: a helper nothing reads is a switch that does
-# nothing. Create them in the console, or ask Jarvis for one ("make me a
-# toggle called guest mode"). The shape, when you want to write them by hand:
-#
-# input_boolean:
-#   guest_mode:
-#     name: Guest mode
-#     icon: mdi:account-multiple
-#     initial: off
-# input_select:
-#   house_mode:
-#     name: House mode
-#     options: [home, away, night, holiday]
-#     initial: home
+input_boolean:
+  guest_mode:
+    name: Guest mode
+    icon: mdi:account-multiple
+    initial: off
+  chris_awake:
+    name: Chris awake
+    initial: on
+
+input_number:
+  bedtime_volume:
+    name: Bedtime volume
+    min: 0
+    max: 100
+    step: 5
+    initial: 30
+    unit_of_measurement: "%"
+
+input_select:
+  house_mode:
+    name: House mode
+    options: [home, away, night, holiday]
+    initial: home
+
+input_text:
+  last_announcement:
+    name: Last announcement
+    max: 255
 
 # ---------------------------------------------------------------------------
 # Hardware integrations that need a real device on the LAN.
@@ -456,11 +508,8 @@ command_line:
 #     scan_interval: 10
 
 # ---------------------------------------------------------------------------
-# Automations, scripts and scenes.
+# Automations, scripts and scenes — separate files, because they grow.
 # ---------------------------------------------------------------------------
-# Anything you make in the console lives in .storage/ and is editable there;
-# these files are for the ones you would rather keep in version control. They
-# ship empty. examples/house/ has a working set to copy from.
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
@@ -470,7 +519,6 @@ scene: !include scenes.yaml
 # ---------------------------------------------------------------------------
 # Every packages/*.yaml is merged into the top level of this file: a package
 # can contribute its own automations, scripts, template entities and helpers,
-# all in one place, and deleting the file removes the whole feature.
-# examples/house/packages-laundry.yaml is a worked one — drop it into
-# packages/ to switch it on.
+# all in one place, and deleting the file removes the whole feature. See
+# packages/example.yaml.
 packages: !include_dir_named packages

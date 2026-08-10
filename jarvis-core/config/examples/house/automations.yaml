@@ -1,0 +1,237 @@
+# Automations. A list; every entry becomes an `automation.<id>` entity you can
+# turn off, plus a `automation.trigger` target.
+#
+# Shape is Home Assistant's, so existing automations paste in unchanged:
+#   trigger:   state | numeric_state | time | time_pattern | event | mqtt |
+#              webhook | template | jarvis_start
+#   condition: state | numeric_state | template | time | and/or/not | trigger
+#   action:    service | delay | wait_template | wait_for_trigger | choose |
+#              if/then/else | repeat | variables | parallel | stop | event | scene
+#   mode:      single (default) | restart | queued | parallel
+#
+# `sun` is not a trigger platform — watch the `sun.sun` entity instead, as
+# "Evening wind-down" does below.
+#
+# Full reference: ../docs/configuration.md
+
+# ---------------------------------------------------------------------------
+- id: motion_light_basement
+  alias: Basement motion light
+  description: >-
+    Light on when the basement sees movement, off two minutes after it stops.
+    mode: restart is what makes the timer extend instead of stack — each new
+    movement cancels the pending run and starts the wait again.
+  mode: restart
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.basement_motion
+      to: "on"
+  condition:
+    # Do not bother during the day.
+    - condition: state
+      entity_id: sun.sun
+      state: below_horizon
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.ceiling_lights
+      data:
+        brightness: 160
+    - wait_for_trigger:
+        - platform: state
+          entity_id: binary_sensor.basement_motion
+          to: "off"
+      timeout: "00:10:00"
+      continue_on_timeout: true
+    - delay: "00:02:00"
+    - service: light.turn_off
+      target:
+        entity_id: light.ceiling_lights
+
+# ---------------------------------------------------------------------------
+- id: evening_wind_down
+  alias: Evening wind-down
+  description: Warm light and closed blinds at sunset, but only if someone is in.
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: sun.sun
+      to: below_horizon
+  condition:
+    - condition: state
+      entity_id: binary_sensor.anyone_home
+      state: "on"
+  action:
+    - service: scene.turn_on
+      target:
+        entity_id: scene.evening
+    - service: cover.close_cover
+      target:
+        entity_id: cover.living_room_window
+
+# ---------------------------------------------------------------------------
+- id: house_mode_night
+  alias: House mode — night
+  description: >-
+    One switch for "everyone is going to bed". Triggered by the house_mode
+    helper rather than a time, so a late night is a single voice command
+    ("set the house to night") instead of waiting for the clock.
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_select.house_mode
+      to: night
+  action:
+    - service: script.turn_on
+      target:
+        entity_id: script.goodnight
+
+# ---------------------------------------------------------------------------
+- id: door_opened_while_away
+  alias: Front door opened while away
+  description: >-
+    Notice, record, and speak up. Deliberately does NOT lock anything back:
+    a door opening while the house is empty could be a delivery or it could be
+    someone locked out, and guessing wrong is worse than reporting.
+  mode: queued
+  max: 5
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.front_door
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: binary_sensor.anyone_home
+      state: "off"
+    - condition: state
+      entity_id: input_boolean.guest_mode
+      state: "off"
+  action:
+    # Record first, speak second, and never let the speaking fail the
+    # recording: `voice.say` raises outright when Piper is unreachable, so
+    # without continue_on_error a security event would end in a traceback
+    # instead of an entry. Ordering alone is not enough — anything added after
+    # this point would be skipped.
+    - service: logbook.log
+      data:
+        name: Security
+        message: Front door opened with nobody home
+        entity_id: binary_sensor.front_door
+    - service: voice.say
+      continue_on_error: true
+      data:
+        text: "Sir, the front door has just opened and the house is empty."
+
+# ---------------------------------------------------------------------------
+- id: power_draw_high
+  alias: Sustained high power draw
+  description: >-
+    `for:` is the whole point — an oven or a kettle spikes past 3 kW routinely,
+    so only a draw that *stays* high for five minutes is worth mentioning.
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.power_consumption
+      above: 3000
+      for: "00:05:00"
+  action:
+    - service: logbook.log
+      data:
+        name: Energy
+        message: >-
+          Sustained draw of {{ states('sensor.power_consumption') }} W
+          (about {{ state_attr('sensor.house_power', 'hourly_cost') }} an hour).
+
+# ---------------------------------------------------------------------------
+- id: guest_mode_expires
+  alias: Guest mode expires overnight
+  description: Guest mode is for an evening, not forever. Clear it at 04:00.
+  trigger:
+    - platform: time
+      at: "04:00:00"
+  condition:
+    - condition: state
+      entity_id: input_boolean.guest_mode
+      state: "on"
+  action:
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.guest_mode
+
+# ---------------------------------------------------------------------------
+- id: startup_notice
+  alias: Startup notice
+  description: A line in the logbook every time Jarvis comes back up.
+  trigger:
+    - platform: jarvis_start
+  action:
+    - service: logbook.log
+      data:
+        name: Jarvis
+        message: "Core restarted; back online at {{ now().strftime('%H:%M') }}."
+
+# ---------------------------------------------------------------------------
+- id: phone_location_webhook
+  alias: Phone location report
+  description: >-
+    The companion app POSTs coordinates here. The webhook id IS the credential
+    (that is why it is long and random) — rotate it by editing this line, and
+    set `jarvis: webhook_require_auth: true` to demand a bearer token too.
+    POST http://<host>:8080/api/webhook/<webhook_id>
+  mode: parallel
+  max: 10
+  trigger:
+    - platform: webhook
+      webhook_id: chris_phone_a7f3d91c4e2b5086
+  # The webhook is open by design (the id is the credential), so this is the
+  # only thing standing between a malformed or hostile POST and the tracker.
+  # Without it a body with no coordinates renders both templates to "" —
+  # device_tracker.see logs "bad gps payload", drops the fix, and still applies
+  # the rest, which resets source_type to `router`, gps_accuracy to 50 and
+  # battery to 0. One empty POST degrades a good location report.
+  condition:
+    - condition: template
+      value_template: >-
+        {{ trigger.json.latitude is defined and trigger.json.longitude is defined
+           and trigger.json.latitude is not none and trigger.json.longitude is not none }}
+  action:
+    - service: device_tracker.see
+      data:
+        dev_id: chris_phone
+        gps:
+          - "{{ trigger.json.latitude | float }}"
+          - "{{ trigger.json.longitude | float }}"
+        gps_accuracy: "{{ trigger.json.accuracy | default(50) }}"
+        battery: "{{ trigger.json.battery | default(0) }}"
+
+# ---------------------------------------------------------------------------
+# The pattern for any Zigbee2MQTT remote: single press toggles, double press
+# runs a scene. Change the topic to your device's friendly name.
+#
+# Shipped commented out because of a startup-ordering caveat, not because the
+# pattern is wrong. The automation engine is set up before the mqtt client
+# exists, so an mqtt trigger attached at boot logs "mqtt trigger ... is inert"
+# and never fires. Uncomment this, then call `automation.reload` once after
+# startup (or from a `jarvis_start` automation with a short delay) and the
+# trigger attaches to a live client and works from then on.
+#
+# - id: mqtt_button_press
+#   alias: Zigbee button — living room
+#   mode: restart
+#   trigger:
+#     - platform: mqtt
+#       topic: zigbee2mqtt/living_room_button
+#   action:
+#     - choose:
+#         - conditions:
+#             - condition: template
+#               value_template: "{{ trigger.payload_json.action == 'single' }}"
+#           sequence:
+#             - service: light.toggle
+#               target:
+#                 entity_id: light.ceiling_lights
+#         - conditions:
+#             - condition: template
+#               value_template: "{{ trigger.payload_json.action == 'double' }}"
+#           sequence:
+#             - scene: scene.evening

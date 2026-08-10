@@ -53,10 +53,22 @@ one per device, without restarting:
 docker compose exec jarvis-core python -m jarvis --config /config --create-token phone
 ```
 
-The shipped `config/` boots into a full demo house — lights, a thermostat,
-covers, a lock, a speaker — so you can test voice and automations before any
-hardware is wired up. Delete the `demo:` block from
-`config/configuration.yaml` when real devices arrive.
+The shipped `config/` boots into an **empty** house: the server, the voice
+pipeline, the model, and a handful of sensors that watch Jarvis itself (is the
+model loaded, is the disk filling up, where is the sun). No rooms, no devices,
+no automations and no people — inventing those would fill your console with
+things you do not own and cannot switch on, and you could never tell "not set
+up yet" from "set up wrong".
+
+Build the house one of three ways: plug in hardware and let `mqtt:` discovery
+find it, use the console (Devices / Areas / Automations / Tools), or ask Jarvis,
+which can create areas, helpers, automations and tools and will ask you for
+anything it needs.
+
+If you want something to talk to before hardware arrives, `config/examples/house/`
+is the full fake house — lights, a thermostat, covers, a lock, a speaker, eight
+automations, five scripts, scenes and helpers — kept whole, with copy-paste
+instructions in `config/examples/README.md`.
 
 ### Permissions
 
@@ -188,7 +200,7 @@ per device kind. A working integration is on the order of 100 lines.
 | `voice:` | Wyoming `stt`/`tts`/`wake` endpoints and named `pipelines`. |
 | `llm:` | Ollama `url`/`model`, `persona_file`, `expose`, `user_context`, `tools_dir`. |
 | `mqtt:` | Broker, HA-format `discovery`, and hand-declared entities. |
-| `demo:` | A full fake house. Delete once you have hardware. |
+| `demo:` | A full fake house. Not shipped; see `config/examples/house/`. |
 | `template:` | Entities whose state is a Jinja expression. |
 | `rest:` | Entities from any HTTP API. |
 | `command_line:` | Entities from shell commands. |

@@ -1,0 +1,3 @@
+Packages live here: one self-contained feature per file, merged into the top
+level of configuration.yaml. The directory ships empty on purpose — see
+../examples/house/ for a worked one.

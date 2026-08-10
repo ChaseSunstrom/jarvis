@@ -1,78 +1,9 @@
-# Scenes — a named set of entity states.
+# Scenes you keep in version control — a named set of entity states.
 #
 # `scene.turn_on` applies one. Each target is set with the right verb for its
 # domain (lights get turn_on with attributes, covers get open/close, locks get
 # lock/unlock, climate gets set_hvac_mode + set_temperature), so a scene can
-# mix domains freely. Entities whose domain has no matching service fall back
-# to a direct state write, which is what makes scenes work for template and
-# virtual entities too.
+# span domains without you writing the service calls out.
 #
-# A scene is a destination, not a transition: it says what the room should look
-# like, and Jarvis works out the calls. For anything with steps, timing or
-# conditions, use a script instead.
-
-# ---------------------------------------------------------------------------
-- name: Evening
-  id: evening
-  icon: mdi:weather-sunset-down
-  entities:
-    light.ceiling_lights:
-      state: on
-      brightness: 120
-      color_temp_kelvin: 2400
-    light.kitchen_lights:
-      state: on
-      brightness: 80
-      color_temp_kelvin: 2700
-    switch.decorative_lights: on
-    fan.living_room_fan: off
-
-# ---------------------------------------------------------------------------
-- name: Movie
-  id: movie
-  icon: mdi:movie-open
-  entities:
-    light.ceiling_lights:
-      state: on
-      brightness: 25
-      rgb_color: [255, 140, 60]
-    light.kitchen_lights: off
-    switch.decorative_lights: off
-    cover.living_room_window: closed
-    media_player.living_room_speaker:
-      state: playing
-      volume_level: 0.45
-
-# ---------------------------------------------------------------------------
-- name: Bright
-  id: bright
-  icon: mdi:white-balance-sunny
-  entities:
-    light.ceiling_lights:
-      state: on
-      brightness: 255
-      color_temp_kelvin: 5000
-    light.kitchen_lights:
-      state: on
-      brightness: 255
-      color_temp_kelvin: 5000
-    light.bed_light: off
-    cover.living_room_window: open
-
-# ---------------------------------------------------------------------------
-- name: Away
-  id: away
-  icon: mdi:home-export-outline
-  entities:
-    light.ceiling_lights: off
-    light.kitchen_lights: off
-    light.bed_light: off
-    switch.decorative_lights: off
-    switch.coffee_machine: off
-    fan.living_room_fan: off
-    media_player.living_room_speaker: off
-    # Setback rather than off: reheating a cold house costs more than holding
-    # it at 16, and a frozen pipe costs more than either.
-    climate.thermostat:
-      state: heat
-      temperature: 16
+# Empty on purpose. examples/house/scenes.yaml has working ones.
+[]

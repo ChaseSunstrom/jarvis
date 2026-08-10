@@ -17,6 +17,7 @@ import asyncio
 import json
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -184,6 +185,51 @@ def config_copy(tmp_path: Path) -> Path:
     return target
 
 
+#: The worked example — the full fake house that used to BE the default.
+EXAMPLE_HOUSE = CONFIG / "examples" / "house"
+
+
+def _overlay_example(target: Path) -> Path:
+    """Copy `examples/house/` over a copy of `config/`, in place.
+
+    An overlay rather than a standalone directory, because that is what the
+    README tells a user to do and what they would actually run: the example
+    replaces four files and adds two, and inherits `prompts/` and everything
+    else from the shipped config it is an example *of*.
+    """
+    for name in ("configuration.yaml", "automations.yaml", "scripts.yaml", "scenes.yaml"):
+        shutil.copy(EXAMPLE_HOUSE / name, target / name)
+    shutil.copy(EXAMPLE_HOUSE / "example.tool.yaml", target / "tools" / "example.tool.yaml")
+    shutil.copy(EXAMPLE_HOUSE / "packages-laundry.yaml", target / "packages" / "laundry.yaml")
+    return target
+
+
+def _example_config() -> dict[str, Any]:
+    """The worked example's configuration, loaded, with nothing left behind."""
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "config"
+        shutil.copytree(CONFIG, target)
+        return load_config(_overlay_example(target))
+
+
+@pytest.fixture
+def example_copy(config_copy: Path) -> Path:
+    """The shipped config with `examples/house/` copied over it.
+
+    The default is an empty house now, which is the right thing to ship and the
+    wrong thing to test safety properties against. "An excluded entity cannot be
+    reached through a model-runnable script" is only a claim about a house that
+    HAS scripts and an excluded entity; asserted against nothing it passes for
+    the least interesting reason there is.
+
+    So the demo house is kept whole as `config/examples/house/` and this fixture
+    is exactly the copy instruction in its README. That means two things at
+    once: the safety tests keep a populated fixture, and the example itself is
+    proven to still work rather than rotting in a directory nobody loads.
+    """
+    return _overlay_example(config_copy)
+
+
 async def _boot(config_dir: Path) -> Jarvis:
     jarvis = Jarvis(config_dir)
     await jarvis.async_setup(load_config(config_dir))
@@ -210,13 +256,56 @@ def test_load_config_succeeds_on_a_fresh_checkout(config_copy: Path) -> None:
     )
     config = load_config(config_copy)
 
-    expected = {
+    infrastructure = {
         "jarvis", "recorder", "history", "logbook", "sun", "voice", "llm",
-        "mqtt", "demo", "template", "rest", "command_line", "person",
+        "web", "orchestrator", "mqtt", "rest", "command_line",
         "automation", "script", "scene",
-        "input_boolean", "input_number", "input_select", "input_text",
     }
-    assert expected <= set(config), f"missing from the default config: {expected - set(config)}"
+    assert infrastructure <= set(config), (
+        f"missing from the default config: {infrastructure - set(config)}"
+    )
+
+    # And the other half of the claim, which is the one that changed: the
+    # default ships an EMPTY house. A room you did not create, a person who is
+    # not you and a light you cannot switch on are worse than nothing, because
+    # you cannot tell "not set up yet" from "set up wrong". The worked example
+    # still has all of it — see `example_copy`.
+    invented = {"demo", "person", "template", "input_boolean", "input_number",
+                "input_select", "input_text"}
+    assert not (invented & set(config)), (
+        f"the default configuration invents things the user does not have: "
+        f"{sorted(invented & set(config))}"
+    )
+    assert not (config.get("jarvis") or {}).get("areas"), (
+        "the default configuration guesses at a floor plan; areas are the "
+        "user's to create"
+    )
+    # Emptiness rather than a type: `!include` folds a falsy document to `{}`
+    # (config.py's `yaml.load(...) or {}`), so an empty automations.yaml arrives
+    # as a dict where a list was written. Harmless downstream — everything that
+    # reads it iterates — and not what this test is about.
+    for key in ("automation", "script", "scene"):
+        assert not config[key], f"the default ships a {key}"
+
+
+def test_the_worked_example_still_has_everything_it_documents(example_copy: Path) -> None:
+    """The other side of the split, so the example cannot rot unnoticed.
+
+    It is no longer loaded by anything a user runs, which is exactly the
+    condition under which a directory stops working and nobody finds out.
+    """
+    config = load_config(example_copy)
+    expected = {
+        "demo", "template", "person",
+        "input_boolean", "input_number", "input_select", "input_text",
+        "automation", "script", "scene",
+    }
+    assert expected <= set(config), (
+        f"the worked example lost: {expected - set(config)}"
+    )
+    assert (config["jarvis"] or {}).get("areas"), "the example lost its rooms"
+    assert len(config["automation"]) >= 8, "the example lost automations"
+    assert len(config["script"]) >= 5, "the example lost scripts"
 
 
 def test_configuration_references_no_secrets() -> None:
@@ -264,8 +353,8 @@ def test_runtime_state_written_into_config_is_ignored_by_git() -> None:
     assert (CONFIG / "secrets.yaml.example").is_file()
 
 
-def test_packages_are_merged_into_the_top_level(config_copy: Path) -> None:
-    config = load_config(config_copy)
+def test_packages_are_merged_into_the_top_level(example_copy: Path) -> None:
+    config = load_config(example_copy)
     assert "packages" not in config, "packages: should be folded away by the loader"
 
     # example.yaml contributes to four different top-level keys.
@@ -347,8 +436,14 @@ def test_yaml_tools_load_and_build() -> None:
     """A manifest that cannot build is silently skipped at runtime — catch it here."""
     from jarvis.llm.tools import build_yaml_tool, load_tool_manifests
 
-    specs = load_tool_manifests(CONFIG / "tools")
-    assert specs, "config/tools has no usable *.tool.yaml"
+    # The example's, not `config/tools/`: that ships empty now, because a tool
+    # the user did not write is a verb the assistant claims to have.
+    specs = load_tool_manifests(EXAMPLE_HOUSE)
+    assert specs, "the worked example has no usable *.tool.yaml"
+    assert not load_tool_manifests(CONFIG / "tools"), (
+        "config/tools ships a tool; it is meant to be empty until you or the "
+        "console put one there"
+    )
 
     jarvis = Jarvis(CONFIG)
     for spec in specs:
@@ -360,15 +455,56 @@ def test_yaml_tools_load_and_build() -> None:
 
 def test_tool_manifests_avoid_the_custom_tags() -> None:
     """load_tool_manifests uses a plain SafeLoader, so !secret would be skipped."""
-    for path in sorted((CONFIG / "tools").glob("*.tool.yaml")):
+    paths = sorted(CONFIG.rglob("*.tool.yaml"))
+    assert paths, "no tool manifests anywhere, including the worked example"
+    for path in paths:
         yaml.safe_load(path.read_text(encoding="utf-8"))  # raises on an unknown tag
 
 
 # ===========================================================================
 # config/ — the shipped default must actually run
 # ===========================================================================
-async def test_default_config_boots_into_a_working_house(config_copy: Path) -> None:
+async def test_the_default_boots_into_an_empty_house_that_is_still_alive(
+    config_copy: Path,
+) -> None:
+    """Empty is not the same as inert, and the difference is the whole design.
+
+    A first boot has no rooms, no devices and no automations — nothing was
+    invented on the user's behalf. What it does have is Jarvis watching itself:
+    is the model loaded, is the disk filling up, where is the sun. Those are
+    the only entities that pass the test for a default, which is that they work
+    on the day you install and answer a question you will actually ask.
+    """
     jarvis = await _boot(config_copy)
+    try:
+        ids = {state.entity_id for state in jarvis.states.all()}
+
+        # Present, because they need nothing but the software itself.
+        for entity_id in (
+            "sensor.ollama_loaded_model",
+            "binary_sensor.ollama_up",
+            "sensor.disk_free",
+            "sensor.load_average",
+            "sensor.jarvis_uptime",
+            "sun.sun",
+        ):
+            assert entity_id in ids, f"{entity_id} is missing from a fresh boot"
+
+        # Absent, because they would be fiction. Checked by domain rather than
+        # by id: the failure this guards against is somebody re-adding a demo
+        # platform, not one entity slipping back.
+        invented = {eid.split(".")[0] for eid in ids} & {
+            "light", "climate", "cover", "lock", "fan", "media_player",
+            "vacuum", "person", "input_boolean", "input_select",
+        }
+        assert not invented, f"a fresh install invents {sorted(invented)} entities"
+        assert not jarvis.areas.areas, "a fresh install invents rooms"
+    finally:
+        await jarvis.async_stop()
+
+
+async def test_the_worked_example_boots_into_a_full_house(example_copy: Path) -> None:
+    jarvis = await _boot(example_copy)
     try:
         by_domain: dict[str, int] = {}
         for state in jarvis.states.all():
@@ -376,7 +512,7 @@ async def test_default_config_boots_into_a_working_house(config_copy: Path) -> N
                 by_domain.get(state.entity_id.split(".")[0], 0) + 1
             )
 
-        # Every integration the config demonstrates produced entities.
+        # Every integration the example demonstrates produced entities.
         for domain in (
             "light", "switch", "sensor", "binary_sensor", "climate", "cover",
             "lock", "fan", "media_player", "number", "select", "text", "button",
@@ -390,15 +526,15 @@ async def test_default_config_boots_into_a_working_house(config_copy: Path) -> N
         await jarvis.async_stop()
 
 
-async def test_every_referenced_entity_exists(config_copy: Path) -> None:
+async def test_every_referenced_entity_exists(example_copy: Path) -> None:
     """The typo test.
 
     An entity_id that does not exist fails silently at runtime — the automation
     simply never fires. This is the check that caught `front_door_sensor`
     (the unique_id) being used where `front_door` (the entity_id) was meant.
     """
-    config = load_config(config_copy)
-    jarvis = await _boot(config_copy)
+    config = load_config(example_copy)
+    jarvis = await _boot(example_copy)
     try:
         live = set(jarvis.states.entity_ids())
         missing = sorted(_referenced_entity_ids(config) - live)
@@ -407,9 +543,9 @@ async def test_every_referenced_entity_exists(config_copy: Path) -> None:
         await jarvis.async_stop()
 
 
-async def test_every_referenced_service_is_registered(config_copy: Path) -> None:
-    config = load_config(config_copy)
-    jarvis = await _boot(config_copy)
+async def test_every_referenced_service_is_registered(example_copy: Path) -> None:
+    config = load_config(example_copy)
+    jarvis = await _boot(example_copy)
     try:
         missing = sorted(
             f"{domain}.{service}"
@@ -421,9 +557,9 @@ async def test_every_referenced_service_is_registered(config_copy: Path) -> None
         await jarvis.async_stop()
 
 
-async def test_template_entities_render_to_clean_values(config_copy: Path) -> None:
+async def test_template_entities_render_to_clean_values(example_copy: Path) -> None:
     """A folded template that leaks whitespace stops being numeric."""
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         for entity_id in ("sensor.feels_like_outside", "sensor.house_power"):
             state = jarvis.states.get(entity_id)
@@ -472,9 +608,9 @@ async def test_command_line_sensors_work_with_the_image_toolset(config_copy: Pat
                 )
 
 
-async def test_unreachable_services_degrade_instead_of_failing(config_copy: Path) -> None:
+async def test_unreachable_services_degrade_instead_of_failing(example_copy: Path) -> None:
     """No Ollama, no broker, no Wyoming: startup must still complete."""
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         # The REST block points at Ollama, which is not running here.
         assert jarvis.states.get("sensor.ollama_loaded_model").state == "unavailable"
@@ -484,10 +620,10 @@ async def test_unreachable_services_degrade_instead_of_failing(config_copy: Path
         await jarvis.async_stop()
 
 
-async def test_scripts_that_carry_metadata_become_llm_tools(config_copy: Path) -> None:
+async def test_scripts_that_carry_metadata_become_llm_tools(example_copy: Path) -> None:
     """description + fields is what promotes a script into the tool surface."""
-    config = load_config(config_copy)
-    jarvis = await _boot(config_copy)
+    config = load_config(example_copy)
+    jarvis = await _boot(example_copy)
     try:
         for name, script in config["script"].items():
             assert script.get("description"), f"script.{name} has no description"
@@ -524,9 +660,12 @@ def test_every_voice_say_step_tolerates_a_dead_tts() -> None:
     must never cancel the steps after it — that is what silently lost
     `input_text.last_announcement` in `script.announce`.
     """
-    config = load_config(CONFIG)
+    # The example's config: the shipped one has no sequences at all now, so
+    # asserting against it would pass without checking anything. Every script a
+    # user copies out of the example carries the flag.
+    config = _example_config()
     steps = _voice_say_steps(config)
-    assert steps, "the shipped config no longer calls voice.say — fix this test"
+    assert steps, "the worked example no longer calls voice.say — fix this test"
     missing = [s for s in steps if not s.get("continue_on_error")]
     assert not missing, (
         f"{len(missing)} voice.say step(s) lack continue_on_error: true; an "
@@ -534,9 +673,9 @@ def test_every_voice_say_step_tolerates_a_dead_tts() -> None:
     )
 
 
-async def test_announce_records_the_message_even_with_tts_down(config_copy: Path) -> None:
+async def test_announce_records_the_message_even_with_tts_down(example_copy: Path) -> None:
     """The regression: TTS raised, so the announcement was never recorded."""
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         await jarvis.services.async_call(
             "script", "announce", {"message": "the washing machine has finished"},
@@ -551,8 +690,8 @@ async def test_announce_records_the_message_even_with_tts_down(config_copy: Path
         await jarvis.async_stop()
 
 
-async def test_good_morning_completes_with_tts_down(config_copy: Path) -> None:
-    jarvis = await _boot(config_copy)
+async def test_good_morning_completes_with_tts_down(example_copy: Path) -> None:
+    jarvis = await _boot(example_copy)
     try:
         # `away`, not `night`: selecting `night` fires automation.house_mode_night,
         # which starts script.goodnight in the background and races this test to
@@ -578,9 +717,9 @@ async def test_good_morning_completes_with_tts_down(config_copy: Path) -> None:
         await jarvis.async_stop()
 
 
-async def test_goodnight_runs_end_to_end(config_copy: Path) -> None:
+async def test_goodnight_runs_end_to_end(example_copy: Path) -> None:
     """A templated `delay:`, `parallel:`, a gated lock call and a select, in one go."""
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         await jarvis.services.async_call(
             "lock", "unlock", {"entity_id": "lock.front_door_lock"}, blocking=True
@@ -598,9 +737,9 @@ async def test_goodnight_runs_end_to_end(config_copy: Path) -> None:
         await jarvis.async_stop()
 
 
-async def test_house_status_returns_structured_data(config_copy: Path) -> None:
+async def test_house_status_returns_structured_data(example_copy: Path) -> None:
     """`stop:` + `response_variable:` is the whole "scripts as LLM tools" story."""
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         result = await jarvis.services.async_call(
             "script", "house_status", {}, blocking=True, return_response=True
@@ -616,10 +755,10 @@ async def test_house_status_returns_structured_data(config_copy: Path) -> None:
         await jarvis.async_stop()
 
 
-async def test_every_shipped_scene_applies(config_copy: Path) -> None:
+async def test_every_shipped_scene_applies(example_copy: Path) -> None:
     """A scene naming an entity it cannot actuate fails silently at runtime."""
-    config = load_config(config_copy)
-    jarvis = await _boot(config_copy)
+    config = load_config(example_copy)
+    jarvis = await _boot(example_copy)
     try:
         for scene in config["scene"]:
             entity_id = f"scene.{slugify(scene['name'])}"
@@ -650,7 +789,7 @@ async def test_every_shipped_scene_applies(config_copy: Path) -> None:
 
 
 async def test_the_security_automation_logs_before_it_speaks(
-    config_copy: Path, caplog: pytest.LogCaptureFixture
+    example_copy: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Front door opens, nobody home: the whole automation must survive dead TTS.
 
@@ -660,7 +799,7 @@ async def test_the_security_automation_logs_before_it_speaks(
     runs.
     """
     caplog.set_level("ERROR", logger="jarvis.automation.engine")
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         jarvis.states.set("person.chris", "not_home")
         await jarvis.services.async_call(
@@ -696,7 +835,7 @@ async def test_the_security_automation_logs_before_it_speaks(
 
 
 async def test_a_webhook_without_coordinates_cannot_degrade_the_tracker(
-    config_copy: Path,
+    example_copy: Path,
 ) -> None:
     """The webhook id is the only credential, so a junk POST must be a no-op.
 
@@ -712,12 +851,12 @@ async def test_a_webhook_without_coordinates_cannot_degrade_the_tracker(
 
     webhook_id = next(
         trigger["webhook_id"]
-        for automation in load_config(config_copy)["automation"]
+        for automation in load_config(example_copy)["automation"]
         for trigger in as_list(automation.get("trigger"))
         if isinstance(trigger, dict) and trigger.get("platform") == "webhook"
     )
 
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         await async_setup_auth(jarvis)
         with TestClient(create_app(jarvis)) as client:
@@ -841,7 +980,7 @@ def _macro_closure(config: dict[str, Any], sequence: Any) -> tuple[set[str], set
     return targets, services
 
 
-async def test_run_script_is_not_gated_by_the_domains_it_calls(config_copy: Path) -> None:
+async def test_run_script_is_not_gated_by_the_domains_it_calls(example_copy: Path) -> None:
     """Pins the platform behaviour these config rules exist to work around.
 
     This is not an endorsement. `run_script` resolves `script.*`, whose domain
@@ -851,9 +990,9 @@ async def test_run_script_is_not_gated_by_the_domains_it_calls(config_copy: Path
     """
     from jarvis.llm.tools import ToolRegistry, register_builtin_tools
 
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
-        llm_config = load_config(config_copy).get("llm") or {}
+        llm_config = load_config(example_copy).get("llm") or {}
         registry = ToolRegistry(jarvis, exposure=_exposure({"llm": llm_config}))
         register_builtin_tools(registry, llm_config.get("user_context"))
 
@@ -872,7 +1011,7 @@ async def test_run_script_is_not_gated_by_the_domains_it_calls(config_copy: Path
 
 
 async def test_excluded_entities_are_not_reachable_through_a_script_or_scene(
-    config_copy: Path,
+    example_copy: Path,
 ) -> None:
     """An exclusion the model can route around is not an exclusion.
 
@@ -882,11 +1021,11 @@ async def test_excluded_entities_are_not_reachable_through_a_script_or_scene(
     and scene the model can reach and asserts none of them names an excluded
     entity as a target.
     """
-    config = load_config(config_copy)
+    config = load_config(example_copy)
     exposure = _exposure(config)
     assert exposure.exclude_entities, "the shipped config excludes nothing to test"
 
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         offenders: list[str] = []
 
@@ -914,7 +1053,7 @@ async def test_excluded_entities_are_not_reachable_through_a_script_or_scene(
         await jarvis.async_stop()
 
 
-async def test_no_model_runnable_macro_reaches_a_gated_domain(config_copy: Path) -> None:
+async def test_no_model_runnable_macro_reaches_a_gated_domain(example_copy: Path) -> None:
     """Nothing the model can run may unlock a door or send a notification.
 
     Checked over the macro's transitive closure, so one level of indirection
@@ -922,9 +1061,9 @@ async def test_no_model_runnable_macro_reaches_a_gated_domain(config_copy: Path)
     """
     from jarvis.const import GATED_DOMAINS
 
-    config = load_config(config_copy)
+    config = load_config(example_copy)
     exposure = _exposure(config)
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         offenders: list[str] = []
 
@@ -963,13 +1102,13 @@ async def test_no_model_runnable_macro_reaches_a_gated_domain(config_copy: Path)
         await jarvis.async_stop()
 
 
-async def test_the_excluded_entity_really_is_invisible(config_copy: Path) -> None:
+async def test_the_excluded_entity_really_is_invisible(example_copy: Path) -> None:
     """End to end: the model cannot read it, list it, or actuate it."""
     from jarvis.llm.tools import ToolRegistry, register_builtin_tools
 
-    config = load_config(config_copy)
+    config = load_config(example_copy)
     exposure = _exposure(config)
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         registry = ToolRegistry(jarvis, exposure=exposure)
         register_builtin_tools(registry, (config.get("llm") or {}).get("user_context"))
@@ -1569,7 +1708,7 @@ def test_documented_entity_lifecycle_is_real() -> None:
     assert {"jarvis", "domain", "platform_name", "scan_interval"} <= set(platform)
 
 
-async def test_documented_services_exist(config_copy: Path) -> None:
+async def test_documented_services_exist(example_copy: Path) -> None:
     """Service names quoted in the docs must be registered by a booted Jarvis."""
     quoted: set[tuple[str, str]] = set()
     for name in DOC_FILES:
@@ -1586,7 +1725,7 @@ async def test_documented_services_exist(config_copy: Path) -> None:
         )
     assert quoted, "the regex stopped matching anything — fix the test, not the docs"
 
-    jarvis = await _boot(config_copy)
+    jarvis = await _boot(example_copy)
     try:
         missing = sorted(
             f"{d}.{s}" for d, s in quoted if not jarvis.services.has_service(d, s)
