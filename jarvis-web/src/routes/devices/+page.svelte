@@ -195,7 +195,7 @@
 
 	onMount(() => {
 		let disposed = false;
-		let sub: Subscription | null = null;
+		const subs: Subscription[] = [];
 		(async () => {
 			try {
 				const connection = await openConnection({ onStatus: (s) => (status = s) });
@@ -206,9 +206,29 @@
 				conn = connection;
 				await load(connection);
 				await loadCompanions(connection);
-				sub = await connection.client.subscribeEvents((event) => {
-					if (applyStateChanged(stateMap, event)) publish();
-				}, 'state_changed');
+				subs.push(
+					await connection.client.subscribeEvents((event) => {
+						if (applyStateChanged(stateMap, event)) publish();
+					}, 'state_changed')
+				);
+				// A phone that registers while this page is open must appear on
+				// it. Loading the list once at mount meant somebody who opened
+				// the console, then set up the app, saw an empty panel telling
+				// them no device had registered — for as long as they left the
+				// tab open. There is no state_changed for a companion; these are
+				// the events jarvis-core fires when one arrives or goes away.
+				for (const type of ['jarvis_device_registered', 'jarvis_device_disconnected']) {
+					try {
+						subs.push(
+							await connection.client.subscribeEvents(() => {
+								void loadCompanions(connection);
+							}, type)
+						);
+					} catch {
+						// An older jarvis-core does not fire them. The list is
+						// still correct on load, which is what it was before.
+					}
+				}
 			} catch (e) {
 				err = describeError(e);
 			} finally {
@@ -217,7 +237,7 @@
 		})();
 		return () => {
 			disposed = true;
-			void sub?.unsubscribe();
+			for (const sub of subs) void sub.unsubscribe();
 			conn?.close();
 			conn = null;
 		};

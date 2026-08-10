@@ -369,7 +369,23 @@ class JarvisChannel(
             Log.i(TAG, "connecting to ${cfg.pinnedHost} ($cfg)")
 
             val socket = try {
-                http.newWebSocket(Request.Builder().url(url).build(), current)
+                http.newWebSocket(
+                    Request.Builder()
+                        .url(url)
+                        // Presented on the upgrade so jarvis-web's relay passes
+                        // it THROUGH to jarvis-core instead of injecting its own
+                        // admin token and answering the handshake on our behalf.
+                        // The voice client has always done this; this one did
+                        // not, and the consequence was precise: pointed at the
+                        // console, the relay authenticated us silently, no
+                        // `auth_ok` ever arrived, and `sendRegister` — which
+                        // only ran in that branch — never ran. The socket was up
+                        // and the phone had still never said who it was, which
+                        // is why the console could not see a registered device.
+                        .header("Authorization", "Bearer ${cfg.token}")
+                        .build(),
+                    current,
+                )
             } catch (t: Throwable) {
                 Log.w(TAG, "could not open the socket", t)
                 current.finish("could not open the socket: ${t.javaClass.simpleName}")
@@ -568,6 +584,24 @@ class JarvisChannel(
         for (id in ids) pending.remove(id)?.complete(stub)
     }
 
+    /**
+     * Register anyway, when the server never asked us to authenticate.
+     *
+     * Reachable against a jarvis-web old enough to still inject its own token
+     * and swallow the handshake. Without it that phone connects, is accepted,
+     * and never registers — so it can be talked to and is invisible to every
+     * surface that lists devices, which is exactly how "I registered my Android
+     * device, but the web app still doesn't recognise it" looks from the
+     * outside. Registering on an unauthenticated socket costs nothing: a server
+     * that did want a token refuses the frame.
+     */
+    private fun assumeAuthedIfSilent(current: Session) {
+        if (session !== current || current.authed || current.finished.isCompleted) return
+        Log.i(TAG, "no auth handshake was asked for; assuming the relay authenticated us")
+        current.authed = true
+        scope.launch { sendRegister(current) }
+    }
+
     override fun requestReregister() {
         val current = session ?: return
         if (!current.authed) return
@@ -615,6 +649,7 @@ class JarvisChannel(
 
         when (msg.optString("type")) {
             ChannelFrames.TYPE_AUTH_REQUIRED -> {
+                current.quiet?.cancel()
                 setState(State.AUTHENTICATING)
                 // The ONLY place the token is transmitted, and it never appears
                 // in a URL, a header, or a log line.
@@ -624,6 +659,8 @@ class JarvisChannel(
             }
 
             ChannelFrames.TYPE_AUTH_OK -> {
+                current.quiet?.cancel()
+                if (current.authed) return
                 current.authed = true
                 // This attempt's guess was right. Pin it so the next connection
                 // — and the voice client, which reads the same setting — dials
@@ -639,6 +676,7 @@ class JarvisChannel(
             }
 
             ChannelFrames.TYPE_AUTH_INVALID -> {
+                current.quiet?.cancel()
                 // Retrying in a second cannot fix a rejected token, and
                 // hammering an auth endpoint is how you end up rate-limited or
                 // locked out. Sit down for a while and tell the UI why.
@@ -1069,6 +1107,16 @@ class JarvisChannel(
         @Volatile
         var authed = false
 
+        /**
+         * Fires when the server has said nothing about authentication.
+         *
+         * Cancelled by any auth frame. See [assumeAuthedIfSilent] for what it
+         * concludes, and why the alternative is a phone that connects, is
+         * accepted, and is never visible to anything.
+         */
+        @Volatile
+        var quiet: Job? = null
+
         @Volatile
         var registered = false
 
@@ -1109,6 +1157,8 @@ class JarvisChannel(
 
         fun finish(reason: String, penalise: Boolean = false) {
             if (finished.isCompleted) return
+            quiet?.cancel()
+            quiet = null
             registered = false
             authed = false
             // A fixed short reason: the close frame's reason is capped at 123
@@ -1130,6 +1180,10 @@ class JarvisChannel(
                 return
             }
             Log.i(TAG, "socket open to $actual; waiting for auth_required")
+            quiet = scope.launch {
+                delay(HANDSHAKE_QUIET_MS)
+                assumeAuthedIfSilent(this@Session)
+            }
             // Positive proof that this app can reach the network, which clears
             // any GrapheneOS "your Network toggle is off" suspicion the failure
             // path accumulated. Recorded here rather than after auth: the
@@ -1194,6 +1248,15 @@ class JarvisChannel(
 
         /** How often to re-check an unconfigured install for a server URL. */
         private const val RECHECK_CONFIG_MS = 30_000L
+
+        /**
+         * How long the server gets to ask us to authenticate before we conclude
+         * it never will. Matches `AssistPipelineClient.HANDSHAKE_QUIET_MS`, and
+         * for the same reason — an older jarvis-web relay authenticates on the
+         * client's behalf and swallows the handshake, so waiting for `auth_ok`
+         * forever means never registering at all.
+         */
+        private const val HANDSHAKE_QUIET_MS = 2_000L
 
         /** Default ceiling for a phone-initiated request. */
         const val DEFAULT_REQUEST_TIMEOUT_MS = 30_000L

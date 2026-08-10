@@ -853,6 +853,28 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				// refusing to reach one.
 				// The phones and desktops on the other end of the socket, as
 				// opposed to `config/device_registry/list`, which is the house.
+				// Test hook: a phone that registers while the console is open.
+				// The console used to load this list once at mount, so a device
+				// that arrived afterwards was invisible until a reload — which
+				// is what "I registered my android device but the web app still
+				// doesn't recognize it" looks like from the browser side.
+				case 'jarvis/test/register_companion': {
+					const device = {
+						device_id: msg.device_id ?? 'late-phone',
+						name: msg.name ?? 'Late Phone',
+						platform: 'android',
+						capabilities: ['notify'],
+						connected: true,
+						app_version: '1.0.40',
+						action_count: 7,
+						actions: []
+					};
+					world.companions.push(device);
+					ok(msg.id, { registered: device.device_id });
+					broadcast('jarvis_device_registered', device);
+					break;
+				}
+
 				case 'config/companion/list':
 					ok(msg.id, world.companions);
 					break;

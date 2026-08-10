@@ -889,3 +889,42 @@ test('a turn shows every tool it calls, with real progress and a reason when one
 	// record of a turn that finished a minute ago sitting over the house.
 	await expect(panel).toHaveCount(0, { timeout: 20_000 });
 });
+
+test('a phone that registers while the console is open appears without a reload', async ({
+	page
+}) => {
+	// The report: "I registered my android device, but the web app still doesn't
+	// recognize it as a device." Two halves — the phone never sent its register
+	// frame through the relay (fixed in the app), and this half: the console
+	// read the companion list exactly once, at mount, so a device that arrived
+	// a minute later was invisible for as long as the tab stayed open.
+	await page.goto('/devices');
+	await expect(page.getByTestId('companion-pixel-8')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('companion-late-phone')).toHaveCount(0);
+
+	await page.evaluate(
+		() =>
+			new Promise((resolve) => {
+				const ws = new WebSocket(
+					`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+				);
+				ws.onopen = () =>
+					ws.send(
+						JSON.stringify({
+							id: 97,
+							type: 'jarvis/test/register_companion',
+							device_id: 'late-phone',
+							name: 'Late Phone'
+						})
+					);
+				ws.onmessage = () => {
+					ws.close();
+					resolve(null);
+				};
+			})
+	);
+
+	await expect(page.getByTestId('companion-late-phone')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('companion-state-late-phone')).toHaveText('online');
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});

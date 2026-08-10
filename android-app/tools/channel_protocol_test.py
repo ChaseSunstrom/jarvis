@@ -907,6 +907,55 @@ def test_kotlin_channel_only_registers_an_authenticated_socket():
         "there is now more than one place that marks a session registered"
 
 
+def test_the_command_channel_presents_its_own_token_on_the_upgrade():
+    """The console must not authenticate on the phone's behalf.
+
+    jarvis-web's relay has two modes. A client that presents no bearer token is
+    treated as a browser: the relay injects the server-held admin token and
+    swallows the whole handshake, so `auth_required` and `auth_ok` never reach
+    the client. A client that presents its own is passed straight through to
+    jarvis-core.
+
+    This channel presented nothing, and registered only inside its `auth_ok`
+    branch — so pointed at the console (the URL people type, because it is the
+    one with a web page on it) the socket came up, was accepted, and
+    `jarvis/device/register` never ran. The phone was connected and invisible:
+    "I registered my android device, but the web app still doesn't recognize it
+    as a device". The voice client has always sent the header; this is the same
+    line, on the socket that carries identity.
+    """
+    src = _read(KOTLIN_CHANNEL)
+    assert '.header("Authorization", "Bearer ${cfg.token}")' in src, \
+        "the command channel no longer presents its token on the upgrade, so a " \
+        "relay will authenticate for it and swallow the handshake"
+
+
+def test_a_swallowed_handshake_still_registers():
+    """And when the handshake IS swallowed anyway, register regardless.
+
+    An older jarvis-web injects its own token whatever the client presents.
+    Waiting for an `auth_ok` that is never coming means never registering, which
+    is the same invisible phone by a different route. So: if nothing has been
+    said about authentication after a short wait, assume the relay did it.
+    """
+    src = _read(KOTLIN_CHANNEL)
+    code = "\n".join(
+        line for line in src.splitlines()
+        if not line.lstrip().startswith(("*", "//", "/*"))
+    )
+    assert "assumeAuthedIfSilent" in code, \
+        "there is no fallback for a relay that never asks us to authenticate"
+    assert "HANDSHAKE_QUIET_MS" in code, "the quiet window is gone"
+    # It must stand down the moment the server does speak, or a slow but real
+    # handshake would be raced by the assumption.
+    for frame in ("TYPE_AUTH_REQUIRED", "TYPE_AUTH_OK", "TYPE_AUTH_INVALID"):
+        arm = re.search(
+            rf"ChannelFrames\.{frame} ->.*?\n\n", code, re.S
+        )
+        assert arm and "quiet?.cancel()" in arm.group(0), \
+            f"the {frame} branch no longer cancels the quiet-handshake timer"
+
+
 def test_kotlin_channel_keeps_the_whole_event_backlog():
     src = _read(KOTLIN_CHANNEL)
     assert "queued.subList(index, queued.size)" in src, \
