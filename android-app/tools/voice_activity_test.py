@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""Executable spec for when Jarvis decides you started and stopped talking.
+
+The reported symptom, twice, in opposite directions:
+
+  * at thresholds of 0.02 / 0.01 — "I feel like I have to be right next to the
+    mic/screaming for it to detect";
+  * after lowering them ten times, to 0.002 / 0.001 — "I was talking to it and
+    it wasnt really able to hear me".
+
+Both complaints are real and both are consequences of the same mistake: a fixed
+pair of numbers cannot describe "louder than this room". MicStreamer reports a
+0..1 normalised RMS, so 0.002 is -54 dBFS and 0.001 is -60 dBFS — below the
+noise floor of an ordinary room with a fan or a laptop in it.
+
+What that costs is not obvious from the numbers, which is why it survived:
+
+  * The hangover is the only VAD path that ends a turn, and it only runs while
+    the level is BELOW the end edge. With the floor above that edge it never
+    runs, so every turn lasted the full 30-second cap.
+  * Thirty seconds is the worst possible length to hand a Whisper backend: it
+    exactly fills the model's window with ~28 seconds of room noise, which
+    produces empty text or invention. "The STT doesn't work that well."
+  * And the start edge latched on the room itself, which disarmed the
+    inactivity timeout — deleting the diagnostic that tells a dead microphone
+    from a quiet one.
+
+So the room is the reference. The floor tracks the quietest the room has
+recently been and both edges are multiples of it, which gives a silent study
+and a kitchen with an extractor fan the same ratio of speech to background.
+
+Run:  python3 android-app/tools/voice_activity_test.py
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+KOTLIN = "app/src/main/kotlin/ai/jarvis/app/assist/VoiceActivity.kt"
+
+START_RATIO = 4.0
+END_RATIO = 2.0
+MIN_START = 0.004
+MIN_END = 0.002
+FLOOR_RISE_PER_CHUNK = 0.0001
+START_DEBOUNCE_MS = 200
+MIN_SPEECH_MS = 300
+END_SILENCE_MS = 900
+SUSTAIN_RATIO = 0.40
+
+#: MicStreamer emits one buffer every 64 ms.
+CHUNK_MS = 64
+
+QUIET, STARTED, SPEAKING, ENDED = "QUIET", "STARTED", "SPEAKING", "ENDED"
+
+
+class VoiceActivity:
+    """Mirrors VoiceActivity.kt."""
+
+    def __init__(self):
+        self.floor = 0.0
+        self.peak = 0.0
+        self.speaking = False
+        self.above_since = 0
+        self.candidate_peak = 0.0
+        self.last_voice_at = 0
+        self.started_at = 0
+
+    @property
+    def start_edge(self) -> float:
+        return max(MIN_START, self.floor * START_RATIO)
+
+    @property
+    def end_edge(self) -> float:
+        return max(MIN_END, self.floor * END_RATIO)
+
+    def on_level(self, now_ms: int, level: float) -> str:
+        if level > self.peak:
+            self.peak = level
+
+        edge = self.start_edge
+        if self.floor <= 0.0:
+            self.floor = level
+        elif level <= edge:
+            self.floor = level if level < self.floor else min(self.floor + FLOOR_RISE_PER_CHUNK, level)
+
+        if level > edge:
+            if self.above_since == 0:
+                self.above_since = now_ms
+                self.candidate_peak = level
+            if level > self.candidate_peak:
+                self.candidate_peak = level
+            if now_ms < self.above_since:
+                self.above_since = now_ms
+            if not self.speaking and now_ms - self.above_since >= START_DEBOUNCE_MS:
+                # Sustained, or merely loud once? A transient decays to a small
+                # fraction of its own peak over the window; speech does not.
+                if level >= self.candidate_peak * SUSTAIN_RATIO:
+                    self.speaking = True
+                    self.started_at = now_ms
+                    self.last_voice_at = now_ms
+                    return STARTED
+                self.above_since = now_ms
+                self.candidate_peak = level
+            if self.speaking:
+                self.last_voice_at = now_ms
+                return SPEAKING
+            return QUIET
+
+        self.above_since = 0
+        self.candidate_peak = 0.0
+        if not self.speaking:
+            return QUIET
+
+        if level >= self.end_edge:
+            self.last_voice_at = now_ms
+            return SPEAKING
+        if now_ms < self.last_voice_at:
+            self.last_voice_at = now_ms
+            return SPEAKING
+        if now_ms - self.started_at > MIN_SPEECH_MS and now_ms - self.last_voice_at > END_SILENCE_MS:
+            self.speaking = False
+            self.above_since = 0
+            return ENDED
+        return SPEAKING
+
+    def new_turn(self):
+        self.speaking = False
+        self.above_since = 0
+        self.candidate_peak = 0.0
+        self.last_voice_at = 0
+        self.started_at = 0
+
+
+def run(levels: list[float], start: int = 0) -> tuple[VoiceActivity, list[str]]:
+    vad = VoiceActivity()
+    out = []
+    for i, lvl in enumerate(levels):
+        out.append(vad.on_level(start + i * CHUNK_MS, lvl))
+    return vad, out
+
+
+def steady(seconds: float, level: float) -> list[float]:
+    return [level] * int(seconds * 1000 / CHUNK_MS)
+
+
+# --- the two field reports, as tests ---------------------------------------
+
+
+def check_a_quiet_room_hears_ordinary_speech() -> int:
+    """The FIRST complaint: having to shout, or sit on top of the phone.
+
+    Conversational speech through an unprocessed phone mic at arm's length
+    smooths to roughly 0.005-0.02. The old start edge was 0.02 — the very top
+    of that range.
+    """
+    failures = 0
+    for speech in (0.006, 0.010, 0.020):
+        _, verdicts = run(steady(2, 0.0008) + steady(2, speech))
+        if STARTED not in verdicts:
+            print(f"FAIL  speech at {speech} in a quiet room was never heard")
+            failures += 1
+    return failures
+
+
+def check_a_noisy_room_still_ends_the_turn() -> int:
+    """The SECOND complaint, and the expensive one.
+
+    A room at 0.003 sits above the old END_THRESHOLD of 0.001, so the hangover
+    could never elapse and every turn ran to the 30-second cap — handing
+    Whisper a window packed with room noise.
+    """
+    noise = 0.003
+    vad, verdicts = run(steady(3, noise) + steady(1.5, 0.02) + steady(3, noise))
+    failures = 0
+    if STARTED not in verdicts:
+        print("FAIL  speech over a noisy room was not heard at all")
+        failures += 1
+    if ENDED not in verdicts:
+        print(
+            f"FAIL  the turn never ended over a {noise} noise floor — this is the "
+            "30-second buffer that makes Whisper return nothing"
+        )
+        failures += 1
+    return failures
+
+
+def check_the_room_alone_never_starts_a_turn() -> int:
+    """Silence must stay silence, at every plausible noise floor."""
+    failures = 0
+    for noise in (0.0005, 0.001, 0.002, 0.003, 0.006, 0.012):
+        _, verdicts = run(steady(20, noise))
+        if STARTED in verdicts:
+            print(f"FAIL  a steady room at {noise} latched a turn on its own")
+            failures += 1
+    return failures
+
+
+def check_a_rising_room_is_tracked() -> int:
+    """A fan switched on must not permanently arm the start edge."""
+    ramp = [0.0005 + 0.004 * (i / 200) for i in range(200)]
+    vad, verdicts = run(ramp + steady(10, 0.0045))
+    if STARTED in verdicts:
+        print("FAIL  a room getting louder was mistaken for somebody talking")
+        return 1
+    if vad.floor < 0.003:
+        print(f"FAIL  the floor did not follow the room up (floor={vad.floor:.4f})")
+        return 1
+    return 0
+
+
+def check_a_quietening_room_is_tracked_at_once() -> int:
+    """Down instantly, up slowly — or a lorry deafens Jarvis for a minute."""
+    vad, _ = run(steady(3, 0.02) + steady(1, 0.0006))
+    if vad.floor > 0.001:
+        print(f"FAIL  the floor stayed high after the room went quiet ({vad.floor:.4f})")
+        return 1
+    return 0
+
+
+def check_the_floor_is_frozen_during_speech() -> int:
+    """Otherwise a long sentence drags the floor up behind it.
+
+    The speaker would talk themselves over their own end edge and the turn
+    would cut off mid-word.
+    """
+    vad, verdicts = run(steady(1, 0.0008) + steady(6, 0.015))
+    if ENDED in verdicts:
+        print("FAIL  a six-second sentence ended itself while still being spoken")
+        return 1
+    if vad.floor > 0.002:
+        print(f"FAIL  sustained speech dragged the floor up to {vad.floor:.4f}")
+        return 1
+    return 0
+
+
+def check_a_transient_is_not_speech() -> int:
+    """A door, a cough, a plate.
+
+    MicStreamer smooths at alpha 0.3 per 64 ms buffer, so one loud buffer stays
+    above the edge for about 384 ms. The old 120 ms debounce rejected nothing.
+    """
+    quiet = steady(2, 0.0008)
+    # A single loud buffer, then its smoothed decay.
+    tail = [0.05 * (0.7 ** i) for i in range(10)]
+    _, verdicts = run(quiet + tail + steady(2, 0.0008))
+    if STARTED in verdicts:
+        print("FAIL  a single transient latched a turn")
+        return 1
+    return 0
+
+
+def check_a_pause_between_words_does_not_end_the_turn() -> int:
+    """The dead band between the edges is what makes this possible."""
+    quiet = steady(1, 0.0008)
+    word = steady(0.5, 0.015)
+    gap = steady(0.4, 0.0025)  # between the edges: ambiguous, not silence
+    _, verdicts = run(quiet + word + gap + word + steady(2, 0.0008))
+    if verdicts.index(ENDED) if ENDED in verdicts else None:
+        first_end = verdicts.index(ENDED)
+        # It must end AFTER the second word, not in the gap.
+        gap_end = len(quiet) + len(word) + len(gap)
+        if first_end < gap_end:
+            print("FAIL  the turn ended in the pause between two words")
+            return 1
+    if ENDED not in verdicts:
+        print("FAIL  the turn never ended after the speaker stopped")
+        return 1
+    return 0
+
+
+def check_the_edges_always_have_hysteresis() -> int:
+    """start > end at every floor, or a turn starts and ends on one level."""
+    vad = VoiceActivity()
+    for floor in (0.0, 0.0005, 0.001, 0.003, 0.01, 0.05, 0.2):
+        vad.floor = floor
+        if not vad.start_edge > vad.end_edge:
+            print(f"FAIL  no hysteresis at floor={floor}")
+            return 1
+    return 0
+
+
+def check_a_backwards_clock_does_not_wedge_it() -> int:
+    vad = VoiceActivity()
+    # A quiet room first, so there is a floor to speak over. Without it the very
+    # first buffer becomes the floor and a constant tone is — correctly — the
+    # room rather than a voice.
+    for i in range(40):
+        vad.on_level(10_000 + i * CHUNK_MS, 0.0008)
+    for i in range(40):
+        vad.on_level(12_560 + i * CHUNK_MS, 0.02)
+    # Time jumps back.
+    verdicts = [vad.on_level(100 + i * CHUNK_MS, 0.02) for i in range(40)]
+    if STARTED not in verdicts and SPEAKING not in verdicts:
+        print("FAIL  a clock that went backwards wedged the detector")
+        return 1
+    return 0
+
+
+def check_the_dead_mic_case_survives() -> int:
+    """Digital silence must never look like a quiet room that heard nothing."""
+    vad, verdicts = run(steady(10, 0.0))
+    if STARTED in verdicts:
+        print("FAIL  a dead microphone started a turn")
+        return 1
+    if vad.peak != 0.0:
+        print("FAIL  the peak is not zero for a dead microphone")
+        return 1
+    return 0
+
+
+def check_kotlin_agrees(android: Path) -> int:
+    path = android / KOTLIN
+    if not path.is_file():
+        print(f"FAIL  {path} is missing")
+        return 1
+    src = path.read_text(encoding="utf-8")
+    failures = 0
+    for const, value in (
+        ("START_RATIO", "4.0f"),
+        ("END_RATIO", "2.0f"),
+        ("MIN_START", "0.004f"),
+        ("MIN_END", "0.002f"),
+        ("FLOOR_RISE_PER_CHUNK", "0.0001f"),
+        ("START_DEBOUNCE_MS", "200L"),
+        ("MIN_SPEECH_MS", "300L"),
+        ("END_SILENCE_MS", "900L"),
+    ):
+        if f"const val {const} = {value}" not in src:
+            print(f"FAIL  VoiceActivity.{const} is no longer {value}")
+            failures += 1
+
+    if "level <= edge ->" not in src or "floor = if (level < floor)" not in src:
+        print("FAIL  the floor is no longer frozen while a level might be speech")
+        failures += 1
+    if "const val SUSTAIN_RATIO = 0.40f" not in src:
+        print("FAIL  the transient test is gone; a door bang latches a turn again")
+        failures += 1
+    if "level >= candidatePeak * SUSTAIN_RATIO" not in src:
+        print("FAIL  the candidate is no longer checked for being sustained")
+        failures += 1
+    if "maxOf(minStart, floor * startRatio)" not in src:
+        print("FAIL  the start edge is no longer relative to the room")
+        failures += 1
+    if "maxOf(minEnd, floor * endRatio)" not in src:
+        print("FAIL  the end edge is no longer relative to the room")
+        failures += 1
+
+    # The conversation must actually use it, or this file is a spec for nothing.
+    convo = android / "app/src/main/kotlin/ai/jarvis/app/assist/JarvisConversation.kt"
+    if convo.is_file():
+        text = convo.read_text(encoding="utf-8")
+        if "VoiceActivity(" not in text:
+            print("FAIL  JarvisConversation does not use VoiceActivity")
+            failures += 1
+        for gone in ("START_THRESHOLD", "END_THRESHOLD"):
+            if f"const val {gone}" in text:
+                print(f"FAIL  JarvisConversation still declares a fixed {gone}")
+                failures += 1
+    return failures
+
+
+def main() -> int:
+    android = Path(__file__).resolve().parents[1]
+    failures = (
+        check_a_quiet_room_hears_ordinary_speech()
+        + check_a_noisy_room_still_ends_the_turn()
+        + check_the_room_alone_never_starts_a_turn()
+        + check_a_rising_room_is_tracked()
+        + check_a_quietening_room_is_tracked_at_once()
+        + check_the_floor_is_frozen_during_speech()
+        + check_a_transient_is_not_speech()
+        + check_a_pause_between_words_does_not_end_the_turn()
+        + check_the_edges_always_have_hysteresis()
+        + check_a_backwards_clock_does_not_wedge_it()
+        + check_the_dead_mic_case_survives()
+        + check_kotlin_agrees(android)
+    )
+    if failures:
+        print(f"\n{failures} failure(s)")
+        return 1
+    print(
+        "voice activity: ordinary speech is heard in a quiet room, the turn still "
+        "ends over a fan, and the room alone never starts one"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

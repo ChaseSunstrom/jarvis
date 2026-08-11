@@ -33,7 +33,11 @@ from pathlib import Path
 # Mirrors JarvisConversation. Lowered by ten after a report of having to shout:
 # the old figure came from the browser, whose getUserMedia applies automatic
 # gain, and this capture path deliberately does not.
-START_THRESHOLD = 0.002
+#: The edge is no longer a constant — it is a multiple of the room's own noise
+#: floor (see VoiceActivity). In a silent room it bottoms out at MIN_START,
+#: which is the value this file reasons about, because that is the quietest
+#: edge the diagnosis can ever be measured against.
+START_THRESHOLD = 0.004
 DEAD_MIC_LEVEL = 0.0005
 
 DEAD_MIC = "dead-mic"
@@ -89,14 +93,16 @@ TABLE: list[tuple[bool, bool, float, str | None, str]] = [
         "problem, not a permission one",
     ),
     (
-        True, False, 0.00199, TOO_QUIET,
-        "just under the threshold is the most frustrating case and must name "
-        "the numbers",
+        True, False, 0.00399, TOO_QUIET,
+        "just under the edge is the most frustrating case and must name the "
+        "numbers. The edge is the room's now, so in a silent room it is "
+        "MIN_START and in a loud one it is higher — the sentence quotes "
+        "whichever one actually decided",
     ),
     (
-        True, False, 0.002, NOTHING_HEARD,
-        "at the threshold the VAD would have latched, so silence here is a "
-        "genuine did-not-speak",
+        True, False, 0.004, NOTHING_HEARD,
+        "at the edge the VAD would have latched, so silence here is a genuine "
+        "did-not-speak",
     ),
     (
         True, False, 0.012, NOTHING_HEARD,
@@ -179,12 +185,8 @@ def check_kotlin_still_says_so() -> list[str]:
     """The rules are still in the Kotlin, spelled the way this file mirrors."""
     source = _source()
     required = {
-        "private const val DEAD_MIC_LEVEL = 0.0005f": "the dead-mic floor",
-        "private const val START_THRESHOLD = 0.002f": "the start threshold",
-        "private const val END_THRESHOLD = 0.001f": "the end edge, which must stay BELOW the start edge",
-        "peakLevel <= DEAD_MIC_LEVEL -> DEAD_MIC": "the dead-mic branch",
-        "peakLevel < START_THRESHOLD -> TOO_QUIET": "the too-quiet branch",
-        "if (level > peakLevel) peakLevel = level": "the peak being recorded at all",
+        "vad.peak <= VoiceActivity.DEAD_MIC_LEVEL -> DEAD_MIC": "the dead-mic branch",
+        "vad.peak < vad.startEdge -> TOO_QUIET": "the too-quiet branch",
         "main.removeCallbacks(handshake)": "the handshake timer being cancelled on LISTENING",
         "main.postDelayed(handshake, HANDSHAKE_MS)": "the handshake timer being armed",
     }
