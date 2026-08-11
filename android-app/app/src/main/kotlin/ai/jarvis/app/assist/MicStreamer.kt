@@ -107,9 +107,24 @@ class MicStreamer(
         worker = thread(name = "jarvis-mic", isDaemon = true) {
             val chunk = ByteArray(CHUNK_BYTES)
             var smooth = 0f
+            var duds = 0
             while (running) {
                 val n = rec.read(chunk, 0, chunk.size)
-                if (n <= 0) continue
+                if (n <= 0) {
+                    // `read` returns immediately on an error rather than after a
+                    // buffer's worth of time, so looping straight back round on
+                    // one pegs a core for as long as the conversation lasts. A
+                    // handful in a row is a recorder that has gone away — say
+                    // so and stop, rather than burning the battery in silence.
+                    if (n < 0 && ++duds >= MAX_READ_ERRORS) {
+                        Log.w(TAG, "the recorder returned $n $duds times; giving up")
+                        running = false
+                        fail("The microphone stopped responding. Another app may have taken it.")
+                        break
+                    }
+                    continue
+                }
+                duds = 0
                 onPcm(chunk, n)
                 val level = rms16(chunk, n)
                 smooth += (level - smooth) * 0.3f
@@ -124,15 +139,41 @@ class MicStreamer(
         main.post { onUnavailable(reason) }
     }
 
+    /**
+     * Give the microphone back.
+     *
+     * Synchronous on purpose: the wake listener asks for the mic back the
+     * instant a conversation ends, and two `AudioRecord`s on one device is a
+     * coin toss. So this returns only once the recorder is genuinely released.
+     *
+     * The order below is what keeps that from costing the main thread a whole
+     * buffer period every turn. `AudioRecord.read` blocks and is not
+     * interruptible — a worker parked inside it ignores both `running = false`
+     * and `Thread.interrupt`, and the join waits out the read. Stopping the
+     * DEVICE first makes that read return at once, so the join it then performs
+     * is normally instant instead of ~64 ms. The interrupt is for the injected
+     * test source, which parks in `Thread.sleep` rather than in a read.
+     *
+     * `release()` comes after the join and never before: releasing a recorder
+     * another thread is reading from is a native crash, not an exception.
+     */
     fun stop() {
         running = false
-        worker?.let { try { it.join(200) } catch (_: InterruptedException) {} }
-        worker = null
-        record?.let {
-            try { if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop() } catch (_: Exception) {}
-            it.release()
-        }
+        val device = record
         record = null
+        if (device != null) {
+            try {
+                if (device.recordingState == AudioRecord.RECORDSTATE_RECORDING) device.stop()
+            } catch (t: Exception) {
+                Log.d(TAG, "the recorder was already stopped", t)
+            }
+        }
+        worker?.let {
+            it.interrupt()
+            try { it.join(JOIN_MS) } catch (_: InterruptedException) {}
+        }
+        worker = null
+        device?.release()
     }
 
     /**
@@ -226,6 +267,24 @@ class MicStreamer(
 
         /** Wall-clock duration of one [CHUNK_BYTES] chunk at [SAMPLE_RATE]. */
         private const val CHUNK_MS = 64L
+
+        /**
+         * How long [stop] will wait for the capture thread.
+         *
+         * A backstop, not a budget: the device is stopped before the join, so a
+         * blocked `read` has already returned by the time this matters. Kept
+         * short because this runs on the main thread at the end of every turn.
+         */
+        private const val JOIN_MS = 200L
+
+        /**
+         * Consecutive `read` errors that mean the recorder has gone away.
+         *
+         * A failing read returns immediately rather than after a buffer's worth
+         * of time, so without a limit the loop spins at full speed for as long
+         * as the conversation lasts.
+         */
+        private const val MAX_READ_ERRORS = 8
 
         /**
          * TEST SEAM — **debug builds only**, and the only line of this class

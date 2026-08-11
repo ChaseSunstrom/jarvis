@@ -44,13 +44,38 @@ class LocalTranscriber(private val context: Context) {
     private var pending: ((String?, String?) -> Unit)? = null
 
     /**
+     * What the caller wants to know while the recogniser is working.
+     *
+     * All of it is optional, and all of it exists because leaving it out made
+     * the on-device path feel broken in a way that had nothing to do with its
+     * accuracy: with no MicStreamer in this path there is no level meter, so
+     * the orb sat perfectly still while somebody talked at it. A voice
+     * assistant that does not visibly react is one people repeat themselves at,
+     * and then talk over their own recogniser.
+     */
+    interface Listener {
+        /** Microphone level on MicStreamer's scale, so one orb reads both paths. */
+        fun onLevel(level: Float) = Unit
+
+        /** Words as they are recognised. Not final, and not sent anywhere. */
+        fun onPartial(text: String) = Unit
+
+        /** The recogniser decided the utterance is over. */
+        fun onSpeechEnd() = Unit
+    }
+
+    /**
      * Transcribe one utterance.
      *
      * @param onResult text, or (null, reason). Delivered on the main thread,
      *   exactly once — a recogniser that both errors and returns, or does
      *   neither, must not leave a conversation waiting forever.
      */
-    fun listen(language: String, onResult: (String?, String?) -> Unit) {
+    fun listen(
+        language: String,
+        listener: Listener? = null,
+        onResult: (String?, String?) -> Unit,
+    ) {
         if (!isAvailable(context)) {
             onResult(null, "this phone has no on-device speech recognition")
             return
@@ -78,16 +103,29 @@ class LocalTranscriber(private val context: Context) {
 
             override fun onError(error: Int) = deliver(null, describe(error))
 
-            // Everything else is progress this class does not report. The
-            // conversation already draws its own level meter from the same
-            // microphone, so a second source of "still listening" would only be
-            // a second thing to keep in sync.
+            override fun onRmsChanged(rmsdB: Float) {
+                listener?.onLevel(levelOf(rmsdB))
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val text = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    ?.trim()
+                if (!text.isNullOrEmpty()) listener?.onPartial(text)
+            }
+
+            override fun onEndOfSpeech() {
+                // The level meter has nothing left to report, and leaving the
+                // last value on screen freezes the orb mid-swell.
+                listener?.onLevel(0f)
+                listener?.onSpeechEnd()
+            }
+
+            // The rest is progress with nowhere useful to go.
             override fun onReadyForSpeech(params: Bundle?) = Unit
             override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() = Unit
-            override fun onPartialResults(partialResults: Bundle?) = Unit
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
 
@@ -130,12 +168,35 @@ class LocalTranscriber(private val context: Context) {
     }
 
     private fun describe(error: Int): String = when (error) {
-        SpeechRecognizer.ERROR_AUDIO -> "the microphone could not be read"
-        SpeechRecognizer.ERROR_NO_MATCH -> "nothing was recognised"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "nothing was said"
+        SpeechRecognizer.ERROR_AUDIO ->
+            // Same cause and same sentence as the streaming path's dead-mic
+            // diagnosis: on the platform this app targets it is almost always
+            // the per-app Sensors toggle, which is a separate thing from the
+            // Microphone permission and is the reason people spend an afternoon
+            // granting one they already had.
+            "the microphone produced nothing — on GrapheneOS check the per-app " +
+                "Sensors toggle, which is separate from the Microphone permission"
+        SpeechRecognizer.ERROR_NO_MATCH ->
+            // NOT "nothing was said". The recogniser heard audio and could not
+            // find words in it, which is a different problem with a different
+            // fix, and telling somebody who was talking that they were silent is
+            // how they conclude the microphone is broken.
+            "I heard you but could not make out the words — try again a little " +
+                "closer to the phone"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I did not hear anything"
         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
             "the microphone permission is not granted"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "the recogniser is busy"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
+            "the recogniser is busy — something else on this phone is using it"
+        SpeechRecognizer.ERROR_NETWORK,
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+        ->
+            // Worth its own sentence rather than a number. This path exists so
+            // that no audio leaves the phone; a recogniser reporting a NETWORK
+            // failure is one that tried to, and the user should hear that from
+            // the app rather than find it in a packet capture.
+            "the on-device recogniser tried to use the network and failed. Nothing " +
+                "was sent, and this turn was abandoned rather than retried online."
         SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED,
         SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE,
         ->
@@ -149,6 +210,25 @@ class LocalTranscriber(private val context: Context) {
 
     companion object {
         private const val TAG = "JarvisLocalStt"
+
+        /** The quietest and loudest `onRmsChanged` values the platform documents. */
+        const val RMS_DB_FLOOR = -2f
+        const val RMS_DB_CEILING = 10f
+
+        /**
+         * `onRmsChanged`'s decibels, on MicStreamer's linear 0..1 scale.
+         *
+         * The orb applies its own gain of 4 to whatever it is handed, because a
+         * smoothed RMS of ordinary speech lives in the bottom tenth of that
+         * range. So this maps into that bottom tenth rather than filling 0..1:
+         * hand the orb a full-scale number and every syllable pins it, which is
+         * exactly as uninformative as the frozen orb this replaces.
+         */
+        const val RMS_SCALE = 0.25f
+
+        fun levelOf(rmsdB: Float): Float =
+            (((rmsdB - RMS_DB_FLOOR) / (RMS_DB_CEILING - RMS_DB_FLOOR))
+                .coerceIn(0f, 1f)) * RMS_SCALE
 
         /**
          * Whether this phone can transcribe without the network.

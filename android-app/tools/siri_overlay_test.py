@@ -229,18 +229,17 @@ def check_the_fallback_survives(android: Path) -> int:
     if "AssistOverlay.canShow" not in body:
         print("FAIL  the overlay is attached without checking for its permission")
         failures += 1
-    # And explicitly NOT gated on the keyguard, which was the bug.
+    # The keyguard is not this function's business.
     #
-    # `isKeyguardLocked()` is true whenever the keyguard is up, which on any
-    # phone with a secure lock includes the screen merely being OFF. Using it to
-    # decide whether to attach meant the overlay was skipped in exactly the
-    # scenario always-on listening exists for — phone on a table, say the name —
-    # and the wake word arrived as a notification every single time.
+    # It was, and that was a bug: `isKeyguardLocked()` is true whenever the
+    # keyguard is up, which on any phone with a secure lock includes the screen
+    # merely being OFF, so returning false here meant the caller could not tell
+    # "no permission" from "locked" — and the fallback for those two is not the
+    # same. The decision moved to `onWakeWord`, which owns both surfaces.
     if "isLocked()" in body:
         print(
-            "FAIL  startOverlayConversation is gated on the keyguard again. That "
-            "skips the overlay whenever the screen is off, which is most of the "
-            "time a wake word is used."
+            "FAIL  startOverlayConversation decides about the keyguard again. That "
+            "conflates 'no permission' with 'locked', which need different answers."
         )
         failures += 1
 
@@ -262,14 +261,45 @@ def check_the_fallback_survives(android: Path) -> int:
     if wake_body.index("startOverlayConversation()") > wake_body.index("showHeard(intent)"):
         print("FAIL  the notification fallback runs before the overlay is tried")
         failures += 1
-    # The overlay short-circuits ONLY when unlocked. Locked, both fire: an
-    # overlay window does not draw above the lock screen, and the full-screen
-    # intent is the platform's own mechanism for that case.
-    if "showedOverlay && !isLocked()" not in wake_body:
+    # ONE microphone. This is the invariant, and it is not obvious from any one
+    # line of the handler.
+    #
+    # A `TYPE_APPLICATION_OVERLAY` window is not drawn above the keyguard — the
+    # platform stopped honouring FLAG_SHOW_WHEN_LOCKED for non-Activity windows
+    # long before this app's minSdk — so on a locked phone the overlay
+    # conversation is one nobody can see, while the full-screen intent brings up
+    # JarvisAssistActivity, which starts a conversation of its own. Both running
+    # is two `AudioRecord`s on one microphone: the second startRecording wins
+    # and the first goes silent, or it fails outright, and WHICH of the two is
+    # deaf is a race with the activity's ACTION_PAUSE.
+    #
+    # So the keyguard is asked once, before anything opens a microphone, and the
+    # overlay is not even attempted when it cannot be seen.
+    if "val locked = isLocked()" not in wake_body:
         print(
-            "FAIL  the wake handler does not post the full-screen intent when the "
-            "phone is locked, where the overlay cannot draw"
+            "FAIL  the wake handler no longer settles the keyguard question before "
+            "opening a microphone"
         )
+        failures += 1
+    if "val showedOverlay = !locked && startOverlayConversation()" not in wake_body:
+        print(
+            "FAIL  the wake handler starts an overlay conversation on a locked phone. "
+            "The full-screen intent starts a second one, and two AudioRecords on one "
+            "microphone means one of the two Jarvises on screen is deaf."
+        )
+        failures += 1
+    if "if (showedOverlay) {" not in wake_body:
+        print(
+            "FAIL  the wake handler does not stop after the overlay took the turn, so "
+            "a successful overlay ALSO fires the full-screen intent"
+        )
+        failures += 1
+    # The keyguard must be sampled before the microphone is opened, not after:
+    # asked afterwards it is a check on a decision already made.
+    asked = wake_body.find("val locked = isLocked()")
+    opened = wake_body.find("startOverlayConversation()")
+    if asked >= 0 and opened >= 0 and asked > opened:
+        print("FAIL  the keyguard is checked after the overlay has already opened the mic")
         failures += 1
     if "wakeTheScreen()" not in wake_body:
         print(

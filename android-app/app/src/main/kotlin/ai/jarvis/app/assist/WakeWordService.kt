@@ -400,19 +400,39 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         // before the overlay goes up, released when the conversation ends.
         wakeTheScreen()
 
-        val showedOverlay = startOverlayConversation()
-        if (showedOverlay && !isLocked()) {
+        // Asked ONCE, and asked BEFORE anything opens a microphone.
+        //
+        // An overlay window is not drawn above the keyguard: `TYPE_APPLICATION_
+        // OVERLAY` is a non-Activity window, and the platform stopped honouring
+        // FLAG_SHOW_WHEN_LOCKED for those long before this app's minimum API.
+        // So on a locked phone the overlay conversation is a conversation
+        // nobody can see — and the full-screen intent brings up
+        // `JarvisAssistActivity`, which starts a conversation of its OWN.
+        //
+        // Two conversations means two `AudioRecord`s on one microphone, and the
+        // outcome of that is decided by the platform rather than by this code:
+        // the second `startRecording` wins and the first goes silent, or it
+        // fails outright. Either way one of the two Jarvises on screen is deaf,
+        // and which one is a race with the activity's ACTION_PAUSE. That is a
+        // plausible reading of "it wasn't really able to hear me" from a phone
+        // sitting locked on a desk, which is the position a wake word is FOR.
+        //
+        // The activity is the half that is actually visible when locked, so it
+        // gets the microphone, and the overlay is not attempted at all.
+        val locked = isLocked()
+        val showedOverlay = !locked && startOverlayConversation()
+        if (showedOverlay) {
             // The orb is on screen over whatever the user is doing, and the
             // conversation is running in this process. Nothing to hand off to,
             // no re-arm timer: onIdle gives the mic back itself.
             return
         }
 
-        // Locked, or no overlay. An overlay window does not draw above the lock
-        // screen, so on a locked phone the full-screen intent is the only thing
-        // that reaches the user — and it is the platform's own mechanism for
-        // exactly this. Posting both is deliberate: whichever one the device
-        // actually honours, the wake word leads somewhere.
+        // Locked, or no overlay permission. The full-screen intent is the
+        // platform's own mechanism for putting something in front of a locked
+        // phone — it is how an incoming call gets on screen — and
+        // `JarvisAssistActivity` is declared `showWhenLocked` + `turnScreenOn`
+        // for exactly this.
         val intent = Intent(this, JarvisAssistActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(JarvisAssistActivity.EXTRA_FROM_WAKE_WORD, true)
@@ -478,25 +498,22 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
      * Show the Siri-style orb over whatever is on screen and talk there.
      *
      * @return false when there is no overlay to show — the permission is not
-     *   granted, or the phone is locked, where `TYPE_APPLICATION_OVERLAY`
-     *   windows are not displayed at all and the full-screen intent is the
-     *   platform's own answer. The caller falls back rather than assuming a
-     *   surface that is not there.
+     *   granted, or the window manager refused it. The caller falls back rather
+     *   than assuming a surface that is not there.
+     *
+     * NO keyguard check *here*. There used to be one, and it was the reason the
+     * overlay "still doesn't work": `isKeyguardLocked()` is true whenever the
+     * keyguard is up, which on any phone with a secure lock includes the screen
+     * simply being OFF — and the answer to being locked is the full-screen
+     * intent, which only [onWakeWord] can post. Whether the phone is locked is
+     * therefore a decision about WHICH surface gets the microphone, and it
+     * belongs to the caller that owns both. Putting it back here would make
+     * this function's "no" mean two different things again.
      */
     private fun startOverlayConversation(): Boolean {
         if (!AssistOverlay.canShow(this)) return false
         if (!config.isConfigured) return false
 
-        // NO keyguard check. There used to be one, and it was the reason the
-        // overlay "still doesn't work": `isKeyguardLocked()` is true whenever
-        // the keyguard is up, which on any phone with a secure lock includes
-        // the screen simply being OFF. So in the one scenario always-on
-        // listening exists for — phone face-down on a table, say the name — the
-        // overlay was skipped every single time and the wake word arrived as a
-        // notification. The fact behind the check was right (an overlay window
-        // does not draw above the lock screen) and using it as a gate was
-        // wrong: the answer to being locked is to also post the full-screen
-        // intent, which `onWakeWord` does, not to refuse to draw at all.
         endOverlayConversation(giveMicBack = false)
         val surface = AssistOverlay(this) { endOverlayConversation(giveMicBack = true) }
         if (!surface.attach()) return false

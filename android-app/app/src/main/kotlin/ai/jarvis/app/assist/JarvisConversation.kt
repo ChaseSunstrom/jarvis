@@ -224,9 +224,28 @@ class JarvisConversation(
         ui.onMode(JarvisOrbView.Mode.LISTENING, "LISTENING")
         val transcriber = LocalTranscriber(context)
         localStt = transcriber
-        transcriber.listen(config.sttLanguage) { text, error ->
+        // There is no MicStreamer in this path — the platform recogniser owns
+        // the microphone — so without this the orb never moves while somebody
+        // is talking to it. It looked exactly like a surface that had stopped
+        // listening, and a surface that looks like it stopped listening is one
+        // people repeat themselves at, over the top of the recogniser.
+        val progress = object : LocalTranscriber.Listener {
+            override fun onLevel(level: Float) {
+                if (running) ui.onAmplitude(level)
+            }
+
+            override fun onPartial(text: String) {
+                if (running) ui.onTranscript(text)
+            }
+
+            override fun onSpeechEnd() {
+                if (running) ui.onMode(JarvisOrbView.Mode.THINKING, "PROCESSING")
+            }
+        }
+        transcriber.listen(config.sttLanguage, progress) { text, error ->
             localStt = null
             if (!running) return@listen
+            ui.onAmplitude(0f)
             if (text == null) {
                 // Named rather than generic, and NOT silently retried on the
                 // server: falling back would send the audio after promising it

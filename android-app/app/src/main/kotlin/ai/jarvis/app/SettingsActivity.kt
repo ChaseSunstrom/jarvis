@@ -193,6 +193,13 @@ class SettingsActivity : Activity() {
             )
         )
         wakeOnDevice = switchRow(ctx, "Detect \u201CHey Jarvis\u201D on this phone", config.wakeWordOnDevice)
+        // Every one of these switches has a line of status under it that says
+        // what is ACTUALLY happening, and a status line that only refreshes on
+        // save is a status line that contradicts the switch above it for as
+        // long as the user is looking at both.
+        wakeOnDevice.setOnCheckedChangeListener { _, _ ->
+            if (::modelStatus.isInitialized) refreshModelStatus()
+        }
         col.addView(wakeOnDevice, matchWidth())
         modelStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(modelStatus)
@@ -202,7 +209,27 @@ class SettingsActivity : Activity() {
                 JarvisUi.ghost(ctx, "DELETE MODELS") { deleteModels() },
             )
         )
+
+        // Named for the thing it is, because the two are constantly confused:
+        // the models above are the WAKE WORD's, and they have nothing to do
+        // with transcription. "I have the models downloaded, why isn't it
+        // transcribing on my phone" is that confusion, and it is the app's
+        // fault for putting one switch under the other with no label between.
+        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.label(ctx, "Speech to text"))
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Separate from the models above. Transcription uses Android's own " +
+                    "offline recogniser, which is part of the system rather than " +
+                    "something Jarvis can download \u2014 if this phone does not have one, " +
+                    "the line below says so."
+            )
+        )
         sttOnDevice = switchRow(ctx, "Transcribe on this phone", config.sttOnDevice)
+        sttOnDevice.setOnCheckedChangeListener { _, _ ->
+            if (::sttStatus.isInitialized) refreshSttStatus()
+        }
         col.addView(sttOnDevice, matchWidth())
         sttStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(sttStatus)
@@ -712,7 +739,7 @@ class SettingsActivity : Activity() {
             runOnUiThread {
                 toast(problem ?: "On-device models ready.")
                 if (::modelStatus.isInitialized) refreshModelStatus()
-        if (::sttStatus.isInitialized) refreshSttStatus()
+                if (::sttStatus.isInitialized) refreshSttStatus()
                 // Restart the listener so it picks the local path up now rather
                 // than at the next reconnect.
                 if (problem == null && config.wakeWordEnabled) {
