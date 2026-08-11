@@ -1945,3 +1945,69 @@ def test_every_websocket_command_is_documented():
     stale = documented - handlers
     assert not missing, f"undocumented websocket commands: {sorted(missing)}"
     assert not stale, f"documented commands that do not exist: {sorted(stale)}"
+
+
+async def test_a_stock_install_can_reach_a_connected_device():
+    """The failure this catches had no error message anywhere.
+
+    A phone pairs, registers, and appears in the console's device list — that
+    list is read from the websocket layer, which is always on. But
+    `device_control` and `companion` were loaded only if configuration.yaml
+    named them, and the shipped configuration.yaml deliberately describes no
+    house at all, so it named neither.
+
+    So `control_device` was never registered, and the model — asked to text
+    somebody from the user's own connected phone — answered that its
+    capabilities were confined to the house. Which was true, and useless, and
+    logged nothing: an integration nobody asked for is not an error.
+
+    Both take no configuration. Their whole job is to exist so that a device
+    which connects can be reached.
+    """
+    import tempfile
+
+    from jarvis.core import Jarvis
+
+    jarvis = Jarvis(Path(tempfile.mkdtemp()))
+    try:
+        # The empty house, exactly as a fresh checkout boots it.
+        await jarvis.async_setup({})
+
+        registry = jarvis.data.get("llm_tools")
+        assert registry is not None, "no tool registry on a stock install"
+        assert "control_device" in registry.tools, (
+            "the model has no tool that can reach a connected phone, so it will "
+            "say it cannot — correctly, and uselessly"
+        )
+        # Jarvis reaching the USER, as opposed to the user's hardware. Without
+        # these a question raised by `ask_user` never leaves the console.
+        assert jarvis.services.has_service("companion", "ask")
+        assert jarvis.services.has_service("companion", "notify")
+        assert jarvis.services.has_service("device_control", "run")
+    finally:
+        await jarvis.async_stop()
+
+
+def test_the_always_on_integrations_need_no_configuration():
+    """Anything in CORE_INTEGRATIONS is set up with `config.get(name)` — which
+    is None when the key is absent. An integration that cannot survive that
+    would crash every boot of a stock install."""
+    import inspect
+
+    from jarvis.integrations import CORE_INTEGRATIONS, _load_module
+
+    for name in CORE_INTEGRATIONS:
+        module = _load_module(name)
+        assert module is not None, f"CORE_INTEGRATIONS names {name}, which does not exist"
+        setup = getattr(module, "async_setup", None)
+        assert setup is not None, f"{name} is loaded unconditionally but has no async_setup"
+        params = list(inspect.signature(setup).parameters.values())
+        assert len(params) >= 2, f"{name}.async_setup takes no config argument"
+        config_param = params[1]
+        # Either it defaults, or it is annotated to accept None. Both are fine;
+        # a required positional with no None handling is what breaks.
+        assert (
+            config_param.default is not inspect.Parameter.empty
+            or "Any" in str(config_param.annotation)
+            or "None" in str(config_param.annotation)
+        ), f"{name}.async_setup cannot be called with no configuration"

@@ -28,7 +28,38 @@ if TYPE_CHECKING:  # pragma: no cover
 _LOGGER = logging.getLogger(__name__)
 
 # Always set up (they provide the base service layer), even if absent from YAML.
-CORE_INTEGRATIONS = ("homeassistant_compat", "domains", "voice", "llm", "automation")
+#: Integrations that load whether or not configuration.yaml mentions them.
+#:
+#: `device_control` and `companion` are here for a reason worth writing down.
+#: Both need no configuration at all — their whole job is to exist so that a
+#: device which connects can be reached — and neither was in the shipped
+#: configuration.yaml, because that file was deliberately emptied of anything
+#: describing a house nobody owns yet.
+#:
+#: The result was a failure with no error anywhere. A phone paired, registered,
+#: and appeared in the console's device list, because that list is read from the
+#: websocket layer, which is always on. But `device_control.async_setup` never
+#: ran, so `control_device` was never registered, so the model had no tool that
+#: could reach the phone — and answered, correctly and uselessly, that its
+#: capabilities were confined to the house. Nothing logged a warning: an
+#: integration that is never asked for is not an error.
+#:
+#: `companion` is the same shape: without it `companion.notify` and
+#: `companion.ask` do not exist, so Jarvis cannot reach the user on the device
+#: they are actually at, and a question raised by `ask_user` never leaves the
+#: console.
+#:
+#: A config block can still tune either (timeouts, taint TTL); it is no longer
+#: what decides whether they exist.
+CORE_INTEGRATIONS = (
+    "homeassistant_compat",
+    "domains",
+    "voice",
+    "llm",
+    "automation",
+    "device_control",
+    "companion",
+)
 
 # Keys in configuration.yaml that are NOT integrations.
 NON_INTEGRATION_KEYS = {"jarvis", "packages", "secrets"}
