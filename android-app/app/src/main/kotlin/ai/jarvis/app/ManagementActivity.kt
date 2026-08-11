@@ -4,6 +4,7 @@ import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.config.ServerKind
 import ai.jarvis.app.config.Origin
 import ai.jarvis.app.config.ServerUrl
+import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisUi
 import android.Manifest
 import android.app.Activity
@@ -25,6 +26,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -56,16 +59,26 @@ import java.io.ByteArrayInputStream
  *  * **No mixed content, no third-party cookies, no geolocation, no camera or
  *    mic** — the page gets none of them.
  *
- * The bearer token rides an `Authorization` header on the initial load only,
- * which is all the platform offers: WebView does not attach `additionalHeaders`
- * to sub-resources or later navigations. jarvis-core is expected to turn that
- * first authenticated request into a session of its own.
+ * The bearer token rides an `Authorization` header on every navigation this
+ * *app* starts — the first load and each tab switch. That is all the platform
+ * offers: WebView does not attach `additionalHeaders` to sub-resources or to
+ * navigations the page itself initiates, so following a link inside the console
+ * carries nothing. The console is expected to turn the first authenticated
+ * request into a session of its own; the tab strip exists partly because of
+ * this, since a link tap in the page's own nav is exactly the navigation the
+ * header does not reach.
+ *
+ * **The section comes from [ConsoleTab], never from the intent.** See
+ * [EXTRA_TAB]: an authenticated WebView is not something any component on the
+ * device that can start an activity should be able to aim.
  */
 class ManagementActivity : Activity() {
 
     private lateinit var config: JarvisConfig
     private var webView: WebView? = null
     private var serverOrigin: Origin? = null
+    private var tab: ConsoleTab = ConsoleTab.DEFAULT
+    private val tabButtons = mutableListOf<TextView>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,13 +112,34 @@ class ManagementActivity : Activity() {
             return
         }
 
+        // The NAME of a tab, never a path. See ConsoleTab: this WebView carries
+        // the user's bearer token, so a caller-supplied URL would be a way for
+        // anything on the device that can start an activity to point an
+        // authenticated session wherever it liked.
+        tab = ConsoleTab.of(intent?.getStringExtra(EXTRA_TAB))
+
         val view = WebView(this)
         webView = view
         configure(view)
         setContentView(buildUi(view))
+        load(tab)
+    }
 
-        // Headers apply to this request only — see the class comment.
-        view.loadUrl(url, mapOf("Authorization" to "Bearer ${config.token}"))
+    /**
+     * Open one of the console's sections.
+     *
+     * `loadUrl` with headers, not `WebView.loadUrl(url)`: the platform attaches
+     * `additionalHeaders` to the navigation it is given and to nothing else, so
+     * every top-level navigation this app initiates has to carry the bearer
+     * itself. Following a link inside the page does not, which is why the
+     * console is expected to turn the first authenticated request into a
+     * session.
+     */
+    private fun load(next: ConsoleTab) {
+        tab = next
+        val base = config.serverUrl.trimEnd('/')
+        webView?.loadUrl(base + next.path, mapOf("Authorization" to "Bearer ${config.token}"))
+        markCurrentTab()
     }
 
     private fun buildUi(view: WebView): ViewGroup {
@@ -122,7 +156,7 @@ class ManagementActivity : Activity() {
         }
         bar.addView(
             TextView(this).apply {
-                text = "MANAGEMENT · ${serverOrigin?.host ?: ""}"
+                text = serverOrigin?.host ?: ""
                 setTextColor(JarvisUi.ACCENT)
                 textSize = 12f
                 letterSpacing = 0.16f
@@ -139,6 +173,21 @@ class ManagementActivity : Activity() {
             )
         )
 
+        // The console's own nav, on the phone.
+        //
+        // Without it this screen was the console's front door and nothing else:
+        // reaching Tools meant going back to the home screen and starting again,
+        // because the page's own nav is inside a WebView whose links do not
+        // carry the bearer header. Switching here re-issues an authenticated
+        // navigation, which is the only kind that works.
+        root.addView(
+            tabBar(),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
         root.addView(
             view,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -146,10 +195,59 @@ class ManagementActivity : Activity() {
         return root
     }
 
+    /** The tab strip, matching the console's own and in the console's order. */
+    private fun tabBar(): ViewGroup {
+        val strip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val p = JarvisUi.dp(this@ManagementActivity, 12)
+            setPadding(p, 0, p, JarvisUi.dp(this@ManagementActivity, 10))
+        }
+        for (entry in ConsoleTab.entries) {
+            val button = JarvisUi.ghost(this, entry.label) { load(entry) }
+            button.tag = entry
+            tabButtons += button
+            strip.addView(button)
+            if (entry != ConsoleTab.entries.last()) {
+                strip.addView(
+                    android.view.View(this),
+                    LinearLayout.LayoutParams(JarvisUi.dp(this, 8), 1)
+                )
+            }
+        }
+        // Scrolls, because five monospace labels do not fit a phone's width and
+        // the alternative is a nav that wraps into two ragged lines.
+        return HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            // Fills the width when the tabs fit and scrolls when they do not.
+            isFillViewport = true
+            // FrameLayout params, not LinearLayout's: HorizontalScrollView IS a
+            // FrameLayout, and FrameLayout.onMeasure casts its child's
+            // LayoutParams — the wrong type is a ClassCastException on the
+            // first measure pass rather than a layout that looks a bit off.
+            addView(
+                strip,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+    }
+
+    /** Which tab you are on, said in the one way a ghost button can say it. */
+    private fun markCurrentTab() {
+        for (button in tabButtons) {
+            val here = button.tag == tab
+            button.setTextColor(if (here) JarvisUi.ACCENT else JarvisUi.DIM)
+            button.alpha = if (here) 1f else 0.75f
+        }
+    }
+
     private fun reload() {
-        // Re-issue the authenticated first request rather than WebView.reload(),
-        // which would replay whatever the last navigation was without the header.
-        webView?.loadUrl(config.serverUrl, mapOf("Authorization" to "Bearer ${config.token}"))
+        // Re-issue the authenticated navigation rather than WebView.reload(),
+        // which would replay the last one without the header — and re-issue it
+        // for the tab the user is actually on, not for the console's root.
+        load(tab)
     }
 
     private fun configure(view: WebView) {
@@ -343,5 +441,20 @@ class ManagementActivity : Activity() {
          */
         private val USER_AGENT =
             "JarvisAndroid/${BuildConfig.VERSION_NAME} (ai.jarvis.app; management)"
+
+        /**
+         * Which section to open, as a [ConsoleTab] NAME.
+         *
+         * A name and not a path, and not a URL. This activity loads what it is
+         * given into a WebView carrying the user's bearer token, so accepting a
+         * path here would let anything on the device that can start an activity
+         * aim an authenticated session wherever it liked. The path comes from
+         * [ConsoleTab] and an unrecognised name resolves to the default.
+         */
+        const val EXTRA_TAB = "ai.jarvis.app.CONSOLE_TAB"
+
+        /** Open the console at [tab]. */
+        fun intent(context: android.content.Context, tab: ConsoleTab): Intent =
+            Intent(context, ManagementActivity::class.java).putExtra(EXTRA_TAB, tab.name)
     }
 }

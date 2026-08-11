@@ -8,6 +8,7 @@ import ai.jarvis.app.support.Toasts
 import ai.jarvis.app.support.Views
 import ai.jarvis.app.support.Waits
 import ai.jarvis.app.ui.CrashLogActivity
+import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.SystemCheckActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -58,17 +59,17 @@ class NavigationTest {
     // --- MainActivity -------------------------------------------------------
 
     @Test
-    fun homeManageButtonExplainsItselfWhenNothingIsConfigured() {
+    fun homeConsoleTabExplainsItselfWhenNothingIsConfigured() {
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
-        tap("MANAGE")
+        tap(ConsoleTab.DEVICES.label)
 
-        // No server configured, so MANAGE must say so rather than opening a
-        // WebView onto nowhere.
-        Waits.until("the home screen to explain that MANAGE needs a server first") {
+        // No server configured, so a console tab must say so rather than
+        // opening a WebView onto nowhere.
+        Waits.until("the home screen to explain that the console needs a server first") {
             Device.ui.findObject(
-                By.text(Views.containingIgnoringCase("Set the server URL and token in Settings"))
+                By.text(Views.containingIgnoringCase("Set the server URL and token"))
             ) != null
         }
         assertTrue(
@@ -76,22 +77,46 @@ class NavigationTest {
             Activities.isResumed(MainActivity::class.java),
         )
 
-        Screenshots.take("NavigationTest-home-manage-unconfigured")
+        Screenshots.take("NavigationTest-home-console-unconfigured")
     }
 
     @Test
-    fun homeSettingsButtonOpensSettings() {
+    fun homePhoneButtonOpensThePhonesOwnSettings() {
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
-        val settings = Activities.expect(SettingsActivity::class.java) { tap("SETTINGS") }
+        // PHONE, not SETTINGS. SETTINGS is one of the console's tabs and is the
+        // HOUSE's settings; this one is the mobile half — permissions, the wake
+        // word, which server this device talks to.
+        val settings = Activities.expect(SettingsActivity::class.java) {
+            tap(ConsoleTab.PHONE_LABEL)
+        }
         Activities.awaitResumed(settings)
 
         Waits.until("the settings screen to render its server URL field") {
             Device.ui.findObject(By.text(Views.textIgnoringCase("Server URL"))) != null
         }
 
-        Screenshots.take("NavigationTest-settings")
+        Screenshots.take("NavigationTest-phone-settings")
+    }
+
+    @Test
+    fun everyConsoleTabIsOnTheHomeScreen() {
+        val main = Activities.launch(MainActivity::class.java)
+        Activities.awaitResumed(main)
+
+        // The property the user asked for in words: the phone is not a
+        // different screen from the web view. Every section the console has,
+        // the home screen offers — by the console's own label, so a page added
+        // to one and not the other is a failure here rather than a surprise on
+        // somebody's phone.
+        for (tab in ConsoleTab.entries) {
+            Waits.until("the home screen to offer the console's ${tab.label} tab") {
+                Device.ui.findObject(By.text(Views.textIgnoringCase(tab.label))) != null
+            }
+        }
+
+        Screenshots.take("NavigationTest-home-console-tabs")
     }
 
     @Test
@@ -107,33 +132,16 @@ class NavigationTest {
         Screenshots.take("NavigationTest-talk-unconfigured")
     }
 
-    @Test
-    fun homeAutomationsButtonToastsRatherThanCrashing() {
-        val main = Activities.launch(MainActivity::class.java)
-        Activities.awaitResumed(main)
-
-        assertUnimplementedScreenIsHandled(
-            label = "AUTOMATIONS",
-            className = JarvisScreens.AUTOMATIONS,
-            screenshot = "NavigationTest-home-automations",
-        )
-
-        assertTrue(
-            "MainActivity must survive a tap on a screen this build does not have",
-            Activities.isResumed(MainActivity::class.java),
-        )
-    }
-
     // --- SettingsActivity ---------------------------------------------------
 
     @Test
-    fun settingsAutomationsAndAuditLogButtonsToastRatherThanCrashing() {
+    fun settingsPhoneTasksAndAuditLogButtonsToastRatherThanCrashing() {
         openSettings()
 
         assertUnimplementedScreenIsHandled(
-            label = "AUTOMATIONS",
+            label = "PHONE TASKS",
             className = JarvisScreens.AUTOMATIONS,
-            screenshot = "NavigationTest-settings-automations",
+            screenshot = "NavigationTest-settings-phone-tasks",
         )
         assertUnimplementedScreenIsHandled(
             label = "AUDIT LOG",

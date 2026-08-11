@@ -9,8 +9,8 @@ import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisBootAnimation
+import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisOrbView
-import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.SystemCheckActivity
 import android.Manifest
@@ -24,6 +24,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -301,15 +302,49 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             setPadding(0, JarvisUi.dp(this@MainActivity, 4), 0, 0)
         }
 
+        // The console's own nav, on the phone, in the console's order.
+        //
+        // It used to be MANAGE / AUTOMATIONS / SETTINGS, and only one of those
+        // three had a counterpart in the browser: MANAGE opened the console's
+        // front door with no way on to its other four sections, SETTINGS opened
+        // a native screen about this phone, and AUTOMATIONS opened a native
+        // screen listing the tasks THIS PHONE runs by itself — a different
+        // thing from the house's automations that happens to share a word.
+        // Which is the whole of "it feels weird that it's kind of similar but
+        // not really". See ConsoleTab.
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            for (tab in ConsoleTab.entries) {
+                addView(JarvisUi.ghost(this@MainActivity, tab.label) { openConsole(tab) })
+                addView(navSpacer())
+            }
+            // The mobile half, and deliberately not called Settings: a button
+            // named Settings beside a tab named SETTINGS is how the phone's own
+            // configuration and the house's got confused to begin with.
+            addView(
+                JarvisUi.ghost(this@MainActivity, ConsoleTab.PHONE_LABEL) { openSettings() }
+            )
+        }
+        // Six monospace labels do not fit a phone's width, and a nav that wraps
+        // into two ragged lines is the thing this replaced.
+        val navScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
             setPadding(0, JarvisUi.dp(this@MainActivity, 18), 0, 0)
-            addView(JarvisUi.ghost(this@MainActivity, "MANAGE") { openManagement() })
-            addView(navSpacer())
-            addView(JarvisUi.ghost(this@MainActivity, "AUTOMATIONS") { openAutomations() })
-            addView(navSpacer())
-            addView(JarvisUi.ghost(this@MainActivity, "SETTINGS") { openSettings() })
+            clipToPadding = false
+            // Centred when the six labels fit, scrollable when they do not.
+            isFillViewport = true
+            // FrameLayout params, not LinearLayout's: HorizontalScrollView IS a
+            // FrameLayout, and FrameLayout.onMeasure casts its child's
+            // LayoutParams — the wrong type is a ClassCastException on the
+            // first measure pass rather than a layout that looks a bit off.
+            addView(
+                nav,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
 
         col.addView(
@@ -343,7 +378,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             ).apply { topMargin = JarvisUi.dp(this@MainActivity, 10) }
         )
         col.addView(listenReason, fullWidthParams())
-        col.addView(nav)
+        col.addView(navScroll)
 
         root.addView(
             col,
@@ -509,16 +544,19 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private fun openSystemCheck() =
         startActivity(Intent(this, SystemCheckActivity::class.java))
 
-    private fun openManagement() {
+    /**
+     * Open one of the console's sections.
+     *
+     * The phone and the browser show the same pages; this is the phone's way in
+     * to one of them. Unconfigured, it says so rather than opening a WebView
+     * onto nothing — the console is not something this app can render itself.
+     */
+    private fun openConsole(tab: ConsoleTab) {
         if (!config.isConfigured) {
-            responseView.text = "Set the server URL and token in Settings first."
+            responseView.text = "Set the server URL and token under ${ConsoleTab.PHONE_LABEL} first."
             return
         }
-        startActivity(Intent(this, ManagementActivity::class.java))
-    }
-
-    private fun openAutomations() {
-        JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Automations")
+        startActivity(ManagementActivity.intent(this, tab))
     }
 
     /**

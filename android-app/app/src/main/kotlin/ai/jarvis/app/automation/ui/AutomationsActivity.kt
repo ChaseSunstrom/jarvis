@@ -172,7 +172,7 @@ class AutomationsActivity : Activity() {
 
     private fun unavailableColumn(): LinearLayout {
         val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "AUTOMATIONS"))
+        col.addView(JarvisUi.title(this, "PHONE TASKS"))
         col.addView(
             JarvisUi.hint(
                 this,
@@ -189,7 +189,7 @@ class AutomationsActivity : Activity() {
     ): LinearLayout {
         val rt = runtime
         val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "AUTOMATIONS"))
+        col.addView(JarvisUi.title(this, "PHONE TASKS"))
 
         val store = policy
         val live = store?.automationLive ?: false

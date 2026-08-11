@@ -300,12 +300,25 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.label(ctx, "More"))
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "AUTOMATIONS") {
-                    JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Automations")
+                // NOT "automations". The console has a page by that name and it
+                // is the HOUSE's; this one lists the tasks this phone runs by
+                // itself, which is a different thing that happened to share a
+                // word — and sharing it made the app feel like a slightly wrong
+                // copy of the console rather than the other half of it.
+                JarvisUi.ghost(ctx, "PHONE TASKS") {
+                    JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Phone tasks")
                 },
                 JarvisUi.ghost(ctx, "AUDIT LOG") {
                     JarvisScreens.open(this, JarvisScreens.AUDIT_LOG, "The audit log")
                 },
+            )
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Phone tasks are what THIS device does on its own \u2014 a geofence, a media " +
+                    "button, a rule pushed to it. The house's automations live in the " +
+                    "console's AUTOMATIONS tab, on this phone and in a browser alike."
             )
         )
         col.addView(

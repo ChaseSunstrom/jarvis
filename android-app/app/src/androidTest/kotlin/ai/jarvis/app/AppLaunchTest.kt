@@ -6,6 +6,7 @@ import ai.jarvis.app.support.JarvisTestRule
 import ai.jarvis.app.support.Screenshots
 import ai.jarvis.app.support.Views
 import ai.jarvis.app.support.Waits
+import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisOrbView
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
@@ -82,7 +83,14 @@ class AppLaunchTest {
         // the failure carries the whole window dump: on a screen with no
         // resource ids, "no view matched" is otherwise unactionable.
         val device = Device.ui
-        for (label in listOf("TAP TO SPEAK", "MANAGE", "AUTOMATIONS", "SETTINGS")) {
+        // The console's own sections, plus the one entry that is not the
+        // console's. See ConsoleTab: the home screen used to offer MANAGE /
+        // AUTOMATIONS / SETTINGS, and only one of those three had a counterpart
+        // in the browser.
+        val labels = listOf("TAP TO SPEAK") +
+            ConsoleTab.entries.map { it.label } +
+            ConsoleTab.PHONE_LABEL
+        for (label in labels) {
             Waits.until("the home screen to show \"$label\"") {
                 device.findObject(By.text(Views.textIgnoringCase(label))) != null
             }
