@@ -19,12 +19,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
+import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -312,38 +312,55 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // thing from the house's automations that happens to share a word.
         // Which is the whole of "it feels weird that it's kind of similar but
         // not really". See ConsoleTab.
-        val nav = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            for (tab in ConsoleTab.entries) {
-                addView(JarvisUi.ghost(this@MainActivity, tab.label) { openConsole(tab) })
-                addView(navSpacer())
-            }
-            // The mobile half, and deliberately not called Settings: a button
-            // named Settings beside a tab named SETTINGS is how the phone's own
-            // configuration and the house's got confused to begin with.
-            addView(
-                JarvisUi.ghost(this@MainActivity, ConsoleTab.PHONE_LABEL) { openSettings() }
-            )
+        //
+        // A grid rather than a scrolling strip, and the two are not equal on a
+        // HOME screen: a horizontal scroller hides whatever is past the right
+        // edge, so TOOLS and PHONE would be discoverable only by a swipe nobody
+        // is told about — a worse version of the problem being fixed. Two rows
+        // of three show all six at once. The console frame keeps the scroller,
+        // because there it mirrors the browser's own nav bar.
+        val navGap = JarvisUi.dp(this, 4)
+        val nav = GridLayout(this).apply {
+            columnCount = NAV_COLUMNS
+            useDefaultMargins = false
+            setPadding(0, JarvisUi.dp(this@MainActivity, 14), 0, 0)
         }
-        // Six monospace labels do not fit a phone's width, and a nav that wraps
-        // into two ragged lines is the thing this replaced.
-        val navScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, JarvisUi.dp(this@MainActivity, 18), 0, 0)
-            clipToPadding = false
-            // Centred when the six labels fit, scrollable when they do not.
-            isFillViewport = true
-            // FrameLayout params, not LinearLayout's: HorizontalScrollView IS a
-            // FrameLayout, and FrameLayout.onMeasure casts its child's
-            // LayoutParams — the wrong type is a ClassCastException on the
-            // first measure pass rather than a layout that looks a bit off.
-            addView(
-                nav,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
+        val navButtons = ConsoleTab.entries.map { tab ->
+            JarvisUi.ghost(this, tab.label) { openConsole(tab) }
+        } + JarvisUi.ghost(this, ConsoleTab.PHONE_LABEL) { openSettings() }
+        // The mobile half is last and deliberately not called Settings: a button
+        // named Settings beside a tab named SETTINGS is how the phone's own
+        // configuration and the house's got confused to begin with.
+        for (button in navButtons) {
+            // AUTOMATIONS is eleven letter-spaced monospace characters and has
+            // to fit a third of a 360dp screen. Auto-sizing rather than a
+            // smaller fixed size, because "does the longest label fit" is a
+            // question about a font on a device rather than one that can be
+            // answered here with arithmetic — and the failure is a clipped word
+            // on the first screen of the app.
+            //
+            // Order matters: `setTextSize` AFTER enabling auto-sizing throws.
+            // JarvisUi.ghost sets it before this runs, which is why this reads
+            // as though nothing sets a size at all.
+            button.setPadding(
+                JarvisUi.dp(this, 8),
+                JarvisUi.dp(this, 10),
+                JarvisUi.dp(this, 8),
+                JarvisUi.dp(this, 10),
+            )
+            button.setSingleLine(true)
+            button.setAutoSizeTextTypeUniformWithConfiguration(
+                NAV_TEXT_MIN_SP, NAV_TEXT_MAX_SP, 1, TypedValue.COMPLEX_UNIT_SP,
+            )
+            nav.addView(
+                button,
+                GridLayout.LayoutParams().apply {
+                    width = 0
+                    height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, GridLayout.FILL, 1f)
+                    rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, GridLayout.FILL, 0f)
+                    setMargins(navGap, navGap, navGap, navGap)
+                }
             )
         }
 
@@ -378,7 +395,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             ).apply { topMargin = JarvisUi.dp(this@MainActivity, 10) }
         )
         col.addView(listenReason, fullWidthParams())
-        col.addView(navScroll)
+        col.addView(nav, fullWidthParams())
 
         root.addView(
             col,
@@ -452,9 +469,6 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         refreshListening()
     }
 
-    private fun navSpacer(): View = View(this).apply {
-        layoutParams = LinearLayout.LayoutParams(JarvisUi.dp(this@MainActivity, 10), 1)
-    }
 
     // --- the GrapheneOS status banner ---------------------------------------
 
@@ -628,6 +642,18 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     }
 
     companion object {
+        /**
+         * Columns in the home screen's nav grid.
+         *
+         * Three, so the console's five sections plus PHONE come out as two even
+         * rows of three with nothing hidden past an edge.
+         */
+        private const val NAV_COLUMNS = 3
+
+        /** Auto-sizing bounds for the nav labels, in sp. */
+        private const val NAV_TEXT_MIN_SP = 8
+        private const val NAV_TEXT_MAX_SP = 12
+
         private const val REQ_MIC = 4712
         private const val REQ_NOTIFICATIONS = 4713
         private const val REQ_MIC_FOR_WAKE = 4714

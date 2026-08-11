@@ -146,7 +146,7 @@ def check_the_mobile_half_is_named_for_itself() -> list[str]:
         )
     # And the home screen must build its nav FROM the table rather than listing
     # buttons by hand — a hand-written list is what drifted.
-    if "for (tab in ConsoleTab.entries)" not in main:
+    if not re.search(r"ConsoleTab\.entries\.map \{|for \(tab in ConsoleTab\.entries\)", main):
         failures.append(
             "MainActivity's nav is a hand-written list of buttons again. A section "
             "added to the console would simply not appear on the phone."
@@ -277,6 +277,21 @@ def check_the_console_screen_can_reach_every_section() -> list[str]:
         )
     if "private fun markCurrentTab()" not in src:
         failures.append("the console screen does not show which section you are on")
+
+    # And on the HOME screen, nothing may be hidden past an edge.
+    #
+    # A horizontal scroller is right in the console frame, where it mirrors the
+    # browser's own nav bar. It is wrong on the home screen: TOOLS and PHONE
+    # would be discoverable only by a swipe nobody is told about, which is a
+    # worse version of the problem this change is fixing.
+    main = MAIN.read_text(encoding="utf-8")
+    if "HorizontalScrollView" in main:
+        failures.append(
+            "the home screen's nav scrolls sideways, so the sections past the right "
+            "edge are reachable only by a swipe nothing advertises"
+        )
+    if "GridLayout" not in main:
+        failures.append("the home screen's nav no longer lays every section out at once")
     if "load(tab)" not in src:
         failures.append(
             "RELOAD no longer re-issues the CURRENT section, so it throws you back to "
