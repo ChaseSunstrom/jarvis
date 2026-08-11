@@ -38,10 +38,16 @@ class Store:
             await asyncio.to_thread(self._save_sync, data)
 
     def _save_sync(self, data: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(
             json.dumps({"version": self.version, "data": data}, indent=2, default=str),
             encoding="utf-8",
         )
+        # auth.json holds the pairing secret in the clear — it has to be
+        # readable back — so a store must not land group/world readable under
+        # the usual 022 umask. Chmod the temp file rather than the live path:
+        # after the rename there would be an instant in which any local user
+        # could open it, and a credential leaked in that instant stays leaked.
+        os.chmod(tmp, 0o600)
         os.replace(tmp, self.path)

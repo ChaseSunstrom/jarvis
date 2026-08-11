@@ -16,6 +16,12 @@
 	 * — and it is the one the app is told to use. It is editable, because the
 	 * console may be open on `localhost` while the phone needs the LAN address,
 	 * and only a person can know which.
+	 *
+	 * Minting is gated on the console password, not on the pairing secret typed
+	 * out in full. The gate is checked server-side (`api/console/+server.ts`);
+	 * this file only draws the two states, and the pairing secret does not reach
+	 * this file at all until a session has been proved. See
+	 * `$lib/server/consoleAuth` for what that keeps and what it changes.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import { qrSvg } from '$lib/qr';
@@ -23,15 +29,33 @@
 	import { toasts } from '$lib/toast';
 	import type { AccessToken } from '$lib/jarvisClient';
 
+	/** Which of the three doors the panel is drawing. */
+	type Lock = 'loading' | 'choose' | 'locked' | 'open';
+	let lock = $state<Lock>('loading');
+
 	/**
-	 * The operator's pairing secret. Typed here, forwarded, never stored.
-	 *
-	 * Not an inconvenience — the whole reason minting needs it is that this
-	 * console's relay hands the admin token to anything that connects, so
-	 * possession of the API token deliberately is not enough to mint a
-	 * credential. See `jarvis-core/jarvis/api/pairing.py`.
+	 * The console password, held in a variable for exactly as long as it takes
+	 * to post it. Never in `sessionStorage`, never in `localStorage`: the
+	 * session cookie the server sets is httpOnly, so what survives a reload is
+	 * something page JavaScript — and therefore an XSS — cannot read back.
 	 */
-	let secret = $state('');
+	let password = $state('');
+	let passwordHint = $state('');
+	let passwordFile = $state('');
+	let passwordVar = $state('JARVIS_CONSOLE_PASSWORD');
+	let minChars = $state(10);
+	let unlocking = $state(false);
+
+	/** Whether the SERVER holds a pairing secret. Never the secret itself. */
+	let secretHeld = $state(false);
+	let secretSource = $state<'env' | 'operator' | 'none'>('none');
+	let secretVar = $state('JARVIS_PAIRING_SECRET');
+	/** Typed once when this console has no secret of its own; sent, then cleared. */
+	let secretDraft = $state('');
+	/** The revealed secret, only ever assigned from a password-gated response. */
+	let revealed = $state('');
+	let revealing = $state(false);
+
 	let code = $state('');
 	/**
 	 * The name of the credential that claimed the last code, once one has.
@@ -66,9 +90,6 @@
 	/** Credentials that existed when the current code was minted. */
 	let known = new Set<string>();
 
-	/** Where the operator's secret lives for the rest of this tab's life. */
-	const SECRET_KEY = 'jarvis.pairing.secret';
-
 	/**
 	 * How many codes may expire unscanned before the console stops replacing
 	 * them by itself. A tab left open on this page overnight should not mint a
@@ -77,9 +98,18 @@
 	 */
 	const MAX_AUTO_REISSUE = 3;
 
+	/**
+	 * How long a revealed secret stays on screen. It is on a monitor now, which
+	 * is the one place this design spent a whole module avoiding putting it —
+	 * so it goes away by itself rather than waiting for somebody to remember.
+	 */
+	const REVEAL_MS = 60_000;
+	let revealTimer: ReturnType<typeof setTimeout> | null = null;
+
 	/** Seconds a code has left, or 0. Drives both the readout and the expiry. */
 	const secondsLeft = $derived(expiresAt ? Math.max(0, Math.round(expiresAt - now / 1000)) : 0);
 	const live = $derived(Boolean(code) && secondsLeft > 0);
+	const canIssue = $derived(lock === 'open' && secretHeld);
 
 	/**
 	 * `jarvis://pair?v=1&u=<url>&c=<code>` — what `PairingPayload.kt` parses.
@@ -94,50 +124,178 @@
 
 	const svg = $derived(payload ? qrSvg(payload, { title: 'Jarvis pairing code' }) : '');
 
+	/** The server's own words for a refusal, which is what a person can act on. */
+	async function failure(res: Response, fallback: string): Promise<string> {
+		const detail = await res.json().catch(() => null);
+		return detail?.message ?? `${fallback} (${res.status})`;
+	}
+
+	async function loadLock(): Promise<void> {
+		const res = await fetch('/api/console');
+		if (!res.ok) throw new Error(await failure(res, 'the console could not be read'));
+		const body = await res.json();
+		minChars = body.minChars ?? minChars;
+		passwordVar = body.envVar ?? passwordVar;
+		passwordFile = body.file ?? '';
+		passwordHint = body.problem ?? '';
+		lock = body.authenticated ? 'open' : body.configured ? 'locked' : 'choose';
+	}
+
+	/** Whether the server holds a secret — not what it is. */
+	async function loadSecretStatus(): Promise<void> {
+		const res = await fetch('/api/pair/secret');
+		if (!res.ok) return;
+		const body = await res.json();
+		secretHeld = Boolean(body.held);
+		secretSource = body.source ?? 'none';
+		secretVar = body.envVar ?? secretVar;
+	}
+
 	/**
-	 * Mint one.
+	 * Prove the password once, then every code after it is one press.
 	 *
-	 * Kept to a single click, which is the whole point of remembering the
-	 * secret: the operator types it once per browser session and every code
-	 * after that is one press. The secret still never leaves this tab except on
-	 * the way to `/api/pair`, and never reaches jarvis-web's own environment —
-	 * it is the second factor precisely because reaching this console is enough
-	 * to be an authenticated API client, so storing it on the server would
-	 * quietly delete the property it exists for.
+	 * On a console that has none yet this CHOOSES it — the only moment that can
+	 * happen without one, and the alternative is a console nobody can lock
+	 * without editing a file on the server.
+	 */
+	async function unlock(): Promise<void> {
+		if (!password.trim() || unlocking) return;
+		unlocking = true;
+		err = '';
+		try {
+			const res = await fetch('/api/console', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ password })
+			});
+			if (!res.ok) throw new Error(await failure(res, 'the console refused that password'));
+			const body = await res.json();
+			// Out of the page's memory the moment it is spent. What survives is
+			// the httpOnly cookie, which this code cannot read.
+			password = '';
+			lock = 'open';
+			if (body.chosen) {
+				toasts.success('Console password set', 'It is stored as a scrypt hash, not as itself.');
+			}
+			await loadSecretStatus();
+			if (secretHeld) await issue();
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			unlocking = false;
+		}
+	}
+
+	/** Lock it again — the operator walking away, not an expiry. */
+	async function relock(): Promise<void> {
+		await fetch('/api/console', { method: 'DELETE' }).catch(() => null);
+		lock = 'locked';
+		hideSecret();
+		code = '';
+		expiresAt = 0;
+		unclaimed = 0;
+	}
+
+	/**
+	 * Hand this console the pairing secret, once, for the life of the process.
+	 *
+	 * Only shown when the console holds none. It goes to the server and stays
+	 * there in memory — the browser is not where it lives, which is why the
+	 * `sessionStorage` copy this replaced had to go.
+	 */
+	async function adoptSecret(): Promise<void> {
+		if (!secretDraft.trim() || busy) return;
+		busy = true;
+		err = '';
+		try {
+			const res = await fetch('/api/pair/secret', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ secret: secretDraft })
+			});
+			if (!res.ok) throw new Error(await failure(res, 'the console would not take that secret'));
+			secretDraft = '';
+			await loadSecretStatus();
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			busy = false;
+		}
+		if (secretHeld) await issue();
+	}
+
+	/** Read the secret back. The one thing the password is for besides minting. */
+	async function reveal(): Promise<void> {
+		if (revealing) return;
+		revealing = true;
+		err = '';
+		try {
+			const res = await fetch('/api/pair/secret', { method: 'POST' });
+			if (!res.ok) {
+				if (res.status === 401) lock = 'locked';
+				throw new Error(await failure(res, 'the secret could not be read'));
+			}
+			const body = await res.json();
+			revealed = body.secret ?? '';
+			if (revealTimer) clearTimeout(revealTimer);
+			revealTimer = setTimeout(hideSecret, REVEAL_MS);
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			revealing = false;
+		}
+	}
+
+	function hideSecret(): void {
+		revealed = '';
+		if (revealTimer) clearTimeout(revealTimer);
+		revealTimer = null;
+	}
+
+	/**
+	 * Mint one. One click.
+	 *
+	 * No secret in the body any more: the server holds it and the session
+	 * cookie is what releases it, so this posts nothing at all. That is the
+	 * whole gain — the operator proves who they are once per browser session
+	 * instead of retyping the secret for every device they ever add.
 	 */
 	async function issue(): Promise<void> {
-		if (!secret.trim() || busy) return;
+		if (!canIssue || busy) return;
 		busy = true;
 		err = '';
 		claimedBy = '';
 		try {
-			const res = await fetch('/api/pair', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ secret })
-			});
+			// The baseline goes FIRST. Whatever is on the house before the code
+			// exists cannot be the phone that scans it, and anything that turns
+			// up afterwards can. Taken after the mint instead, `known` was still
+			// the empty set from before the page had read the token list at all,
+			// so the very first code was declared claimed by an existing
+			// credential the instant it was minted — the QR was replaced by
+			// "Paired console" without anybody scanning anything.
+			//
+			// Re-read rather than trusted from mount, so a device paired from
+			// another console in the meantime does not read as this code.
+			if (conn) {
+				await loadTokens(conn);
+				known = new Set(tokens.map((t) => t.id));
+			}
+			const res = await fetch('/api/pair', { method: 'POST' });
 			if (!res.ok) {
-				const detail = await res.json().catch(() => null);
-				throw new Error(detail?.message ?? `pairing failed (${res.status})`);
+				// A session that expired mid-tab has to put the password form
+				// back, not leave GENERATE failing at somebody.
+				if (res.status === 401) lock = 'locked';
+				throw new Error(await failure(res, 'pairing failed'));
 			}
 			const body = await res.json();
 			code = body.code;
 			expiresAt = body.expires_at ?? Date.now() / 1000 + (body.ttl ?? 300);
-			// Whatever is on the house right now is the baseline; anything that
-			// appears after this is what scanned the code. Re-read rather than
-			// trusted from before, so a device paired from another console does
-			// not read as this code being claimed.
-			if (conn) await loadTokens(conn);
-			known = new Set(tokens.map((t) => t.id));
-			try {
-				sessionStorage.setItem(SECRET_KEY, secret);
-			} catch {
-				// A browser with storage disabled still works; it just asks for
-				// the secret again next reload.
-			}
 		} catch (e) {
 			err = describeError(e);
 			code = '';
+			// jarvis-core may have refused the secret, in which case the server
+			// has dropped it and the field for correcting it must come back.
+			await loadSecretStatus();
 		} finally {
 			busy = false;
 		}
@@ -196,6 +354,16 @@
 	onMount(() => {
 		let disposed = false;
 		(async () => {
+			// The lock state first, and independently of the websocket: a
+			// backend that is down must still show the password form rather
+			// than an empty panel.
+			try {
+				await loadLock();
+				await loadSecretStatus();
+			} catch (e) {
+				err = describeError(e);
+				lock = 'locked';
+			}
 			try {
 				const connection = await openConnection({});
 				if (disposed) {
@@ -204,16 +372,9 @@
 				}
 				conn = connection;
 				await loadTokens(connection);
-				// Typed once per tab, then every code after it is one press.
-				// sessionStorage rather than localStorage: it dies with the tab,
-				// so a shared machine does not keep the operator's second factor
-				// on disk.
-				try {
-					secret = sessionStorage.getItem(SECRET_KEY) ?? '';
-				} catch {
-					secret = '';
-				}
-				if (secret) await issue();
+				// Already past the password from an earlier load in this browser
+				// session: keep a live code on screen without a press.
+				if (canIssue) await issue();
 			} catch {
 				tokensSupported = false;
 			}
@@ -241,7 +402,7 @@
 			// open overnight stops after MAX_AUTO_REISSUE rather than minting
 			// one every five minutes until the morning.
 			unclaimed += 1;
-			if (secret.trim() && unclaimed <= MAX_AUTO_REISSUE) void issue();
+			if (canIssue && unclaimed <= MAX_AUTO_REISSUE) void issue();
 		}
 	}, 1000);
 
@@ -260,6 +421,7 @@
 	onDestroy(() => {
 		clearInterval(ticker);
 		clearInterval(watcher);
+		if (revealTimer) clearTimeout(revealTimer);
 	});
 </script>
 
@@ -274,33 +436,150 @@
 	<p class="muted">
 		Scan this in the Jarvis app — PHONE → SCAN QR. The code is single-use and lasts five
 		minutes; it is not a token, so a photograph of this screen is worthless once it expires.
-		Enter the secret once and the console keeps a live code on screen by itself.
+		Enter the console password once and every code after that is one press.
 	</p>
+
+	{#if lock === 'choose'}
+		<!--
+		  No password yet. This is the one moment it can be chosen from a
+		  browser, and it has to be offered here: anything that reaches this
+		  console can already use its admin token, so a console nobody has
+		  locked is a console with no second factor at all.
+		-->
+		<div class="row" data-testid="pair-choose">
+			<span class="name">
+				<b>Choose a console password</b><span class="eid">{minChars} characters or more</span>
+			</span>
+			<input
+				type="password"
+				aria-label="Choose a console password"
+				data-testid="pair-password"
+				autocomplete="new-password"
+				bind:value={password}
+				onkeydown={(e) => e.key === 'Enter' && unlock()}
+				placeholder="nobody has set one"
+			/>
+			<button
+				type="button"
+				class="btn"
+				data-testid="pair-unlock"
+				disabled={unlocking || password.trim().length < minChars}
+				onclick={unlock}
+			>
+				{unlocking ? 'SETTING…' : 'SET PASSWORD'}
+			</button>
+		</div>
+		<p class="muted small">
+			Stored as a scrypt hash in {passwordFile || '.storage/console-password'} — set
+			{passwordVar} where the console runs to choose it there instead.
+		</p>
+	{:else if lock === 'locked'}
+		<div class="row" data-testid="pair-lockform">
+			<span class="name">
+				<b>Console password</b><span class="eid">{passwordVar}</span>
+			</span>
+			<input
+				type="password"
+				aria-label="Console password"
+				data-testid="pair-password"
+				autocomplete="current-password"
+				bind:value={password}
+				onkeydown={(e) => e.key === 'Enter' && unlock()}
+				placeholder="set where the console runs"
+			/>
+			<button
+				type="button"
+				class="btn"
+				data-testid="pair-unlock"
+				disabled={unlocking || !password.trim()}
+				onclick={unlock}
+			>
+				{unlocking ? 'CHECKING…' : 'UNLOCK'}
+			</button>
+		</div>
+		<p class="muted small">
+			Minting a code needs it as well as the console's own access, because anything that can
+			reach this console can already use its token — so the token alone must not be enough to
+			make a permanent one.
+		</p>
+	{:else if lock === 'open'}
+		<div class="row" data-testid="pair-unlocked">
+			<span class="name">
+				<b>Console unlocked</b><span class="eid">for this browser session</span>
+			</span>
+			<button type="button" class="btn ghost" data-testid="pair-relock" onclick={relock}>
+				LOCK
+			</button>
+		</div>
+	{/if}
+
+	{#if lock === 'open' && !secretHeld}
+		<!--
+		  The console holds no pairing secret, so it cannot mint on the
+		  operator's behalf. Typed once and kept in the SERVER's memory for the
+		  life of the process — not in this tab, and not on disk beside the
+		  admin token.
+		-->
+		<div class="row" data-testid="pair-secret-form">
+			<span class="name">
+				<b>Pairing secret</b><span class="eid">{secretVar}</span>
+			</span>
+			<input
+				type="password"
+				aria-label="Pairing secret"
+				data-testid="pair-secret"
+				autocomplete="off"
+				bind:value={secretDraft}
+				onkeydown={(e) => e.key === 'Enter' && adoptSecret()}
+				placeholder="set where jarvis-core runs"
+			/>
+			<button
+				type="button"
+				class="btn"
+				data-testid="pair-secret-save"
+				disabled={busy || !secretDraft.trim()}
+				onclick={adoptSecret}
+			>
+				HOLD IT
+			</button>
+		</div>
+		<p class="muted small">
+			jarvis-core prints it on first run. Set {secretVar} where this console runs and it survives
+			a restart; given here it lives in the server's memory only.
+		</p>
+	{/if}
+
+	{#if lock === 'open' && secretHeld}
+		<div class="row" data-testid="pair-secret-row">
+			<span class="name">
+				<b>Pairing secret</b><span class="eid">
+					{secretSource === 'env' ? secretVar : 'held for this process'}
+				</span>
+			</span>
+			{#if revealed}
+				<code class="small" data-testid="pair-secret-value">{revealed}</code>
+				<button type="button" class="btn ghost" data-testid="pair-conceal" onclick={hideSecret}>
+					HIDE
+				</button>
+			{:else}
+				<button
+					type="button"
+					class="btn ghost"
+					data-testid="pair-reveal"
+					disabled={revealing}
+					onclick={reveal}
+				>
+					{revealing ? 'READING…' : 'SHOW PAIRING SECRET'}
+				</button>
+			{/if}
+		</div>
+	{/if}
 
 	{#if claimedBy}
 		<p class="ok" data-testid="pair-claimed" role="status">
 			Paired <b>{claimedBy}</b>. That code is spent — press GENERATE for the next device.
 		</p>
 	{/if}
-
-	<div class="row">
-		<span class="name">
-			<b>Pairing secret</b><span class="eid">JARVIS_PAIRING_SECRET</span>
-		</span>
-		<input
-			type="password"
-			aria-label="Pairing secret"
-			data-testid="pair-secret"
-			autocomplete="off"
-			bind:value={secret}
-			placeholder="set on the server"
-		/>
-	</div>
-	<p class="muted small">
-		Set where jarvis-core runs. Minting a code needs it as well as the console's own access,
-		because anything that can reach this console can already use its token — so the token alone
-		must not be enough to make a permanent one.
-	</p>
 
 	<div class="row">
 		<span class="name"><b>Address</b><span class="eid">what the phone will connect to</span></span>
@@ -314,6 +593,7 @@
 	</div>
 
 	{#if err}<p class="err" data-testid="pair-error" role="alert">{err}</p>{/if}
+	{#if passwordHint}<p class="err" data-testid="pair-password-problem">{passwordHint}</p>{/if}
 
 	{#if live}
 		<div class="qr" data-testid="pair-qr">
@@ -329,7 +609,7 @@
 			type="button"
 			class="btn"
 			data-testid="pair-new"
-			disabled={busy || !secret.trim()}
+			disabled={busy || !canIssue}
 			onclick={issue}
 		>
 			{busy ? 'GENERATING…' : 'GENERATE CODE'}
@@ -407,5 +687,11 @@
 	}
 	.ok {
 		color: var(--jv-ok, #4ade80);
+	}
+	code {
+		/* A secret is read off the screen and typed elsewhere, so the glyphs
+		   have to be distinguishable — l/1 and O/0 in particular. */
+		font-family: var(--jv-font-mono, ui-monospace, monospace);
+		user-select: all;
 	}
 </style>

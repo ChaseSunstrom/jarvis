@@ -42,10 +42,13 @@ import kotlin.math.sin
  *  2. **[drawBlob] ×3** — the drifting colour field, from [SiriPalette]. Rates
  *     1 : 0.73 : 1.31 never return to the same arrangement, so it does not
  *     visibly loop.
- *  3. **[drawSpokes]** — the reactor's coils. Ten arc segments in an annulus,
- *     and the single element that most says "arc reactor" rather than "orb".
- *     They are inside the layer deliberately: the drifting blob colours *light*
- *     them, instead of a flat overprint that would read as a decal.
+ *  3. **[drawSpokes]** — the reactor's coils, and the single element that most
+ *     says "arc reactor" rather than "orb": a dark [drawHousing] recess, a metal
+ *     hub ring, then ten filled keystone plates seated in that recess with the
+ *     outer lip's shadow across them. The plates are inside the layer
+ *     deliberately: the drifting blob colours *light* them, instead of a flat
+ *     overprint that would read as a decal. The housing inside it is the one
+ *     thing there that is not additive — see [drawHousing] for why it cannot be.
  *  4. **[drawCore]** — the hot centre.
  *  5. **[drawGlass]** — the specular highlight and the inner-edge shadow. This
  *     is what makes a flat circle read as a lit ball under a glass cover, and
@@ -144,6 +147,14 @@ class ReactorOrb(private val density: Float) {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
     }
 
+    /**
+     * The housing's machined parts, inside the layer and deliberately NOT
+     * additive: a hub ring that adds light is another glow, and the reactor
+     * already has enough of those. This one is struck by the same light source
+     * the glass highlight fixes, so it reads as turned metal.
+     */
+    private val metal = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -152,8 +163,12 @@ class ReactorOrb(private val density: Float) {
     private val sweepPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
-    private val arcRect = RectF()
+    /** The two seat radii each plate's keystone is struck between. */
+    private val seatInRect = RectF()
+    private val seatOutRect = RectF()
+
     private val annulus = Path()
+    private val plate = Path()
     private val sweepMatrix = Matrix()
 
     private fun dp(v: Float) = v * density
@@ -235,44 +250,165 @@ class ReactorOrb(private val density: Float) {
     }
 
     /**
-     * The coils: ten arc segments in an annulus, with a thin radial divider in
-     * each gap.
+     * The recess the coils are bolted into, and the hub ring inside it.
      *
-     * Screen-blended against the blob field rather than painted over it, so a
-     * blob drifting under a coil lights that coil in its own colour. Painted
-     * over, the same shape reads as a decal stuck on the front of a ball.
+     * Drawn with [plain] rather than [additive], and that is not a detail —
+     * it is the single biggest part of "layered". Screening a dark colour onto
+     * anything is very nearly a no-op, so an additive housing is no housing at
+     * all, and without it there is nothing behind the plates: they float in the
+     * blob field with no depth to sit at.
+     *
+     * Outward: a dark gap that separates the core from the assembly, the metal
+     * hub ring, then the recess floor the plates lie on.
+     */
+    private fun drawHousing(canvas: Canvas, f: Frame) {
+        val r = f.radius
+        val hIn = r * HOUSING_INNER
+        val hOut = r * HOUSING_OUTER
+        if (hIn < MIN_DRAW_PX || hOut <= hIn) return
+
+        annulus.reset()
+        annulus.fillType = Path.FillType.EVEN_ODD
+        annulus.addCircle(f.cx, f.cy, hOut, Path.Direction.CW)
+        annulus.addCircle(f.cx, f.cy, hIn, Path.Direction.CW)
+        // Deepest at the floor, lifting toward the outer lip, so the recess has
+        // a direction rather than being a flat dark washer.
+        plain.shader = RadialGradient(
+            f.cx, f.cy, hOut,
+            intArrayOf(
+                withAlpha(HOUSING_COLOR, HOUSING_ALPHA * f.alpha),
+                withAlpha(HOUSING_COLOR, HOUSING_ALPHA * f.alpha),
+                withAlpha(HOUSING_COLOR, HOUSING_ALPHA * 0.55f * f.alpha),
+            ),
+            HOUSING_STOPS,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawPath(annulus, plain)
+        plain.shader = null
+
+        val hubR = r * HUB_FACTOR
+        if (hubR < MIN_DRAW_PX) return
+        // Lit from up and to the left — the same source [drawGlass] fixes — so
+        // the hub is a turned ring catching light rather than a fourth circle
+        // emitting it.
+        metal.strokeWidth = dp(HUB_WIDTH_DP)
+        metal.alpha = 255
+        metal.shader = LinearGradient(
+            f.cx - hubR, f.cy - hubR, f.cx + hubR, f.cy + hubR,
+            intArrayOf(
+                withAlpha(HUB_COLOR, HUB_ALPHA * f.alpha),
+                withAlpha(HUB_COLOR, HUB_ALPHA * 0.45f * f.alpha),
+                withAlpha(HUB_SHADOW_COLOR, HUB_ALPHA * 0.85f * f.alpha),
+            ),
+            RIM_STOPS,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(f.cx, f.cy, hubR, metal)
+        metal.shader = null
+    }
+
+    /**
+     * The coils: ten trapezoidal plates recessed in a housing between an inner
+     * and an outer seat ring.
+     *
+     * These used to be ten STROKED ARCS — one uniform band at one radius each,
+     * every one of them additive, with nothing drawn behind them. A stroked arc
+     * has no thickness to shade across and no housing to sit in, so the plates
+     * melted into the blob field: *"the arc reactor isnt layerd and doesnt
+     * really look like the arc reactor"*. Each plate is a FILLED wedge now,
+     * carrying a gradient across its own thickness, sitting in [drawHousing]'s
+     * recess with the outer seat's shadow falling across it.
+     *
+     * The plates keep their screen blend, so a blob drifting under one lights
+     * that plate in its own colour. Painted over, the same shape reads as a
+     * decal stuck on the front of a ball.
      *
      * They counter-rotate slowly against the chrome outside, which is what
      * stops the whole assembly from looking like one rigid disc.
      */
     private fun drawSpokes(canvas: Canvas, f: Frame) {
         val r = f.radius
-        val ringR = r * SPOKE_RADIUS
-        val width = r * SPOKE_WIDTH
-        if (ringR < MIN_DRAW_PX || width < MIN_DRAW_PX) return
+        val rIn = r * SPOKE_INNER
+        val rOut = r * SPOKE_OUTER
+        if (rIn < MIN_DRAW_PX || rOut <= rIn) return
 
-        arcRect.set(f.cx - ringR, f.cy - ringR, f.cx + ringR, f.cy + ringR)
-        strokeAdditive.strokeWidth = width
-        strokeAdditive.color =
-            withAlpha(f.core, SPOKE_ALPHA * f.alpha * (0.70f + 0.30f * f.level))
+        drawHousing(canvas, f)
 
         val span = 360f / SPOKE_COUNT
-        val arc = span - SPOKE_GAP_DEG
+        // A constant-WIDTH gap rather than a constant-ANGLE one. [SPOKE_GAP_DEG]
+        // is the gap measured at the coils' centreline, and holding its arc
+        // LENGTH fixed opens it out toward the middle — which is exactly what
+        // gives each plate its keystone taper, wider at the outer seat than at
+        // the inner one. A constant angle gives ten identical sectors, and ten
+        // identical sectors is a pie chart.
+        val gapArc = SPOKE_GAP_DEG * SPOKE_RADIUS
+        val halfIn = (span - gapArc / SPOKE_INNER) / 2f
+        val halfOut = (span - gapArc / SPOKE_OUTER) / 2f
         val spin = -f.spinDeg * SPOKE_SPIN_RATIO
-        for (i in 0 until SPOKE_COUNT) {
-            canvas.drawArc(arcRect, spin + i * span, arc, false, strokeAdditive)
+        val lit = 0.70f + 0.30f * f.level
+
+        // A gap wide enough to close the plate at the inner seat leaves ten
+        // degenerate paths, which Skia will happily spend a frame on.
+        if (halfIn > 0f && halfOut > 0f) {
+            seatInRect.set(f.cx - rIn, f.cy - rIn, f.cx + rIn, f.cy + rIn)
+            seatOutRect.set(f.cx - rOut, f.cy - rOut, f.cx + rOut, f.cy + rOut)
+            // Across each plate's THICKNESS, bright along the inner edge: the
+            // plates are lit by the core, so the face nearest it is the one that
+            // catches light. This gradient is the thing a band stroked at one
+            // radius could not have, and half of why the old coils read flat.
+            // Shared by all ten — same centre, same radii, one shader a frame.
+            val hot = lighten(f.core, PLATE_HOT_WHITENESS)
+            val ratio = (rIn / rOut).coerceIn(0.05f, 0.95f)
+            additive.shader = RadialGradient(
+                f.cx, f.cy, rOut,
+                intArrayOf(
+                    withAlpha(hot, PLATE_INNER_ALPHA * lit * f.alpha),
+                    withAlpha(hot, PLATE_INNER_ALPHA * lit * f.alpha),
+                    withAlpha(f.core, PLATE_INNER_ALPHA * 0.45f * lit * f.alpha),
+                    withAlpha(f.rim, PLATE_OUTER_ALPHA * lit * f.alpha),
+                ),
+                floatArrayOf(0f, ratio, ratio + (1f - ratio) * 0.30f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            for (i in 0 until SPOKE_COUNT) {
+                val mid = spin + i * span
+                plate.reset()
+                plate.arcTo(seatInRect, mid - halfIn, 2f * halfIn)
+                plate.arcTo(seatOutRect, mid + halfOut, -2f * halfOut)
+                plate.close()
+                canvas.drawPath(plate, additive)
+            }
+            additive.shader = null
+        }
+
+        // The shadow the outer seat casts down the plates. An unlit band right
+        // under the lip is what says the plates sit BELOW the ring rather than
+        // level with it, and it is the cheapest occlusion in the assembly.
+        val shadowSpan = (rOut - rIn) * SEAT_SHADOW_SPAN
+        if (shadowSpan >= MIN_DRAW_PX) {
+            val start = ((rOut - shadowSpan) / rOut).coerceIn(0.01f, 0.99f)
+            plain.shader = RadialGradient(
+                f.cx, f.cy, rOut,
+                intArrayOf(
+                    withAlpha(HOUSING_COLOR, 0f),
+                    withAlpha(HOUSING_COLOR, 0f),
+                    withAlpha(HOUSING_COLOR, SEAT_SHADOW_ALPHA * f.alpha),
+                ),
+                floatArrayOf(0f, start, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(f.cx, f.cy, rOut, plain)
+            plain.shader = null
         }
 
         // The dividers, down the middle of each gap. Deliberately fainter than
         // the plates: lead with the dividers and the reactor reads as a
         // starburst, which is a different object and a much cheaper-looking one.
-        val rIn = r * SPOKE_INNER
-        val rOut = r * SPOKE_OUTER
         strokeAdditive.strokeWidth = dp(SPOKE_DIVIDER_DP)
         strokeAdditive.color =
-            withAlpha(f.rim, SPOKE_DIVIDER_ALPHA * f.alpha * (0.70f + 0.30f * f.level))
+            withAlpha(f.rim, SPOKE_DIVIDER_ALPHA * f.alpha * lit)
         for (i in 0 until SPOKE_COUNT) {
-            val a = ((spin + i * span - SPOKE_GAP_DEG / 2f) * RAD_PER_DEG)
+            val a = ((spin + (i + 0.5f) * span) * RAD_PER_DEG)
             val ca = cos(a)
             val sa = sin(a)
             canvas.drawLine(
@@ -282,9 +418,10 @@ class ReactorOrb(private val density: Float) {
             )
         }
 
-        // The two rings the plates are seated between. These are what make the
-        // annulus read as an assembly with an inside and an outside rather than
-        // as ten highlights floating in the glow.
+        // The two seat rings, drawn last so the lips stay bright over both the
+        // plates and the shadow one of them casts. These are the edges of the
+        // recess, and what make the annulus read as an assembly with an inside
+        // and an outside rather than as ten highlights floating in the glow.
         strokeAdditive.strokeWidth = dp(SPOKE_SEAT_DP)
         strokeAdditive.color = withAlpha(f.core, SPOKE_SEAT_ALPHA * f.alpha)
         canvas.drawCircle(f.cx, f.cy, rIn, strokeAdditive)
@@ -569,14 +706,52 @@ class ReactorOrb(private val density: Float) {
         const val SPOKE_INNER = 0.42f
         const val SPOKE_OUTER = 0.92f
         const val SPOKE_COUNT = 10
-        const val SPOKE_GAP_DEG = 9f
-        const val SPOKE_ALPHA = 0.42f
         const val SPOKE_DIVIDER_ALPHA = 0.28f
         const val SPOKE_DIVIDER_DP = 1.1f
+
+        /**
+         * The gap between two plates, in degrees, **at [SPOKE_RADIUS]**.
+         *
+         * Its arc length is what is held fixed, not its angle, so it opens out
+         * toward the middle and each plate comes out a keystone rather than a
+         * slice of pie. See [drawSpokes].
+         */
+        const val SPOKE_GAP_DEG = 9f
 
         /** The two rings the plates sit between. */
         const val SPOKE_SEAT_ALPHA = 0.55f
         const val SPOKE_SEAT_DP = 1.4f
+
+        /**
+         * The recess the plates lie in: [HOUSING_INNER]..[HOUSING_OUTER].
+         *
+         * Wider than the coil annulus at both ends. Inside [SPOKE_INNER] it is
+         * the dark gap that separates the core from the assembly and the seat
+         * for [HUB_FACTOR]; outside [SPOKE_OUTER] it is the lip whose shadow
+         * falls back across the plates.
+         */
+        const val HOUSING_INNER = 0.34f
+        const val HOUSING_OUTER = 0.965f
+        const val HOUSING_ALPHA = 0.72f
+
+        /** The metal hub ring, between the dark gap and the inner seat. */
+        const val HUB_FACTOR = 0.385f
+        const val HUB_WIDTH_DP = 2.2f
+        const val HUB_ALPHA = 0.62f
+
+        /**
+         * How far down the plates the outer seat's shadow reaches, as a
+         * fraction of the annulus' width.
+         */
+        const val SEAT_SHADOW_SPAN = 0.16f
+        const val SEAT_SHADOW_ALPHA = 0.60f
+
+        /** The plate face, inner edge to outer. Bright where the core lights it. */
+        const val PLATE_INNER_ALPHA = 0.62f
+        const val PLATE_OUTER_ALPHA = 0.20f
+
+        /** How far the plate's inner edge is pushed toward white. */
+        const val PLATE_HOT_WHITENESS = 0.25f
 
         /**
          * The coils turn against the chrome, slowly. Same clock, opposite sign:
@@ -585,9 +760,8 @@ class ReactorOrb(private val density: Float) {
          */
         const val SPOKE_SPIN_RATIO = 0.35f
 
-        /** Radius of the coil ring's centreline, and its stroke width. */
+        /** The coil annulus' centreline, which is where [SPOKE_GAP_DEG] is measured. */
         const val SPOKE_RADIUS = (SPOKE_INNER + SPOKE_OUTER) / 2f
-        const val SPOKE_WIDTH = SPOKE_OUTER - SPOKE_INNER
 
         const val INNER_RIM_FACTOR = 1.05f
         const val TURBULENCE_FACTOR = 1.14f
@@ -653,6 +827,16 @@ class ReactorOrb(private val density: Float) {
         val EDGE_SHADOW_COLOR = 0xFF01040A.toInt()
         const val EDGE_SHADOW_ALPHA = 0.55f
 
+        /**
+         * The recess, and the machined ring in it.
+         *
+         * The housing is darker than [SUBSTRATE_COLOR] because it has to read as
+         * a hole cut into that ball rather than as more of the same surface.
+         */
+        val HOUSING_COLOR = 0xFF01030A.toInt()
+        val HUB_COLOR = 0xFFA8BDD2.toInt()
+        val HUB_SHADOW_COLOR = 0xFF1B2836.toInt()
+
         /** Where the highlight sits, and how big it is. Up and to the left. */
         const val SPECULAR_X = 0.34f
         const val SPECULAR_Y = 0.38f
@@ -668,6 +852,12 @@ class ReactorOrb(private val density: Float) {
 
         /** Transparent until 82% of the ball, then down into the edge shadow. */
         private val EDGE_SHADOW_STOPS = floatArrayOf(0f, 0.82f, 1f)
+
+        /**
+         * Flat across the recess floor, lifting over the last third toward the
+         * outer lip. Clipped to the annulus, so the first stop is never seen.
+         */
+        private val HOUSING_STOPS = floatArrayOf(0f, 0.66f, 1f)
 
         /**
          * Flat to 78% of the ball, then out to nothing.

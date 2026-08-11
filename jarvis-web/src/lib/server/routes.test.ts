@@ -34,7 +34,7 @@ const MAY_ATTACH_THE_TOKEN: Record<string, string> = {
 	'api/tts/+server.ts':
 		'allow-listed to media paths by mediaProxyTarget, which re-tests the NORMALISED url',
 	'api/pair/+server.ts':
-		'needs JARVIS_PAIRING_SECRET, typed by the operator and never stored here'
+		'needs a console-password session proved server-side, and the pairing secret that session releases'
 };
 
 function serverRoutes(dir: string, prefix = ''): string[] {

@@ -195,14 +195,30 @@ def check_the_three_ends_agree(root: Path) -> int:
     # so a script with transient reach to the console's port is already an
     # authenticated API client. Minting therefore needs a secret the relay does
     # not hold, or reach-for-a-minute becomes access-forever.
-    if 'ENV_PAIRING_SECRET = "JARVIS_PAIRING_SECRET"' not in core:
+    # The constant moved to jarvis.auth, which is what mints and persists the
+    # secret on first run; pairing.py re-exports it. Follow it there rather than
+    # asserting where it used to live, or this check passes on the file having
+    # been renamed and says nothing about the property.
+    auth = _read(root / "jarvis-core/jarvis/auth.py")
+    if 'ENV_PAIRING_SECRET = "JARVIS_PAIRING_SECRET"' not in auth:
         print("FAIL  minting no longer needs a second secret; the API token alone "
               "would be enough to turn LAN reach into a permanent token")
+        failures += 1
+    if "ENV_PAIRING_SECRET" not in core:
+        print("FAIL  pairing.py no longer reads the pairing secret at all")
         failures += 1
     if "hmac.compare_digest(configured, str(offered or \"\"))" not in core:
         print("FAIL  the pairing secret is no longer compared in constant time")
         failures += 1
-    if "check_secret((payload or {}).get(\"secret\"))" not in core:
+    # Matched without the argument list, because the box is threaded through it
+    # now (`check_secret(..., jarvis)`) so the stored secret is reachable. What
+    # must not change is that async_issue calls it at all: delete this line and
+    # the API token alone mints a permanent credential.
+    issue = re.search(r"async def async_issue\(.*?\n(?=\n?async def |\n?def )", core, re.S)
+    if not issue:
+        print("FAIL  async_issue is gone from pairing.py")
+        failures += 1
+    elif 'check_secret(' not in issue.group(0):
         print("FAIL  async_issue no longer checks the pairing secret")
         failures += 1
 

@@ -65,6 +65,10 @@ GEOMETRY = {
     "SPOKE_OUTER": "SPOKE_OUTER",
     "SPOKE_GAP_DEG": "SPOKE_GAP_DEG",
     "SPOKE_SPIN_RATIO": "SPOKE_SPIN_RATIO",
+    "HOUSING_INNER": "HOUSING_INNER",
+    "HOUSING_OUTER": "HOUSING_OUTER",
+    "HUB_FACTOR": "HUB_FACTOR",
+    "SEAT_SHADOW_SPAN": "SEAT_SHADOW_SPAN",
     "INNER_RIM_FACTOR": "INNER_RIM_FACTOR",
     "TURBULENCE_FACTOR": "TURBULENCE_FACTOR",
     "MID_DASH_FACTOR": "MID_DASH_FACTOR",
@@ -91,6 +95,10 @@ EXPECTED = {
     "SPOKE_COUNT": 10,
     "SPOKE_GAP_DEG": 9.0,
     "SPOKE_SPIN_RATIO": 0.35,
+    "HOUSING_INNER": 0.34,
+    "HOUSING_OUTER": 0.965,
+    "HUB_FACTOR": 0.385,
+    "SEAT_SHADOW_SPAN": 0.16,
     "INNER_RIM_FACTOR": 1.05,
     "TURBULENCE_FACTOR": 1.14,
     "MID_DASH_FACTOR": 1.22,
@@ -212,6 +220,177 @@ def check_the_geometry_budget_holds() -> list[str]:
             "LAYER_PAD is no longer derived from the blob geometry, so a retuned "
             "blob can be clipped square by the layer it is drawn into"
         )
+    return failures
+
+
+def kotlin_body(src: str, fn: str) -> str:
+    """The text of one `private fun`, up to the next member.
+
+    Stops at the following KDoc as well as at the following `fun`, because the
+    next function's doc comment is prose about a DIFFERENT function — and these
+    docs name the paints, so swallowing one makes "does this body touch an
+    additive paint?" answer yes for every function in the file.
+    """
+    head = f"private fun {fn}("
+    if head not in src:
+        return ""
+    rest = src.split(head, 1)[1]
+    ends = [rest.find(m) for m in ("\n    /**", "\n    private fun ", "\n    // ---")]
+    ends = [e for e in ends if e >= 0]
+    return rest[: min(ends)] if ends else rest
+
+
+def check_the_coils_are_a_layered_assembly() -> list[str]:
+    """The coils have to be an assembly with parts at different depths.
+
+    The report: *"the arc reactor isnt layerd and doesnt really look like the
+    arc reactor, once again, it looks weird"*. They were ten STROKED ARCS —
+    each one a uniform band at a single radius, all of them additive, with
+    nothing drawn behind them. That has no thickness to shade across and no
+    housing to sit in, so the plates dissolved into the drifting colour field
+    and the whole reactor read as one flat glowing washer.
+
+    Four things fix it, and every one of them is invisible in a diff:
+
+      * the plates are FILLED wedges between the two seat radii, not strokes,
+        so they have a thickness at all;
+      * a gradient ACROSS that thickness, bright at the inner edge, because
+        that is the face the core lights;
+      * a HOUSING drawn first and NOT additively. Screening a dark colour onto
+        anything is very nearly a no-op, so an additive recess is no recess —
+        this is the largest single part of "layered" and the easiest to undo by
+        moving one paint;
+      * a taper. The gap's arc LENGTH is held fixed rather than its angle, so it
+        opens toward the middle and each plate is a keystone. Hold the angle
+        instead and you get ten identical sectors, which is a pie chart.
+    """
+    failures = []
+    kot = REACTOR.read_text(encoding="utf-8")
+    web = WEB_ORB.read_text(encoding="utf-8")
+
+    # --- the radial order, centre out: core, dark gap, hub, plates, lip ---
+    order = [
+        ("CORE_FRACTION", EXPECTED["CORE_FRACTION"]),
+        ("HOUSING_INNER", EXPECTED["HOUSING_INNER"]),
+        ("HUB_FACTOR", EXPECTED["HUB_FACTOR"]),
+        ("SPOKE_INNER", EXPECTED["SPOKE_INNER"]),
+        ("SPOKE_OUTER", EXPECTED["SPOKE_OUTER"]),
+        ("HOUSING_OUTER", EXPECTED["HOUSING_OUTER"]),
+    ]
+    for (an, av), (bn, bv) in zip(order, order[1:]):
+        if av >= bv:
+            failures.append(
+                f"{an} ({av}) is not inside {bn} ({bv}); the reactor reads centre out as "
+                "core, dark gap, hub ring, plates, outer lip and that order is the layering"
+            )
+    if EXPECTED["HOUSING_OUTER"] >= 1.0:
+        failures.append("the housing reaches the ball's own edge, where the glass is")
+
+    # The dark gap has to be a gap you can see. Under about 3% of the ball it is
+    # an antialiasing artefact and the core runs straight into the hub.
+    gap = EXPECTED["HUB_FACTOR"] - EXPECTED["CORE_FRACTION"]
+    if gap < 0.03:
+        failures.append(
+            f"the gap between the core ({EXPECTED['CORE_FRACTION']}) and the hub ring "
+            f"({EXPECTED['HUB_FACTOR']}) is {gap:.3f} x the ball, too small to read as one"
+        )
+
+    # --- the taper -------------------------------------------------------
+    span = 360.0 / EXPECTED["SPOKE_COUNT"]
+    centre = (EXPECTED["SPOKE_INNER"] + EXPECTED["SPOKE_OUTER"]) / 2
+    gap_arc = EXPECTED["SPOKE_GAP_DEG"] * centre
+    plate_in = span - gap_arc / EXPECTED["SPOKE_INNER"]
+    plate_out = span - gap_arc / EXPECTED["SPOKE_OUTER"]
+    if plate_in <= 0:
+        failures.append(
+            f"the gap opens to {gap_arc / EXPECTED['SPOKE_INNER']:.1f} deg at the inner "
+            f"seat, which is the whole {span:.1f} deg segment: the plates close up"
+        )
+    elif plate_out / plate_in < 1.15:
+        failures.append(
+            f"a plate spans {plate_in:.1f} deg at the inner seat and {plate_out:.1f} deg "
+            "at the outer; under 1.15x that is not a visible taper and the plates read "
+            "as ten identical sectors"
+        )
+
+    # --- Skia: filled wedges in a non-additive recess ---------------------
+    spokes = kotlin_body(kot, "drawSpokes")
+    if not spokes:
+        failures.append("ReactorOrb has no drawSpokes")
+        return failures
+    if "canvas.drawArc(" in spokes:
+        failures.append(
+            "the plates are stroked arcs again. A stroked arc is a uniform band at one "
+            "radius: no thickness to shade across, no taper, and nothing to recess."
+        )
+    for needle, what in (
+        ("plate.arcTo(seatInRect", "the plate's inner edge"),
+        ("plate.arcTo(seatOutRect", "the plate's outer edge"),
+        ("canvas.drawPath(plate, additive)", "the filled plate"),
+    ):
+        if needle not in spokes:
+            failures.append(f"drawSpokes no longer draws {what} ({needle})")
+    if "gapArc / SPOKE_INNER" not in spokes or "gapArc / SPOKE_OUTER" not in spokes:
+        failures.append(
+            "drawSpokes no longer derives the gap per seat radius, so the plates have "
+            "lost their keystone taper"
+        )
+    at_housing = spokes.find("drawHousing(")
+    at_plates = spokes.find("canvas.drawPath(plate")
+    if at_housing < 0:
+        failures.append("drawSpokes no longer draws the housing; the plates sit in nothing")
+    elif 0 <= at_plates < at_housing:
+        failures.append(
+            "the housing is drawn after the plates, so the recess is painted over the "
+            "things meant to be sitting in it"
+        )
+    housing = kotlin_body(kot, "drawHousing")
+    if "SEAT_SHADOW_ALPHA" not in spokes:
+        failures.append(
+            "the outer seat casts no shadow down the plates; without it the plates are "
+            "level with the ring rather than under it"
+        )
+    # Nothing in the recess may use a screening paint. `plain.shader = null` on
+    # its way out is enough to satisfy a check that only looks for the name, so
+    # this looks at what the housing is actually PAINTED with.
+    if "canvas.drawPath(annulus, plain)" not in housing:
+        failures.append(
+            "the recess is no longer filled with the non-additive paint. Screening a "
+            "dark colour onto anything is very nearly a no-op, so an additive housing "
+            "is no housing and the plates float in the blob field again."
+        )
+    if "additive" in housing:
+        failures.append(
+            "drawHousing touches an additive paint. The recess and the hub are the two "
+            "things in the layer that take light away rather than adding it."
+        )
+    if "canvas.drawCircle(f.cx, f.cy, hubR, metal)" not in housing or "HUB_COLOR" not in housing:
+        failures.append(
+            "the housing has no metal hub ring struck between the core and the coils"
+        )
+
+    # --- GLSL: the same assembly, with the sphere normal doing the depth ---
+    for needle, what in (
+        ("acc = mix(acc, HOUSING,", "a housing that takes light away rather than adding it"),
+        ("ring(q, HUB_FACTOR,", "the metal hub ring"),
+        ("gapArc / max(q,", "the gap that widens inward, which is the plates' taper"),
+        ("float across = clamp((q - SPOKE_INNER)", "the gradient across the plate's thickness"),
+        ("SEAT_SHADOW_SPAN, 1.0, across", "the outer seat's shadow on the plates"),
+    ):
+        if needle not in web:
+            failures.append(f"the web orb has lost {what} ({needle})")
+    # The browser has a real normal; the recess and the machined ring are where
+    # it is worth spending, because the phone can only fake that depth with a
+    # flat gradient. The INVERTED term is the recess's own: it deepens where the
+    # sphere turns away from the light, which is what occlusion does.
+    if "(1.0 - clamp(dot(n, L), 0.0, 1.0))" not in web:
+        failures.append(
+            "the web orb's recess no longer deepens away from the light, so it is as "
+            "flat as the one the Canvas has to fake and the shader is spending a real "
+            "sphere normal on nothing"
+        )
+    if "clamp(dot(n, L), 0.0, 1.0)" not in web:
+        failures.append("the web orb's machined parts are no longer lit off the normal")
     return failures
 
 
@@ -460,12 +639,18 @@ def check_the_blend_is_confined() -> list[str]:
             "the additive blend is not confined to a layer; over the overlay window it "
             "would brighten the app behind instead of the orb"
         )
-    # The substrate and the glass must NOT be additive: screening a dark colour
-    # onto anything is very nearly a no-op, so an additive substrate is no
-    # substrate and an additive shadow is no shadow.
-    for fn in ("drawSubstrate", "drawGlass"):
-        body = src.split(f"private fun {fn}(", 1)[1][:1400]
-        if "plain.shader" not in body:
+    # The substrate, the housing and the glass must NOT be additive: screening a
+    # dark colour onto anything is very nearly a no-op, so an additive substrate
+    # is no substrate, an additive recess is no recess and an additive shadow is
+    # no shadow.
+    for fn in ("drawSubstrate", "drawHousing", "drawGlass"):
+        # A missing function is a failure, not a traceback: this used to index
+        # straight into the split and blow up, which reports nothing at all
+        # about the other checks.
+        body = kotlin_body(src, fn)
+        if not body:
+            failures.append(f"ReactorOrb has no {fn}")
+        elif "plain.shader" not in body:
             failures.append(
                 f"{fn} no longer uses the non-additive paint. Screening a dark colour "
                 "onto anything is a no-op, so it would draw nothing at all."
@@ -611,6 +796,7 @@ def main() -> int:
     failures = (
         check_the_two_renderers_agree()
         + check_the_geometry_budget_holds()
+        + check_the_coils_are_a_layered_assembly()
         + check_the_web_ball_fits_its_viewport()
         + check_the_web_shader_wears_the_same_colours()
         + check_the_rates_are_one_table()

@@ -1344,6 +1344,33 @@ test("Jarvis can ask a question and the answer reaches the server", async ({
   await expect(page.getByTestId("error")).toHaveCount(0);
 });
 
+/** What the console's own password is set to, once, by the first test to need it. */
+const CONSOLE_PASSWORD = "e2e-console-password";
+/** Mirrors JARVIS_PAIRING_SECRET on the mock backend (see mock-ha.mjs). */
+const PAIRING_SECRET = "e2e-pairing-secret";
+
+/**
+ * Get past the console password, from whichever side of it this run starts.
+ *
+ * The hash outlives the run — it is a file under `.storage/` — so the first
+ * ever run chooses the password and every run after it types the same one.
+ * Asserting one of those two states would make this suite pass once and then
+ * fail forever on the same machine, which is the same trap `ensureLabLightOff`
+ * exists for.
+ */
+async function unlockConsole(
+  page: import("@playwright/test").Page,
+): Promise<void> {
+  await expect(page.getByTestId("pairing")).toBeVisible({ timeout: 15_000 });
+  const unlocked = page.getByTestId("pair-unlocked");
+  const field = page.getByTestId("pair-password");
+  await expect(unlocked.or(field).first()).toBeVisible({ timeout: 15_000 });
+  if (await unlocked.count()) return;
+  await field.fill(CONSOLE_PASSWORD);
+  await page.getByTestId("pair-unlock").click();
+  await expect(unlocked).toBeVisible({ timeout: 15_000 });
+}
+
 test("the console shows a pairing QR, and what it encodes is a code and not a token", async ({
   page,
 }) => {
@@ -1364,20 +1391,30 @@ test("the console shows a pairing QR, and what it encodes is a code and not a to
   // demonstrably an address that reaches Jarvis.
   await expect(page.getByTestId("pair-url")).toHaveValue(/^https?:\/\//);
 
-  // Minting needs a second secret the relay does not hold. Anything that can
-  // reach this console can already use its admin token — the relay attaches it
-  // to whatever connects — so the token alone must not be enough to make a
-  // permanent one out of transient reach.
+  // Minting needs something the relay does not already have. Anything that can
+  // reach this console can use its admin token — the relay attaches it to
+  // whatever connects — so the token alone must not be enough to make a
+  // permanent credential out of transient reach. Until the password is proved
+  // server-side there is nothing to press.
   await expect(page.getByTestId("pair-new")).toBeDisabled();
-  await page.getByTestId("pair-secret").fill("wrong-secret");
-  await page.getByTestId("pair-new").click();
-  await expect(page.getByTestId("pair-error")).toContainText("not correct", {
-    timeout: 10_000,
-  });
-  await expect(page.getByTestId("pair-qr")).toHaveCount(0);
+  await unlockConsole(page);
 
-  await page.getByTestId("pair-secret").fill("e2e-pairing-secret");
-  await page.getByTestId("pair-new").click();
+  // The console has to hold the pairing secret to mint on the operator's
+  // behalf. Handed over once, to the SERVER — and one jarvis-core refuses is
+  // dropped again, so the field to correct it comes back rather than leaving
+  // GENERATE failing at somebody with nowhere to type.
+  if (await page.getByTestId("pair-secret-form").count()) {
+    await page.getByTestId("pair-secret").fill("wrong-secret");
+    await page.getByTestId("pair-secret-save").click();
+    await expect(page.getByTestId("pair-error")).toContainText("not correct", {
+      timeout: 10_000,
+    });
+    await expect(page.getByTestId("pair-qr")).toHaveCount(0);
+    await expect(page.getByTestId("pair-secret-form")).toBeVisible();
+
+    await page.getByTestId("pair-secret").fill(PAIRING_SECRET);
+    await page.getByTestId("pair-secret-save").click();
+  }
   await expect(page.getByTestId("pair-qr")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId("pair-qr").locator("svg")).toHaveCount(1);
 
@@ -1394,20 +1431,62 @@ test("the console shows a pairing QR, and what it encodes is a code and not a to
   await page.getByTestId("pair-hide").click();
   await expect(page.getByTestId("pair-qr")).toHaveCount(0);
 
-  // One press, not a re-typed secret. The console remembers it for the tab,
-  // which is the difference between "generate a code" being a click and being
-  // forty characters of base64 on every device you ever add.
+  // One press. Not a re-typed secret and not a re-typed password: that is the
+  // whole point of proving it once per session, and the difference between
+  // adding a device being a click and being a hunt for the secret.
   await expect(page.getByTestId("pair-new")).toBeEnabled();
   await page.getByTestId("pair-new").click();
   await expect(page.getByTestId("pair-qr")).toBeVisible({ timeout: 10_000 });
 
-  // And a reload does not ask for it again, so the code on screen is there
-  // before anybody has touched the keyboard.
+  // And a reload does not ask for either again, so the code on screen is there
+  // before anybody has touched the keyboard. What survives the reload is an
+  // httpOnly cookie — nothing page JavaScript can read back.
   await page.reload();
   await expect(page.getByTestId("pairing")).toBeVisible();
   await expect(page.getByTestId("pair-qr")).toBeVisible({ timeout: 10_000 });
+  expect(
+    await page.evaluate(() => JSON.stringify(sessionStorage)),
+  ).not.toContain(PAIRING_SECRET);
 
   await expect(page.getByTestId("error")).toHaveCount(0);
+});
+
+test("the pairing secret is shown only after the password, and only from the server", async ({
+  page,
+}) => {
+  // The secret is what stops reach to this port being enough to mint a
+  // permanent credential. So the reveal is the one place it may travel, and it
+  // must not be in the page before the button that asks for it: a control that
+  // fetched it on load and hid it behind a `{#if}` has already handed it over
+  // to anything that can read the DOM.
+  await page.goto("/settings");
+  await unlockConsole(page);
+  if (await page.getByTestId("pair-secret-form").count()) {
+    await page.getByTestId("pair-secret").fill(PAIRING_SECRET);
+    await page.getByTestId("pair-secret-save").click();
+  }
+  // A fresh load, so nothing in this page was typed into it: whatever is here
+  // is what the server sent, and the secret is not part of it. Asserted on the
+  // ROW rather than on the button, so a page that arrived with the secret
+  // already in hand fails this line rather than failing to find a control.
+  await page.reload();
+  await expect(page.getByTestId("pair-secret-row")).toBeVisible({
+    timeout: 15_000,
+  });
+  expect(await page.content()).not.toContain(PAIRING_SECRET);
+
+  await page.getByTestId("pair-reveal").click();
+  await expect(page.getByTestId("pair-secret-value")).toHaveText(
+    PAIRING_SECRET,
+    { timeout: 10_000 },
+  );
+
+  // Locking puts it away again, both on screen and on the server: the button
+  // is for the operator walking away from the machine.
+  await page.getByTestId("pair-relock").click();
+  await expect(page.getByTestId("pair-secret-value")).toHaveCount(0);
+  await expect(page.getByTestId("pair-new")).toBeDisabled();
+  expect(await page.content()).not.toContain(PAIRING_SECRET);
 });
 
 test("a paired device can be un-paired, and the panel says what is connected", async ({
@@ -1438,4 +1517,50 @@ test("a paired device can be un-paired, and the panel says what is connected", a
   await expect(page.getByTestId("token-tok-console")).toBeVisible();
 
   await expect(page.getByTestId("error")).toHaveCount(0);
+});
+
+test("the console password is checked on the server, and guessing at it is bounded", async ({
+  request,
+}) => {
+  // Both halves of the gate, asked without a browser — because the browser is
+  // not where either of them is enforced. A page that merely hides the button
+  // is not a password; a `curl` loop is the attacker this exists for.
+  const reveal = await request.post("/api/pair/secret");
+  expect(reveal.status()).toBe(401);
+  expect(await reveal.text()).not.toContain(PAIRING_SECRET);
+
+  // And minting, which is the half that makes a PERMANENT credential.
+  const mint = await request.post("/api/pair");
+  expect(mint.status()).toBe(401);
+
+  const status = await (await request.get("/api/console")).json();
+  expect(status.authenticated).toBe(false);
+  if (!status.configured) {
+    // Only when this test is run on its own: the pairing tests above choose it
+    // otherwise, and the guesses below have to be wrong ones rather than the
+    // choice itself.
+    expect(
+      (await request.post("/api/console", { data: { password: CONSOLE_PASSWORD } })).ok(),
+    ).toBe(true);
+  }
+
+  // An unlimited password endpoint is not a password. scrypt costs an attacker
+  // tens of milliseconds a guess, which is worth nothing if they may have as
+  // many guesses as they like: every password a person would actually choose
+  // falls inside an afternoon, in silence. This deliberately spends this
+  // client's whole allowance, which is why it is the last test in the file.
+  let refusedAt = 0;
+  for (let i = 1; i <= 8; i += 1) {
+    const res = await request.post("/api/console", {
+      data: { password: `not-the-password-${i}` },
+    });
+    if (res.status() === 429) {
+      refusedAt = i;
+      break;
+    }
+    expect(res.status(), "a wrong password must be refused, not accepted").toBe(401);
+  }
+  expect(refusedAt, "the endpoint answered eight guesses without ever saying no").toBeGreaterThan(
+    0,
+  );
 });

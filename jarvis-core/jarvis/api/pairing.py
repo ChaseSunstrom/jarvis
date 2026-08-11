@@ -57,8 +57,17 @@ walk away with a permanent token. Reach for as long as the script runs becomes
 access forever.
 
 The secret is typed by the operator into the console panel and travels with the
-mint request; the relay never stores it. Unset means minting is disabled and
-every surface says so — fail closed, the same direction as ``require_token``.
+mint request; the relay never stores it.
+
+It is generated on first run and kept next to the tokens in
+``<config>/.storage/auth.json`` — see :meth:`jarvis.auth.AuthManager
+.async_ensure_pairing_secret` — because requiring the operator to invent one
+and set an environment variable before any phone can be added meant pairing did
+not work at all on a fresh install. Generating it locally keeps the property
+that matters: the value lives only in this machine's config directory, so the
+relay still does not hold it. ``JARVIS_PAIRING_SECRET`` wins when set. With
+neither — no token store to generate into — minting stays disabled and every
+surface says so, fail closed, the same direction as ``require_token``.
 
 **A browser may not claim.** A claim carrying an ``Origin`` header is refused
 outright. Browsers always send one on a cross-origin POST and phones never do,
@@ -75,6 +84,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..auth import ENV_PAIRING_SECRET, get_auth
+
 if TYPE_CHECKING:  # pragma: no cover
     from ..core import Jarvis
 
@@ -82,9 +93,9 @@ _LOGGER = logging.getLogger(__name__)
 
 DATA_PAIRING = "pairing_codes"
 
-#: Set this to enable pairing. Unset means minting is off — see the module
-#: docstring for why possession of the API token is deliberately not enough.
-ENV_PAIRING_SECRET = "JARVIS_PAIRING_SECRET"
+# ENV_PAIRING_SECRET is re-exported from `jarvis.auth` rather than defined
+# here: that module mints and persists the secret, and one constant with two
+# definitions is one definition too many.
 
 #: A secret shorter than this is a typo or a placeholder, not a secret.
 MIN_SECRET_CHARS = 8
@@ -216,24 +227,42 @@ def get_codes(jarvis: "Jarvis") -> PairingCodes:
     return store
 
 
-def configured_secret() -> str:
-    """The operator's pairing secret, or empty when pairing is switched off."""
+def configured_secret(jarvis: "Jarvis | None" = None) -> str:
+    """The pairing secret in force, or empty when pairing is switched off.
+
+    The environment wins, then the one generated on first run and kept in the
+    auth store. Passing [jarvis] is what reaches the stored value; without it
+    only the environment is visible, which is all a caller with no box to hand
+    can honestly report.
+
+    This is the in-process accessor for an HTTP layer to read. It authenticates
+    nobody: anything that serves the value must gate it behind the operator's
+    own credential, because handing it to every holder of an API token gives
+    away precisely the second factor this module exists to keep separate.
+    """
     import os
 
+    auth = get_auth(jarvis) if jarvis is not None else None
+    if auth is not None:
+        # Precedence lives in AuthManager, in one place. Re-deciding it here
+        # would be two rules to keep in step, and the one that drifted would
+        # decide which secret is actually accepted.
+        return auth.pairing_secret
     return os.environ.get(ENV_PAIRING_SECRET, "").strip()
 
 
-def check_secret(offered: Any) -> None:
+def check_secret(offered: Any, jarvis: "Jarvis | None" = None) -> None:
     """Raise unless [offered] is the configured pairing secret.
 
     Fails closed twice over: an unset secret refuses everything rather than
     accepting anything, and a wrong one is compared in constant time.
     """
-    configured = configured_secret()
+    configured = configured_secret(jarvis)
     if not configured:
         raise PairingError(
-            "Pairing is switched off on this server. Set "
-            f"{ENV_PAIRING_SECRET} where jarvis-core runs, and restart it."
+            "Pairing is switched off on this server: it has no store to keep a "
+            f"generated pairing secret in. Set {ENV_PAIRING_SECRET} where "
+            "jarvis-core runs, and restart it."
         )
     if len(configured) < MIN_SECRET_CHARS:
         raise PairingError(
@@ -250,7 +279,7 @@ async def async_issue(jarvis: "Jarvis", payload: dict[str, Any] | None = None) -
     Guarded by the pairing secret rather than only by the API token, because
     the console's relay hands the API token to anything that connects to it.
     """
-    check_secret((payload or {}).get("secret"))
+    check_secret((payload or {}).get("secret"), jarvis)
     entry = get_codes(jarvis).issue()
     _LOGGER.info("Issued a pairing code, valid for %.0fs", CODE_TTL)
     return {
@@ -264,8 +293,6 @@ async def async_claim(
     jarvis: "Jarvis", payload: dict[str, Any], client: str | None = None
 ) -> dict[str, Any]:
     """Exchange a code for a real token. Unauthenticated, and single use."""
-    from ..auth import get_auth
-
     auth = get_auth(jarvis)
     if auth is None:
         # No token store means no way to mint one. Refusing here rather than

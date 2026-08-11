@@ -85,8 +85,18 @@ const float CORE_LEVEL_GAIN = 0.10;
 const float SPOKE_INNER   = 0.42;
 const float SPOKE_OUTER   = 0.92;
 const float SPOKE_COUNT   = 10.0;
+// The gap between two plates, in degrees, AT THE COIL ANNULUS' CENTRELINE. Its
+// arc length is what is held fixed, not its angle — see the coil block below.
 const float SPOKE_GAP_DEG = 9.0;
 const float SPOKE_SPIN_RATIO = 0.35;
+// The recess the plates lie in. Wider than the coil annulus at both ends:
+// inside SPOKE_INNER it is the dark gap between the core and the assembly and
+// the seat for the hub ring, outside SPOKE_OUTER it is the lip whose shadow
+// falls back across the plates.
+const float HOUSING_INNER = 0.34;
+const float HOUSING_OUTER = 0.965;
+const float HUB_FACTOR    = 0.385;
+const float SEAT_SHADOW_SPAN = 0.16;
 const float INNER_RIM_FACTOR = 1.05;
 const float TURBULENCE_FACTOR= 1.14;
 const float MID_DASH_FACTOR  = 1.22;
@@ -99,6 +109,9 @@ const float MAJOR_TICK    = 0.15;
 const float HALO_FRACTION = 1.30;
 
 const vec3 SUBSTRATE = vec3(0.024, 0.043, 0.086);   // #060B16
+const vec3 HOUSING   = vec3(0.004, 0.012, 0.039);   // #01030A, darker than the
+                                                    // ball: a hole cut in it
+const vec3 HUB_METAL = vec3(0.659, 0.741, 0.824);   // #A8BDD2
 
 /**
  * The palette, sampled at a fractional state so a transition is a colour
@@ -190,6 +203,10 @@ void main() {
 	float z = sqrt(max(1.0 - q * q, 0.0));
 	vec3 n = vec3(p.x, p.y, z + 1e-4);
 	n = normalize(n);
+	// One light source, up and to the left, fixed here rather than in the glass
+	// block below because the housing's machined parts are struck by it too. A
+	// hub ring lit from somewhere else is a hub ring that reads as a decal.
+	vec3 L = normalize(vec3(-0.42, 0.52, 0.74));
 
 	// The dark ground the colours are lit against. Additive blending needs
 	// something to add TO.
@@ -211,26 +228,67 @@ void main() {
 	acc += field * ball * (0.34 + 0.52 * z);
 	alpha += ball * 0.10;
 
-	// The coils: ten plates in an annulus, turning against the chrome. The
-	// single element that most says "arc reactor" rather than "orb", and the
-	// blob field lights them rather than being covered by them.
-	float coilBand = smoothstep(SPOKE_INNER - 0.03, SPOKE_INNER + 0.02, q)
-	               * smoothstep(SPOKE_OUTER + 0.03, SPOKE_OUTER - 0.02, q);
-	float seg = fract((ang * INV2PI - uSpin * INV2PI * SPOKE_SPIN_RATIO) * SPOKE_COUNT);
-	float gapFrac = SPOKE_GAP_DEG / (360.0 / SPOKE_COUNT);
-	float coil = coilBand * smoothstep(0.0, 0.03, seg) * smoothstep(1.0 - gapFrac + 0.03, 1.0 - gapFrac - 0.03, seg);
-	acc += mix(rimCol, coreCol, 0.6) * coil * 0.42 * (0.70 + 0.30 * lvl) * (0.5 + 0.5 * z);
+	// ---- the coil assembly, outward ---------------------------------------
+	// Ten plates recessed in a housing between two seat rings. The single
+	// element that most says "arc reactor" rather than "orb", and the blob
+	// field lights them rather than being covered by them.
+	//
+	// The housing comes first and it SUBTRACTS. A recess that adds light is not
+	// a recess, and without one the plates have nothing to sit in: they float
+	// in the colour field at no depth at all, which is what they used to do.
+	float housing = smoothstep(HOUSING_INNER - 0.025, HOUSING_INNER + 0.012, q)
+	              * smoothstep(HOUSING_OUTER + 0.025, HOUSING_OUTER - 0.012, q);
+	// Deeper where the sphere turns away from the light — the occlusion the
+	// phone's Canvas has to fake with a flat gradient and this gets from the
+	// real normal for nothing.
+	float sink = housing * ball * (0.72 + 0.28 * (1.0 - clamp(dot(n, L), 0.0, 1.0)));
+	acc = mix(acc, HOUSING, 0.74 * sink);
+	alpha += sink * 0.18;
+
+	// The metal hub, between the core's dark gap and the inner seat. Struck by
+	// the light rather than emitting, so it reads as a turned ring and not as a
+	// fourth glowing circle.
+	float hub = ring(q, HUB_FACTOR, 0.024) * ball;
+	acc += HUB_METAL * hub * (0.30 + 0.70 * clamp(dot(n, L), 0.0, 1.0)) * 0.70;
+	alpha += hub * 0.55;
+
+	// A constant-WIDTH gap rather than a constant-ANGLE one: SPOKE_GAP_DEG is
+	// measured at the annulus' centreline and its arc LENGTH is held fixed, so
+	// it opens out toward the middle and each plate comes out a keystone —
+	// wider at the outer seat than at the inner one. A constant angle gives ten
+	// identical sectors, and ten identical sectors is a pie chart.
+	float segSpan = 360.0 / SPOKE_COUNT;
+	float gapArc = SPOKE_GAP_DEG * (SPOKE_INNER + SPOKE_OUTER) * 0.5;
+	float halfPlate = max((segSpan - gapArc / max(q, SPOKE_INNER * 0.5)) * 0.5, 0.0);
+	float segDeg = (fract((ang * INV2PI - uSpin * INV2PI * SPOKE_SPIN_RATIO) * SPOKE_COUNT) - 0.5) * segSpan;
+	float coilBand = smoothstep(SPOKE_INNER - 0.012, SPOKE_INNER + 0.008, q)
+	               * smoothstep(SPOKE_OUTER + 0.012, SPOKE_OUTER - 0.008, q);
+	float coil = coilBand * smoothstep(halfPlate, halfPlate - 1.4, abs(segDeg));
+
+	// Across the plate's own THICKNESS, bright along the inner edge where the
+	// core lights it. A band stroked at one radius has no thickness to shade
+	// across, which is half of why the old coils read flat.
+	float across = clamp((q - SPOKE_INNER) / (SPOKE_OUTER - SPOKE_INNER), 0.0, 1.0);
+	float face = mix(1.0, 0.26, across);
+	// ...and the shadow the outer seat's lip casts back down them. An unlit
+	// band right under the ring is what says the plates sit BELOW it.
+	face *= 1.0 - 0.55 * smoothstep(1.0 - SEAT_SHADOW_SPAN, 1.0, across);
+	vec3 plateCol = mix(mix(coreCol, vec3(1.0), 0.25), rimCol, across);
+	acc += plateCol * coil * face * 0.62 * (0.70 + 0.30 * lvl) * (0.55 + 0.45 * z);
+
 	// A divider down the middle of each gap. Deliberately fainter than the
 	// plates: lead with the dividers and the reactor reads as a starburst,
 	// which is a different object and a much cheaper-looking one.
-	float divider = coilBand * smoothstep(0.03, 0.0, abs(seg - (1.0 - gapFrac * 0.5)));
+	float divider = coilBand * smoothstep(1.3, 0.0, abs(abs(segDeg) - segSpan * 0.5));
 	acc += rimCol * divider * 0.28;
-	// The two rings the plates are seated between. These are what make the
-	// annulus read as an assembly with an inside and an outside rather than as
-	// ten highlights floating in the glow.
-	float seat = ring(q, SPOKE_INNER, 0.018) + ring(q, SPOKE_OUTER, 0.018);
-	acc += mix(rimCol, coreCol, 0.35) * seat * ball * 0.55;
-	alpha += (coil * 0.20 + divider * 0.20 + seat * 0.35) * ball;
+
+	// The two seat rings, over both the plates and that shadow, so the lips stay
+	// bright. These are the edges of the recess, and what make the annulus read
+	// as an assembly with an inside and an outside rather than as ten
+	// highlights floating in the glow.
+	float seat = ring(q, SPOKE_INNER, 0.016) + ring(q, SPOKE_OUTER, 0.016);
+	acc += mix(rimCol, coreCol, 0.35) * seat * ball * (0.45 + 0.55 * clamp(dot(n, L), 0.0, 1.0)) * 0.85;
+	alpha += (coil * face * 0.28 + divider * 0.20 + seat * 0.40) * ball;
 
 	// The hot centre, where the microphone level lives. Growing this rather
 	// than the whole assembly is what makes speech visible without pushing the
@@ -247,8 +305,7 @@ void main() {
 	// ---- the glass over it ------------------------------------------------
 	// A self-luminous sphere has no terminator, so the depth comes from the
 	// cover: one highlight, and a limb that brightens the way every rounded
-	// transparent thing's does.
-	vec3 L = normalize(vec3(-0.42, 0.52, 0.74));
+	// transparent thing's does. Same L the housing above is machined against.
 	vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
 	float spec = pow(max(dot(n, H), 0.0), 26.0);
 	acc += vec3(1.0) * spec * ball * 0.62;

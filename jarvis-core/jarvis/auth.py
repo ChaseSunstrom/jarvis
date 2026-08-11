@@ -1,17 +1,29 @@
-"""Long-lived access tokens — the only credential Jarvis has.
+"""Long-lived access tokens, and the pairing secret that guards minting them.
 
 There are no user accounts and no login form. A client (the web HUD, the
 Android app, an ESP32 satellite, curl) presents a long-lived token as
 ``Authorization: Bearer <token>`` on REST calls, or inside the websocket
 ``auth`` message, and that is the whole authentication story.
 
-Tokens are persisted through :class:`jarvis.store.Store` at
-``<config>/.storage/auth.json``. Only a SHA-256 digest is stored: a token is
-shown exactly once, when it is created. On first run — no stored tokens and no
-``JARVIS_TOKEN`` in the environment — one is minted and printed to the log in a
-banner you cannot miss.
+Both credentials are persisted through :class:`jarvis.store.Store` at
+``<config>/.storage/auth.json`` — one file, mode 0600, because a second store
+would be a second thing to find, back up and get the permissions wrong on.
 
-    JARVIS_TOKEN=...   overrides/augments the store; always accepted.
+**Tokens.** Only a SHA-256 digest is stored: a token is shown exactly once,
+when it is created. On first run — no stored tokens and no ``JARVIS_TOKEN`` in
+the environment — one is minted and printed to the log in a banner you cannot
+miss.
+
+**The pairing secret** (see :mod:`jarvis.api.pairing` for what it defends
+against) is generated the same way and on the same first run, because an
+operator who has to invent one and set an environment variable before any phone
+can be added simply cannot pair a phone out of the box. It is stored in the
+clear rather than digested — unlike a token it must be *readable back*, since
+somebody has to type it into the pairing panel — and so it is never logged.
+The banner says where it landed and how to read it.
+
+    JARVIS_TOKEN=...            overrides/augments the store; always accepted.
+    JARVIS_PAIRING_SECRET=...   wins over the stored pairing secret.
 
 All comparisons go through :func:`hmac.compare_digest`, and verification walks
 every stored token rather than short-circuiting on the first match, so a
@@ -42,13 +54,23 @@ DATA_AUTH = "auth"
 STORAGE_KEY = "auth"
 ENV_TOKEN = "JARVIS_TOKEN"
 
+#: Set this to choose your own pairing secret. Unset, one is generated on first
+#: run — defined here rather than in `api.pairing` because this module is what
+#: mints and persists it, and a constant should live with the code that owns
+#: the value. `api.pairing` re-exports it.
+ENV_PAIRING_SECRET = "JARVIS_PAIRING_SECRET"
+
 TOKEN_BYTES = 32
 DEFAULT_TOKEN_NAME = "initial"
 ENV_TOKEN_ID = "env"
 
+#: Key under which the pairing secret sits in the stored document.
+PAIRING_SECRET_KEY = "pairing_secret"
+
 __all__ = [
     "AuthManager",
     "DATA_AUTH",
+    "ENV_PAIRING_SECRET",
     "ENV_TOKEN",
     "TokenInfo",
     "async_setup_auth",
@@ -96,6 +118,7 @@ class AuthManager:
         self._store = store
         self._tokens: dict[str, TokenInfo] = {}
         self._env_token: str | None = None
+        self._pairing_secret: str | None = None
         self._loaded = False
         self.refresh_env()
 
@@ -109,6 +132,12 @@ class AuthManager:
     @property
     def has_env_token(self) -> bool:
         return self.refresh_env() is not None
+
+    @property
+    def env_pairing_secret(self) -> str | None:
+        """``JARVIS_PAIRING_SECRET``, read fresh for the same reason as above."""
+        raw = os.environ.get(ENV_PAIRING_SECRET)
+        return raw.strip() or None if raw else None
 
     # --- persistence ------------------------------------------------------
     async def async_load(self) -> "AuthManager":
@@ -125,6 +154,9 @@ class AuthManager:
                     last_used_at=raw.get("last_used_at"),
                 )
                 self._tokens[info.id] = info
+            stored_secret = data.get(PAIRING_SECRET_KEY)
+            if isinstance(stored_secret, str) and stored_secret.strip():
+                self._pairing_secret = stored_secret.strip()
         self._loaded = True
         return self
 
@@ -133,7 +165,13 @@ class AuthManager:
             return
         try:
             await self._store.save(
-                {"tokens": [info._stored() for info in self._tokens.values()]}
+                {
+                    "tokens": [info._stored() for info in self._tokens.values()],
+                    # Written on every save, not only when it changes: a save
+                    # triggered by minting a token would otherwise drop the
+                    # pairing secret out of the document.
+                    PAIRING_SECRET_KEY: self._pairing_secret or "",
+                }
             )
         except OSError:  # pragma: no cover - disk trouble must not kill the API
             _LOGGER.warning("Could not persist auth tokens", exc_info=True)
@@ -182,6 +220,64 @@ class AuthManager:
             return False
         await self.async_save()
         return True
+
+    # --- pairing secret ---------------------------------------------------
+    @property
+    def pairing_secret(self) -> str:
+        """The pairing secret in force, or ``""`` when there is none.
+
+        The in-process accessor an HTTP layer reads. It authenticates nothing
+        by itself, so whatever serves this value must gate it behind the
+        operator's own credential — handing it to any holder of an API token
+        would give away exactly the second factor `api.pairing` exists to keep
+        separate from the token.
+        """
+        return self.env_pairing_secret or self._pairing_secret or ""
+
+    async def async_ensure_pairing_secret(self) -> str | None:
+        """Generate + persist the pairing secret on first run. Never logs it.
+
+        Returns the new secret, or ``None`` when one was already in force.
+
+        This does not weaken the second-factor argument in `api.pairing`: the
+        value never leaves this machine's config directory, so jarvis-web's
+        relay — which attaches the admin token to anything that connects to it
+        — still does not hold it. What it removes is the state where pairing
+        is simply unavailable until the operator invents a secret, which is
+        every fresh install.
+        """
+        if self.pairing_secret:
+            return None
+        if self._store is None:
+            # Nowhere to write it means nowhere to read it back from, and an
+            # unreadable pairing secret is worse than none: pairing would look
+            # switched on while nobody alive knows the value.
+            return None
+        self._pairing_secret = generate_token()
+        await self.async_save()
+        rule = "=" * 74
+        _LOGGER.warning(
+            "\n%s\n"
+            "  JARVIS GENERATED A PAIRING SECRET, so you can add a phone without\n"
+            "  inventing one first. It is NOT printed here — you have to be on the\n"
+            "  server to read it, which is the point of it.\n"
+            "\n"
+            "  It is in %s, under %r. Read it with:\n"
+            "\n"
+            "      python3 -c \"import json,sys; print(json.load(open(sys.argv[1]))"
+            "['data']['%s'])\" %s\n"
+            "\n"
+            "  Prefer your own? Set %s and restart — it wins.\n"
+            "%s",
+            rule,
+            self._store.path,
+            PAIRING_SECRET_KEY,
+            PAIRING_SECRET_KEY,
+            self._store.path,
+            ENV_PAIRING_SECRET,
+            rule,
+        )
+        return self._pairing_secret
 
     # --- first run --------------------------------------------------------
     async def async_ensure_initial_token(self, name: str = DEFAULT_TOKEN_NAME) -> str | None:
@@ -242,5 +338,6 @@ async def async_setup_auth(
     manager = AuthManager(store)
     await manager.async_load()
     await manager.async_ensure_initial_token()
+    await manager.async_ensure_pairing_secret()
     jarvis.data[DATA_AUTH] = manager
     return manager
