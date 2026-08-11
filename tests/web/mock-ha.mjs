@@ -378,7 +378,10 @@ export function makeWorld() {
 
 	return {
 		areas, devices, entities, states, automations, settings, tools,
-		companions, approvals: [], calls: []
+		companions, approvals: [], calls: [],
+		// Pairing: a counter for readable code names and the live set, so the
+		// single-use rule is exercised rather than assumed.
+		pairingCodes: 0, livePairingCodes: new Set()
 	};
 }
 
@@ -575,6 +578,42 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			}
 			res.writeHead(200, { 'content-type': 'application/json' });
 			res.end(JSON.stringify({ secret: 'admin-only-payload' }));
+			return;
+		}
+		// Pairing. `/api/pair/new` is authenticated because inviting a device
+		// onto the house is something only somebody already inside may do;
+		// `/api/pair/claim` is not, because the phone has no credential yet.
+		if (url.pathname === '/api/pair/new') {
+			if (req.headers.authorization !== `Bearer ${token}`) {
+				res.writeHead(401);
+				res.end('unauthorized');
+				return;
+			}
+			const code = `mock-code-${++world.pairingCodes}`;
+			world.livePairingCodes.add(code);
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ code, expires_at: Date.now() / 1000 + 300, ttl: 300 }));
+			return;
+		}
+		if (url.pathname === '/api/pair/claim' && req.method === 'POST') {
+			let body = '';
+			req.on('data', (chunk) => (body += chunk));
+			req.on('end', () => {
+				let parsed = {};
+				try {
+					parsed = JSON.parse(body || '{}');
+				} catch {
+					parsed = {};
+				}
+				// Single use, exactly as the real one: spent before anything else.
+				if (!world.livePairingCodes.delete(parsed.code)) {
+					res.writeHead(403, { 'content-type': 'application/json' });
+					res.end(JSON.stringify({ detail: 'That pairing code is not valid, or it has expired.' }));
+					return;
+				}
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ token: 'paired-token', name: parsed.name ?? 'Paired device' }));
+			});
 			return;
 		}
 		res.writeHead(404);

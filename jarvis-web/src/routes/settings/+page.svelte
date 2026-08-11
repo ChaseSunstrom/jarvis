@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Pairing from '$lib/components/Pairing.svelte';
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, relayUrl, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
@@ -335,6 +336,8 @@
 		</section>
 	{/each}
 {/if}
+
+<Pairing />
 
 <!--
   This console's OWN environment, as opposed to the house settings above.

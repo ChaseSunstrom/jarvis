@@ -119,6 +119,28 @@ async def tts_proxy(request: Request, filename: str) -> Response:
     )
 
 
+@open_router.post("/api/pair/claim")
+async def pair_claim(request: Request) -> dict[str, Any]:
+    """Exchange a pairing code for a real token.
+
+    The only unauthenticated write in this API, and it has to be: the phone has
+    no credential yet, which is the entire problem being solved. What makes it
+    safe is on the other side — see `api/pairing.py` — a 192-bit code that
+    lives five minutes, is removed before the token is minted, is compared in
+    constant time, and stops being answerable at all after ten failures.
+    """
+    from . import pairing
+
+    body = await json_body(request)
+    try:
+        return await pairing.async_claim(get_jarvis(request), body)
+    except pairing.PairingError as err:
+        # 403 rather than 404: the code was structurally a claim and it was
+        # refused. A 404 would suggest the endpoint is not there and send
+        # somebody debugging their reverse proxy.
+        raise HTTPException(status_code=403, detail=str(err)) from err
+
+
 # One route per method rather than a single multi-method `api_route`: FastAPI
 # derives a route's operation id from just one of its methods, so a
 # multi-method route emits duplicate ids and warns during schema generation.
@@ -429,6 +451,20 @@ async def tool_delete(request: Request) -> dict[str, Any]:
         return await common.async_delete_tool(get_jarvis(request), await json_body(request))
     except ApiError as err:
         raise _api_error(err) from err
+
+
+@api_router.post("/pair/new")
+async def pair_new(request: Request) -> dict[str, Any]:
+    """Mint a pairing code for the console to draw as a QR.
+
+    Authenticated, because inviting a new device onto the house is something
+    only somebody already inside may do. The code it returns is not a
+    credential — see `api/pairing.py` for why the QR deliberately does not
+    carry one.
+    """
+    from . import pairing
+
+    return await pairing.async_issue(get_jarvis(request))
 
 
 @api_router.get("/models/list")

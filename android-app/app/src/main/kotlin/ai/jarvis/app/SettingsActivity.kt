@@ -6,9 +6,12 @@ import ai.jarvis.app.assist.OnDeviceWakeWord
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.automation.actions.ActionEnv
+import ai.jarvis.app.channel.ChannelConfig
 import ai.jarvis.app.channel.DeviceChannelHost
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.PairingClaim
+import ai.jarvis.app.config.PairingPayload
 import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.update.UpdateChecker
 import ai.jarvis.app.ui.JarvisScreens
@@ -494,8 +497,58 @@ class SettingsActivity : Activity() {
             toast("Nothing scanned")
             return
         }
-        tokenField.setText(scanned)
-        toast("Scanned ${scanned.length} characters")
+
+        // Three outcomes, and the middle one is the reason this is not just
+        // `tokenField.setText(scanned)`.
+        when (val parsed = PairingPayload.parse(scanned)) {
+            is PairingPayload.Result.Ok -> pair(parsed.payload)
+            // Recognisably one of ours and not acceptable — a stale version, an
+            // address this app may not dial, a malformed code. This must never
+            // fall through to the bare-token path: doing so would put a refused
+            // payload's text in the token field and call it success.
+            is PairingPayload.Result.Refused -> toast(parsed.message)
+            // Not addressed to us at all, so it is somebody's hand-made QR with
+            // a token in it — the way this worked before pairing existed, and
+            // still the fallback for a server too old to pair.
+            is PairingPayload.Result.NotAPayload -> {
+                tokenField.setText(scanned)
+                toast("Scanned ${scanned.length} characters")
+            }
+        }
+    }
+
+    /**
+     * Exchange a scanned pairing code for a token, off the main thread.
+     *
+     * Fills BOTH fields on success: the address travelled in the QR alongside
+     * the code, which is the point — the whole reason typing a token is the
+     * worst moment of setup is that it comes with an address to type as well.
+     */
+    private fun pair(payload: PairingPayload) {
+        toast("Pairing…")
+        Thread {
+            val result = PairingClaim.claim(
+                payload,
+                deviceName = deviceNameField.text.toString().trim()
+                    .ifEmpty { config.deviceName },
+                // Read through ChannelConfig, which is the one place that
+                // knows where the user's own cleartext acknowledgements live.
+                // The QR must not be able to add to that list — only a person
+                // typing on this device can.
+                acknowledgedCleartextHosts =
+                    ChannelConfig.from(this, appVersionName()).acknowledgedCleartextHosts,
+            )
+            runOnUiThread {
+                when (result) {
+                    is PairingClaim.Result.Ok -> {
+                        urlField.setText(result.url)
+                        tokenField.setText(result.token)
+                        toast("Paired as ${result.name}. Tap SAVE to finish.")
+                    }
+                    is PairingClaim.Result.Failed -> toast(result.message)
+                }
+            }
+        }.start()
     }
 
     /**

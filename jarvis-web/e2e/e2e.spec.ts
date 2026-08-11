@@ -1029,3 +1029,43 @@ test('Jarvis can ask a question and the answer reaches the server', async ({ pag
 
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
+
+test('the console shows a pairing QR, and what it encodes is a code and not a token', async ({
+	page
+}) => {
+	// Forty characters of base64 typed on a phone keyboard is the worst moment
+	// of setting Jarvis up. The obvious shortcut — put the token in the QR — is
+	// worse than typing it: a QR on a screen can be photographed from across the
+	// room and stays valid as long as the token does. So the QR carries a
+	// short-lived, single-use code the app exchanges for a token.
+	await page.goto('/settings');
+	const panel = page.getByTestId('pairing');
+	await expect(panel).toBeVisible({ timeout: 15_000 });
+
+	// Nothing on screen until it is asked for: a code that appears whenever
+	// somebody opens Settings is a code sitting on a screen in an empty room.
+	await expect(page.getByTestId('pair-qr')).toHaveCount(0);
+
+	// The address defaults to the origin this page is served on, which is
+	// demonstrably an address that reaches Jarvis.
+	await expect(page.getByTestId('pair-url')).toHaveValue(/^https?:\/\//);
+
+	await page.getByTestId('pair-new').click();
+	await expect(page.getByTestId('pair-qr')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('pair-qr').locator('svg')).toHaveCount(1);
+
+	// The payload is the format `PairingPayload.kt` parses, and what it carries
+	// is a code.
+	const payload = await page.getByTestId('pair-payload').textContent();
+	expect(payload).toMatch(/^jarvis:\/\/pair\?v=1&u=/);
+	expect(payload).toContain('&c=mock-code-');
+	// And emphatically not a token. This is the assertion the whole design is for.
+	expect(payload).not.toContain('paired-token');
+
+	await expect(page.getByTestId('pair-expiry')).toContainText('s left');
+
+	await page.getByTestId('pair-hide').click();
+	await expect(page.getByTestId('pair-qr')).toHaveCount(0);
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});
