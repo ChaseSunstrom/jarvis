@@ -74,6 +74,18 @@ export interface PendingApproval {
 	tier?: number;
 	created?: number;
 	expires_at?: number;
+	/**
+	 * Set when this held request is a QUESTION rather than an action.
+	 *
+	 * The name of the single argument the human's reply is allowed to write —
+	 * see `Tool.answerable` in jarvis-core. It travels on the request so that a
+	 * surface can tell a question from an action without holding a tool
+	 * registry; the phone does not have one, and a rule based on the tool's
+	 * name would be wrong for the first tool anybody adds.
+	 */
+	answerable?: string | null;
+	/** The answers on offer. Empty or absent means free text. */
+	choices?: string[];
 }
 
 /** One editable setting, with where its current value came from. */
@@ -554,8 +566,17 @@ export class JarvisClient {
 	 * Single use and enforced server-side: the request is popped before it runs,
 	 * so a double-click cannot execute it twice and a replayed id does nothing.
 	 */
-	resolveApproval(requestId: string, approved: boolean): Promise<any> {
-		return this.command({ type: 'jarvis/approve', request_id: requestId, approved });
+	resolveApproval(requestId: string, approved: boolean, answer?: string): Promise<any> {
+		return this.command({
+			type: 'jarvis/approve',
+			request_id: requestId,
+			approved,
+			// Only ever reaches the one argument the held tool named, and is
+			// ignored entirely by tools that take no answer. Omitted rather
+			// than sent as null so an older jarvis-core sees the same frame it
+			// always did.
+			...(answer === undefined ? {} : { answer })
+		});
 	}
 
 	/** What is waiting on a human right now. */

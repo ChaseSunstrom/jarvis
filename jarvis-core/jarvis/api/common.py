@@ -323,11 +323,17 @@ async def async_approve(
     request_id: str,
     approved: Any = True,
     context: Context | None = None,
+    answer: Any = None,
 ) -> dict[str, Any]:
     """Resolve a Tier-3 request the LLM safety gate is holding.
 
     ``approved`` is taken raw from the client and normalised by
     :func:`approval_flag`; never pre-cast it with ``bool()``.
+
+    ``answer`` is what a human typed or picked, for the one kind of held
+    request that is a question rather than an action. It is passed straight
+    through: the tool registry decides whether the held tool accepts one at
+    all, and if so which single argument it may write.
     """
     if not request_id:
         raise ApiError("invalid_format", "jarvis/approve needs 'request_id'", 400)
@@ -338,7 +344,11 @@ async def async_approve(
     result = await jarvis.services.async_call(
         LLM_DOMAIN,
         "approve",
-        {"request_id": request_id, "approved": approval_flag(approved)},
+        {
+            "request_id": request_id,
+            "approved": approval_flag(approved),
+            "answer": answer,
+        },
         blocking=True,
         context=context or api_context(),
         return_response=True,

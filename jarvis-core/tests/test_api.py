@@ -830,7 +830,11 @@ def test_ws_approve_reaches_the_llm_gate(client, jarvis, token):
         ws.send_json({"id": 1, "type": "jarvis/approve", "request_id": "req-7", "approved": True})
         message = ws.receive_json()
 
-    assert seen == {"request_id": "req-7", "approved": True}
+    # `answer` rides along on every approve now: a held request can be a
+    # question rather than an action, and the reply reaches exactly one
+    # argument — the one the tool named. None here is "no answer supplied",
+    # which is what an ordinary action approval sends.
+    assert seen == {"request_id": "req-7", "approved": True, "answer": None}
     assert message["result"]["status"] == "executed"
 
 

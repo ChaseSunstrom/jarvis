@@ -617,6 +617,7 @@ class WebSocketHandler:
             # Raw, not bool(): common.approval_flag fails closed on "false".
             msg.get("approved"),
             context=self._context(),
+            answer=msg.get("answer"),
         )
 
     # registries

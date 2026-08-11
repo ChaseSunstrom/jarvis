@@ -941,3 +941,91 @@ test('a phone that registers while the console is open appears without a reload'
 	await expect(page.getByTestId('companion-state-late-phone')).toHaveText('online');
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
+
+test('Jarvis can ask a question and the answer reaches the server', async ({ page }) => {
+	// The assistant needs facts only the user has — the address of a service on
+	// their network, which of three lamps they meant. Without a way to ask it
+	// guesses, and a guess about an address is a request sent to the wrong host.
+	//
+	// A question rides the approval gate rather than a second channel, so it
+	// inherits single use, an expiry and human-only resolution. What it does not
+	// inherit is the words: "APPROVE / DENY" is the wrong pair for "which lamp?".
+	await page.goto('/devices');
+	await expect(page.getByTestId('entity-light.lab_lights')).toBeVisible({ timeout: 15_000 });
+
+	const ask = async (payload: Record<string, unknown>) =>
+		page.evaluate(
+			(body) =>
+				new Promise((resolve) => {
+					const ws = new WebSocket(
+						`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+					);
+					ws.onopen = () => ws.send(JSON.stringify({ id: 96, ...body }));
+					ws.onmessage = () => {
+						ws.close();
+						resolve(null);
+					};
+				}),
+			payload
+		);
+
+	const lastAnswer = async (): Promise<string | null> =>
+		page.evaluate(
+			() =>
+				new Promise<string | null>((resolve) => {
+					const ws = new WebSocket(
+						`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+					);
+					ws.onopen = () => ws.send(JSON.stringify({ id: 95, type: 'jarvis/test/last_answer' }));
+					ws.onmessage = (ev) => {
+						ws.close();
+						resolve(JSON.parse(ev.data as string)?.result?.answer ?? null);
+					};
+				})
+		);
+
+	// --- free text -----------------------------------------------------------
+	await ask({
+		type: 'jarvis/test/ask_user',
+		request_id: 'ask-1',
+		question: "What is the printer's URL?"
+	});
+
+	await expect(page.getByTestId('question-ask_user')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('question-text')).toHaveText("What is the printer's URL?");
+	// It is a question, so it does not offer APPROVE.
+	await expect(page.getByTestId('approve-ask_user')).toHaveCount(0);
+
+	// Nothing to send until something is typed.
+	await expect(page.getByTestId('answer-send')).toBeDisabled();
+	await page.getByTestId('answer-input').fill('http://printer.lan');
+	await page.getByTestId('answer-send').click();
+
+	await expect(page.getByTestId('question-ask_user')).toHaveCount(0, { timeout: 10_000 });
+	expect(await lastAnswer()).toBe('http://printer.lan');
+
+	// --- choices -------------------------------------------------------------
+	await ask({
+		type: 'jarvis/test/ask_user',
+		request_id: 'ask-2',
+		question: 'Which lamp did you mean?',
+		choices: ['Desk', 'Corner', 'Ceiling']
+	});
+
+	await expect(page.getByTestId('question-choices')).toBeVisible({ timeout: 10_000 });
+	// A knowable set of answers is buttons, not a box to type one of three
+	// words into and misspell.
+	await expect(page.getByTestId('answer-input')).toHaveCount(0);
+	await page.getByTestId('answer-choice-Corner').click();
+
+	await expect(page.getByTestId('question-ask_user')).toHaveCount(0, { timeout: 10_000 });
+	expect(await lastAnswer()).toBe('Corner');
+
+	// --- dismissing ----------------------------------------------------------
+	await ask({ type: 'jarvis/test/ask_user', request_id: 'ask-3', question: 'Still there?' });
+	await expect(page.getByTestId('question-ask_user')).toBeVisible({ timeout: 10_000 });
+	await page.getByTestId('answer-dismiss').click();
+	await expect(page.getByTestId('question-ask_user')).toHaveCount(0, { timeout: 10_000 });
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});

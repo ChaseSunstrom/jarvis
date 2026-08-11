@@ -51,6 +51,7 @@ before calling :func:`async_setup`.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -65,6 +66,7 @@ from ...llm.ollama import DEFAULT_MODEL, DEFAULT_TIMEOUT, DEFAULT_URL, OllamaCli
 from ...llm.authored_tools import get_authored_tools
 from ...llm.tools import (
     DEFAULT_APPROVAL_TTL,
+    EVENT_APPROVAL_REQUIRED,
     Exposure,
     ToolRegistry,
     build_yaml_tools,
@@ -77,6 +79,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...core import Jarvis
 
 _LOGGER = logging.getLogger(__name__)
+
+#: Where `companion.ask` lives. Imported by name rather than from the module so
+#: a build without the companion integration simply never finds the service.
+COMPANION_DOMAIN = "companion"
 
 DOMAIN = "llm"
 DEPENDENCIES = ["domains"]
@@ -209,6 +215,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     jarvis.data[DATA_TOOLS] = registry
 
     _register_services(jarvis, agent, registry)
+    _bridge_questions_to_the_phone(jarvis, registry)
 
     async def _shutdown() -> None:
         await ollama.aclose()
@@ -220,6 +227,82 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         "LLM agent ready: model=%s url=%s tools=%d", model, url, len(registry.tools)
     )
     return True
+
+
+def _bridge_questions_to_the_phone(jarvis: "Jarvis", registry: ToolRegistry) -> None:
+    """Put a question on the user's phone as well as on the console.
+
+    A held request that names an `answerable` argument is a QUESTION rather than
+    an action — see `ask_user`. The console draws it in its approvals banner,
+    which is the right place when somebody is sitting at a screen. Most of the
+    time they are not: they asked out loud, walked off, and the console is in
+    another room with nobody looking at it.
+
+    `companion.ask` already knows how to reach whichever device the user is
+    actually at, render options as buttons and take a spoken answer. So a
+    question goes to both, and **whichever answers first wins** — safely and
+    without any coordination, because `approve_request` pops the request before
+    it does anything. The loser gets "unknown, expired or already-used", which
+    is exactly the truth.
+
+    Only questions are bridged. A tier-3 ACTION deliberately stays on the
+    surfaces that already show it: this is a route for supplying a fact, not a
+    second, quieter way to consent to unlocking a door.
+    """
+
+    def _on_request(event: Any) -> None:
+        data = getattr(event, "data", None) or {}
+        if not data.get("answerable"):
+            return
+        request_id = str(data.get("request_id") or "")
+        if not request_id:
+            return
+        arguments = data.get("arguments") or {}
+        question = str(arguments.get("question") or data.get("description") or "").strip()
+        if not question:
+            return
+        if not jarvis.services.has_service(COMPANION_DOMAIN, "ask"):
+            return
+        jarvis.async_create_task(_ask_on_a_device(jarvis, registry, request_id, question, data))
+
+    jarvis.bus.listen(EVENT_APPROVAL_REQUIRED, _on_request)
+
+
+async def _ask_on_a_device(
+    jarvis: "Jarvis",
+    registry: ToolRegistry,
+    request_id: str,
+    question: str,
+    data: dict[str, Any],
+) -> None:
+    """Deliver one question and, if it is answered there, resolve it."""
+    try:
+        answered = await jarvis.services.async_call(
+            COMPANION_DOMAIN,
+            "ask",
+            {
+                "question": question,
+                "options": list(data.get("choices") or []),
+                # The clock the request is already on. Asking a phone for longer
+                # than the request lives would put a live-looking prompt in
+                # somebody's hand for an answer nothing can still accept.
+                "timeout": max(5.0, float(data.get("expires_at", 0)) - time.time()),
+            },
+            blocking=True,
+            return_response=True,
+        )
+    except Exception:  # pragma: no cover - a phone that is not there is normal
+        _LOGGER.debug("Could not put the question on a device", exc_info=True)
+        return
+    reply = (answered or {}).get("answer") if isinstance(answered, dict) else None
+    if reply is None or str(reply).strip() == "":
+        # Dismissed, timed out, or no device. The console's copy is still live.
+        return
+    result = await registry.approve_request(request_id, True, str(reply))
+    if result.get("status") == "error":
+        # Somebody answered on the console first. Nothing to do and nothing
+        # wrong: the pop is what made the race safe.
+        _LOGGER.debug("The question %s was already answered elsewhere", request_id)
 
 
 def _register_services(
@@ -251,8 +334,11 @@ def _register_services(
 
     async def handle_approve(call: ServiceCall) -> dict[str, Any]:
         request_id = str(call.get("request_id") or "")
+        # `answer` reaches exactly one argument, named by the tool itself, and
+        # is ignored for every tool that did not opt in — see
+        # `ToolRegistry.approve_request` and `Tool.answerable`.
         return await registry.approve_request(
-            request_id, parse_approved(call.get("approved"))
+            request_id, parse_approved(call.get("approved")), call.get("answer")
         )
 
     jarvis.services.register(
@@ -263,6 +349,12 @@ def _register_services(
         fields={
             "request_id": {"description": "Id from the approval request.", "required": True},
             "approved": {"description": "true to execute, false to discard."},
+            "answer": {
+                "description": (
+                    "What the human replied, for a request that is a question. "
+                    "Ignored by tools that do not take an answer."
+                )
+            },
         },
         supports_response=True,
     )

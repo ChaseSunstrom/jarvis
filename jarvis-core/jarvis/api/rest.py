@@ -329,6 +329,7 @@ async def approve(
             # Raw, not bool(): common.approval_flag fails closed on "false".
             body.get("approved"),
             context=_context(token),
+            answer=body.get("answer"),
         )
     except ApiError as err:
         raise _api_error(err) from err

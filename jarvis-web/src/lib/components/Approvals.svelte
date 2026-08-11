@@ -27,6 +27,15 @@
 	let pending = $state<PendingApproval[]>([]);
 	let busy = $state('');
 	let err = $state('');
+	/**
+	 * What the human has typed, per request, for a request that is a QUESTION.
+	 *
+	 * Keyed by request id rather than held on the request object: the request is
+	 * replaced wholesale whenever the server re-announces it, and a draft answer
+	 * that vanished mid-sentence because a reconnect refreshed the list would be
+	 * infuriating in exactly the moment somebody is trying to reply.
+	 */
+	let answers = $state<Record<string, string>>({});
 	/** Ticks once a second so the countdown is honest. */
 	let now = $state(Date.now());
 
@@ -58,18 +67,44 @@
 		return parts.join(' · ') || 'no arguments';
 	}
 
-	async function resolve(req: PendingApproval, approved: boolean): Promise<void> {
+	/**
+	 * A question rather than an action: the server named a writable argument.
+	 *
+	 * Read off the request, not inferred from the tool's name, because the
+	 * console does not hold a tool registry and a name-based rule would be wrong
+	 * for the first tool anybody adds.
+	 */
+	const isQuestion = (req: PendingApproval): boolean => Boolean(req.answerable);
+
+	/** What the question is, for a request that is one. */
+	function questionOf(req: PendingApproval): string {
+		const args = (req.arguments ?? {}) as Record<string, unknown>;
+		const asked = args.question ?? args.prompt ?? args.text;
+		return typeof asked === 'string' && asked ? asked : req.description || req.tool;
+	}
+
+	const choicesOf = (req: PendingApproval): string[] =>
+		Array.isArray(req.choices) ? req.choices.map(String) : [];
+
+	async function resolve(
+		req: PendingApproval,
+		approved: boolean,
+		answer?: string
+	): Promise<void> {
 		const id = idOf(req);
 		if (!conn || !id) return;
 		busy = id;
 		err = '';
 		try {
-			const result = await conn.client.resolveApproval(id, approved);
+			const result = await conn.client.resolveApproval(id, approved, answer);
 			drop(id);
+			delete answers[id];
 			if (result?.status === 'error') {
 				// Expired or already used. Saying so is better than a silent
 				// disappearance, because the action did NOT happen.
 				toasts.error(`${req.tool} was not run`, result.error ?? 'the request had expired');
+			} else if (isQuestion(req)) {
+				toasts.success(approved ? 'Answer sent' : `Dismissed ${req.tool}`);
 			} else {
 				toasts.success(approved ? `Approved ${req.tool}` : `Denied ${req.tool}`);
 			}
@@ -135,41 +170,109 @@
 	<section class="approvals" data-testid="approvals" aria-live="assertive">
 		<div class="head">
 			<span class="mark" aria-hidden="true">[ ! ]</span>
-			<span>{pending.length} action{pending.length === 1 ? '' : 's'} waiting on you</span>
+			<span>{pending.length} thing{pending.length === 1 ? '' : 's'} waiting on you</span>
 		</div>
 
 		{#if err}<p class="err" data-testid="approval-error" role="alert">{err}</p>{/if}
 
 		{#each pending as req (idOf(req))}
 			{@const left = secondsLeft(req)}
-			<div class="req" data-testid="approval-{req.tool}">
-				<div class="what">
-					<b>{req.tool}</b>
-					{#if req.description}<span class="desc">{req.description}</span>{/if}
-					<span class="args" data-testid="approval-args-{req.tool}">{summarise(req)}</span>
+			{@const id = idOf(req)}
+			{#if isQuestion(req)}
+				<!--
+				  A question, not an action. Same gate, same expiry, same
+				  single-use guarantee — see `ask_user` in jarvis-core — but
+				  "APPROVE / DENY" is the wrong pair of words for "which lamp did
+				  you mean?", so it gets the shape of the thing it is.
+				-->
+				<div class="req question" data-testid="question-{req.tool}">
+					<div class="what">
+						<b data-testid="question-text">{questionOf(req)}</b>
+						<span class="desc">Jarvis is waiting for your answer</span>
+					</div>
+					{#if left !== null}
+						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
+					{/if}
+					{#if choicesOf(req).length}
+						<div class="choices" data-testid="question-choices">
+							{#each choicesOf(req) as choice (choice)}
+								<button
+									type="button"
+									class="btn approve"
+									data-testid="answer-choice-{choice}"
+									disabled={busy === id}
+									onclick={() => resolve(req, true, choice)}
+								>
+									{choice}
+								</button>
+							{/each}
+						</div>
+					{:else}
+						<input
+							type="text"
+							class="answer"
+							placeholder="Type your answer"
+							aria-label={questionOf(req)}
+							data-testid="answer-input"
+							disabled={busy === id}
+							value={answers[id] ?? ''}
+							oninput={(e) => (answers[id] = (e.currentTarget as HTMLInputElement).value)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' && (answers[id] ?? '').trim()) {
+									resolve(req, true, answers[id].trim());
+								}
+							}}
+						/>
+						<button
+							type="button"
+							class="btn approve"
+							data-testid="answer-send"
+							disabled={busy === id || !(answers[id] ?? '').trim()}
+							onclick={() => resolve(req, true, (answers[id] ?? '').trim())}
+						>
+							SEND
+						</button>
+					{/if}
+					<button
+						type="button"
+						class="btn ghost danger"
+						data-testid="answer-dismiss"
+						disabled={busy === id}
+						onclick={() => resolve(req, false)}
+					>
+						DISMISS
+					</button>
 				</div>
-				{#if left !== null}
-					<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
-				{/if}
-				<button
-					type="button"
-					class="btn approve"
-					data-testid="approve-{req.tool}"
-					disabled={busy === idOf(req)}
-					onclick={() => resolve(req, true)}
-				>
-					APPROVE
-				</button>
-				<button
-					type="button"
-					class="btn ghost danger"
-					data-testid="deny-{req.tool}"
-					disabled={busy === idOf(req)}
-					onclick={() => resolve(req, false)}
-				>
-					DENY
-				</button>
-			</div>
+			{:else}
+				<div class="req" data-testid="approval-{req.tool}">
+					<div class="what">
+						<b>{req.tool}</b>
+						{#if req.description}<span class="desc">{req.description}</span>{/if}
+						<span class="args" data-testid="approval-args-{req.tool}">{summarise(req)}</span>
+					</div>
+					{#if left !== null}
+						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
+					{/if}
+					<button
+						type="button"
+						class="btn approve"
+						data-testid="approve-{req.tool}"
+						disabled={busy === id}
+						onclick={() => resolve(req, true)}
+					>
+						APPROVE
+					</button>
+					<button
+						type="button"
+						class="btn ghost danger"
+						data-testid="deny-{req.tool}"
+						disabled={busy === id}
+						onclick={() => resolve(req, false)}
+					>
+						DENY
+					</button>
+				</div>
+			{/if}
 		{/each}
 	</section>
 {/if}
@@ -186,6 +289,21 @@
 		box-shadow: var(--jv-elev-panel);
 		padding: var(--jv-space-3);
 		margin-bottom: var(--jv-space-3);
+	}
+	/* A question is the assistant asking, not the assistant about to act, so
+	   it is marked with the accent rather than the warning colour. */
+	.req.question {
+		border-left: 2px solid var(--jv-accent);
+		padding-left: var(--jv-space-2);
+	}
+	.answer {
+		flex: 1 1 14rem;
+		min-width: 0;
+	}
+	.choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--jv-space-2);
 	}
 	.head {
 		display: flex;

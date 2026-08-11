@@ -735,8 +735,17 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					});
 					ok(msg.id, {
 						status: msg.approved ? 'executed' : 'denied',
-						request_id: req.request_id
+						request_id: req.request_id,
+						// Echoed so a test can prove the answer reached the
+						// server rather than only leaving the input box. The real
+						// jarvis-core returns it inside the tool's result.
+						result: req.answerable && msg.approved
+							? { question: req.arguments?.question, answer: msg.answer ?? null }
+							: undefined
 					});
+					// The console can then read it back — again, only for
+					// proving the round trip; nothing in the app uses this.
+					world.lastAnswer = msg.answer ?? null;
 					break;
 				}
 
@@ -749,6 +758,34 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 						tool: msg.tool ?? 'lock_control',
 						description: 'Lock or unlock a door.',
 						arguments: msg.arguments ?? { action: 'unlock', entity_id: ['lock.front_door'] },
+						tier: 3,
+						created: Date.now() / 1000,
+						expires_at: Date.now() / 1000 + 300
+					};
+					world.approvals.push(req);
+					broadcast('jarvis_approval_required', req);
+					ok(msg.id, { raised: req.request_id });
+					break;
+				}
+
+				// Test hook: the assistant asking the user something. Same gate,
+				// same event, same expiry — the only difference on the wire is
+				// `answerable`, which names the one argument the reply may write.
+				// Test hook: what the last answer actually was, server-side. The
+				// point of the round trip is that the text left the browser, and
+				// only the server can say whether it arrived.
+				case 'jarvis/test/last_answer':
+					ok(msg.id, { answer: world.lastAnswer ?? null });
+					break;
+
+				case 'jarvis/test/ask_user': {
+					const req = {
+						request_id: msg.request_id ?? `ask-${world.approvals.length + 1}`,
+						tool: 'ask_user',
+						description: 'Ask the user a question and wait for their answer.',
+						arguments: { question: msg.question ?? 'Which lamp did you mean?' },
+						choices: Array.isArray(msg.choices) ? msg.choices : [],
+						answerable: 'answer',
 						tier: 3,
 						created: Date.now() / 1000,
 						expires_at: Date.now() / 1000 + 300

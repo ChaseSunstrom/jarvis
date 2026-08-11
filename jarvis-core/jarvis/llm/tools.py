@@ -96,6 +96,18 @@ TIER_APPROVAL = 3  # never runs without a human saying yes
 DEFAULT_APPROVAL_TTL = 300.0
 MAX_TOOL_RESULT_CHARS = 4000
 
+#: Bounds on a question the model asks a human.
+#:
+#: Both are rendered verbatim on a consent surface, which is the one place in
+#: this system where a human is being asked to agree to something — so the
+#: model does not get to decide how much of the screen that takes. A question
+#: with two hundred options is a question nobody answers.
+MAX_QUESTION_CHARS = 400
+MAX_CHOICES = 8
+MAX_CHOICE_CHARS = 80
+#: What a human typed, on its way back into the conversation.
+MAX_ANSWER_CHARS = 1000
+
 # Domains an assistant may reasonably see when nothing is configured.
 DEFAULT_EXPOSED_DOMAINS = frozenset(
     {
@@ -581,6 +593,18 @@ class PendingRequest:
     expires_at: float
     context: Any = None
 
+    #: Copied from `Tool.answerable` when the request is raised.
+    #:
+    #: Carried on the request rather than looked up by surfaces, because a
+    #: surface that has to ask "is this tool answerable?" would need the tool
+    #: registry, and the phone does not have one. Non-null is what tells a
+    #: console or an app to draw an answer box instead of only yes/no.
+    answerable: str | None = None
+
+    #: The answers offered, when the question has a knowable set of them.
+    #: Empty means free text.
+    choices: tuple[str, ...] = ()
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.id,
@@ -589,7 +613,31 @@ class PendingRequest:
             "tier": self.tier,
             "created": self.created,
             "expires_at": self.expires_at,
+            "answerable": self.answerable,
+            "choices": list(self.choices),
         }
+
+
+def _choice_list(arguments: dict[str, Any]) -> tuple[str, ...]:
+    """The `choices` argument, as clean strings, or empty.
+
+    Bounded and stringified because it comes from the model and is rendered
+    verbatim on a consent surface. A question with two hundred options is a
+    question nobody answers, and a non-string option is one no surface can
+    draw.
+    """
+    raw = arguments.get("choices")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, (str, int, float)) and not isinstance(item, bool):
+            text = str(item).strip()[:MAX_CHOICE_CHARS]
+            if text and text not in out:
+                out.append(text)
+        if len(out) >= MAX_CHOICES:
+            break
+    return tuple(out)
 
 
 def schema_object(
@@ -752,6 +800,12 @@ class ToolRegistry:
             created=now,
             expires_at=now + self.approval_ttl,
             context=context,
+            answerable=tool.answerable,
+            # Only ever read off the model's own arguments for a tool that
+            # opted in. A tool with no `answerable` cannot be answered at all,
+            # so offering it choices would be offering a control that does
+            # nothing.
+            choices=_choice_list(args) if tool.answerable else (),
         )
         self._pending[request.id] = request
         payload = request.as_dict()
@@ -1821,6 +1875,75 @@ def register_builtin_tools(
         ),
         handler=_run_background_task,
         tier=TIER_BACKGROUND,
+    )
+
+    # --- asking a human -------------------------------------------------------
+    #
+    # The assistant needs facts only the user has: the URL of a service on their
+    # network, which of three lamps "the corner one" means, whether to go ahead.
+    # Without this it guesses, and a guess about an address is a request sent to
+    # the wrong host.
+    #
+    # It rides the approval gate rather than inventing a second channel, and
+    # that is the entire security story. A question is a Tier-3 request: it goes
+    # to the same banner in the console and the same consent screen on the
+    # phone, it expires on the same clock, it is single-use, and it can only be
+    # resolved by a human. The one difference is `answerable`, which names the
+    # single argument the human's reply is allowed to write — see `Tool` — so an
+    # answer can never rewrite a held action's target.
+    #
+    # It returns the answer as the tool's result, which is what puts the reply
+    # back into the conversation the model is already having.
+
+    async def _ask_user(args: dict[str, Any], context: Any) -> Any:
+        question = str(args.get("question") or "").strip()[:MAX_QUESTION_CHARS]
+        answer = args.get("answer")
+        if answer is None:
+            # Reachable only if the gate is bypassed — a Tier-3 tool does not
+            # execute without an approval, and an approval is what supplies the
+            # answer. Failing loudly beats returning a plausible empty string.
+            return {
+                "status": "error",
+                "question": question,
+                "error": "nobody answered this question",
+            }
+        return {
+            "status": "ok",
+            "question": question,
+            "answer": str(answer).strip()[:MAX_ANSWER_CHARS],
+        }
+
+    registry.register(
+        name="ask_user",
+        description=(
+            "Ask the user a question and wait for their answer. Use it for "
+            "anything only they know — the address of a service on their "
+            "network, which of several things they meant, a preference — "
+            "instead of guessing. Offer `choices` when there is a knowable set "
+            "of answers. The question appears on their console and their phone."
+        ),
+        parameters=schema_object(
+            {
+                "question": {
+                    "type": "string",
+                    "description": "What to ask, in one sentence, in their language.",
+                },
+                "choices": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "The answers on offer, when there is a knowable set. "
+                        f"At most {MAX_CHOICES}. Omit for a free-text answer."
+                    ),
+                },
+            },
+            required=["question"],
+        ),
+        handler=_ask_user,
+        tier=TIER_APPROVAL,
+        # The one writable key. Everything else about the request is frozen
+        # when it is raised, exactly as it is for an action.
+        answerable="answer",
     )
 
     # --- building the house -------------------------------------------------
