@@ -38,6 +38,27 @@ codes in a loop.
 after :data:`MAX_ATTEMPTS` failures in :data:`ATTEMPT_WINDOW` the endpoint stops
 answering with anything useful at all, so a scripted sweep gets nowhere even if
 the entropy argument were somehow wrong.
+
+**Minting needs a second secret the relay does not hold.**
+:data:`ENV_PAIRING_SECRET` is the one rule here that is not obvious, and
+leaving it out is a real escalation rather than a missing nicety.
+
+jarvis-web's ``/ws`` relay attaches the server-held admin token to whatever
+connects, and its origin guard deliberately admits a request with no ``Origin``
+header, because that is what a non-browser client looks like. So a script with
+nothing but transient reach to the console's port is already an authenticated
+API client: without this, it could mint a code and immediately claim it, and
+walk away with a permanent token. Reach for as long as the script runs becomes
+access forever.
+
+The secret is typed by the operator into the console panel and travels with the
+mint request; the relay never stores it. Unset means minting is disabled and
+every surface says so — fail closed, the same direction as ``require_token``.
+
+**A browser may not claim.** A claim carrying an ``Origin`` header is refused
+outright. Browsers always send one on a cross-origin POST and phones never do,
+so this costs the real client nothing and removes the hostile-web-page attacker
+from the one unauthenticated write in the API.
 """
 
 from __future__ import annotations
@@ -55,6 +76,13 @@ if TYPE_CHECKING:  # pragma: no cover
 _LOGGER = logging.getLogger(__name__)
 
 DATA_PAIRING = "pairing_codes"
+
+#: Set this to enable pairing. Unset means minting is off — see the module
+#: docstring for why possession of the API token is deliberately not enough.
+ENV_PAIRING_SECRET = "JARVIS_PAIRING_SECRET"
+
+#: A secret shorter than this is a typo or a placeholder, not a secret.
+MIN_SECRET_CHARS = 8
 
 #: How long a code on a screen is worth anything.
 CODE_TTL = 300.0
@@ -153,8 +181,41 @@ def get_codes(jarvis: "Jarvis") -> PairingCodes:
     return store
 
 
-async def async_issue(jarvis: "Jarvis") -> dict[str, Any]:
-    """Mint a pairing code for the console to draw."""
+def configured_secret() -> str:
+    """The operator's pairing secret, or empty when pairing is switched off."""
+    import os
+
+    return os.environ.get(ENV_PAIRING_SECRET, "").strip()
+
+
+def check_secret(offered: Any) -> None:
+    """Raise unless [offered] is the configured pairing secret.
+
+    Fails closed twice over: an unset secret refuses everything rather than
+    accepting anything, and a wrong one is compared in constant time.
+    """
+    configured = configured_secret()
+    if not configured:
+        raise PairingError(
+            "Pairing is switched off on this server. Set "
+            f"{ENV_PAIRING_SECRET} where jarvis-core runs, and restart it."
+        )
+    if len(configured) < MIN_SECRET_CHARS:
+        raise PairingError(
+            f"{ENV_PAIRING_SECRET} is too short to be a secret. Use at least "
+            f"{MIN_SECRET_CHARS} characters."
+        )
+    if not hmac.compare_digest(configured, str(offered or "")):
+        raise PairingError("That pairing secret is not correct.")
+
+
+async def async_issue(jarvis: "Jarvis", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Mint a pairing code for the console to draw.
+
+    Guarded by the pairing secret rather than only by the API token, because
+    the console's relay hands the API token to anything that connects to it.
+    """
+    check_secret((payload or {}).get("secret"))
     entry = get_codes(jarvis).issue()
     _LOGGER.info("Issued a pairing code, valid for %.0fs", CODE_TTL)
     return {

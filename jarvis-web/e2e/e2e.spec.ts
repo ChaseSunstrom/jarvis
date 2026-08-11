@@ -1050,6 +1050,17 @@ test('the console shows a pairing QR, and what it encodes is a code and not a to
 	// demonstrably an address that reaches Jarvis.
 	await expect(page.getByTestId('pair-url')).toHaveValue(/^https?:\/\//);
 
+	// Minting needs a second secret the relay does not hold. Anything that can
+	// reach this console can already use its admin token — the relay attaches it
+	// to whatever connects — so the token alone must not be enough to make a
+	// permanent one out of transient reach.
+	await expect(page.getByTestId('pair-new')).toBeDisabled();
+	await page.getByTestId('pair-secret').fill('wrong-secret');
+	await page.getByTestId('pair-new').click();
+	await expect(page.getByTestId('pair-error')).toContainText('not correct', { timeout: 10_000 });
+	await expect(page.getByTestId('pair-qr')).toHaveCount(0);
+
+	await page.getByTestId('pair-secret').fill('e2e-pairing-secret');
 	await page.getByTestId('pair-new').click();
 	await expect(page.getByTestId('pair-qr')).toBeVisible({ timeout: 10_000 });
 	await expect(page.getByTestId('pair-qr').locator('svg')).toHaveCount(1);

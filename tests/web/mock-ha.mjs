@@ -498,6 +498,9 @@ function applyService(current, domain, service, data) {
 	}
 }
 
+/** Mirrors JARVIS_PAIRING_SECRET on a real jarvis-core. */
+const PAIRING_SECRET = 'e2e-pairing-secret';
+
 export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {}) {
 	const wav = makeWav();
 	const world = makeWorld();
@@ -589,13 +592,39 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				res.end('unauthorized');
 				return;
 			}
-			const code = `mock-code-${++world.pairingCodes}`;
-			world.livePairingCodes.add(code);
-			res.writeHead(200, { 'content-type': 'application/json' });
-			res.end(JSON.stringify({ code, expires_at: Date.now() / 1000 + 300, ttl: 300 }));
+			let minting = '';
+			req.on('data', (chunk) => (minting += chunk));
+			req.on('end', () => {
+				let parsed = {};
+				try {
+					parsed = JSON.parse(minting || '{}');
+				} catch {
+					parsed = {};
+				}
+				// The second secret. The API token is deliberately not enough:
+				// this console's relay hands that token to anything that
+				// connects, so a script with transient reach would otherwise
+				// mint itself a permanent one.
+				if (parsed.secret !== PAIRING_SECRET) {
+					res.writeHead(403, { 'content-type': 'application/json' });
+					res.end(JSON.stringify({ detail: 'That pairing secret is not correct.' }));
+					return;
+				}
+				const code = `mock-code-${++world.pairingCodes}`;
+				world.livePairingCodes.add(code);
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ code, expires_at: Date.now() / 1000 + 300, ttl: 300 }));
+			});
 			return;
 		}
 		if (url.pathname === '/api/pair/claim' && req.method === 'POST') {
+			// A browser may not claim: browsers always send Origin on a
+			// cross-origin POST and phones never do.
+			if (req.headers.origin) {
+				res.writeHead(403, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ detail: 'Pairing codes are claimed by the app.' }));
+				return;
+			}
 			let body = '';
 			req.on('data', (chunk) => (body += chunk));
 			req.on('end', () => {

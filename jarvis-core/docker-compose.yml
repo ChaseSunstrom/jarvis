@@ -109,6 +109,15 @@ services:
       # run and prints it in a banner — see the README quickstart. Set it to
       # pin a known token instead, e.g. when rebuilding from scratch often.
       - JARVIS_TOKEN=${JARVIS_TOKEN:-}
+      # Pairing a phone by scanning a QR in the console. Unset means off.
+      #
+      # A SECOND secret, deliberately — the same shape as ORCHESTRATOR_TOKEN vs
+      # APPROVAL_SECRET next door, and for the same reason. jarvis-web's relay
+      # attaches JARVIS_TOKEN to whatever connects to it, so possession of the
+      # API token cannot be what decides whether a permanent new token may be
+      # minted. jarvis-web never receives this one: it is typed into the pairing
+      # panel and forwarded.
+      - JARVIS_PAIRING_SECRET=${JARVIS_PAIRING_SECRET:-}
       # --- everything config/configuration.yaml reads with !env_var ---------
       # These are not optional extras: the shipped configuration.yaml resolves
       # them at load time, and a variable that never enters this container is

@@ -188,6 +188,29 @@ def check_the_three_ends_agree(root: Path) -> int:
     if "del self.codes[found.code]" not in core:
         print("FAIL  a pairing code is no longer spent when it is claimed")
         failures += 1
+
+    # The escalation this whole endpoint would otherwise be. jarvis-web's relay
+    # attaches the admin token to whatever connects, and its origin guard admits
+    # a client sending no Origin because that is what a non-browser looks like —
+    # so a script with transient reach to the console's port is already an
+    # authenticated API client. Minting therefore needs a secret the relay does
+    # not hold, or reach-for-a-minute becomes access-forever.
+    if 'ENV_PAIRING_SECRET = "JARVIS_PAIRING_SECRET"' not in core:
+        print("FAIL  minting no longer needs a second secret; the API token alone "
+              "would be enough to turn LAN reach into a permanent token")
+        failures += 1
+    if "hmac.compare_digest(configured, str(offered or \"\"))" not in core:
+        print("FAIL  the pairing secret is no longer compared in constant time")
+        failures += 1
+    if "check_secret((payload or {}).get(\"secret\"))" not in core:
+        print("FAIL  async_issue no longer checks the pairing secret")
+        failures += 1
+
+    rest = _read(root / "jarvis-core/jarvis/api/rest.py")
+    if 'request.headers.get("origin")' not in rest:
+        print("FAIL  a browser can claim a pairing code again; browsers always "
+              "send Origin on a cross-origin POST and phones never do")
+        failures += 1
     return failures
 
 

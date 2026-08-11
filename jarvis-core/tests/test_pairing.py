@@ -26,6 +26,15 @@ from jarvis.auth import DATA_AUTH, ENV_TOKEN, AuthManager  # noqa: E402
 from jarvis.core import Jarvis  # noqa: E402
 
 
+SECRET = "pair-me-please"
+
+
+@pytest.fixture(autouse=True)
+def pairing_secret(monkeypatch):
+    """Pairing is off until an operator turns it on, so tests turn it on."""
+    monkeypatch.setenv(pairing.ENV_PAIRING_SECRET, SECRET)
+
+
 @pytest.fixture
 async def jarvis(tmp_path, monkeypatch):
     monkeypatch.delenv(ENV_TOKEN, raising=False)
@@ -53,7 +62,7 @@ def http(tmp_path, monkeypatch):
 
 
 async def test_a_code_is_exchanged_for_a_token(jarvis):
-    issued = await pairing.async_issue(jarvis)
+    issued = await pairing.async_issue(jarvis, {"secret": SECRET})
     assert issued["code"] and len(issued["code"]) >= 24
 
     claimed = await pairing.async_claim(jarvis, {"code": issued["code"], "name": "Pixel"})
@@ -66,14 +75,14 @@ async def test_a_code_is_exchanged_for_a_token(jarvis):
 
 async def test_the_code_is_not_the_token(jarvis):
     """The whole point. What goes on screen must not be a credential."""
-    issued = await pairing.async_issue(jarvis)
+    issued = await pairing.async_issue(jarvis, {"secret": SECRET})
     assert _auth(jarvis).verify(issued["code"]) is None
     claimed = await pairing.async_claim(jarvis, {"code": issued["code"]})
     assert claimed["token"] != issued["code"]
 
 
 async def test_a_code_is_single_use(jarvis):
-    issued = await pairing.async_issue(jarvis)
+    issued = await pairing.async_issue(jarvis, {"secret": SECRET})
     await pairing.async_claim(jarvis, {"code": issued["code"]})
 
     with pytest.raises(pairing.PairingError):
@@ -82,7 +91,7 @@ async def test_a_code_is_single_use(jarvis):
 
 async def test_two_devices_racing_one_code_get_one_token(jarvis):
     """The pop happens before the token is minted, so the race is decided."""
-    issued = await pairing.async_issue(jarvis)
+    issued = await pairing.async_issue(jarvis, {"secret": SECRET})
 
     results = await asyncio.gather(
         pairing.async_claim(jarvis, {"code": issued["code"]}),
@@ -158,7 +167,7 @@ async def test_an_empty_or_missing_code_is_refused(jarvis):
 
 
 async def test_the_device_name_is_bounded(jarvis):
-    issued = await pairing.async_issue(jarvis)
+    issued = await pairing.async_issue(jarvis, {"secret": SECRET})
     claimed = await pairing.async_claim(jarvis, {"code": issued["code"], "name": "x" * 500})
     assert len(claimed["name"]) <= pairing.MAX_NAME_CHARS
 
@@ -181,7 +190,11 @@ def test_claim_is_unauthenticated_and_new_is_not(http):
     refused = client.post("/api/pair/new")
     assert refused.status_code == 401
 
-    issued = client.post("/api/pair/new", headers={"Authorization": f"Bearer {token}"})
+    issued = client.post(
+        "/api/pair/new",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"secret": SECRET},
+    )
     assert issued.status_code == 200
     code = issued.json()["code"]
 
@@ -203,3 +216,88 @@ def test_a_bad_claim_says_so_without_saying_more(http):
     assert refused.status_code == 403
     # Nothing about how many codes exist, or how close the guess was.
     assert "not valid" in refused.json()["detail"]
+
+
+# --- the escalation this endpoint would otherwise be -------------------------
+
+
+def test_minting_needs_the_pairing_secret(http):
+    """Possession of the API token is deliberately not enough.
+
+    jarvis-web's relay attaches the server-held admin token to whatever
+    connects, and its origin guard admits a request with no `Origin` because
+    that is what a non-browser client looks like. So a script with transient
+    reach to the console's port is already an authenticated API client. Without
+    a second secret it could mint a code, claim it immediately, and walk away
+    with a permanent token — reach for as long as the script runs turned into
+    access forever.
+    """
+    client, token = http
+    auth = {"Authorization": f"Bearer {token}"}
+
+    for body in ({}, {"secret": ""}, {"secret": "wrong"}, {"secret": SECRET + "x"}):
+        refused = client.post("/api/pair/new", headers=auth, json=body)
+        assert refused.status_code == 403, body
+
+    allowed = client.post("/api/pair/new", headers=auth, json={"secret": SECRET})
+    assert allowed.status_code == 200
+
+
+def test_pairing_is_off_until_an_operator_turns_it_on(http, monkeypatch):
+    """Fail closed: an unset secret refuses everything rather than allowing it."""
+    client, token = http
+    monkeypatch.delenv(pairing.ENV_PAIRING_SECRET, raising=False)
+
+    refused = client.post(
+        "/api/pair/new",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"secret": ""},
+    )
+    assert refused.status_code == 403
+    assert "switched off" in refused.json()["detail"]
+
+
+def test_a_placeholder_secret_is_refused(http, monkeypatch):
+    client, token = http
+    monkeypatch.setenv(pairing.ENV_PAIRING_SECRET, "x")
+    refused = client.post(
+        "/api/pair/new",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"secret": "x"},
+    )
+    assert refused.status_code == 403
+    assert "too short" in refused.json()["detail"]
+
+
+def test_a_browser_may_not_claim(http):
+    """Browsers always send Origin on a cross-origin POST; phones never do."""
+    client, token = http
+    issued = client.post(
+        "/api/pair/new",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"secret": SECRET},
+    )
+    code = issued.json()["code"]
+
+    refused = client.post(
+        "/api/pair/claim",
+        json={"code": code},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert refused.status_code == 403
+
+    # ...and the code was not spent by the refusal, so the real phone can
+    # still use it. A refusal that burned the code would be a denial of
+    # service anybody on the network could trigger.
+    accepted = client.post("/api/pair/claim", json={"code": code})
+    assert accepted.status_code == 200
+
+
+def test_the_secret_is_never_echoed_back(http):
+    client, token = http
+    issued = client.post(
+        "/api/pair/new",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"secret": SECRET},
+    )
+    assert SECRET not in issued.text

@@ -21,6 +21,15 @@
 	import { qrSvg } from '$lib/qr';
 	import { describeError } from '$lib/connection';
 
+	/**
+	 * The operator's pairing secret. Typed here, forwarded, never stored.
+	 *
+	 * Not an inconvenience — the whole reason minting needs it is that this
+	 * console's relay hands the admin token to anything that connects, so
+	 * possession of the API token deliberately is not enough to mint a
+	 * credential. See `jarvis-core/jarvis/api/pairing.py`.
+	 */
+	let secret = $state('');
 	let code = $state('');
 	let expiresAt = $state(0);
 	let url = $state('');
@@ -49,7 +58,11 @@
 		busy = true;
 		err = '';
 		try {
-			const res = await fetch('/api/pair', { method: 'POST' });
+			const res = await fetch('/api/pair', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ secret })
+			});
 			if (!res.ok) {
 				const detail = await res.json().catch(() => null);
 				throw new Error(detail?.message ?? `pairing failed (${res.status})`);
@@ -97,6 +110,25 @@
 	</p>
 
 	<div class="row">
+		<span class="name">
+			<b>Pairing secret</b><span class="eid">JARVIS_PAIRING_SECRET</span>
+		</span>
+		<input
+			type="password"
+			aria-label="Pairing secret"
+			data-testid="pair-secret"
+			autocomplete="off"
+			bind:value={secret}
+			placeholder="set on the server"
+		/>
+	</div>
+	<p class="muted small">
+		Set where jarvis-core runs. Minting a code needs it as well as the console's own access,
+		because anything that can reach this console can already use its token — so the token alone
+		must not be enough to make a permanent one.
+	</p>
+
+	<div class="row">
 		<span class="name"><b>Address</b><span class="eid">what the phone will connect to</span></span>
 		<input
 			type="text"
@@ -119,7 +151,13 @@
 	{/if}
 
 	<div class="row">
-		<button type="button" class="btn" data-testid="pair-new" disabled={busy} onclick={issue}>
+		<button
+			type="button"
+			class="btn"
+			data-testid="pair-new"
+			disabled={busy || !secret.trim()}
+			onclick={issue}
+		>
 			{live ? 'NEW CODE' : 'SHOW CODE'}
 		</button>
 		{#if live}

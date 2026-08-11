@@ -131,6 +131,14 @@ async def pair_claim(request: Request) -> dict[str, Any]:
     """
     from . import pairing
 
+    # A browser may not claim. Browsers always send `Origin` on a cross-origin
+    # POST and phones never do, so this costs the real client nothing and takes
+    # the hostile-web-page attacker off the one unauthenticated write here.
+    if request.headers.get("origin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Pairing codes are claimed by the app, not from a browser.",
+        )
     body = await json_body(request)
     try:
         return await pairing.async_claim(get_jarvis(request), body)
@@ -464,7 +472,11 @@ async def pair_new(request: Request) -> dict[str, Any]:
     """
     from . import pairing
 
-    return await pairing.async_issue(get_jarvis(request))
+    body = await json_body(request)
+    try:
+        return await pairing.async_issue(get_jarvis(request), body)
+    except pairing.PairingError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
 
 
 @api_router.get("/models/list")
