@@ -436,10 +436,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-e2e-logs-api${{ matrix.api-level }}
+          # gradle-connected.log is gradle's own output, which is where the
+          # failing test names and their exceptions live, and failing-tests.txt
+          # is just those lines. Both are in the job log too — buried in 2800
+          # lines of Gradle stack frames — and as files they are greppable.
+          #
+          # No `#` comments inside `path:`: it is a newline-separated glob list,
+          # and a commented line is a pattern that matches nothing rather than a
+          # comment.
           path: |
             android-app/artifacts/logcat.txt
             android-app/artifacts/logcat-crash.txt
             android-app/artifacts/dumpsys-package.txt
+            android-app/artifacts/gradle-connected.log
+            android-app/artifacts/failing-tests.txt
             testing/artifacts/**
           if-no-files-found: warn
           retention-days: 14

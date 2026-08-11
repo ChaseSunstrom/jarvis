@@ -63,6 +63,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterator, NamedTuple
 
@@ -767,6 +768,130 @@ def test_the_compose_smoke_job_enables_the_profiles_the_bugs_lived_behind():
                 "crash loop this job is supposed to catch, but the job never "
                 "starts it"
             )
+
+
+# ---------------------------------------------------------------------------
+# The emulator script has to say WHAT failed.
+# ---------------------------------------------------------------------------
+
+#: Gradle's output for a failing `connectedDebugAndroidTest`, copied from run
+#: 31516711578 with the timestamps removed and the colour left in.
+#:
+#: The colour is the point. Gradle emits `FAILED \x1b[0m` even when nothing is a
+#: terminal, so a grep for `FAILED$` matches none of these — a fixture with the
+#: escapes stripped would pass against an extractor that finds nothing in CI.
+_GRADLE_FAILURE_SAMPLE = (
+    "> Task :app:connectedDebugAndroidTest\n"
+    "\n"
+    "ai.jarvis.app.AppLaunchTest > mainActivityLaunchesAndShowsTheOrb"
+    "[emulator-5554 - 11] \x1b[31mFAILED \x1b[0m\n"
+    "\tandroidx.test.espresso.NoMatchingViewException: No views in hierarchy found\n"
+    "\n"
+    "emulator-5554 - 11 Tests 1/41 completed. (0 skipped) (1 failed)\n"
+    "\n"
+    "ai.jarvis.app.NavigationTest > homePhoneButtonOpensThePhonesOwnSettings"
+    "[emulator-5554 - 11] \x1b[31mFAILED \x1b[0m\n"
+    '\tjava.lang.AssertionError: No button labelled "PHONE" on screen.\n'
+    "\n"
+    "Tests on emulator-5554 - 11 failed: There was 9 failure(s).\n"
+    "> Task :app:connectedDebugAndroidTest FAILED\n"
+)
+
+
+def _emulator_script() -> str:
+    return (REPO_ROOT / "android-app" / "tools" / "run-instrumented-e2e.sh").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_emulator_script_records_gradles_own_output():
+    """Tee it, and read the status of gradle rather than of `tee`.
+
+    `cmd | tee f` exits with tee's status, so the `|| status=$?` that worked
+    before the pipe would record 0 for a suite that failed and the job would go
+    green with nine failing tests in it.
+    """
+    script = _emulator_script()
+    assert "| tee artifacts/gradle-connected.log" in script, (
+        "gradle's output is not captured, so the failing test names exist only "
+        "in the job log"
+    )
+    assert 'status="${PIPESTATUS[0]}"' in script, (
+        "the status after the tee pipeline is tee's, not gradle's — a failing "
+        "suite would report success"
+    )
+
+
+def test_the_emulator_script_extracts_the_failing_test_names():
+    """Run the script's OWN extraction against real gradle output.
+
+    Not a check that some text is present: the pipeline is lifted out of the
+    script and executed, so editing it re-runs the edited version here. It has
+    to survive gradle's ANSI colour, name each failing test, carry the first
+    line of each exception, and bring across none of the 32 that passed.
+    """
+    script = _emulator_script()
+    match = re.search(
+        r"^(sed 's/\\x1b.*?\|\| true)$",
+        script,
+        re.S | re.M,
+    )
+    assert match, "the failing-test extraction is gone from run-instrumented-e2e.sh"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "artifacts").mkdir()
+        (tmp / "artifacts" / "gradle-connected.log").write_text(
+            _GRADLE_FAILURE_SAMPLE, encoding="utf-8"
+        )
+        pipeline = "FAILURES=artifacts/failing-tests.txt\n" + match.group(1)
+        subprocess.run(
+            ["bash", "-c", pipeline], cwd=tmp, check=True, capture_output=True
+        )
+        got = (tmp / "artifacts" / "failing-tests.txt").read_text(encoding="utf-8")
+
+    assert "mainActivityLaunchesAndShowsTheOrb" in got, got
+    assert "homePhoneButtonOpensThePhonesOwnSettings" in got, got
+    assert "NoMatchingViewException" in got, "the exception line was dropped"
+    assert 'No button labelled "PHONE" on screen.' in got, got
+    # The separator grep -A inserts between matches is noise in a summary.
+    assert "--" not in got.split("\n"), got
+    # And nothing that is not a failure.
+    assert "Tests 1/41 completed" not in got, "passing-test chatter leaked in"
+
+
+def test_a_red_emulator_run_names_the_tests_in_the_step_summary():
+    """"See the artifacts" is not an answer.
+
+    It is what this said for the whole time the suite was red, and the artifacts
+    are a zipped HTML report. The names belong on the summary page.
+    """
+    script = _emulator_script()
+    summary = script[script.index('>> "$GITHUB_STEP_SUMMARY"') - 2000 :]
+    assert "Failing tests" in summary, (
+        "a failing run's step summary does not list the failing tests"
+    )
+    assert 'cat "${FAILURES}"' in summary
+
+
+def test_the_failing_test_names_are_uploaded():
+    """The two files the extraction writes have to leave the runner."""
+    step = next(
+        s
+        for job in _e2e()["jobs"].values()
+        for s in job.get("steps", [])
+        if "logcat and harness logs" in str(s.get("name", ""))
+    )
+    paths = str((step.get("with") or {}).get("path", ""))
+    for wanted in ("gradle-connected.log", "failing-tests.txt"):
+        assert wanted in paths, f"{wanted} is written but never uploaded"
+    assert not any(
+        line.strip().startswith("#") for line in paths.splitlines()
+    ), (
+        "`path:` is a newline-separated glob list, not a script: a commented "
+        "line is a pattern that matches nothing, and upload-artifact warns "
+        "rather than fails"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

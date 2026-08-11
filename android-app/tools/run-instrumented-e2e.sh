@@ -94,12 +94,41 @@ echo "harness for the app: ${HARNESS_URL}"
 adb logcat -c || true
 
 status=0
+# Through `tee`, because gradle's own output is the ONLY place the failing test
+# names and their exceptions appear. Nothing else in this job repeats them: the
+# step summary said "see the artifacts", the artifacts are a zipped HTML report,
+# and the job log is 2800 lines of Gradle stack frames with the nine lines that
+# matter somewhere in the middle. Diagnosing the 10 August red run meant
+# fetching that log four times to binary-search it, which is not a thing anyone
+# should have to do twice.
+#
+# PIPESTATUS[0], not `$?`: with `tee` on the right the pipeline's own status is
+# tee's, and `|| status=$?` would then record 0 for a suite that failed.
 gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace \
   -Pandroid.testInstrumentationRunnerArguments.jarvisHarnessUrl="${HARNESS_URL}" \
   -Pandroid.testInstrumentationRunnerArguments.jarvisHarnessToken="${JARVIS_HARNESS_TOKEN}" \
   -Pandroid.testInstrumentationRunnerArguments.jarvisRequireHarness=true \
-  || status=$?
+  2>&1 | tee artifacts/gradle-connected.log
+status="${PIPESTATUS[0]}"
 echo "gradle :app:connectedDebugAndroidTest exited ${status}"
+
+# The failing test names and the first line of each exception, pulled out of
+# that log. Gradle prints a `FAILED` line per failing test followed by the
+# throwable, and prints nothing at all for the ones that passed, so this is the
+# whole of what went wrong and none of what did not.
+#
+# `sed` strips the ANSI colour gradle writes even when nothing is a terminal —
+# the raw line is `...FAILED \x1b[0m`, and a grep for `FAILED$` silently matches
+# none of them.
+FAILURES=artifacts/failing-tests.txt
+sed 's/\x1b\[[0-9;]*m//g' artifacts/gradle-connected.log 2>/dev/null \
+  | grep -E -A 1 '^ai\.jarvis\.app\..* > .* FAILED' \
+  | grep -v '^--$' > "${FAILURES}" 2>/dev/null || true
+if [ -s "${FAILURES}" ]; then
+  echo "----- failing tests -----"
+  cat "${FAILURES}"
+fi
+
 if [ "${status}" != "0" ]; then
   # An annotation, so the failure is on the run's summary page and not only
   # 4000 lines down the job log.
@@ -179,6 +208,23 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
       echo "The instrumented suite PASSED on a real emulator."
     else
       echo "The instrumented suite FAILED (gradle exit ${status})."
+      echo ""
+      # The names, here, on the summary page. "See the artifacts" is what this
+      # said before, and it is not an answer when the artifacts are a zip of an
+      # HTML report and the job log is 2800 lines long.
+      if [ -s "${FAILURES}" ]; then
+        echo "<details open><summary>Failing tests</summary>"
+        echo ""
+        echo '```'
+        cat "${FAILURES}"
+        echo '```'
+        echo ""
+        echo "</details>"
+      else
+        echo "Gradle failed without naming a test, so the suite did not get as far"
+        echo "as running one — a build, install or emulator fault. The \`* What went"
+        echo "wrong:\` block in the job log says which."
+      fi
     fi
     echo ""
     echo "- Real APK, real activities, real sockets. \`ConversationE2ETest\` drove a full voice turn against the real \`jarvis-core\` harness at \`${HARNESS_URL}\`."
