@@ -254,6 +254,26 @@ def check_the_console_screen_can_reach_every_section() -> list[str]:
             "RELOAD no longer re-issues the CURRENT section, so it throws you back to "
             "the console's root"
         )
+
+    # Back must not walk into an unauthenticated page.
+    #
+    # Every navigation this app starts carries the bearer header, and `goBack()`
+    # re-issues the entry WITHOUT it. So a tab switch must not leave a
+    # back-forward entry at all — otherwise back after two switches lands on
+    # whatever the console serves an unauthenticated request, inside a WebView,
+    # with the tab strip still claiming you are somewhere else.
+    if "view.clearHistory()" not in src:
+        failures.append(
+            "a tab switch leaves a back-forward entry. Going back re-issues that "
+            "navigation without the bearer header, so back lands on a login page "
+            "inside a WebView with no way to type into it."
+        )
+    if "resettingHistory" not in src:
+        failures.append(
+            "nothing distinguishes an app-initiated navigation from the page's own, so "
+            "the history reset either never fires or fires on every page the console "
+            "renders"
+        )
     return failures
 
 

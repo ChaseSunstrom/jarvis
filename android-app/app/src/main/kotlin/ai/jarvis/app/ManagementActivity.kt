@@ -80,6 +80,11 @@ class ManagementActivity : Activity() {
     private var tab: ConsoleTab = ConsoleTab.DEFAULT
     private val tabButtons = mutableListOf<TextView>()
 
+    /**
+     * Set while an app-initiated navigation is in flight. See [onBackPressed].
+     */
+    private var resettingHistory = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = JarvisConfig(this)
@@ -137,6 +142,7 @@ class ManagementActivity : Activity() {
      */
     private fun load(next: ConsoleTab) {
         tab = next
+        resettingHistory = true
         val base = config.serverUrl.trimEnd('/')
         webView?.loadUrl(base + next.path, mapOf("Authorization" to "Bearer ${config.token}"))
         markCurrentTab()
@@ -291,6 +297,22 @@ class ManagementActivity : Activity() {
     }
 
     private fun originLockedClient() = object : WebViewClient() {
+
+        override fun onPageFinished(view: WebView, url: String) {
+            if (!resettingHistory) return
+            resettingHistory = false
+            // A tab switch must not leave a back-forward entry.
+            //
+            // Every navigation this app starts carries the bearer header, and
+            // `goBack()` re-issues the entry WITHOUT it — so back after two tab
+            // switches would land on whatever the console serves an
+            // unauthenticated request, inside a WebView, with the tab strip
+            // still saying you were somewhere else. Clearing here leaves back
+            // meaning what it should: walk this section's own history (the
+            // console navigates itself with pushState, and those entries
+            // restore with no request at all), then leave.
+            view.clearHistory()
+        }
 
         override fun shouldOverrideUrlLoading(
             view: WebView,
