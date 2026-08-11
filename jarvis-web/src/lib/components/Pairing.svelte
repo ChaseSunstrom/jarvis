@@ -172,7 +172,7 @@
 	</div>
 
 	<p class="muted">
-		Scan this in the Jarvis app — SETTINGS → SCAN QR. The code is single-use and lasts five
+		Scan this in the Jarvis app — PHONE → SCAN QR. The code is single-use and lasts five
 		minutes; it is not a token, so a photograph of this screen is worthless once it expires.
 	</p>
 

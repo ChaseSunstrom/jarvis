@@ -187,6 +187,34 @@ def check_the_phones_own_screens_do_not_borrow_the_consoles_words() -> list[str]
     return failures
 
 
+def check_the_console_names_the_phones_screens_correctly() -> list[str]:
+    """When one surface gives the other an instruction, it has to be followable.
+
+    The console's pairing panel tells you where to scan the code. It said
+    "SETTINGS -> SCAN QR" — and SETTINGS is now one of the console's own tabs,
+    reached on the phone by a button that opens a web page with no camera in
+    it. An instruction that names the wrong screen is worse than none: it is
+    read as the app being out of date rather than the sentence being.
+    """
+    failures = []
+    pairing = REPO / "jarvis-web/src/lib/components/Pairing.svelte"
+    if not pairing.is_file():
+        return ["the console has no pairing panel"]
+    text = pairing.read_text(encoding="utf-8")
+    tabs = TABS.read_text(encoding="utf-8")
+    phone_label = re.search(r'const val PHONE_LABEL = "([A-Z ]+)"', tabs)
+    label = phone_label.group(1) if phone_label else "PHONE"
+    if "SCAN QR" not in text:
+        return failures
+    line = next((ln for ln in text.splitlines() if "SCAN QR" in ln), "")
+    if label not in line:
+        failures.append(
+            f"the console tells the user to scan the pairing code somewhere other than "
+            f"{label}: {line.strip()!r}"
+        )
+    return failures
+
+
 def check_the_webview_is_not_handed_a_url() -> list[str]:
     """The token rides on this navigation. The path must not come from a caller.
 
@@ -287,6 +315,7 @@ def main() -> int:
         + check_every_tab_is_a_real_route()
         + check_the_mobile_half_is_named_for_itself()
         + check_the_phones_own_screens_do_not_borrow_the_consoles_words()
+        + check_the_console_names_the_phones_screens_correctly()
         + check_the_webview_is_not_handed_a_url()
         + check_the_console_screen_can_reach_every_section()
     )
