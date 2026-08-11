@@ -251,6 +251,25 @@ object BootTimeline {
     fun homeAlpha(tMs: Long): Float =
         decelerate(window(tMs, HANDOFF_START_MS + HOME_FADE_DELAY_MS, HOME_FADE_MS), 1.2f)
 
+    /**
+     * Opacity of the ORB's own chrome — its brackets, wordmark and caption —
+     * across the handoff. The exact complement of [chromeAlpha], because it
+     * replaces what [chromeAlpha] is removing.
+     *
+     * It used to be [homeAlpha], and that was a visible defect at the end of
+     * the sequence. The boot overlay and the orb draw the same JARVIS wordmark,
+     * in the same colour, on the same baseline, so those two fades are a
+     * crossfade of ONE object; [homeAlpha] deliberately starts
+     * [HOME_FADE_DELAY_MS] late so the home CONTROLS arrive after the chrome
+     * has begun leaving, which left a hole in the middle of that crossfade.
+     * Combined opacity bottomed out near 0.29 around t = 1263 ms: the wordmark
+     * dipped almost out and came back, half a breath before the orb settled.
+     *
+     * The controls keep [homeAlpha] — they are not crossfading with anything.
+     */
+    fun orbChromeAlpha(tMs: Long): Float =
+        decelerate(window(tMs, HANDOFF_START_MS, HANDOFF_FADE_MS), 1.2f)
+
     // --- motion settings ----------------------------------------------------
 
     /**
@@ -293,6 +312,7 @@ object BootTimeline {
         val letterSpacing: Float,
         val checkProgress: List<Float>,
         val chromeAlpha: Float,
+        val orbChromeAlpha: Float,
         val homeAlpha: Float,
     )
 
@@ -310,6 +330,7 @@ object BootTimeline {
         letterSpacing = letterSpacing(tMs),
         checkProgress = (0 until CHECK_LINE_COUNT).map { checkProgress(tMs, it) },
         chromeAlpha = chromeAlpha(tMs),
+        orbChromeAlpha = orbChromeAlpha(tMs),
         homeAlpha = homeAlpha(tMs),
     )
 

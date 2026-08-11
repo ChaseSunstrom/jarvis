@@ -1,5 +1,6 @@
 package ai.jarvis.app.ui
 
+import ai.jarvis.app.BuildConfig
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -13,6 +14,7 @@ import android.graphics.Shader
 import android.graphics.SweepGradient
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
@@ -188,6 +190,12 @@ class JarvisOrbView @JvmOverloads constructor(
 
     // --- the frame clock ----------------------------------------------------
 
+    /** True between [startClock] and [stopClock], animator scale notwithstanding. */
+    private var clockRunning = false
+
+    /** True while a [frameCallback] is posted, so nothing can double-post it. */
+    private var frameCallbackScheduled = false
+
     /**
      * The 60 fps tick: ring rotation, blob drift, breathing, amplitude
      * smoothing and the sole `invalidate`. One clock now, where there used to be
@@ -199,27 +207,53 @@ class JarvisOrbView @JvmOverloads constructor(
      * integrated against the wall clock in [advance], and changing rate mid-turn
      * is continuous by construction.
      *
-     * KNOWN LIMIT, deliberately kept. With the system **animator duration
-     * scale** at 0 — developer options, or a battery saver forcing it — an
-     * infinite `ValueAnimator` ends on its first frame and this whole view
-     * stops redrawing: no breathing, no amplitude, no colour blend. A
-     * `Choreographer.FrameCallback` is immune to that, and is what [SiriOrbView]
-     * uses, but the instrumented suite sets exactly that scale to 0
-     * (`animationsDisabled = true`) precisely so Espresso is not waiting on an
-     * animation that never ends. Swapping clocks would trade a bug nobody has
-     * confirmed for a suite that hangs. If the orb is *totally* static on a real
-     * phone rather than merely under-animated, this setting is the first thing
-     * to check.
+     * It is the *preferred* ticker, not the only one. With the system **animator
+     * duration scale** at 0 — developer options, or a battery saver forcing it,
+     * both routine on GrapheneOS — an infinite `ValueAnimator` ends on its own
+     * first frame and this whole view stops redrawing: no breathing, no
+     * rotation, no amplitude, no colour blend. A frozen orb is exactly what "the
+     * animation isn't looped" reported. [frameCallback] is the answer to that,
+     * and the end listener here is what notices: a clock declared INFINITE that
+     * reaches `onAnimationEnd` did not finish, it died.
      */
     private val frameAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = FRAME_CLOCK_MS
         interpolator = LinearInterpolator()
         repeatCount = ValueAnimator.INFINITE
         addUpdateListener { advance() }
+        addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                // [stopClock] clears clockRunning BEFORE it cancels, so a
+                // deliberate stop does not come back through here and restart
+                // the view on a different clock.
+                if (clockRunning) startFrameCallback()
+            }
+        })
     }
 
-    /** True between [startClock] and [stopClock], animator scale notwithstanding. */
-    private var clockRunning = false
+    /**
+     * The clock of last resort: a vsync callback, which nothing in developer
+     * options scales and no battery saver switches off.
+     *
+     * [SiriOrbView] uses one outright and says why it can. This view cannot,
+     * because it is the one Espresso drives: the instrumented suite sets the
+     * animator scale to 0 for its whole run (`animationsDisabled = true`)
+     * precisely so `onView` is not waiting on an animation that never ends, and
+     * `AppLaunchTest` matches this class through `onView`. So the callback
+     * engages only where the animator has already proved useless, and
+     * [frameClockFallbackEnabled] lets the debug-only test hooks hold it off
+     * altogether — which is what keeps CI on exactly the frame clock it went
+     * green with.
+     *
+     * Stops with the view: nothing is re-posted once it is detached.
+     */
+    private val frameCallback = Choreographer.FrameCallback {
+        frameCallbackScheduled = false
+        if (clockRunning) {
+            advance()
+            if (isAttachedToWindow) postFrameCallback()
+        }
+    }
 
     private fun advance() {
         val nowMs = android.os.SystemClock.uptimeMillis()
@@ -241,15 +275,55 @@ class JarvisOrbView @JvmOverloads constructor(
 
     private fun startClock() {
         clockRunning = true
-        if (frameAnimator.isStarted) return
+        // Do not even start an animator the platform has already said it will
+        // not run. At scale 0 `start()` ends it inside the same call, and the
+        // end listener would restart the view on the vsync clock a frame later
+        // — correct, but with one dead frame and a needless animator.
+        if (fallbackClockAllowed() && !ValueAnimator.areAnimatorsEnabled()) {
+            frameAnimator.cancel()
+            startFrameCallback()
+            return
+        }
+        if (frameAnimator.isStarted || frameCallbackScheduled) return
         lastFrameMs = 0L
         frameAnimator.start()
     }
 
     private fun stopClock() {
+        // Before the cancel, not after: cancelling an animator delivers
+        // onAnimationEnd, and the listener there treats a running clock's end
+        // as the scale-0 death it is meant to recover from.
         clockRunning = false
         frameAnimator.cancel()
+        Choreographer.getInstance().removeFrameCallback(frameCallback)
+        frameCallbackScheduled = false
     }
+
+    /** Hand the clock to vsync. Safe to call when it is already there. */
+    private fun startFrameCallback() {
+        if (!fallbackClockAllowed()) return
+        if (frameCallbackScheduled) return
+        // A clock that has just changed hands has no previous frame to measure
+        // against, exactly as a clock that has just started does.
+        lastFrameMs = 0L
+        postFrameCallback()
+    }
+
+    private fun postFrameCallback() {
+        if (frameCallbackScheduled) return
+        frameCallbackScheduled = true
+        Choreographer.getInstance().postFrameCallback(frameCallback)
+    }
+
+    /**
+     * Whether [frameCallback] may run at all.
+     *
+     * Read through `BuildConfig.DEBUG` so R8 folds the whole question away in a
+     * release build: shipping code has no reachable path to the flag, and the
+     * fallback there is unconditional.
+     */
+    private fun fallbackClockAllowed(): Boolean =
+        !BuildConfig.DEBUG || frameClockFallbackEnabled
 
     /**
      * Ring rotation rate. The web shader runs its rings at 0.35 rad/s while
@@ -440,11 +514,13 @@ class JarvisOrbView @JvmOverloads constructor(
 
         if (scrimEnabled) drawScrim(canvas, cx, cy, a)
         if (chromeEnabled) drawBrackets(canvas, chromeA)
-        // The boot draws its own scan line; the edge sweep would fight it. And
-        // it is chrome: a rounded rectangle traced around the VIEW is exactly
+        // It is chrome: a rounded rectangle traced around the VIEW is exactly
         // the box every report of one has meant, so it goes wherever the
-        // brackets and the wordmark go.
-        if (boot == null && chromeEnabled) drawEdgeLight(canvas)
+        // brackets and the wordmark go — including through the handoff fade,
+        // which it used to be excluded from. (The boot draws its own scan line
+        // and the edge SWEEP would fight it; beginBoot marks the sweep done, so
+        // only the resting edge can appear here while a boot is driving.)
+        if (chromeEnabled) drawEdgeLight(canvas, chromeA)
 
         val f = frameSpec
         f.cx = cx
@@ -507,17 +583,27 @@ class JarvisOrbView @JvmOverloads constructor(
         canvas.drawLine(w - m, h - m, w - m, h - m - len, bracketPaint)
     }
 
-    private fun drawEdgeLight(canvas: Canvas) {
+    private fun drawEdgeLight(canvas: Canvas, chromeA: Float) {
         val shader = edgeShader ?: return
         if (!edgeSweepDone) {
+            // The sweep is a one-shot flourish at activation and is NOT scaled:
+            // it runs only from startEntrance, which finishes fading the view up
+            // (260 ms) before the sweep ends (350 ms), so there is nothing here
+            // for the chrome opacity to say.
             edgeMatrix.setRotate(edgeSweepProgress * 360f - 90f, width / 2f, height / 2f)
             shader.setLocalMatrix(edgeMatrix)
             edgePaint.shader = shader
             edgePaint.alpha = (255 * (1f - 0.3f * edgeSweepProgress)).toInt()
         } else {
+            // The resting edge IS scaled, because the boot hands this view over
+            // mid-fade. Unscaled it was suppressed for the whole sequence and
+            // then appeared whole on the frame the handoff ended — a rounded
+            // rectangle the size of the screen snapping on, which is the "box
+            // around the orb" this app has already been reported for.
+            if (chromeA <= 0f) return
             edgePaint.shader = null
             edgePaint.color = currentColor
-            edgePaint.alpha = (30 + 80 * smoothedAmplitude).toInt().coerceIn(0, 255)
+            edgePaint.alpha = ((30 + 80 * smoothedAmplitude) * chromeA).toInt().coerceIn(0, 255)
         }
         canvas.drawPath(edgePath, edgePaint)
     }
@@ -580,6 +666,32 @@ class JarvisOrbView @JvmOverloads constructor(
         Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
 
     companion object {
+        /**
+         * TEST SEAM — **debug builds only**, and the only mutable state this
+         * class keeps outside an instance.
+         *
+         * True in every shipping build, and unreachable from one: the sole
+         * writer is `ai.jarvis.app.testing.TestHooks`, which exists in the debug
+         * source set alone (`assertNoTestHooksInRelease` in app/build.gradle.kts
+         * fails the build if that ever stops being true), and
+         * [fallbackClockAllowed] does not consult it unless `BuildConfig.DEBUG`.
+         *
+         * It is off for the instrumented suite because that suite is the one
+         * place the fallback's trigger is met deliberately: `animationsDisabled
+         * = true` sets the animator scale to 0 for the whole run so Espresso is
+         * not waiting on an animation that never ends, and `AppLaunchTest`
+         * matches this view through `onView`. Whether a vsync callback re-posted
+         * every frame still lets `onView` reach idle is a question about a
+         * device, and this repository has none to ask; the suite is not the
+         * thing to find out on. Held to the animator there, this view behaves in
+         * CI exactly as it did before the fallback existed.
+         *
+         * It can only make the view redraw LESS, and it reaches nothing but its
+         * own frame clock.
+         */
+        @JvmStatic
+        var frameClockFallbackEnabled = true
+
         /** Orb scale-in + fade; keep under the 300 ms activation budget. */
         const val ENTRANCE_MS = 260L
 

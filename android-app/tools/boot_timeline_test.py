@@ -255,6 +255,11 @@ def home_alpha(t: int) -> float:
     )
 
 
+def orb_chrome_alpha(t: int) -> float:
+    """The exact complement of `chrome_alpha`; see BootTimeline.orbChromeAlpha."""
+    return decelerate(window(t, HANDOFF_START_MS, HANDOFF_FADE_MS), 1.2)
+
+
 def should_skip(animator_scale: float, reduced_motion: bool) -> bool:
     return reduced_motion or animator_scale <= 0.0 or animator_scale != animator_scale
 
@@ -277,6 +282,7 @@ def state_at(t: int) -> dict:
         "letterSpacing": letter_spacing(t),
         "checkProgress": [check_progress(t, i) for i in range(CHECK_LINE_COUNT)],
         "chromeAlpha": chrome_alpha(t),
+        "orbChromeAlpha": orb_chrome_alpha(t),
         "homeAlpha": home_alpha(t),
     }
 
@@ -517,6 +523,7 @@ MONOTONIC = [
     ("coreScale", core_scale),
     ("coreAlpha", core_alpha),
     ("homeAlpha", home_alpha),
+    ("orbChromeAlpha", orb_chrome_alpha),
     ("letterSpacing (descending)", lambda t: -letter_spacing(t)),
     ("chromeAlpha (descending)", lambda t: -chrome_alpha(t)),
 ]
@@ -567,7 +574,8 @@ def test_typed_chars_never_un_types():
 def test_alphas_stay_in_range():
     fns = (
         [("scanAlpha", scan_alpha), ("coreAlpha", core_alpha), ("flareAlpha", flare_alpha),
-         ("chromeAlpha", chrome_alpha), ("homeAlpha", home_alpha), ("coreScale", core_scale)]
+         ("chromeAlpha", chrome_alpha), ("orbChromeAlpha", orb_chrome_alpha),
+         ("homeAlpha", home_alpha), ("coreScale", core_scale)]
         + [(f"ringAlpha[{i}]", lambda t, i=i: ring_alpha(t, i)) for i in range(RING_COUNT)]
         + [(f"letterAlpha[{i}]", lambda t, i=i: letter_alpha(t, i)) for i in range(LETTER_COUNT)]
     )
@@ -591,6 +599,7 @@ def test_frame_zero_is_black_except_the_scan_line():
     assert all(v == 0.0 for v in s["letterAlpha"])
     assert all(v == 0.0 for v in s["checkProgress"])
     assert s["homeAlpha"] == 0.0
+    assert s["orbChromeAlpha"] == 0.0
     # ...and the scan line is the one thing that IS visible.
     assert s["scanAlpha"] == 1.0
     assert scan_y(0) == 0.0
@@ -722,6 +731,7 @@ def test_skip_lands_on_exactly_the_natural_end_state():
     assert abs(s["letterSpacing"] - LETTER_SPACING_END) < 1e-9
     assert s["checkProgress"] == [1.0] * CHECK_LINE_COUNT
     assert s["chromeAlpha"] == 0.0
+    assert s["orbChromeAlpha"] == 1.0
     assert s["homeAlpha"] == 1.0
 
 

@@ -9,6 +9,7 @@ import ai.jarvis.app.channel.DeviceChannelHost
 import ai.jarvis.app.channel.JarvisChannel
 import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.ui.JarvisOrbView
 import android.content.Context
 import android.util.Log
 import org.json.JSONObject
@@ -25,7 +26,7 @@ import java.io.File
  *
  * ## What these hooks are for
  *
- * An instrumented test drives the REAL app on a REAL emulator. Three things are
+ * An instrumented test drives the REAL app on a REAL emulator. Four things are
  * impossible to arrange from the outside on that emulator, and each gets exactly
  * one hook and no more:
  *
@@ -49,6 +50,9 @@ import java.io.File
  *     therefore stops the app's channel and starts an equivalent one: the real
  *     `JarvisChannel`, the real `ChannelConfig`, the real dispatcher from
  *     `AutomationRuntime.ensure`, the real `UiApprovalGateway`.
+ *  4. **A main thread Espresso can call idle.** The one hook nothing asks for:
+ *     [holdTheOrbToItsAnimatorClock] runs from this object's initialiser and
+ *     says why it has to.
  *
  * ## What these hooks are NOT for
  *
@@ -97,6 +101,7 @@ object TestHooks {
         // Belt and braces behind the source-set guarantee. If this object is
         // ever reachable from a non-debug build, refuse to be useful.
         check(BuildConfig.DEBUG) { "TestHooks must never exist in a release build" }
+        holdTheOrbToItsAnimatorClock()
     }
 
     // --- 1. configuration ---------------------------------------------------
@@ -332,6 +337,39 @@ object TestHooks {
     /** Delete previously captured screenshots. Called once per CI run, not per test. */
     fun clearScreenshots(context: Context) {
         screenshotDir(context).listFiles()?.forEach { runCatching { it.delete() } }
+    }
+
+    // --- 5. the orb's frame clock -------------------------------------------
+
+    /**
+     * Keep [JarvisOrbView] on its `ValueAnimator` frame clock for the whole
+     * instrumented run.
+     *
+     * Called from this object's initialiser rather than by any one test,
+     * because what it protects is the suite rather than a test:
+     * `JarvisTestRule.starting` calls in here before any Activity is launched,
+     * so *loading the test hooks at all* is the signal and no test can forget
+     * to ask for it.
+     *
+     * `testOptions { animationsDisabled = true }` sets the system animator
+     * duration scale to 0 for the whole run. An infinite `ValueAnimator` ends on
+     * its own first frame at that scale, which on a phone with a battery saver
+     * on is a stone-dead orb — the bug [JarvisOrbView] grew its `Choreographer`
+     * fallback for. In CI that same death is the reason Espresso ever sees an
+     * idle main thread with the home screen up: `AppLaunchTest` matches the orb
+     * through `onView`, and whether a vsync callback re-posted every frame still
+     * lets `onView` reach idle is a question only a device can answer. The suite
+     * is not the place to find out, so the fallback is switched off here and CI
+     * keeps exactly the frame clock it went green with.
+     *
+     * `BootAnimationTest` is unaffected either way: it restores the scales to
+     * 1.0 for its own duration, so the animator it asserts against runs.
+     *
+     * Like everything else in this file, this can only make the app do LESS. It
+     * grants nothing, opens nothing, and reaches nothing but one view's redraw.
+     */
+    fun holdTheOrbToItsAnimatorClock() {
+        JarvisOrbView.frameClockFallbackEnabled = false
     }
 
     // --- isolation between tests --------------------------------------------
