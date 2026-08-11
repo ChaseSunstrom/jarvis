@@ -133,7 +133,12 @@ class JarvisConversation(
      * holding and a perfectly working mic in a quiet room all look identical —
      * the surface just closes.
      */
-    private val inactivity = Runnable {
+    // The type is stated because the body re-posts THIS property when the
+    // conversation is continuous, and a property whose initializer mentions the
+    // property being declared has no type to infer from. Kotlin says so in
+    // exactly those words — "type checking has run into a recursive problem" —
+    // and it is a compile error, not a warning.
+    private val inactivity: Runnable = Runnable {
         if (!isListening()) return@Runnable
         if (continuous) {
             // The screen is meant to be listening, so "nobody said anything"
