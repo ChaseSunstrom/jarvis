@@ -6,12 +6,15 @@ import ai.jarvis.app.support.JarvisTestRule
 import ai.jarvis.app.support.Screenshots
 import ai.jarvis.app.support.Views
 import ai.jarvis.app.support.Waits
+import ai.jarvis.app.compat.GrapheneCompat
+import ai.jarvis.app.testing.TestHooks
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisOrbView
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -114,5 +117,46 @@ class AppLaunchTest {
         }
 
         Screenshots.take("AppLaunchTest-unconfigured")
+    }
+
+    /**
+     * The one-shot tour every other test in this suite turns off.
+     *
+     * `JarvisTestRule` resets to a first-install state and then calls
+     * `TestHooks.markFirstRunSeen`, because otherwise this behaviour lands on
+     * top of every home-screen assertion in the suite — the checklist is an
+     * Activity, Espresso matches the topmost window, and nine tests across
+     * three classes failed reading "the home screen does not exist" while the
+     * home screen was built, attached and one window down.
+     *
+     * That suppression is only safe while the behaviour itself is pinned
+     * somewhere, so this is that somewhere. Arming the flag AFTER the rule has
+     * run is what makes this a genuine first launch.
+     *
+     * An emulator always qualifies: "display over other apps" and the
+     * battery-optimisation exemption are granted on a Settings screen a test
+     * cannot drive, and `adb shell pm grant` reaches neither — so
+     * `missingEssentials()` is non-empty here by construction rather than by
+     * luck.
+     */
+    @Test
+    fun aFirstLaunchWithSomethingEssentialMissingOpensTheChecklist() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertTrue(
+            "This test is meaningless unless something essential is missing, and on " +
+                "an emulator something always is. If this fails, the requirement " +
+                "table changed and the first-run flow no longer has a trigger.",
+            GrapheneCompat.missingEssentials(context).isNotEmpty(),
+        )
+        TestHooks.armFirstRunChecklist(context)
+
+        val activity = Activities.launch(MainActivity::class.java)
+        Activities.awaitResumed(activity)
+
+        Waits.until("the first-run checklist to open over the home screen") {
+            Device.ui.findObject(By.text(Views.textIgnoringCase("SYSTEM CHECK"))) != null
+        }
+
+        Screenshots.take("AppLaunchTest-first-run-checklist")
     }
 }

@@ -342,6 +342,9 @@ object TestHooks {
      *
      * Every one of those is a *tightening*: an unconfigured phone talks to
      * nobody and a cleared policy store asks about everything.
+     *
+     * The one-shot first-run TOUR is the exception, and [markFirstRunSeen]
+     * explains why it has to be.
      */
     fun resetState(context: Context) {
         val app = context.applicationContext
@@ -352,6 +355,50 @@ object TestHooks {
         clearPrefs(app, POLICY_PREFS_FILE)
         runCatching { auditFile(app).delete() }
         runCatching { CompanionMessageHandler.reset(app) }
+        markFirstRunSeen(app)
+    }
+
+    /**
+     * Say the first-run checklist has already been shown.
+     *
+     * Part of [resetState], and the one thing in it that is not a plain wipe.
+     *
+     * `MainActivity.onResume` opens [ai.jarvis.app.ui.SystemCheckActivity] the
+     * first time an ESSENTIAL special access is missing, which on an emulator
+     * is always: "display over other apps" and battery-optimisation exemption
+     * are user-granted on a Settings screen, and `adb shell pm grant` cannot
+     * reach either. Clearing the config prefs re-arms that one-shot, so every
+     * test that reset its state and then launched the home screen got the
+     * checklist on top of it — and Espresso matches against the topmost window.
+     *
+     * The failure is deceptive, which is why this is spelled out: the home
+     * layout builds correctly and the orb really is attached, so an assertion
+     * made through the object graph passes while the identical assertion made
+     * through Espresso reports `NoMatchingViewException`. Nine tests across
+     * three classes failed that way, every one of them reading as "the home
+     * screen does not exist".
+     *
+     * Skipping the tour is not a relaxation: it grants nothing, opens nothing
+     * and hides no gate — the status banner still reports every missing
+     * requirement, and `NavigationTest` asserts it does. The behaviour this
+     * suppresses is itself pinned by
+     * `AppLaunchTest.aFirstLaunchWithSomethingEssentialMissingOpensTheChecklist`,
+     * which calls [armFirstRunChecklist] to get it back.
+     */
+    fun markFirstRunSeen(context: Context) {
+        runCatching { JarvisConfig(context.applicationContext).setupChecklistShown = true }
+            .onFailure { Log.w(TAG, "could not mark the first-run checklist as seen", it) }
+    }
+
+    /**
+     * Re-arm the first-run checklist, for the test that asserts it appears.
+     *
+     * The counterpart to [markFirstRunSeen]. Call it AFTER the rule's reset —
+     * that is, inside the test body — or the reset will undo it.
+     */
+    fun armFirstRunChecklist(context: Context) {
+        runCatching { JarvisConfig(context.applicationContext).setupChecklistShown = false }
+            .onFailure { Log.w(TAG, "could not arm the first-run checklist", it) }
     }
 
     /** Wipe only the audit log, so one test's assertions cannot see another's. */
