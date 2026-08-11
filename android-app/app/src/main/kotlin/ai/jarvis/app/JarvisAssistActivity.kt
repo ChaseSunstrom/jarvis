@@ -225,6 +225,10 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
                     convo = JarvisConversation(
                         this@JarvisAssistActivity, config, this@JarvisAssistActivity,
                         inactivityMs = 8000L,
+                        // This screen is the wake word's fallback surface — a
+                        // full-screen intent on a locked phone — so the user is
+                        // already talking here too.
+                        speechAlreadyUnderway = true,
                     ).also { it.start() }
                     return true
                 }

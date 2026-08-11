@@ -58,7 +58,10 @@ QUIET, STARTED, SPEAKING, ENDED = "QUIET", "STARTED", "SPEAKING", "ENDED"
 class VoiceActivity:
     """Mirrors VoiceActivity.kt."""
 
-    def __init__(self):
+    def __init__(self, speech_already_underway: bool = False):
+        # See VoiceActivity.seeded. A wake word means the user IS mid-sentence,
+        # so the first buffer is speech and must not be taken for the room.
+        self.seeded = not speech_already_underway
         self.floor = 0.0
         self.peak = 0.0
         self.speaking = False
@@ -80,7 +83,21 @@ class VoiceActivity:
             self.peak = level
 
         edge = self.start_edge
-        if self.floor <= 0.0:
+        if not self.seeded:
+            # Waiting for a buffer that could plausibly BE the room. Until one
+            # arrives the edges sit at their absolute minimums, which is what
+            # lets a command already in progress latch at all.
+            #
+            # The floor still creeps up throughout, INCLUDING while speech is
+            # latched. That is what lets a turn latched on a noisy room end by
+            # itself: the end edge climbs until the room falls under it. A real
+            # sentence is over long before the climb reaches its level.
+            if level <= MIN_START:
+                self.floor = level
+                self.seeded = True
+            else:
+                self.floor = min(self.floor + FLOOR_RISE_PER_CHUNK, level)
+        elif self.floor <= 0.0:
             self.floor = level
         elif level <= edge:
             self.floor = level if level < self.floor else min(self.floor + FLOOR_RISE_PER_CHUNK, level)
@@ -162,6 +179,108 @@ def check_a_quiet_room_hears_ordinary_speech() -> int:
             print(f"FAIL  speech at {speech} in a quiet room was never heard")
             failures += 1
     return failures
+
+
+def ramp(seconds: float, target: float) -> list[float]:
+    """MicStreamer's one-pole smoother, started from zero.
+
+    A step would hide the bug this models: the first buffer would be small
+    enough to be a plausible room. The real first buffer is 0.3 of the level,
+    which is large enough to poison the floor and small enough to sit under the
+    edge that poisoning creates.
+    """
+    out, level = [], 0.0
+    for _ in range(int(seconds * 1000 / CHUNK_MS)):
+        level += (target - level) * 0.3
+        out.append(level)
+    return out
+
+
+def check_a_wake_word_turn_hears_speech_already_in_progress() -> int:
+    """The THIRD field report: "it wasn't really able to hear me".
+
+    The microphone opens while the user is ALREADY talking — "Hey Jarvis, turn
+    the kitchen lights off" is one breath, and capture starts inside it. Taking
+    that first buffer for the room put the floor at speech level and the start
+    edge at FOUR TIMES speech level, so nothing said afterwards could cross it.
+    The turn then ran to its inactivity timeout and blamed the microphone.
+
+    `SyntheticSpeech` emits from sample zero, so `ConversationE2ETest` had the
+    same fault in front of it.
+    """
+    failures = 0
+    for speech in (0.02, 0.05, 0.085, 0.2):
+        vad = VoiceActivity(speech_already_underway=True)
+        verdicts = [
+            vad.on_level(i * CHUNK_MS, lvl) for i, lvl in enumerate(ramp(2, speech))
+        ]
+        if STARTED not in verdicts:
+            print(
+                f"FAIL  a wake-word turn never heard speech at {speech} that was "
+                "already under way when the microphone opened"
+            )
+            failures += 1
+    return failures
+
+
+def check_a_wake_word_turn_still_ends() -> int:
+    """And it has to STOP, which is the half that makes the rest safe.
+
+    A turn that latched on the absolute minimums must still end when the talking
+    does — otherwise this trades "cannot hear you" for "records you for twelve
+    seconds", which is the failure the ratios were introduced to prevent.
+    """
+    failures = 0
+    for speech in (0.02, 0.085):
+        vad = VoiceActivity(speech_already_underway=True)
+        levels = ramp(1.5, speech) + steady(3, 0.0008)
+        verdicts = [vad.on_level(i * CHUNK_MS, lvl) for i, lvl in enumerate(levels)]
+        if STARTED not in verdicts:
+            print(f"FAIL  speech at {speech} was not heard at all")
+            failures += 1
+        elif ENDED not in verdicts:
+            print(f"FAIL  a wake-word turn at {speech} never ended when the talking did")
+            failures += 1
+    return failures
+
+
+def check_a_wake_word_turn_in_a_noisy_room_does_not_run_forever() -> int:
+    """The cost of trusting the wake word, bounded.
+
+    Nothing can tell a room humming at 0.012 from somebody talking at 0.012
+    using level alone, so a wake-word turn opened in a loud room may well latch
+    on the room. What it must not do is stay latched: the floor keeps creeping
+    up while unseeded — speech included — so the end edge climbs until the room
+    falls under it. The turn ends by itself instead of running to MAX_TURN_MS.
+    """
+    failures = 0
+    for noise in (0.006, 0.012, 0.03):
+        vad = VoiceActivity(speech_already_underway=True)
+        verdicts = [
+            vad.on_level(i * CHUNK_MS, lvl) for i, lvl in enumerate(steady(11, noise))
+        ]
+        if STARTED in verdicts and ENDED not in verdicts:
+            print(
+                f"FAIL  a wake-word turn latched on a {noise} room and never ended; "
+                "it would run to the turn cap and hand the recogniser 12s of noise"
+            )
+            failures += 1
+    return failures
+
+
+def check_a_tap_to_speak_turn_still_measures_the_room_first() -> int:
+    """Nothing above changes the button path.
+
+    Tapping the orb is not a wake word: no speech has happened yet, the first
+    buffer really is the room, and the ratios should apply from the start.
+    """
+    vad = VoiceActivity()
+    for i, lvl in enumerate(steady(2, 0.012)):
+        vad.on_level(i * CHUNK_MS, lvl)
+    if abs(vad.floor - 0.012) > 0.001:
+        print(f"FAIL  a tap-to-speak turn no longer measures the room (floor={vad.floor:.4f})")
+        return 1
+    return 0
 
 
 def check_a_noisy_room_still_ends_the_turn() -> int:
@@ -343,6 +462,31 @@ def check_kotlin_agrees(android: Path) -> int:
     if "maxOf(minStart, floor * startRatio)" not in src:
         print("FAIL  the start edge is no longer relative to the room")
         failures += 1
+    if "private var seeded = !speechAlreadyUnderway" not in src:
+        print(
+            "FAIL  VoiceActivity no longer knows whether speech was already under "
+            "way, so a wake-word turn measures the room from the user's own voice"
+        )
+        failures += 1
+    # The flag is useless unless the wake paths actually set it, and both are
+    # easy to lose in a refactor: one is a service, the other a full-screen
+    # Activity, and neither reads like a voice path from its call site.
+    android_src = android / "app/src/main/kotlin/ai/jarvis/app"
+    for path, why in (
+        ("assist/WakeWordService.kt", "the overlay conversation after a wake word"),
+        ("JarvisAssistActivity.kt", "the wake word's full-screen fallback on a locked phone"),
+    ):
+        text = (android_src / path).read_text(encoding="utf-8")
+        if "speechAlreadyUnderway = true" not in text:
+            print(
+                f"FAIL  {path} does not tell the detector that speech is already "
+                f"under way ({why}); the command after the name is never heard"
+            )
+            failures += 1
+    conv = (android_src / "assist/JarvisConversation.kt").read_text(encoding="utf-8")
+    if "VoiceActivity(speechAlreadyUnderway = speechAlreadyUnderway)" not in conv:
+        print("FAIL  JarvisConversation accepts the flag but never passes it on")
+        failures += 1
     if "maxOf(minEnd, floor * endRatio)" not in src:
         print("FAIL  the end edge is no longer relative to the room")
         failures += 1
@@ -365,6 +509,10 @@ def main() -> int:
     android = Path(__file__).resolve().parents[1]
     failures = (
         check_a_quiet_room_hears_ordinary_speech()
+        + check_a_wake_word_turn_hears_speech_already_in_progress()
+        + check_a_wake_word_turn_still_ends()
+        + check_a_wake_word_turn_in_a_noisy_room_does_not_run_forever()
+        + check_a_tap_to_speak_turn_still_measures_the_room_first()
         + check_a_noisy_room_still_ends_the_turn()
         + check_the_room_alone_never_starts_a_turn()
         + check_a_rising_room_is_tracked()

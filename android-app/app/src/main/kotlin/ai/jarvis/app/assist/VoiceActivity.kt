@@ -60,11 +60,51 @@ class VoiceActivity(
     private val minEnd: Float = MIN_END,
     /** How fast the floor may creep upward, per capture buffer. */
     private val floorRise: Float = FLOOR_RISE_PER_CHUNK,
+    /**
+     * True when the caller knows the user is ALREADY talking — a wake-word
+     * turn. See [seeded]; it is the difference between hearing the command
+     * after the name and hearing nothing at all.
+     */
+    private val speechAlreadyUnderway: Boolean = false,
 ) {
 
     /** The quietest the room has recently been, on MicStreamer's 0..1 scale. */
     var floor: Float = 0f
         private set
+
+    /**
+     * Whether any buffer seen so far can be trusted as the room.
+     *
+     * True for an ordinary turn, where the first buffer really is the room —
+     * somebody tapped the orb and has not started talking yet.
+     *
+     * False after a wake word, and that case is the whole reason this exists.
+     * **The microphone opens while the user is already mid-sentence**: "Hey
+     * Jarvis, turn the kitchen lights off" is one breath, and capture starts
+     * inside it. Taking that buffer for the room put [floor] at speech level
+     * and the start edge at FOUR TIMES speech level, so nothing said afterwards
+     * could cross it — the turn heard nothing, ran to its inactivity timeout,
+     * and told the user to check their microphone. That is the field report: "I
+     * was talking to it and it wasn't really able to hear me."
+     *
+     * `SyntheticSpeech` emits its tone from sample zero, so the same fault was
+     * in front of `ConversationE2ETest`.
+     *
+     * While unseeded the edges are the absolute minimums, which is what lets
+     * speech in the very first buffer latch at all, and the floor creeps up
+     * from zero — INCLUDING while speech is latched, unlike the ordinary case.
+     * That asymmetry is deliberate and is what keeps the trade safe: nothing can
+     * separate a room humming at 0.012 from a voice at 0.012 by level alone, so
+     * a wake-word turn in a loud room may well latch on the room, and the thing
+     * it must not do is stay latched. The climbing floor drags the end edge up
+     * until the room falls under it — about four seconds — instead of running to
+     * `MAX_TURN_MS` and handing the recogniser twelve seconds of noise. A real
+     * sentence ends long before the climb reaches its level.
+     *
+     * Seeding happens on the first buffer at or below [MIN_START], i.e. the
+     * first one quiet enough to be a room, after which everything is normal.
+     */
+    private var seeded = !speechAlreadyUnderway
 
     /** Loudest level seen since [reset]. The dead-microphone diagnostic. */
     var peak: Float = 0f
@@ -117,6 +157,23 @@ class VoiceActivity(
 
         val edge = startEdge
         when {
+            // Speech was already under way when the microphone opened, so no
+            // buffer yet seen can be trusted as the room. See [seeded].
+            !seeded -> {
+                if (level <= minStart) {
+                    floor = level
+                    seeded = true
+                } else {
+                    // Note this runs while speech is latched too, which the
+                    // branch below deliberately does not. It is what lets a turn
+                    // latched on a noisy room end by itself: the end edge climbs
+                    // until the room falls under it, in about four seconds from
+                    // silence. A real sentence is over long before the climb
+                    // reaches its level.
+                    floor = minOf(floor + floorRise, level)
+                }
+            }
+
             // The first buffer IS the room. Starting from zero would mean the
             // edges spend their first second at the absolute minimums, and a
             // room already above those would latch a turn on itself before the
@@ -207,11 +264,18 @@ class VoiceActivity(
         startedAt = 0L
     }
 
-    /** A new conversation, in a room we know nothing about yet. */
-    fun reset() {
+    /**
+     * A new conversation, in a room we know nothing about yet.
+     *
+     * @param speechUnderway whether the user is already talking, as they are
+     *   after a wake word. Defaults to this detector's construction-time
+     *   answer, so a caller that never thought about it keeps its behaviour.
+     */
+    fun reset(speechUnderway: Boolean = speechAlreadyUnderway) {
         newTurn()
         floor = 0f
         peak = 0f
+        seeded = !speechUnderway
     }
 
     companion object {

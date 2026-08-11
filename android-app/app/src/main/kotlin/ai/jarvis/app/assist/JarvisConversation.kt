@@ -27,6 +27,19 @@ class JarvisConversation(
     private val config: JarvisConfig,
     private val ui: Ui,
     private val inactivityMs: Long = 8000L,
+    /**
+     * True when this conversation was opened by a wake word.
+     *
+     * The user is mid-sentence when that happens — "Hey Jarvis, turn the
+     * kitchen lights off" is one breath — so the first capture buffer is
+     * speech rather than the room, and [VoiceActivity] must not measure the
+     * room from it. See [VoiceActivity.seeded] for what goes wrong otherwise;
+     * the short version is that the turn hears nothing at all.
+     *
+     * False for a turn the user started by tapping: no speech has happened
+     * yet, the first buffer really is the room, and the ratios apply at once.
+     */
+    private val speechAlreadyUnderway: Boolean = false,
 ) : AssistPipelineClient.Callbacks {
 
     interface Ui {
@@ -83,7 +96,7 @@ class JarvisConversation(
      * When speech starts and stops, measured against THIS room rather than
      * against a number chosen in another one. See [VoiceActivity].
      */
-    private val vad = VoiceActivity()
+    private val vad = VoiceActivity(speechAlreadyUnderway = speechAlreadyUnderway)
     private var sawSpeech = false
     private var turnActive = false
     /** True once the pipeline reached LISTENING at least once this conversation. */

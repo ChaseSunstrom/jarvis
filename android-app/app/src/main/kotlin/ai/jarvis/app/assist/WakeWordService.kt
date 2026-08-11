@@ -518,7 +518,13 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         val surface = AssistOverlay(this) { endOverlayConversation(giveMicBack = true) }
         if (!surface.attach()) return false
         overlay = surface
-        convo = JarvisConversation(this, config, overlayUi, inactivityMs = 8000L)
+        convo = JarvisConversation(
+            this, config, overlayUi, inactivityMs = 8000L,
+            // The name and the command are one breath, so capture opens inside
+            // the sentence. Without this the first buffer becomes the room and
+            // the command that follows is never heard.
+            speechAlreadyUnderway = true,
+        )
             .also { it.start() }
         return true
     }
