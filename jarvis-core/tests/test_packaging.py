@@ -1902,3 +1902,46 @@ def test_every_documented_env_var_is_actually_read_by_something(
         "handed to jarvis-core but never read by configuration.yaml, so the "
         f"setting has no effect: {unread}"
     )
+
+
+def test_every_websocket_command_is_documented():
+    """The client contract has to describe what the server actually answers.
+
+    `docs/clients.md` is what a third client is written against — the Android
+    app, a satellite, somebody's script. A command that exists and is not
+    listed is a feature nobody can find; a row for a command that was removed
+    is worse, because it sends somebody to debug their own code against a
+    `unknown_command` that is correct.
+
+    Both directions, deliberately. Only checking that the doc is a subset would
+    let the table rot as commands are added, which is exactly how it got to
+    fifteen rows for thirty-four handlers.
+    """
+    import re
+
+    from jarvis.api.websocket import WebSocketHandler
+
+    doc = (Path(__file__).resolve().parents[1] / "docs/clients.md").read_text(encoding="utf-8")
+    table = doc[doc.index("| `ping` |") :]
+    table = table[: table.index("\n\n")]
+
+    documented: set[str] = set()
+    for line in table.splitlines():
+        if not line.startswith("| `"):
+            continue
+        # A row may cover several commands: "`a` · `/b` · `/c`". A leading
+        # slash continues the previous name's prefix, the way the rows read.
+        names = re.findall(r"`([^`]+)`", line.split("|")[1])
+        base = ""
+        for name in names:
+            if name.startswith("/"):
+                documented.add(base.rsplit("/", 1)[0] + name)
+            else:
+                base = name
+                documented.add(name)
+
+    handlers = set(WebSocketHandler._HANDLERS)
+    missing = handlers - documented
+    stale = documented - handlers
+    assert not missing, f"undocumented websocket commands: {sorted(missing)}"
+    assert not stale, f"documented commands that do not exist: {sorted(stale)}"

@@ -81,8 +81,26 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `config/entity_registry/list` · `/update` | rename, re-area, hide, or set `exposed` on an entity |
 | `config/device_registry/list` · `/update` | device names and area assignment |
 | `config/area_registry/list` · `/create` · `/update` · `/delete` | areas |
+| `config/companion/list` | the phones, desktops and satellites *running Jarvis*, each with what it will let Jarvis do to it and whether it is connected. Not the house's entities — those are the registries above. `include_actions: false` returns counts instead of manifests |
+| `config/token/list` | every long-lived token, with `connected` for whether a live socket is holding it. Built from the auth manager, so a token with no pairing record still appears |
+| `config/token/revoke` | `token_id`; removes the credential **and closes every socket authenticated with it**, which is why the result carries `sockets_closed` |
+| `config/tool/list` · `/create` · `/update` · `/delete` | console-authored tools. Built-ins are listed and refuse to be edited or shadowed |
+| `config/settings/list` · `/set` · `/reset` | the editable settings overlay, grouped as jarvis-core groups them. Each row says where its value came from and whether applying it needs a restart |
+| `config/automation/list` · `/create` · `/update` · `/delete` | automations |
+| `jarvis/device/register` | says who this socket is, so it can be sent commands and counted as present. It is the door to the whole device channel — `device_command` / `device_result` / `device_event` are *frames*, not commands, and are specified in `docs/cross-device.md` and `android-app/docs/device-channel.md` |
 | `assist_pipeline/pipeline/list` | available voice pipelines + the preferred one |
 | `assist_pipeline/run` | a voice run (below) |
+
+Every command above is in `_HANDLERS` in `jarvis/api/websocket.py`, and
+`test_packaging.py::test_every_websocket_command_is_documented` asserts the two
+sets are equal in both directions — so a command added without a row here, or a
+row for a command that no longer exists, fails the build.
+
+**Versioning rule.** A client that gets `unknown_command` back MUST hide the
+feature rather than surface an error, and never fail open. That is what lets a
+new console talk to an older jarvis-core: the panel simply is not drawn. It is
+also why every new command here is additive, and why none of them changes the
+meaning of an existing one.
 
 Registry updates skip **null-valued** fields, so a client clears an assignment
 by sending `""` — `{"type": "config/entity_registry/update", "entity_id":
