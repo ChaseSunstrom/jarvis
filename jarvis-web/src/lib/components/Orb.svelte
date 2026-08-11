@@ -130,7 +130,10 @@ const float SPOKE_COUNT   = 10.0;
 // The gap between two plates, in degrees, AT THE COIL ANNULUS' CENTRELINE. Its
 // arc length is what is held fixed, not its angle — see the coil block below.
 const float SPOKE_GAP_DEG = 9.0;
-const float SPOKE_SPIN_RATIO = 0.35;
+// SPOKE_SPIN_RATIO is deliberately NOT here. The coil pattern's rotation rate
+// is applied on the CPU now, where uCoilSpin is integrated (see the script
+// block) — a copy of it down here would be dead, and editing the dead one would
+// look like it should work and do nothing at all.
 // The recess the plates lie in. Wider than the coil annulus at both ends:
 // inside SPOKE_INNER it is the dark gap between the core and the assembly and
 // the seat for the hub ring, outside SPOKE_OUTER it is the lip whose shadow

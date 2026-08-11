@@ -162,13 +162,29 @@ def kotlin_consts(src: str) -> dict[str, float]:
 
 
 def glsl_consts(src: str) -> dict[str, float]:
-    """`const float NAME = 1.5;` -> {NAME: 1.5}."""
-    return {
+    """Every shared constant Orb.svelte declares, GLSL or TypeScript.
+
+    `const float NAME = 1.5;` in the shader, and `const NAME = 1.5;` in the
+    script block, because some of these are arithmetic the CPU does before the
+    uniform is handed over. SPOKE_SPIN_RATIO is the worked example: the coil
+    pattern's rotation is integrated on the CPU so a TAU wrap moves the pattern
+    by exactly one segment, and a `const float` copy left in the shader would be
+    dead — editing the dead one would look like it should work and do nothing.
+
+    What this spec pins is that the two RENDERERS use the same number, not which
+    language the web one happens to write it in.
+    """
+    out = {
         name: float(raw)
         for name, raw in re.findall(
             r"const (?:float|int) ([A-Z][A-Z0-9_]*)\s*=\s*(-?[0-9]+\.?[0-9]*)\s*;", src
         )
     }
+    for name, raw in re.findall(
+        r"const ([A-Z][A-Z0-9_]*)\s*=\s*(-?[0-9]+\.?[0-9]*)\s*;", src
+    ):
+        out.setdefault(name, float(raw))
+    return out
 
 
 def check_the_two_renderers_agree() -> list[str]:
