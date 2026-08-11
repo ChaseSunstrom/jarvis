@@ -361,12 +361,29 @@ async def test_a_dead_socket_answers_immediately(manager, phone):
 
 
 async def test_a_silent_device_times_out_rather_than_hanging(manager, phone):
+    """A device that never answers ends the dispatch instead of wedging it.
+
+    The waits are stated against MIN_DISPATCH_TIMEOUT rather than written as
+    numbers, because asking for 0.05s does not get you 0.05s: `_clamp_timeout`
+    floors every dispatch at the minimum, so this really sits for a whole
+    second. Written as `timeout=0.05` inside `wait_for(..., 2)` it read as forty
+    times' headroom and was one — and duly failed on a loaded CI runner, which
+    is a claim about that runner rather than about this code. Deriving both
+    numbers from the floor also means raising the floor moves the budget with
+    it instead of quietly spending the slack.
+    """
     link, wire = phone
+    asked = MIN_DISPATCH_TIMEOUT / 20
     result = await asyncio.wait_for(
-        manager.run(PHONE, "sms_send", {}, "telling Sam", timeout=0.05), 2
+        manager.run(PHONE, "sms_send", {}, "telling Sam", timeout=asked),
+        MIN_DISPATCH_TIMEOUT + 8,
     )
     assert result["status"] == "error"
     assert "did not answer" in result["error"]
+    # And it waited the FLOOR, not what was asked for. Without this the clamp
+    # could stop applying to dispatch — leaving a caller-supplied 50ms in force
+    # — and every assertion above would still pass, faster.
+    assert f"within {MIN_DISPATCH_TIMEOUT:g}s" in result["error"], result["error"]
 
 
 # ---------------------------------------------------------------------------
