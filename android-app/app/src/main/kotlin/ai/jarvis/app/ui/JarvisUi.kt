@@ -27,13 +27,29 @@ import android.widget.TextView
  */
 object JarvisUi {
 
-    const val ACCENT = 0xFF3FD8FF.toInt()
-    const val DIM = 0xCC7FD7EA.toInt()
-    const val BG = 0xFF04070C.toInt()
-    const val SURFACE = 0xFF0A0F16.toInt()
-    const val FAINT = 0xFF5A7A86.toInt()
-    const val APPROVE = 0xFF35D08A.toInt()
-    const val DENY = 0xFFFF5C5C.toInt()
+    // Every one of these is a `--jv-*` token from
+    // `jarvis-web/src/lib/tokens.ts`, and `design_token_test.py` checks them
+    // against it.
+    //
+    // They were a second palette that happened to look similar: three of the
+    // eight matched a web token and five were near misses nobody could see
+    // were misses, because the two are never on screen together. The phone's
+    // settings sit inside the console's frame now, under the console's own nav
+    // — *"have the settings for the android app be in that same web view look?
+    // so we can dedup the things"* — and one nav over two palettes is exactly
+    // the drift that produces.
+    //
+    // One of the five was not merely different. FAINT was #5A7A86, which is
+    // 4.38:1 on this ground — under WCAG AA — and it is the colour every hint
+    // on every screen is drawn in. `--jv-text-faint` is 9.01:1.
+    const val ACCENT = 0xFF3FD8FF.toInt() // --jv-accent
+    /** `--jv-text-dim`, at the 80% alpha the phone has always drawn it with. */
+    const val DIM = 0xCC9FC0CC.toInt()
+    const val BG = 0xFF04070C.toInt() // --jv-bg
+    const val SURFACE = 0xFF06121A.toInt() // --jv-panel-solid
+    const val FAINT = 0xFF8FB3C0.toInt() // --jv-text-faint
+    const val APPROVE = 0xFF6FF2C0.toInt() // --jv-ok
+    const val DENY = 0xFFFF6B5C.toInt() // --jv-danger
 
     /**
      * Wants attention, but nothing is broken.
