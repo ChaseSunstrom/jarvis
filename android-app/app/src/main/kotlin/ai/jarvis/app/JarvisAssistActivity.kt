@@ -7,6 +7,7 @@ import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.ReadabilityScrim
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -24,6 +25,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.ViewTreeObserver
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -118,6 +120,31 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             it.y = JarvisUi.dp(this, 56)
         }
+        blurBehind()
+    }
+
+    /**
+     * Blur what is behind the card, where the platform can.
+     *
+     * This surface already had the theme's 0.5 dim, which is why the popup on
+     * a LOCKED phone reads better than the overlay did on an unlocked one —
+     * two paths to the same orb, only one of them with a ground. They match
+     * now: the same blur here, the same [ReadabilityScrim] under the content.
+     *
+     * `setBackgroundBlurRadius` blurs within this window's own bounds, which
+     * for a floating translucent window is exactly the card. API 31+, and a
+     * request even there — `isCrossWindowBlurEnabled` is false under battery
+     * saver and on hardware that cannot — so nothing depends on it landing.
+     */
+    private fun blurBehind() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        runCatching {
+            window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            window.attributes = window.attributes.also {
+                it.blurBehindRadius = JarvisUi.dp(this, BLUR_DP)
+            }
+            window.setBackgroundBlurRadius(JarvisUi.dp(this, BLUR_DP))
+        }.onFailure { Log.w(TAG, "the platform refused a background blur", it) }
     }
 
     private fun buildUi(): ViewGroup {
@@ -126,11 +153,12 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(pad, pad, pad, pad)
-            // No panel. This used to be a dark rounded card with a cyan stroke
-            // and it read as a box with an orb in it — the frame was the first
-            // thing you saw. The theme's own dim is the ground now, which is
-            // what a floating window is for, and the text carries a shadow so
-            // it survives whatever the dim is over.
+            // Not a panel — see ReadabilityScrim. The theme's dim is a flat
+            // wash over the whole screen, which stops the app behind competing
+            // but does nothing for the orb's own edge; this is the gradient
+            // that gives the orb and the words a ground of their own, with no
+            // border anywhere. The text keeps its shadow on top of both.
+            background = ReadabilityScrim()
         }
 
         orbView = JarvisOrbView(this).apply {
@@ -173,6 +201,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         root.addView(toolActivityView, fullWidth())
 
         transcriptView = JarvisUi.transcriptView(this).apply {
+            // Brighter than the shared transcript colour, for the same reason
+            // AssistOverlay does it — see overlay_scrim_test.py.
+            setTextColor(JarvisUi.TEXT)
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
             setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 12), 0, 0)
@@ -299,6 +330,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
     companion object {
         private const val TAG = "JarvisAssist"
+
+        /** Blur radius behind the card, in dp. Matches AssistOverlay's. */
+        private const val BLUR_DP = 28
         private const val REQ_MIC = 4711
 
         /** Set when the popup was opened by the wake word rather than by a tap. */

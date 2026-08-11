@@ -2,9 +2,11 @@ package ai.jarvis.app.assist
 
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.ReadabilityScrim
 import ai.jarvis.app.ui.SiriOrbView
 import android.content.Context
 import android.graphics.PixelFormat
+import android.os.Build
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.Log
@@ -154,17 +156,20 @@ class AssistOverlay(
     // --- construction --------------------------------------------------------
 
     private fun build(): ViewGroup {
-        val pad = JarvisUi.dp(context, 8)
+        // Generous, because the scrim has to reach zero before the window's
+        // edge does — see ReadabilityScrim. Padding is what buys it that room.
+        val pad = JarvisUi.dp(context, 22)
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(pad, pad, pad, pad)
-            // NO background. This was a panel — a dark rounded card with a cyan
-            // stroke — and it read as exactly what it was: a box with an orb
-            // inside it, sitting on someone's home screen. The orb is the
-            // surface; anything drawn behind it is a frame around the thing
-            // people actually wanted. Legibility comes from the orb's own glow
-            // and from a shadow on the text, not from a slab.
+            // Something to read against. NOT a panel: a radial gradient with no
+            // edge of its own, densest behind the orb and gone before the
+            // window ends. See ReadabilityScrim for why the two previous
+            // attempts at this — both rounded cards with a cyan stroke — were
+            // removed, and why blurring alone does not do it (blurring white
+            // gives white).
+            background = ReadabilityScrim()
             setOnClickListener { onDismiss() }
         }
 
@@ -201,6 +206,12 @@ class AssistOverlay(
         column.addView(tools, fullWidth())
 
         val transcriptView = JarvisUi.transcriptView(context).apply {
+            // Brighter than the shared transcript colour, which is DIM.
+            // This surface floats over whatever the user was looking at, and
+            // DIM reaches WCAG AA there only under a nearly opaque scrim —
+            // i.e. under the dark card this overlay has twice had removed.
+            // See overlay_scrim_test.py, which measures exactly that.
+            setTextColor(JarvisUi.TEXT)
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
@@ -278,11 +289,44 @@ class AssistOverlay(
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             y = JarvisUi.dp(context, 72)
             windowAnimations = 0
+            blurBehind(this)
         }
+    }
+
+    /**
+     * Blur the app behind the orb, where the platform can.
+     *
+     * Cross-window blur is API 31 and up, and even there it is a request rather
+     * than a setting: `isCrossWindowBlurEnabled` goes false under battery
+     * saver, when the developer option is off, and on hardware that cannot do
+     * it. So this is never the only thing making the overlay readable —
+     * [ReadabilityScrim] is, and it is drawn on every build. Blur is the part
+     * that makes it look like Jarvis rather than like a dark patch.
+     *
+     * FLAG_DIM_BEHIND is deliberately NOT set. It dims the entire screen behind
+     * the window, and this overlay comes up unbidden over whatever the user is
+     * doing — darkening a whole map or a video because a wake word fired is a
+     * bigger interruption than the popup itself. The blur and the scrim are
+     * both bounded by the card.
+     */
+    private fun blurBehind(params: WindowManager.LayoutParams) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        params.blurBehindRadius = JarvisUi.dp(context, BLUR_DP)
     }
 
     companion object {
         private const val TAG = "JarvisOverlay"
+
+        /**
+         * Blur radius behind the card, in dp.
+         *
+         * Enough that text behind it stops being readable as text — which is
+         * the actual requirement, since a legible sentence behind a legible
+         * sentence is what makes the overlay hard to read — and not so much
+         * that the phone stops looking like the phone.
+         */
+        private const val BLUR_DP = 28
 
         /**
          * Side of the orb's slot in the card.

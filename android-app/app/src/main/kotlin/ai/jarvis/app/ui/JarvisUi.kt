@@ -43,6 +43,15 @@ object JarvisUi {
     // 4.38:1 on this ground — under WCAG AA — and it is the colour every hint
     // on every screen is drawn in. `--jv-text-faint` is 9.01:1.
     const val ACCENT = 0xFF3FD8FF.toInt() // --jv-accent
+    /**
+     * Body text. `--jv-text`.
+     *
+     * Added for the assist overlay, which floats over whatever the user was
+     * looking at: DIM is the palette's quiet colour and reaches WCAG AA there
+     * only if the scrim behind it is nearly opaque, which is the dark slab this
+     * surface has already had removed twice. A brighter line needs less ground.
+     */
+    const val TEXT = 0xFFD7EDF5.toInt()
     /** `--jv-text-dim`, at the 80% alpha the phone has always drawn it with. */
     const val DIM = 0xCC9FC0CC.toInt()
     const val BG = 0xFF04070C.toInt() // --jv-bg
