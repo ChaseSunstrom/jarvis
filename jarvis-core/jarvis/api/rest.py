@@ -141,7 +141,13 @@ async def pair_claim(request: Request) -> dict[str, Any]:
         )
     body = await json_body(request)
     try:
-        return await pairing.async_claim(get_jarvis(request), body)
+        return await pairing.async_claim(
+            get_jarvis(request),
+            body,
+            # Rate-limit bucket only. Spoofing it buys a fresh allowance and
+            # nothing else — the code's entropy is what the security rests on.
+            client=request.client.host if request.client else None,
+        )
     except pairing.PairingError as err:
         # 403 rather than 404: the code was structurally a claim and it was
         # refused. A 404 would suggest the endpoint is not there and send

@@ -183,3 +183,54 @@ async def test_a_listener_that_throws_does_not_break_the_tool_call(jarvis):
     agent = _agent_with(jarvis, registry)
     await agent._execute_tool_calls(_chat_result([_call("works", {})]), [], None, _result())
     assert ran == [True], "a broken listener stopped the tool from running"
+
+
+async def test_a_huge_argument_is_not_broadcast_whole(jarvis):
+    """These events reach every subscriber; the model chooses their size.
+
+    Through the console's relay, `subscribe_events` is reachable by anything
+    that can open a socket to it. A tool called with a megabyte of text would
+    otherwise be copied to every listening surface — and the row that draws it
+    shows about forty characters.
+    """
+    from jarvis.llm.tools import (
+        EVENT_TOOL_STARTED,
+        MAX_EVENT_ARGS,
+        MAX_EVENT_VALUE_CHARS,
+    )
+
+    seen = []
+    jarvis.bus.listen(EVENT_TOOL_STARTED, lambda event: seen.append(event.data))
+    registry = ToolRegistry(jarvis)
+
+    registry.announce(
+        EVENT_TOOL_STARTED,
+        {
+            "name": "http_request",
+            "arguments": {
+                "body": "x" * 100_000,
+                **{f"k{i}": i for i in range(200)},
+            },
+            "index": 0,
+            "total": 1,
+        },
+    )
+
+    args = seen[0]["arguments"]
+    assert len(args) <= MAX_EVENT_ARGS
+    assert len(args["body"]) == MAX_EVENT_VALUE_CHARS
+    # The counts are ours, not the model's, so they travel untouched.
+    assert seen[0]["index"] == 0 and seen[0]["total"] == 1
+    assert seen[0]["name"] == "http_request"
+
+
+async def test_a_huge_error_is_not_broadcast_whole(jarvis):
+    from jarvis.llm.tools import EVENT_TOOL_FINISHED, MAX_EVENT_VALUE_CHARS
+
+    seen = []
+    jarvis.bus.listen(EVENT_TOOL_FINISHED, lambda event: seen.append(event.data))
+    ToolRegistry(jarvis).announce(
+        EVENT_TOOL_FINISHED,
+        {"name": "t", "ok": False, "error": "e" * 50_000, "index": 0, "total": 1},
+    )
+    assert len(seen[0]["error"]) == MAX_EVENT_VALUE_CHARS

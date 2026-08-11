@@ -123,10 +123,48 @@ async def test_a_wrong_code_is_refused_and_counted(jarvis):
 
     for _ in range(pairing.MAX_ATTEMPTS):
         with pytest.raises(pairing.PairingError):
-            codes.claim("not-a-real-code")
+            codes.claim("not-a-real-code", client="10.0.0.9")
 
-    # Past the limit the endpoint stops being useful at all — including for a
-    # code that IS valid, which is the point: a sweep gets nowhere.
+    # Past the limit that caller stops being answered usefully — including for
+    # a code that IS valid, which is the point: a sweep gets nowhere.
+    entry = codes.issue()
+    with pytest.raises(pairing.PairingError, match="Too many failed"):
+        codes.claim(entry.code, client="10.0.0.9")
+
+
+async def test_one_attacker_cannot_lock_everybody_out(jarvis):
+    """A global counter would be a denial of service, not a defence.
+
+    Anybody who can reach the endpoint could fail ten claims and stop the
+    household pairing anything, then hold it there by failing one more every
+    few minutes — and the operator would see "too many failed attempts" on a
+    phone they had never paired.
+    """
+    codes = pairing.get_codes(jarvis)
+    for _ in range(pairing.MAX_ATTEMPTS * 2):
+        with pytest.raises(pairing.PairingError):
+            codes.claim("nope", client="10.0.0.66")
+
+    entry = codes.issue()
+    # The real phone, from its own address, is unaffected.
+    assert codes.claim(entry.code, client="192.168.1.20").code == entry.code
+
+
+async def test_the_failure_map_cannot_grow_without_bound(jarvis):
+    """The bucket key is spoofable, so it must not be a memory lever."""
+    codes = pairing.get_codes(jarvis)
+    for i in range(pairing.MAX_TRACKED_CLIENTS * 2):
+        with pytest.raises(pairing.PairingError):
+            codes.claim("nope", now=1000.0 + i, client=f"10.1.{i // 256}.{i % 256}")
+    assert len(codes.failures) <= pairing.MAX_TRACKED_CLIENTS
+
+
+async def test_unidentified_callers_share_one_bucket(jarvis):
+    """Otherwise "no client" would be a free, unlimited allowance."""
+    codes = pairing.get_codes(jarvis)
+    for _ in range(pairing.MAX_ATTEMPTS):
+        with pytest.raises(pairing.PairingError):
+            codes.claim("nope")
     entry = codes.issue()
     with pytest.raises(pairing.PairingError, match="Too many failed"):
         codes.claim(entry.code)
@@ -137,10 +175,12 @@ async def test_the_attempt_counter_forgets(jarvis):
     codes = pairing.get_codes(jarvis)
     for i in range(pairing.MAX_ATTEMPTS):
         with pytest.raises(pairing.PairingError):
-            codes.claim("nope", now=1000.0 + i)
+            codes.claim("nope", now=1000.0 + i, client="10.0.0.9")
 
     entry = codes.issue(now=1000.0 + pairing.ATTEMPT_WINDOW + 1)
-    assert codes.claim(entry.code, now=1000.0 + pairing.ATTEMPT_WINDOW + 2)
+    assert codes.claim(
+        entry.code, now=1000.0 + pairing.ATTEMPT_WINDOW + 2, client="10.0.0.9"
+    )
 
 
 async def test_outstanding_codes_are_bounded(jarvis):

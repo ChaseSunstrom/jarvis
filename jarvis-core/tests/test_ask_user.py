@@ -285,3 +285,113 @@ async def test_an_action_is_not_pushed_to_the_phone(jarvis):
         await asyncio.sleep(0.01)
 
     assert asked == [], "a tier-3 action was pushed to the phone as a question"
+
+
+async def test_a_question_from_a_tainted_turn_says_so(jarvis, registry):
+    """The one path that shows the model's own words to a person.
+
+    The tier system answers "may this run without a human". It cannot answer
+    "should the human believe the words on the screen". For an ACTION the two
+    coincide — what is shown is pinned entity ids, which injected text cannot
+    forge. For a QUESTION they do not: `ask_user` renders the model's sentence
+    on a consent surface, so a turn that has read a hostile page can put "What
+    is your bank password?" in front of somebody in Jarvis's voice.
+
+    Nothing refuses — a turn that read a page and needs to ask which of three
+    results was meant is exactly the legitimate case. The surface is told, so
+    it can say where the words came from.
+    """
+    from jarvis.api.devices import mark_untrusted
+    from jarvis.core import Context
+
+    seen = _raised(jarvis)
+    context = Context()
+    mark_untrusted(jarvis, context)
+
+    await registry.call("ask_user", {"question": "Confirm your password?"}, context)
+
+    assert seen[0]["tainted"] is True
+
+
+async def test_an_ordinary_question_is_not_marked(jarvis, registry):
+    seen = _raised(jarvis)
+    await registry.call("ask_user", {"question": "Which lamp?"}, None)
+    assert seen[0]["tainted"] is False
+
+
+async def test_a_held_action_carries_the_same_mark(jarvis, registry):
+    """Not only questions. A tier-3 action raised by a tainted turn earns it."""
+    from jarvis.api.devices import mark_untrusted
+    from jarvis.core import Context
+
+    async def _handler(args, context):
+        return {"status": "ok"}
+
+    registry.register(
+        name="open_gate",
+        description="Open the gate.",
+        parameters=schema_object({"target": {"type": "string"}}),
+        handler=_handler,
+        tier=TIER_APPROVAL,
+    )
+    seen = _raised(jarvis)
+    context = Context()
+    mark_untrusted(jarvis, context)
+    await registry.call("open_gate", {"target": "cover.gate"}, context)
+    assert seen[0]["tainted"] is True
+
+
+async def test_the_phone_is_told_where_a_tainted_question_came_from(jarvis):
+    """A lock screen has no room for a provenance field, so it goes in the words."""
+    import asyncio
+
+    from jarvis.api.devices import mark_untrusted
+    from jarvis.core import Context
+    from jarvis.integrations.llm import UNTRUSTED_PREFIX, _bridge_questions_to_the_phone
+
+    asked: list[dict] = []
+
+    async def _ask(call):
+        asked.append(dict(call.data))
+        return {"answer": ""}
+
+    jarvis.services.register("companion", "ask", _ask, supports_response=True)
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    _bridge_questions_to_the_phone(jarvis, registry)
+
+    context = Context()
+    mark_untrusted(jarvis, context)
+    await registry.call("ask_user", {"question": "Confirm your password"}, context)
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        if asked:
+            break
+
+    assert asked and asked[0]["question"].startswith(UNTRUSTED_PREFIX)
+
+
+async def test_an_ordinary_question_reaches_the_phone_unadorned(jarvis):
+    import asyncio
+
+    from jarvis.integrations.llm import UNTRUSTED_PREFIX, _bridge_questions_to_the_phone
+
+    asked: list[dict] = []
+
+    async def _ask(call):
+        asked.append(dict(call.data))
+        return {"answer": ""}
+
+    jarvis.services.register("companion", "ask", _ask, supports_response=True)
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+    _bridge_questions_to_the_phone(jarvis, registry)
+
+    await registry.call("ask_user", {"question": "Which lamp?"}, None)
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        if asked:
+            break
+
+    assert asked and asked[0]["question"] == "Which lamp?"
+    assert UNTRUSTED_PREFIX not in asked[0]["question"]

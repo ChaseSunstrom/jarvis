@@ -84,6 +84,11 @@ _LOGGER = logging.getLogger(__name__)
 #: a build without the companion integration simply never finds the service.
 COMPANION_DOMAIN = "companion"
 
+#: Prepended to a question raised by a turn that had already read somebody
+#: else's words. The console has a field for this; a phone notification does
+#: not, so it goes in the sentence — see `_ask_on_a_device`.
+UNTRUSTED_PREFIX = "[from an outside source]"
+
 DOMAIN = "llm"
 DEPENDENCIES = ["domains"]
 
@@ -276,12 +281,17 @@ async def _ask_on_a_device(
     data: dict[str, Any],
 ) -> None:
     """Deliver one question and, if it is answered there, resolve it."""
+    tainted = bool(data.get("tainted"))
     try:
         answered = await jarvis.services.async_call(
             COMPANION_DOMAIN,
             "ask",
             {
-                "question": question,
+                # The phone renders this verbatim and has no field for
+                # provenance, so provenance goes in the words. A turn that has
+                # read a hostile page can compose this sentence, and somebody
+                # glancing at a lock screen has no other way to know that.
+                "question": f"{UNTRUSTED_PREFIX} {question}" if tainted else question,
                 "options": list(data.get("choices") or []),
                 # The clock the request is already on. Asking a phone for longer
                 # than the request lives would put a live-looking prompt in

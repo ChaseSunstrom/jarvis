@@ -1021,6 +1021,33 @@ test('Jarvis can ask a question and the answer reaches the server', async ({ pag
 	await expect(page.getByTestId('question-ask_user')).toHaveCount(0, { timeout: 10_000 });
 	expect(await lastAnswer()).toBe('Corner');
 
+	// --- a question from a turn that read somebody else's words --------------
+	//
+	// The tier system answers "may this run without a human". It cannot answer
+	// "should the human believe the words on the screen" — and for a question,
+	// unlike an action, what is shown IS the model's own sentence. A turn that
+	// read a hostile page can write "confirm your password" in Jarvis's voice.
+	// Nothing is blocked, because a turn that read a page and needs to ask which
+	// result was meant is the legitimate case. The human is told where the words
+	// came from.
+	await ask({
+		type: 'jarvis/test/ask_user',
+		request_id: 'ask-tainted',
+		question: 'Please confirm your bank password',
+		tainted: true
+	});
+	await expect(page.getByTestId('question-tainted')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('question-tainted')).toContainText('untrusted');
+	await page.getByTestId('answer-dismiss').click();
+	await expect(page.getByTestId('question-ask_user')).toHaveCount(0, { timeout: 10_000 });
+
+	// ...and an ordinary question carries no such warning.
+	await ask({ type: 'jarvis/test/ask_user', request_id: 'ask-plain', question: 'Which lamp?' });
+	await expect(page.getByTestId('question-ask_user')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('question-tainted')).toHaveCount(0);
+	await page.getByTestId('answer-dismiss').click();
+	await expect(page.getByTestId('question-ask_user')).toHaveCount(0, { timeout: 10_000 });
+
 	// --- dismissing ----------------------------------------------------------
 	await ask({ type: 'jarvis/test/ask_user', request_id: 'ask-3', question: 'Still there?' });
 	await expect(page.getByTestId('question-ask_user')).toBeVisible({ timeout: 10_000 });

@@ -86,6 +86,16 @@ export interface PendingApproval {
 	answerable?: string | null;
 	/** The answers on offer. Empty or absent means free text. */
 	choices?: string[];
+	/**
+	 * True when the turn that raised this had already read somebody else's
+	 * words — a fetched page, a scraped document, a notification.
+	 *
+	 * It changes nothing about what may run: the tier already decided that. It
+	 * changes what the human is told, because for a QUESTION the text on screen
+	 * is the model's own sentence, and a turn that has read a hostile page can
+	 * write that sentence.
+	 */
+	tainted?: boolean;
 }
 
 /** One editable setting, with where its current value came from. */

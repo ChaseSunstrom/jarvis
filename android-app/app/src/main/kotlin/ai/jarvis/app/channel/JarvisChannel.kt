@@ -651,8 +651,14 @@ class JarvisChannel(
             ChannelFrames.TYPE_AUTH_REQUIRED -> {
                 current.quiet?.cancel()
                 setState(State.AUTHENTICATING)
-                // The ONLY place the token is transmitted, and it never appears
-                // in a URL, a header, or a log line.
+                // Where the token is transmitted to jarvis-core. It also rides
+                // the upgrade as an `Authorization` header now — see `dial()`,
+                // and note that this comment used to claim it never did. That
+                // is not a relaxation for convenience: jarvis-web's relay
+                // decides whether to pass a client through or authenticate on
+                // its behalf by whether the header is present, and without it
+                // the phone was silently never registered. It never appears in
+                // a URL or a log line, which is the part that still holds.
                 if (!current.send(ChannelFrames.auth(current.cfg.token))) {
                     current.finish("could not send the auth frame")
                 }

@@ -34,10 +34,15 @@ leave to the arithmetic being infeasible anyway.
 an authenticated client cannot make the store grow without bound by asking for
 codes in a loop.
 
-**Slow to attack.** Claims are rate limited per code-shaped attempt window;
-after :data:`MAX_ATTEMPTS` failures in :data:`ATTEMPT_WINDOW` the endpoint stops
-answering with anything useful at all, so a scripted sweep gets nowhere even if
-the entropy argument were somehow wrong.
+**Slow to attack, per caller.** After :data:`MAX_ATTEMPTS` failures in
+:data:`ATTEMPT_WINDOW` a caller stops being answered usefully, so a scripted
+sweep gets nowhere even if the entropy argument were somehow wrong.
+
+The counter is **per client**, and that is not a refinement — a global one is a
+denial of service. Anybody who can reach the endpoint could fail ten claims and
+lock pairing for everybody, then keep it locked by failing one more every few
+minutes. The operator would see "too many failed attempts" on a phone they had
+never paired. Keyed by caller, an attacker locks out only themselves.
 
 **Minting needs a second secret the relay does not hold.**
 :data:`ENV_PAIRING_SECRET` is the one rule here that is not obvious, and
@@ -90,9 +95,19 @@ CODE_TTL = 300.0
 #: Codes alive at once. A person pairs one phone at a time.
 MAX_OUTSTANDING = 8
 
-#: Failed claims tolerated inside [ATTEMPT_WINDOW] before the door shuts.
+#: Failed claims tolerated inside [ATTEMPT_WINDOW], per caller, before the
+#: door shuts on that caller.
 MAX_ATTEMPTS = 10
 ATTEMPT_WINDOW = 300.0
+
+#: Callers tracked at once. A spoofed source address cannot grow the failure
+#: map without bound; past this the oldest entry is dropped, which at worst
+#: forgives an attacker who was already being refused.
+MAX_TRACKED_CLIENTS = 256
+
+#: Used when the caller cannot be identified, so those attempts share one
+#: bucket rather than each getting a fresh allowance.
+UNKNOWN_CLIENT = "unknown"
 
 #: What a device is called when it does not say.
 DEFAULT_DEVICE_NAME = "Paired device"
@@ -115,7 +130,8 @@ class PairingCodes:
     """Live pairing codes, and the attempt counter that guards them."""
 
     codes: dict[str, _Code] = field(default_factory=dict)
-    failures: list[float] = field(default_factory=list)
+    #: caller -> the times it got a claim wrong, inside the window.
+    failures: dict[str, list[float]] = field(default_factory=dict)
 
     # --- issuing ------------------------------------------------------------
     def issue(self, now: float | None = None) -> _Code:
@@ -140,20 +156,33 @@ class PairingCodes:
         stale = [c for c, entry in self.codes.items() if entry.expires_at <= moment]
         for code in stale:
             del self.codes[code]
-        self.failures = [at for at in self.failures if moment - at < ATTEMPT_WINDOW]
+        for client in list(self.failures):
+            kept = [at for at in self.failures[client] if moment - at < ATTEMPT_WINDOW]
+            if kept:
+                self.failures[client] = kept
+            else:
+                del self.failures[client]
         return len(stale)
 
     # --- claiming -----------------------------------------------------------
-    def claim(self, offered: str, now: float | None = None) -> _Code:
+    def claim(
+        self, offered: str, now: float | None = None, client: str | None = None
+    ) -> _Code:
         """Spend a code, or raise. Removes it BEFORE returning it.
 
         The removal is what makes two devices racing the same code produce one
         token: whichever call reaches the pop first is the only one that can
         continue, exactly as a single-use approval works.
+
+        [client] identifies the caller for rate limiting. It is only ever used
+        as a bucket key — nothing is decided by it, so a spoofed value can win
+        an attacker a fresh allowance and nothing else, which is why the
+        entropy of the code is what the security actually rests on.
         """
         moment = time.time() if now is None else now
         self.purge(moment)
-        if len(self.failures) >= MAX_ATTEMPTS:
+        who = (client or UNKNOWN_CLIENT).strip()[:64] or UNKNOWN_CLIENT
+        if len(self.failures.get(who, ())) >= MAX_ATTEMPTS:
             raise PairingError(
                 "Too many failed pairing attempts. Wait a few minutes, then "
                 "generate a new code."
@@ -167,7 +196,13 @@ class PairingCodes:
             if hmac.compare_digest(code, candidate):
                 found = entry
         if found is None:
-            self.failures.append(moment)
+            if len(self.failures) >= MAX_TRACKED_CLIENTS and who not in self.failures:
+                # Oldest by its most recent failure. Dropping it forgives a
+                # caller that was already being refused, which is a far better
+                # failure than an unbounded map keyed by a spoofable value.
+                oldest = min(self.failures, key=lambda c: self.failures[c][-1])
+                del self.failures[oldest]
+            self.failures.setdefault(who, []).append(moment)
             raise PairingError("That pairing code is not valid, or it has expired.")
         del self.codes[found.code]
         return found
@@ -225,7 +260,9 @@ async def async_issue(jarvis: "Jarvis", payload: dict[str, Any] | None = None) -
     }
 
 
-async def async_claim(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+async def async_claim(
+    jarvis: "Jarvis", payload: dict[str, Any], client: str | None = None
+) -> dict[str, Any]:
     """Exchange a code for a real token. Unauthenticated, and single use."""
     from ..auth import get_auth
 
@@ -237,7 +274,7 @@ async def async_claim(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, An
         raise PairingError("This server has no token store, so it cannot pair a device.")
     # The code is spent BEFORE anything else can fail, which is what decides a
     # race between two devices holding the same photograph of the same screen.
-    entry = get_codes(jarvis).claim(payload.get("code"))
+    entry = get_codes(jarvis).claim(payload.get("code"), client=client)
     name = str(payload.get("name") or DEFAULT_DEVICE_NAME).strip()[:MAX_NAME_CHARS]
     info, secret = await auth.create_token(name or DEFAULT_DEVICE_NAME)
     _LOGGER.info("Paired a new device as %r (token %s)", info.name, info.id)

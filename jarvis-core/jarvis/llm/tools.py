@@ -108,6 +108,13 @@ MAX_CHOICE_CHARS = 80
 #: What a human typed, on its way back into the conversation.
 MAX_ANSWER_CHARS = 1000
 
+#: Bounds on a tool-lifecycle event, which is broadcast to every subscriber.
+#: The surfaces that draw these show one line; the model chooses the size of
+#: what it passes, so the two need a limit between them.
+MAX_EVENT_ARGS = 24
+MAX_EVENT_KEY_CHARS = 64
+MAX_EVENT_VALUE_CHARS = 512
+
 # Domains an assistant may reasonably see when nothing is configured.
 DEFAULT_EXPOSED_DOMAINS = frozenset(
     {
@@ -605,6 +612,10 @@ class PendingRequest:
     #: Empty means free text.
     choices: tuple[str, ...] = ()
 
+    #: True when the turn that raised this had already read somebody else's
+    #: words. Carried to every consent surface so a human can see it.
+    tainted: bool = False
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.id,
@@ -615,7 +626,38 @@ class PendingRequest:
             "expires_at": self.expires_at,
             "answerable": self.answerable,
             "choices": list(self.choices),
+            "tainted": self.tainted,
         }
+
+
+def _bounded(data: dict[str, Any]) -> dict[str, Any]:
+    """A lifecycle event's payload, with the model-sized parts cut down.
+
+    Only `arguments` and `error` are touched, because they are the only fields
+    whose size the model or a tool decides. The counts and the name are ours.
+    """
+    if not isinstance(data.get("arguments"), dict) and "error" not in data:
+        return data
+    out = dict(data)
+    arguments = out.get("arguments")
+    if isinstance(arguments, dict):
+        out["arguments"] = {
+            str(key)[:MAX_EVENT_KEY_CHARS]: _short(value)
+            for key, value in list(arguments.items())[:MAX_EVENT_ARGS]
+        }
+    if isinstance(out.get("error"), str):
+        out["error"] = out["error"][:MAX_EVENT_VALUE_CHARS]
+    return out
+
+
+def _short(value: Any) -> Any:
+    """One argument value, small enough to broadcast."""
+    if isinstance(value, str):
+        return value[:MAX_EVENT_VALUE_CHARS]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    text = str(value)
+    return text[:MAX_EVENT_VALUE_CHARS]
 
 
 def _choice_list(arguments: dict[str, Any]) -> tuple[str, ...]:
@@ -765,6 +807,32 @@ class ToolRegistry:
                 return True
         return False
 
+    def _is_tainted(self, context: Any) -> bool:
+        """Has this turn already read something a stranger wrote?
+
+        The tier system answers "may this run without a human"; it cannot
+        answer "should the human believe the words on the screen". For an
+        ACTION the two coincide — the human is shown pinned entity ids, which
+        injected text cannot forge. For a QUESTION they do not: `ask_user`
+        renders the model's own sentence on a consent surface, so a turn that
+        has read a hostile web page can put "What is your bank password?" in
+        front of somebody in Jarvis's voice.
+
+        Nothing here refuses. Refusing would break the legitimate case — a turn
+        that read a page and needs to ask which of three results was meant —
+        and a question is not an action either way. What it does is tell the
+        surface, so the surface can say where the words came from and the human
+        can decide. That is the same principle as fencing untrusted text for
+        the model, applied to the one path that shows model text to a person.
+        """
+        try:
+            from ..api.devices import get_untrusted_turns
+
+            return get_untrusted_turns(self.jarvis).is_tainted(context)
+        except Exception:  # pragma: no cover - absent integration, never a crash
+            _LOGGER.debug("Could not read the taint flag", exc_info=True)
+            return False
+
     def _pinned_arguments(self, tool: Tool, args: dict[str, Any]) -> dict[str, Any]:
         """Freeze a held action onto concrete targets.
 
@@ -806,6 +874,7 @@ class ToolRegistry:
             # so offering it choices would be offering a control that does
             # nothing.
             choices=_choice_list(args) if tool.answerable else (),
+            tainted=self._is_tainted(context),
         )
         self._pending[request.id] = request
         payload = request.as_dict()
@@ -888,8 +957,15 @@ class ToolRegistry:
         Exception-safe like every other `_fire` here: a surface that is not
         listening, or one that throws, must not fail the tool call it was only
         meant to be watching.
+
+        The arguments are bounded before they go out. These events reach every
+        `subscribe_events` subscriber — which through the console's relay is
+        anything that can open a socket to it — and an argument is a value the
+        MODEL chose the size of. A tool called with a megabyte of text would
+        otherwise be copied to every listening surface, and the row that
+        renders it shows about forty characters.
         """
-        self._fire(event_type, data, context)
+        self._fire(event_type, _bounded(data), context)
 
     def pending_requests(self) -> list[dict[str, Any]]:
         self.purge_expired()

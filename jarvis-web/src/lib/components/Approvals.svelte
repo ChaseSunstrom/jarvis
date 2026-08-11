@@ -185,10 +185,27 @@
 				  "APPROVE / DENY" is the wrong pair of words for "which lamp did
 				  you mean?", so it gets the shape of the thing it is.
 				-->
-				<div class="req question" data-testid="question-{req.tool}">
+				<div class="req question" class:tainted={req.tainted} data-testid="question-{req.tool}">
 					<div class="what">
 						<b data-testid="question-text">{questionOf(req)}</b>
-						<span class="desc">Jarvis is waiting for your answer</span>
+						{#if req.tainted}
+							<!--
+							  Where the words came from. This turn read something a
+							  stranger wrote before it composed this question, and
+							  the question is rendered verbatim — so the sentence
+							  above may have been written by whatever it read
+							  rather than by Jarvis. Nothing is blocked; the tier
+							  already decided what may run. The human is simply
+							  told, which is the only defence that works against a
+							  sentence that is legitimate half the time.
+							-->
+							<span class="desc warn" data-testid="question-tainted">
+								This turn read something from outside your house before asking. Treat the
+								wording above as untrusted — never type a password or a code into it.
+							</span>
+						{:else}
+							<span class="desc">Jarvis is waiting for your answer</span>
+						{/if}
 					</div>
 					{#if left !== null}
 						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
@@ -244,9 +261,14 @@
 					</button>
 				</div>
 			{:else}
-				<div class="req" data-testid="approval-{req.tool}">
+				<div class="req" class:tainted={req.tainted} data-testid="approval-{req.tool}">
 					<div class="what">
 						<b>{req.tool}</b>
+						{#if req.tainted}
+							<span class="desc warn" data-testid="approval-tainted">
+								Raised by a turn that read something from outside your house.
+							</span>
+						{/if}
 						{#if req.description}<span class="desc">{req.description}</span>{/if}
 						<span class="args" data-testid="approval-args-{req.tool}">{summarise(req)}</span>
 					</div>
@@ -299,6 +321,14 @@
 	.answer {
 		flex: 1 1 14rem;
 		min-width: 0;
+	}
+	/* Louder than the ordinary accent, quieter than a denial: this is a
+	   provenance note, not a failure. */
+	.req.tainted {
+		border-left-color: var(--jv-warn, #ffb347);
+	}
+	.desc.warn {
+		color: var(--jv-warn, #ffb347);
 	}
 	.choices {
 		display: flex;

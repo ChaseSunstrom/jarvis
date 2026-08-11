@@ -854,6 +854,11 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 						arguments: { question: msg.question ?? 'Which lamp did you mean?' },
 						choices: Array.isArray(msg.choices) ? msg.choices : [],
 						answerable: 'answer',
+						// Whether the turn that asked had already read somebody
+						// else's words. The console renders the question
+						// verbatim, so this is what lets a human tell a real
+						// question from one an injected page wrote.
+						tainted: Boolean(msg.tainted),
 						tier: 3,
 						created: Date.now() / 1000,
 						expires_at: Date.now() / 1000 + 300
