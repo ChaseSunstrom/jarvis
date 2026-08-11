@@ -40,6 +40,24 @@ class JarvisConversation(
      * yet, the first buffer really is the room, and the ratios apply at once.
      */
     private val speechAlreadyUnderway: Boolean = false,
+    /**
+     * True when this conversation is the screen's resting state rather than
+     * something the user started and will finish.
+     *
+     * [MainActivity][ai.jarvis.app.MainActivity] holds one of these open for as
+     * long as it is in the foreground, so silence is the NORMAL condition here
+     * — a room with nobody talking in it — where for a tapped or wake-word
+     * conversation silence means the turn failed. That single difference is
+     * what this flag buys, and it changes exactly one behaviour: what
+     * [inactivity] does when it finds nothing was said.
+     *
+     * It does NOT mean "never time out". The dead-microphone diagnosis is worth
+     * more here than anywhere else — a phone that is supposed to be listening
+     * all the time and is in fact deaf looks precisely like a quiet room — so
+     * the timer still runs. It reports and re-arms instead of tearing the
+     * session down.
+     */
+    private val continuous: Boolean = false,
 ) : AssistPipelineClient.Callbacks {
 
     interface Ui {
@@ -99,6 +117,8 @@ class JarvisConversation(
     private val vad = VoiceActivity(speechAlreadyUnderway = speechAlreadyUnderway)
     private var sawSpeech = false
     private var turnActive = false
+    /** Whether [DEAD_MIC] has already been said this conversation. See [inactivity]. */
+    private var reportedDeafness = false
     /** True once the pipeline reached LISTENING at least once this conversation. */
     private var reachedListening = false
     private var responseBuffer = StringBuilder()
@@ -115,6 +135,22 @@ class JarvisConversation(
      */
     private val inactivity = Runnable {
         if (!isListening()) return@Runnable
+        if (continuous) {
+            // The screen is meant to be listening, so "nobody said anything"
+            // is not a fault and must not close anything or say a word. The one
+            // thing worth interrupting for is a microphone that is not merely
+            // quiet but DEAD — handing back digital silence — because that is
+            // indistinguishable from a quiet room from the outside and would
+            // otherwise leave the phone looking attentive and stone deaf for as
+            // long as the user cared to stare at it. Reported once per session
+            // rather than every cycle: it is a standing condition, not news.
+            if (vad.peak <= VoiceActivity.DEAD_MIC_LEVEL && !reportedDeafness) {
+                reportedDeafness = true
+                ui.onError(DEAD_MIC)
+            }
+            main.postDelayed(inactivity, inactivityMs)
+            return@Runnable
+        }
         if (sawSpeech) {
             stopWith(idle = true)
         } else {
@@ -321,6 +357,7 @@ class JarvisConversation(
         running = false
         vad.reset()
         reachedListening = false
+        reportedDeafness = false
         main.removeCallbacks(inactivity)
         main.removeCallbacks(handshake)
         main.removeCallbacks(turnCap)

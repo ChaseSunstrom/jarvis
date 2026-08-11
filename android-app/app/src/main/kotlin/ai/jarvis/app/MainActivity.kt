@@ -19,19 +19,34 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
  * The Jarvis home — the face of the app. Opening it lands on the orb, not a
- * dashboard: tap to talk, watch the transcript and the reply, and get to the
- * other surfaces from the bottom row.
+ * dashboard: it is already listening, and MANAGE is the way to everything else.
+ *
+ * **There is no talk button.** *"is there a way you can get rid of the push to
+ * talk button ... and have it just listen for the wake word? or when the mobile
+ * app is open directly, to constantly listen"* — so opening this screen IS the
+ * activation gesture. [resumeHandsFree] starts a [continuous]
+ * [JarvisConversation] on every resume and [releaseTheMic] ends it on every
+ * pause, which makes the microphone's lifetime exactly the lifetime of a screen
+ * the user is looking at. That is the property that makes an always-open mic
+ * defensible: it is open while its own UI is in front of you, saying so.
+ *
+ * The pill that used to say TAP TO SPEAK is a mute, because an always-on
+ * microphone with no off switch is not a thing to ship. Muting is remembered
+ * ([JarvisConfig.micMuted]) — a kill switch that forgets is not one.
+ *
+ * When this screen is NOT in front of you, "Hey Jarvis" is the way in, via
+ * [WakeWordService]. The two never hold the microphone at once: the wake
+ * listener is paused for as long as this screen owns it, because two
+ * AudioRecords on one device is a coin toss over which gets the audio.
  *
  * The conversation itself is [JarvisConversation], the same engine the assist
  * popup uses, so the two behave identically down to the barge-in timing.
@@ -48,7 +63,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
     private lateinit var toolActivityView: ToolActivityView
-    private lateinit var talkButton: Button
+    private lateinit var muteButton: Button
     private lateinit var listenButton: Button
     private lateinit var listenReason: TextView
     private lateinit var config: JarvisConfig
@@ -60,6 +75,25 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     private var convo: JarvisConversation? = null
     private var boot: JarvisBootAnimation? = null
+
+    /** True between [onResume] and [onPause]: whether this screen may hold the mic. */
+    private var inForeground = false
+
+    /**
+     * How long to wait before opening the mic again after a conversation ended
+     * badly, in ms. Zero when the last one ended cleanly.
+     *
+     * Hands-free means [onIdle] re-opens the microphone, and an unreachable
+     * server fails in well under a second — so without this, a wrong URL is an
+     * unbounded reconnect loop that heats the phone and rewrites the error
+     * message faster than it can be read. Doubles per consecutive failure and
+     * is cleared by any conversation that reaches LISTENING.
+     */
+    private var restartBackoffMs = 0L
+
+    /** The pending hands-free restart, so pausing can cancel one mid-flight. */
+    private val restart = Runnable { resumeHandsFree() }
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** Set before the layout is built, so the orb knows not to play its entrance. */
     private var coldStart = false
@@ -88,6 +122,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     override fun onResume() {
         super.onResume()
+        inForeground = true
         askForNotificationsOnce()
         startAutomationLayer()
         // Settings may have changed the server behind our back.
@@ -100,6 +135,74 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         if (!booting) refreshStatusBanner()
         if (::listenButton.isInitialized) refreshListening()
         openSystemCheckOnceIfSetupIsIncomplete()
+        resumeHandsFree()
+    }
+
+    /**
+     * Leaving the screen closes the microphone. Every time, no exceptions.
+     *
+     * `onPause` rather than `onStop`: the moment another window is in front of
+     * this one — a dialog, the recents switcher, the notification shade pulled
+     * down over it — the user is no longer looking at the screen that says
+     * LISTENING, and an open mic behind somebody else's UI is the thing this
+     * design must never do. It costs a re-open when they come back, which is
+     * a socket and a couple of hundred milliseconds.
+     */
+    override fun onPause() {
+        inForeground = false
+        releaseTheMic()
+        super.onPause()
+    }
+
+    /**
+     * Open the microphone, if this screen is allowed to have it.
+     *
+     * Every "no" here is silent and ordinary rather than an error: not
+     * configured yet, no permission granted, muted, or the power-on still
+     * playing. The screen already says what is missing — the setup banner, the
+     * mute pill's own label — and a second voice saying it in the response
+     * field would be noise on the first screen of the app.
+     */
+    private fun resumeHandsFree() {
+        handler.removeCallbacks(restart)
+        if (!inForeground || booting) return
+        if (convo?.isRunning == true) return
+        if (!config.isConfigured || config.micMuted) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+
+        // The wake listener goes quiet first and is only resumed in
+        // releaseTheMic(), so the two never contend. Ordering matters: pausing
+        // after the conversation has opened its recorder is the race, not the
+        // fix for it.
+        runCatching { WakeWordService.pause(this) }
+        transcriptView.text = ""
+        responseView.text = ""
+        toolActivityView.hide()
+        convo = JarvisConversation(
+            this,
+            config,
+            this,
+            inactivityMs = DEAF_CHECK_MS,
+            continuous = true,
+        ).also { it.start() }
+        refreshMuteButton()
+    }
+
+    /**
+     * Give the microphone back — to the wake listener, or to whatever else on
+     * the phone wants it.
+     */
+    private fun releaseTheMic() {
+        handler.removeCallbacks(restart)
+        convo?.stop()
+        convo = null
+        // Only if it is supposed to be running at all; resuming a listener the
+        // user has switched off would turn leaving this screen into a way to
+        // switch it back on.
+        if (config.wakeWordEnabled) runCatching { WakeWordService.resume(this) }
+        if (::muteButton.isInitialized) refreshMuteButton()
     }
 
     /**
@@ -226,6 +329,12 @@ class MainActivity : Activity(), JarvisConversation.Ui {
                 homeControls.alpha = 1f
                 showIdle()
                 refreshStatusBanner()
+                // And open the microphone, which onResume declined to do while
+                // this was playing. Without it a COLD start — the launch from
+                // the home screen, the commonest way into this app — is the one
+                // case that ends up not listening, because the only other
+                // caller is a resume that already happened.
+                resumeHandsFree()
             }
         }
         boot = animation
@@ -284,7 +393,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         transcriptView = JarvisUi.transcriptView(this)
         responseView = JarvisUi.responseView(this)
         toolActivityView = ToolActivityView(this)
-        talkButton = JarvisUi.pill(this, "TAP TO SPEAK") { toggleTalk() }
+        muteButton = JarvisUi.pill(this, "LISTENING — TAP TO MUTE") { toggleMute() }
 
         // The always-on listener's actual state, on the screen the user opens.
         //
@@ -302,66 +411,26 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             setPadding(0, JarvisUi.dp(this@MainActivity, 4), 0, 0)
         }
 
-        // The console's own nav, on the phone, in the console's order.
+        // One way in to everything that is not this screen.
         //
-        // It used to be MANAGE / AUTOMATIONS / SETTINGS, and only one of those
-        // three had a counterpart in the browser: MANAGE opened the console's
-        // front door with no way on to its other four sections, SETTINGS opened
-        // a native screen about this phone, and AUTOMATIONS opened a native
-        // screen listing the tasks THIS PHONE runs by itself — a different
-        // thing from the house's automations that happens to share a word.
-        // Which is the whole of "it feels weird that it's kind of similar but
-        // not really". See ConsoleTab.
+        // This was six buttons — the console's five sections plus PHONE — which
+        // was itself a fix for three buttons that went to unrelated places. But
+        // *"the buttons on the home screen take you to basically the web app
+        // view, why dont you just have a MANAGE button"*: the console frame
+        // already carries the very same nav as a tab strip, so the home screen
+        // was drawing a second copy of somebody else's navigation and had to be
+        // kept in step with it by a parity test. Six buttons that open one
+        // screen at six scroll positions is one button.
         //
-        // A grid rather than a scrolling strip, and the two are not equal on a
-        // HOME screen: a horizontal scroller hides whatever is past the right
-        // edge, so TOOLS and PHONE would be discoverable only by a swipe nobody
-        // is told about — a worse version of the problem being fixed. Two rows
-        // of three show all six at once. The console frame keeps the scroller,
-        // because there it mirrors the browser's own nav bar.
-        val navGap = JarvisUi.dp(this, 4)
-        val nav = GridLayout(this).apply {
-            columnCount = NAV_COLUMNS
-            useDefaultMargins = false
+        // PHONE went with them, and did not simply move: it is a tab in that
+        // strip now (see ConsoleTab.PHONE and ManagementActivity), so the
+        // phone's own settings and the house's sit in one frame wearing the
+        // same chrome instead of being a native screen off to one side.
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, JarvisUi.dp(this@MainActivity, 14), 0, 0)
-        }
-        val navButtons = ConsoleTab.entries.map { tab ->
-            JarvisUi.ghost(this, tab.label) { openConsole(tab) }
-        } + JarvisUi.ghost(this, ConsoleTab.PHONE_LABEL) { openSettings() }
-        // The mobile half is last and deliberately not called Settings: a button
-        // named Settings beside a tab named SETTINGS is how the phone's own
-        // configuration and the house's got confused to begin with.
-        for (button in navButtons) {
-            // AUTOMATIONS is eleven letter-spaced monospace characters and has
-            // to fit a third of a 360dp screen. Auto-sizing rather than a
-            // smaller fixed size, because "does the longest label fit" is a
-            // question about a font on a device rather than one that can be
-            // answered here with arithmetic — and the failure is a clipped word
-            // on the first screen of the app.
-            //
-            // Order matters: `setTextSize` AFTER enabling auto-sizing throws.
-            // JarvisUi.ghost sets it before this runs, which is why this reads
-            // as though nothing sets a size at all.
-            button.setPadding(
-                JarvisUi.dp(this, 8),
-                JarvisUi.dp(this, 10),
-                JarvisUi.dp(this, 8),
-                JarvisUi.dp(this, 10),
-            )
-            button.setSingleLine(true)
-            button.setAutoSizeTextTypeUniformWithConfiguration(
-                NAV_TEXT_MIN_SP, NAV_TEXT_MAX_SP, 1, TypedValue.COMPLEX_UNIT_SP,
-            )
-            nav.addView(
-                button,
-                GridLayout.LayoutParams().apply {
-                    width = 0
-                    height = ViewGroup.LayoutParams.WRAP_CONTENT
-                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, GridLayout.FILL, 1f)
-                    rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, GridLayout.FILL, 0f)
-                    setMargins(navGap, navGap, navGap, navGap)
-                }
-            )
+            addView(JarvisUi.ghost(this@MainActivity, "MANAGE") { openConsole(ConsoleTab.DEFAULT) })
         }
 
         col.addView(
@@ -381,7 +450,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         col.addView(transcriptView)
         col.addView(responseView)
         col.addView(
-            talkButton,
+            muteButton,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -512,27 +581,61 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     // --- actions ------------------------------------------------------------
 
-    private fun toggleTalk() {
-        // A tap during the power-on means "skip it", not "start talking".
+    /**
+     * The one control on the home screen: close the microphone, or open it.
+     *
+     * This is where TAP TO SPEAK used to be, and it is deliberately the
+     * opposite kind of thing. That button was the only way to be heard; this
+     * one is the only way NOT to be. Everything else it used to do — asking for
+     * the permission, complaining about an unconfigured server — belongs to the
+     * paths that already handle those, so a tap here means one thing.
+     */
+    private fun toggleMute() {
+        // A tap during the power-on means "skip it", exactly as it always did.
         boot?.let { it.skip(); return }
 
-        val c = convo
-        if (c != null && c.isRunning) {
-            c.stop(); showIdle(); return
-        }
         if (!config.isConfigured) {
             openSettings(); return
         }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+        if (!config.micMuted &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
+            // Unmuted and deaf: the grant is what is actually being asked for.
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC); return
         }
-        transcriptView.text = ""
-        responseView.text = ""
-        toolActivityView.hide()
-        talkButton.text = "LISTENING… (TAP TO STOP)"
-        convo = JarvisConversation(this, config, this, inactivityMs = 12000L).also { it.start() }
+
+        config.micMuted = !config.micMuted
+        restartBackoffMs = 0
+        if (config.micMuted) {
+            convo?.stop()
+            convo = null
+            if (config.wakeWordEnabled) runCatching { WakeWordService.resume(this) }
+            showIdle()
+        } else {
+            resumeHandsFree()
+        }
+        refreshMuteButton()
+    }
+
+    /**
+     * What the pill says, which is the only place the screen states whether it
+     * can hear you.
+     *
+     * Four distinguishable conditions, because "MUTED" covering all of them is
+     * how a phone that cannot hear looks identical to one that has been told
+     * not to.
+     */
+    private fun refreshMuteButton() {
+        if (!::muteButton.isInitialized) return
+        val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        muteButton.text = when {
+            !config.isConfigured -> "SET UP JARVIS"
+            config.micMuted -> "MUTED — TAP TO LISTEN"
+            !granted -> "GRANT THE MICROPHONE"
+            else -> "LISTENING — TAP TO MUTE"
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -543,7 +646,10 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_MIC &&
             grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        ) toggleTalk()
+        ) resumeHandsFree()
+        // A REFUSED microphone has to move the pill too, or the screen goes on
+        // claiming LISTENING at somebody who has just said no.
+        if (requestCode == REQ_MIC) refreshMuteButton()
         // Either answer changes the checklist, and the banner is the only place
         // the home screen says anything about its own health.
         if (requestCode == REQ_NOTIFICATIONS && !booting) refreshStatusBanner()
@@ -588,9 +694,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         orbView.setAmplitude(0f)
         orbView.setMode(JarvisOrbView.Mode.IDLE)
         orbView.setStateLabel(IDLE_CAPTION)
-        talkButton.text = "TAP TO SPEAK"
+        refreshMuteButton()
         if (!config.isConfigured) {
-            responseView.text = "Tap SETTINGS to point me at your Jarvis server."
+            responseView.text = "Tap MANAGE to point me at your Jarvis server."
         }
     }
 
@@ -599,10 +705,15 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     override fun onMode(mode: JarvisOrbView.Mode, label: String) {
         orbView.setMode(mode)
         orbView.setStateLabel(label)
-        talkButton.text = when (label) {
-            "LISTENING" -> "LISTENING… (TAP TO STOP)"
-            else -> "$label… (TAP TO STOP)"
-        }
+        // Reaching LISTENING is the proof that the whole chain works — socket,
+        // token, pipeline, microphone — so it is what clears the backoff.
+        // Clearing on start instead would reset it on the very failure it
+        // exists to slow down.
+        if (label == "LISTENING") restartBackoffMs = 0
+        // The pill stays a mute. It used to mirror the state word, which made
+        // the only off switch read as a status line and change what a tap did
+        // depending on when it landed.
+        refreshMuteButton()
     }
 
     override fun onAmplitude(level: Float) = orbView.setAmplitude(level)
@@ -623,7 +734,29 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     override fun onTools(run: ToolRun) = toolActivityView.render(run)
 
-    override fun onIdle() = showIdle()
+    /**
+     * A conversation ended. On a screen with no talk button, that is not a
+     * resting state — it is a gap in the one thing this screen does.
+     *
+     * A continuous conversation only ends badly: the socket dropped, the
+     * server refused, the pipeline errored. So this always re-opens, and the
+     * backoff is what keeps "always" from meaning "as fast as the failure
+     * repeats". It is cleared the moment a conversation gets as far as
+     * LISTENING (see [onMode]), so a single flaky reconnect costs a second and
+     * a genuinely unreachable server settles at one attempt every 30.
+     */
+    override fun onIdle() {
+        showIdle()
+        convo = null
+        if (!inForeground || config.micMuted || !config.isConfigured) return
+        restartBackoffMs = if (restartBackoffMs <= 0) {
+            RESTART_BACKOFF_MS
+        } else {
+            minOf(restartBackoffMs * 2, RESTART_BACKOFF_MAX_MS)
+        }
+        handler.removeCallbacks(restart)
+        handler.postDelayed(restart, restartBackoffMs)
+    }
 
     override fun onDestroy() {
         convo?.stop()
@@ -643,16 +776,20 @@ class MainActivity : Activity(), JarvisConversation.Ui {
 
     companion object {
         /**
-         * Columns in the home screen's nav grid.
+         * How often the hands-free screen checks that it can still hear.
          *
-         * Three, so the console's five sections plus PHONE come out as two even
-         * rows of three with nothing hidden past an edge.
+         * Not an inactivity timeout — a continuous conversation has none, since
+         * silence is what a room full of nobody talking sounds like. This is
+         * only the period at which a DEAD microphone is looked for; see
+         * JarvisConversation.inactivity. Long enough to be free, short enough
+         * that a phone which cannot hear says so while the user is still
+         * holding it.
          */
-        private const val NAV_COLUMNS = 3
+        private const val DEAF_CHECK_MS = 20_000L
 
-        /** Auto-sizing bounds for the nav labels, in sp. */
-        private const val NAV_TEXT_MIN_SP = 8
-        private const val NAV_TEXT_MAX_SP = 12
+        /** First backoff after a conversation that failed, and its ceiling. */
+        private const val RESTART_BACKOFF_MS = 1_500L
+        private const val RESTART_BACKOFF_MAX_MS = 30_000L
 
         private const val REQ_MIC = 4712
         private const val REQ_NOTIFICATIONS = 4713

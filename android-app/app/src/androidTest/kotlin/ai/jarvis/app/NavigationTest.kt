@@ -88,6 +88,11 @@ class NavigationTest {
         // PHONE, not SETTINGS. SETTINGS is one of the console's tabs and is the
         // HOUSE's settings; this one is the mobile half — permissions, the wake
         // word, which server this device talks to.
+        //
+        // Reached through MANAGE now rather than from the home screen directly:
+        // PHONE is one of the tabs in the console frame's strip, so the phone's
+        // own half and the house's sit in one place under one nav.
+        tap("MANAGE")
         val settings = Activities.expect(SettingsActivity::class.java) {
             tap(ConsoleTab.PHONE_LABEL)
         }
@@ -101,35 +106,48 @@ class NavigationTest {
     }
 
     @Test
-    fun everyConsoleTabIsOnTheHomeScreen() {
+    fun everyConsoleTabIsReachableFromManage() {
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
         // The property the user asked for in words: the phone is not a
-        // different screen from the web view. Every section the console has,
-        // the home screen offers — by the console's own label, so a page added
-        // to one and not the other is a failure here rather than a surprise on
-        // somebody's phone.
+        // different screen from the web view. Every section the console has is
+        // offered by the console's own label, so a page added to one and not
+        // the other is a failure here rather than a surprise on somebody's
+        // phone.
+        //
+        // Behind MANAGE rather than on the home screen, which is the change:
+        // the strip that offers them is the one the console frame draws, not a
+        // second copy the home screen kept in step by hand.
+        tap("MANAGE")
         for (tab in ConsoleTab.entries) {
-            Waits.until("the home screen to offer the console's ${tab.label} tab") {
+            Waits.until("the console frame to offer its ${tab.label} tab") {
                 Device.ui.findObject(By.text(Views.textIgnoringCase(tab.label))) != null
             }
         }
+        // And the mobile half, in the same strip, which is the other half of
+        // deduplicating the two.
+        Waits.until("the console frame to offer ${ConsoleTab.PHONE_LABEL}") {
+            Device.ui.findObject(
+                By.text(Views.textIgnoringCase(ConsoleTab.PHONE_LABEL))
+            ) != null
+        }
 
-        Screenshots.take("NavigationTest-home-console-tabs")
+        Screenshots.take("NavigationTest-console-tabs")
     }
 
     @Test
-    fun homeTalkButtonSendsAnUnconfiguredUserToSettings() {
+    fun homeMuteButtonSendsAnUnconfiguredUserToSettings() {
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
-        // With no server configured, tapping the orb control must not start a
-        // conversation with nobody — it must take the user somewhere useful.
-        val settings = Activities.expect(SettingsActivity::class.java) { tap("TAP TO SPEAK") }
+        // With no server configured the pill says so, and tapping it must take
+        // the user somewhere useful rather than toggling a mute on a
+        // microphone that has nowhere to send anything.
+        val settings = Activities.expect(SettingsActivity::class.java) { tap("SET UP JARVIS") }
         Activities.awaitResumed(settings)
 
-        Screenshots.take("NavigationTest-talk-unconfigured")
+        Screenshots.take("NavigationTest-mute-unconfigured")
     }
 
     // --- SettingsActivity ---------------------------------------------------

@@ -86,13 +86,13 @@ class AppLaunchTest {
         // the failure carries the whole window dump: on a screen with no
         // resource ids, "no view matched" is otherwise unactionable.
         val device = Device.ui
-        // The console's own sections, plus the one entry that is not the
-        // console's. See ConsoleTab: the home screen used to offer MANAGE /
-        // AUTOMATIONS / SETTINGS, and only one of those three had a counterpart
-        // in the browser.
-        val labels = listOf("TAP TO SPEAK") +
-            ConsoleTab.entries.map { it.label } +
-            ConsoleTab.PHONE_LABEL
+        // Two controls, which is the whole home screen now: the mute — the only
+        // voice control left, since opening the app opens the microphone — and
+        // MANAGE, which is the one way to everything else. The console's
+        // sections are NOT here any more; they are the tab strip inside the
+        // console frame, and a second copy of them on this screen is exactly
+        // what had to be kept in step by hand. See ConsoleFrame.
+        val labels = listOf("SET UP JARVIS", "MANAGE")
         for (label in labels) {
             Waits.until("the home screen to show \"$label\"") {
                 device.findObject(By.text(Views.textIgnoringCase(label))) != null

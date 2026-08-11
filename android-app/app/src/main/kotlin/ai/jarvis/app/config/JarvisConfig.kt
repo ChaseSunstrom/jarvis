@@ -191,6 +191,24 @@ class JarvisConfig(context: Context) {
         get() = prefs.getBoolean(KEY_WAKE_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_WAKE_ENABLED, v).apply()
 
+    /**
+     * The microphone is off, by the user's choice, on the home screen.
+     *
+     * [ai.jarvis.app.MainActivity] has no talk button — opening it opens the
+     * mic — so this is the off switch, and it is persisted because a kill
+     * switch that forgets across a restart is not a kill switch. It governs
+     * that screen only: "Hey Jarvis" has its own master switch in
+     * [wakeWordEnabled], and muting the screen you are looking at should not
+     * silently disarm the listener that works when you are not.
+     *
+     * Defaults to false, which is what "just listen when the app is open"
+     * means. The permission is still the real gate — this cannot open a
+     * microphone Android has not granted.
+     */
+    var micMuted: Boolean
+        get() = prefs.getBoolean(KEY_MIC_MUTED, false)
+        set(v) = prefs.edit().putBoolean(KEY_MIC_MUTED, v).apply()
+
     /** Listen whenever the car's Bluetooth is connected, hour of day ignored. */
     var wakeInCar: Boolean
         get() = prefs.getBoolean(KEY_WAKE_IN_CAR, true)
@@ -263,6 +281,7 @@ class JarvisConfig(context: Context) {
         private const val KEY_STT_ON_DEVICE = "stt_on_device"
         private const val KEY_STT_LANGUAGE = "stt_language"
         private const val KEY_WAKE_ENABLED = "wake_enabled"
+        private const val KEY_MIC_MUTED = "mic_muted"
         private const val KEY_WAKE_IN_CAR = "wake_in_car"
         private const val KEY_WAKE_AT_HOME = "wake_at_home"
         private const val KEY_WAKE_HOUR_START = "wake_hour_start"

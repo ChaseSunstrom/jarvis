@@ -4,6 +4,7 @@ import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.config.ServerKind
 import ai.jarvis.app.config.Origin
 import ai.jarvis.app.config.ServerUrl
+import ai.jarvis.app.ui.ConsoleFrame
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisUi
 import android.Manifest
@@ -27,7 +28,6 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -78,7 +78,8 @@ class ManagementActivity : Activity() {
     private var webView: WebView? = null
     private var serverOrigin: Origin? = null
     private var tab: ConsoleTab = ConsoleTab.DEFAULT
-    private val tabButtons = mutableListOf<TextView>()
+    /** Holds the tab strip, so marking the current tab can rebuild it. */
+    private var tabSlot: FrameLayout? = null
 
     /**
      * Set while an app-initiated navigation is in flight. See [onBackPressed].
@@ -186,8 +187,17 @@ class ManagementActivity : Activity() {
         // because the page's own nav is inside a WebView whose links do not
         // carry the bearer header. Switching here re-issues an authenticated
         // navigation, which is the only kind that works.
-        root.addView(
+        val slot = FrameLayout(this)
+        tabSlot = slot
+        slot.addView(
             tabBar(),
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        root.addView(
+            slot,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -201,52 +211,34 @@ class ManagementActivity : Activity() {
         return root
     }
 
-    /** The tab strip, matching the console's own and in the console's order. */
-    private fun tabBar(): ViewGroup {
-        val strip = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            val p = JarvisUi.dp(this@ManagementActivity, 12)
-            setPadding(p, 0, p, JarvisUi.dp(this@ManagementActivity, 10))
-        }
-        for (entry in ConsoleTab.entries) {
-            val button = JarvisUi.ghost(this, entry.label) { load(entry) }
-            button.tag = entry
-            tabButtons += button
-            strip.addView(button)
-            if (entry != ConsoleTab.entries.last()) {
-                strip.addView(
-                    android.view.View(this),
-                    LinearLayout.LayoutParams(JarvisUi.dp(this, 8), 1)
-                )
-            }
-        }
-        // Scrolls, because five monospace labels do not fit a phone's width and
-        // the alternative is a nav that wraps into two ragged lines.
-        return HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            // Fills the width when the tabs fit and scrolls when they do not.
-            isFillViewport = true
-            // FrameLayout params, not LinearLayout's: HorizontalScrollView IS a
-            // FrameLayout, and FrameLayout.onMeasure casts its child's
-            // LayoutParams — the wrong type is a ClassCastException on the
-            // first measure pass rather than a layout that looks a bit off.
-            addView(
-                strip,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            )
-        }
-    }
+    /**
+     * The tab strip, matching the console's own and in the console's order —
+     * plus PHONE, which is this handset rather than the house. Built by
+     * [ConsoleFrame] because the settings screen shows the same strip, and two
+     * copies of one nav is what this change exists to stop.
+     */
+    private fun tabBar(): ViewGroup =
+        ConsoleFrame.tabBar(this, current = tab, onPhone = false) { load(it) }
 
-    /** Which tab you are on, said in the one way a ghost button can say it. */
+    /**
+     * Which tab you are on, said in the one way a ghost button can say it.
+     *
+     * The strip is rebuilt rather than repainted: it is seven small views, it
+     * is rebuilt only on a tab switch, and the alternative was this class
+     * keeping a parallel list of buttons in step with a strip built somewhere
+     * else — which is the bookkeeping that made two copies of the nav drift in
+     * the first place.
+     */
     private fun markCurrentTab() {
-        for (button in tabButtons) {
-            val here = button.tag == tab
-            button.setTextColor(if (here) JarvisUi.ACCENT else JarvisUi.DIM)
-            button.alpha = if (here) 1f else 0.75f
-        }
+        val slot = tabSlot ?: return
+        slot.removeAllViews()
+        slot.addView(
+            tabBar(),
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
     }
 
     private fun reload() {

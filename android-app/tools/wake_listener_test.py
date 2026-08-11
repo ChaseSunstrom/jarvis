@@ -87,6 +87,32 @@ class Phone:
         self.mic.release(CONVO)
         self.wake_resume()
 
+    # --- MainActivity, which now holds the mic for as long as it is shown ---
+    #
+    # There is no talk button any more, so the home screen being in front of
+    # you IS the conversation. That makes it a THIRD owner of one AudioRecord,
+    # and the one most likely to overlap the listener: the same tap that opens
+    # the app is what the listener would otherwise still be running through.
+    def home_resume(self) -> None:
+        # onResume -> resumeHandsFree(): pause the listener first, exactly as
+        # the assist activity does, then open the recorder.
+        self.wake_pause()
+        self.mic.acquire(CONVO)
+
+    def home_pause(self) -> None:
+        # onPause -> releaseTheMic(). Not onStop: the moment another window is
+        # in front of this one the user is no longer looking at the screen that
+        # says LISTENING.
+        self.mic.release(CONVO)
+        self.wake_resume()
+
+    def home_mute(self) -> None:
+        # The pill. Closes the recorder and gives the listener the mic back —
+        # muting the screen must not mute "Hey Jarvis", which has its own
+        # switch.
+        self.mic.release(CONVO)
+        self.wake_resume()
+
 
 def scenario_wake_then_talk() -> Phone:
     """The headline path: say the name, talk, finish."""
@@ -135,6 +161,56 @@ def scenario_never_enabled() -> Phone:
     return p
 
 
+def scenario_open_the_app_while_listening() -> Phone:
+    """The commonest path there is: the listener is up and the user opens Jarvis."""
+    p = Phone()
+    p.wake_start()
+    p.home_resume()
+    return p
+
+
+def scenario_open_and_leave() -> Phone:
+    """Open the app, leave it. The listener must have the mic back."""
+    p = Phone()
+    p.wake_start()
+    p.home_resume()
+    p.home_pause()
+    return p
+
+
+def scenario_mute_on_the_home_screen() -> Phone:
+    """Muting the screen hands the mic to the listener, not to nobody."""
+    p = Phone()
+    p.wake_start()
+    p.home_resume()
+    p.home_mute()
+    return p
+
+
+def scenario_wake_word_fires_while_the_app_is_open() -> Phone:
+    """The overlay opens over the home screen, which is already holding the mic.
+
+    Android pauses the activity underneath before the new one resumes, so the
+    home screen releases first. If it did not, the assist activity's own
+    acquire would land on a mic the screen behind it still held.
+    """
+    p = Phone()
+    p.wake_start()
+    p.home_resume()
+    p.home_pause()   # the overlay coming up pauses the activity beneath it
+    p.convo_start()
+    p.convo_end()
+    return p
+
+
+def scenario_home_screen_with_no_listener() -> Phone:
+    """Wake word off. Opening the app still opens the mic, and leaving closes it."""
+    p = Phone(wake_enabled=False)
+    p.home_resume()
+    p.home_pause()
+    return p
+
+
 def scenario_stop_button() -> Phone:
     p = Phone()
     p.wake_start()
@@ -153,6 +229,31 @@ SCENARIOS = [
     ),
     (scenario_never_enabled, None, "no listener means nothing holds the mic when idle"),
     (scenario_stop_button, None, "STOP releases the mic and stays off"),
+    (
+        scenario_open_the_app_while_listening,
+        CONVO,
+        "opening the app takes the mic from the listener rather than racing it",
+    ),
+    (
+        scenario_open_and_leave,
+        WAKE,
+        "leaving the app gives the microphone back to the listener",
+    ),
+    (
+        scenario_mute_on_the_home_screen,
+        WAKE,
+        "muting the screen must not also mute \"Hey Jarvis\", which has its own switch",
+    ),
+    (
+        scenario_wake_word_fires_while_the_app_is_open,
+        WAKE,
+        "the overlay opening over the home screen must not find the mic still held",
+    ),
+    (
+        scenario_home_screen_with_no_listener,
+        None,
+        "with the wake word off, leaving the app leaves nothing holding the mic",
+    ),
 ]
 
 
@@ -202,6 +303,36 @@ def check_kotlin_still_says_so() -> list[str]:
             "assist/AssistPipelineClient.kt",
             '"wake_word-end"',
             "the detection event being handled at all",
+        ),
+        # The home screen is the third owner, and the newest. Every one of
+        # these is one line to delete and none of them is visible in a diff.
+        (
+            "MainActivity.kt",
+            "WakeWordService.pause(this)",
+            "the listener being paused before the home screen opens its recorder",
+        ),
+        (
+            "MainActivity.kt",
+            "override fun onPause()",
+            "the home screen closing the microphone when it stops being shown — "
+            "without this the mic stays open behind whatever the user opened next",
+        ),
+        (
+            "MainActivity.kt",
+            "continuous = true",
+            "the home screen's conversation being one that does not end on silence, "
+            "which is what makes it listen rather than time out",
+        ),
+        (
+            "MainActivity.kt",
+            "config.micMuted",
+            "the mute — an always-open microphone with no off switch",
+        ),
+        (
+            "assist/JarvisConversation.kt",
+            "if (continuous) {",
+            "a continuous conversation treating silence as normal rather than as the "
+            "failed turn it is for a tapped one",
         ),
     ]
     failures = []

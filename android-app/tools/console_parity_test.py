@@ -53,6 +53,7 @@ TABS = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt"
 MANAGEMENT = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ManagementActivity.kt"
 MAIN = ANDROID / "app/src/main/kotlin/ai/jarvis/app/MainActivity.kt"
 SETTINGS = ANDROID / "app/src/main/kotlin/ai/jarvis/app/SettingsActivity.kt"
+FRAME = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ui/ConsoleFrame.kt"
 LAYOUT = REPO / "jarvis-web/src/routes/+layout.svelte"
 ROUTES = REPO / "jarvis-web/src/routes"
 
@@ -139,17 +140,29 @@ def check_the_mobile_half_is_named_for_itself() -> list[str]:
             f'the native settings button is called "{label}", which is also one of the '
             "console's tabs. That collision is the confusion this whole change is about."
         )
-    if f"ConsoleTab.PHONE_LABEL" not in main:
+    if f"ConsoleTab.PHONE_LABEL" not in main and "ConsoleTab.DEFAULT" not in main:
         failures.append(
-            "MainActivity names the mobile half itself rather than using "
-            "ConsoleTab.PHONE_LABEL, so the two can disagree"
+            "MainActivity names a console destination itself rather than taking one "
+            "from ConsoleTab, so the two can disagree"
         )
-    # And the home screen must build its nav FROM the table rather than listing
-    # buttons by hand — a hand-written list is what drifted.
-    if not re.search(r"ConsoleTab\.entries\.map \{|for \(tab in ConsoleTab\.entries\)", main):
+    # The home screen must NOT draw the console's nav.
+    #
+    # This check used to demand the opposite — that the grid be built from
+    # ConsoleTab.entries so a new section could not be forgotten. That was the
+    # right fix for a hand-written list of three buttons, and the wrong shape:
+    # the console frame already carries this exact nav as a tab strip, so the
+    # home screen was drawing a second copy of it and needed a spec to keep the
+    # copy honest. One MANAGE button cannot drift from a table it does not read.
+    if re.search(r"ConsoleTab\.entries", main):
         failures.append(
-            "MainActivity's nav is a hand-written list of buttons again. A section "
-            "added to the console would simply not appear on the phone."
+            "the home screen is enumerating the console's sections again. That nav "
+            "lives in the console frame (see ConsoleFrame); a second copy of it on "
+            "the home screen is the thing that has to be kept in step by hand."
+        )
+    if not re.search(r'JarvisUi\.ghost\([^,]+, "MANAGE"\)', main):
+        failures.append(
+            "the home screen has no MANAGE button, so the console is unreachable "
+            "from the first screen of the app"
         )
     return failures
 
@@ -270,7 +283,15 @@ def check_the_console_screen_can_reach_every_section() -> list[str]:
     """
     failures = []
     src = MANAGEMENT.read_text(encoding="utf-8")
-    if "for (entry in ConsoleTab.entries)" not in src:
+    frame = FRAME.read_text(encoding="utf-8") if FRAME.is_file() else ""
+    if not frame:
+        return [f"there is no {FRAME.relative_to(REPO)}, so nothing builds the tab strip"]
+    if "for (entry in ConsoleTab.entries)" not in frame:
+        failures.append(
+            "the tab strip is not built from ConsoleTab.entries, so a section added to "
+            "the console would not appear on the phone"
+        )
+    if "ConsoleFrame.tabBar(" not in src:
         failures.append(
             "the console screen has no tab strip, so reaching any section other than "
             "the one you arrived at means going back to the home screen"
@@ -278,20 +299,36 @@ def check_the_console_screen_can_reach_every_section() -> list[str]:
     if "private fun markCurrentTab()" not in src:
         failures.append("the console screen does not show which section you are on")
 
-    # And on the HOME screen, nothing may be hidden past an edge.
+    # The phone's own settings wear the same strip.
     #
-    # A horizontal scroller is right in the console frame, where it mirrors the
-    # browser's own nav bar. It is wrong on the home screen: TOOLS and PHONE
-    # would be discoverable only by a swipe nobody is told about, which is a
-    # worse version of the problem this change is fixing.
+    # This is the other half of "have the settings for the android app be in
+    # that same web view look": the console's sections and the phone's own are
+    # one frame with one nav, rather than a native screen you reach from
+    # somewhere else and leave by going back. What is UNDER the strip on that
+    # screen stays native, and has to — a page in a WebView cannot ask for
+    # RECORD_AUDIO or take a battery exemption.
+    settings = SETTINGS.read_text(encoding="utf-8")
+    if "ConsoleFrame.tabBar(" not in settings:
+        failures.append(
+            "the phone's settings screen does not wear the console's nav, so it is a "
+            "screen off to one side again rather than one of the sections"
+        )
+    if "onPhone = true" not in settings:
+        failures.append(
+            "the settings screen does not mark itself as the current section, so the "
+            "strip above it says you are somewhere you are not"
+        )
+
+    # And the home screen still has nothing hidden past an edge — which is now
+    # true because it has one button rather than because a grid was chosen over
+    # a scroller. The scroller is right where it is, in the frame, where it
+    # mirrors the browser's own nav bar and has six labels to fit.
     main = MAIN.read_text(encoding="utf-8")
     if "HorizontalScrollView" in main:
         failures.append(
-            "the home screen's nav scrolls sideways, so the sections past the right "
-            "edge are reachable only by a swipe nothing advertises"
+            "the home screen's nav scrolls sideways, so whatever is past the right "
+            "edge is reachable only by a swipe nothing advertises"
         )
-    if "GridLayout" not in main:
-        failures.append("the home screen's nav no longer lays every section out at once")
     if "load(tab)" not in src:
         failures.append(
             "RELOAD no longer re-issues the CURRENT section, so it throws you back to "

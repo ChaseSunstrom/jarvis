@@ -119,9 +119,9 @@ class ConversationE2ETest {
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
-        // Tapped, not injected: the conversation starts through the same code
-        // path the button always uses.
-        tapTalk()
+        // Nothing is tapped. The home screen opens its microphone on resume
+        // now — there is no talk button to press — so being resumed IS the
+        // start of the conversation, and that is the code path under test.
 
         val transcript = AtomicReference("")
         val response = AtomicReference("")
@@ -178,18 +178,16 @@ class ConversationE2ETest {
         // The cheap half of the round trip, asserted on the FIRST thing on
         // screen that only the server can cause.
         //
-        // Deliberately not the talk button's label. `MainActivity.toggleTalk`
-        // sets it to "LISTENING… (TAP TO STOP)" synchronously, before a socket
-        // is even opened, so "the label left TAP TO SPEAK" is satisfied by the
-        // tap itself and would pass against a harness that refused the token.
+        // Deliberately not the mute pill's label, which says LISTENING as soon
+        // as the screen resumes — before a socket is even opened — so it would
+        // be satisfied by the activity launching and would pass against a
+        // harness that refused the token.
         // A transcript cannot appear without `stt-end`, and `stt-end` cannot
         // arrive without auth_ok, a resolved pipeline, an accepted
         // `assist_pipeline/run`, audio frames prefixed with the run's
         // stt_binary_handler_id, and the end-of-audio byte.
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
-
-        tapTalk()
 
         val transcript = AtomicReference("")
         Waits.until(
@@ -239,7 +237,7 @@ class ConversationE2ETest {
      * transcript. MAIN THREAD ONLY.
      */
     private fun readTurn(main: MainActivity): Turn {
-        val column = talkButton(main)?.parent as? LinearLayout ?: return Turn("", "")
+        val column = muteButton(main)?.parent as? LinearLayout ?: return Turn("", "")
         val plain = (0 until column.childCount)
             .map { column.getChildAt(it) }
             .filterIsInstance<TextView>()
@@ -250,28 +248,35 @@ class ConversationE2ETest {
         )
     }
 
-    private fun talkButton(main: MainActivity): Button? =
+    /**
+     * The mute pill, whatever it currently says.
+     *
+     * All four of its labels, because they have no common substring — the two
+     * mute states share "TAP TO" and the two can't-listen states share nothing
+     * with them. Only ever used to FIND the controls column, never to assert
+     * anything, so a label added here and not there costs a clear
+     * "no mute control" failure rather than a wrong reading.
+     */
+    private fun muteButton(main: MainActivity): Button? =
         Views.allOfType(main.window.decorView, Button::class.java)
             .firstOrNull { button ->
                 val text = button.text?.toString().orEmpty()
-                text == IDLE_LABEL || text.contains(TALKING_MARKER)
+                MUTE_LABELS.any { text.contains(it, ignoreCase = true) }
             }
-
-    private fun tapTalk() {
-        val button = Device.ui.findObject(By.text(Views.textIgnoringCase(IDLE_LABEL)))
-        requireNotNull(button) {
-            "No \"$IDLE_LABEL\" control on the home screen.\n${Device.windowDump()}"
-        }.click()
-    }
 
     private companion object {
         const val POLL_MS = 100L
 
-        /** `MainActivity.showIdle` sets exactly this on both orb and button. */
-        const val IDLE_LABEL = "TAP TO SPEAK"
-
-        /** Present in every non-idle label: "LISTENING… (TAP TO STOP)" and friends. */
-        const val TALKING_MARKER = "TAP TO STOP"
+        /**
+         * Every label `MainActivity.refreshMuteButton` can set. Used only to
+         * locate the controls column; see [muteButton].
+         */
+        val MUTE_LABELS = listOf(
+            "TAP TO MUTE",
+            "TAP TO LISTEN",
+            "SET UP JARVIS",
+            "GRANT THE MICROPHONE",
+        )
 
         /**
          * Substrings `JarvisConversation.onError` and `AssistPipelineClient` put

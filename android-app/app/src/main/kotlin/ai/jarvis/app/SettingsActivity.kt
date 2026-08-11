@@ -14,6 +14,7 @@ import ai.jarvis.app.config.PairingClaim
 import ai.jarvis.app.config.PairingPayload
 import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.update.UpdateChecker
+import ai.jarvis.app.ui.ConsoleFrame
 import ai.jarvis.app.ui.JarvisScreens
 import ai.jarvis.app.ui.JarvisUi
 import android.annotation.SuppressLint
@@ -377,8 +378,30 @@ class SettingsActivity : Activity() {
                 )
             )
         }
-        root.addView(
+
+        // The console's nav, above this screen exactly as it sits above the
+        // console's own sections — this is the "same web view look" half of
+        // deduplicating the two. What is BELOW it cannot be a web page: asking
+        // for RECORD_AUDIO, taking a battery exemption and downloading a wake
+        // word model are things a page in a WebView cannot do. So the frame is
+        // shared and the content is native, and PHONE stops being a screen off
+        // to one side that you reach from somewhere else.
+        val framed = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        framed.addView(
+            ConsoleFrame.tabBar(this, current = null, onPhone = true) { tab ->
+                startActivity(ManagementActivity.intent(this, tab))
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        framed.addView(
             scroll,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+        root.addView(
+            framed,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT

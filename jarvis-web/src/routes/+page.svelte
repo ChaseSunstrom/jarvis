@@ -13,14 +13,27 @@
 	let statusMsg = $state('booting');
 	let errorMsg = $state('');
 	let capturing = $state(false);
-	let handsFree = $state(false);
+	// Muting is the only voice control this HUD has left. There is no
+	// push-to-talk: the mic opens when the page does and the VAD decides when a
+	// turn starts, so the one thing a person needs from a button is a way to be
+	// sure nothing is listening. Remembered across reloads, because a kill
+	// switch that forgets is not one.
+	let muted = $state(false);
+	// Why the mic is not open, when it is not. Distinguishes "you muted it" from
+	// "the browser said no" from "this machine has no microphone", which all
+	// look identical from a dead orb.
+	let micError = $state('');
 	let orbLevel = $state(0);
 	let latText = $state('');
 
 	let ws: WebSocket | null = null;
 	let client: PipelineClient | null = null;
 	let mic: MicCapture | null = null;
-	let micReady = false;
+	// Reactive, and reported in the DOM, because "the button says LISTENING" and
+	// "the microphone is open" are different claims and only the second one
+	// matters. The label cannot tell them apart — it reads LISTENING whenever
+	// nothing has gone wrong, including when nothing has been tried.
+	let micReady = $state(false);
 	const player = new Player();
 	const vad = new EnergyVAD();
 	const bargeVad = new EnergyVAD({ startThreshold: 0.06, minSpeechMs: 150 });
@@ -146,13 +159,17 @@
 			},
 			onLevel: (r) => {
 				micLevel = r;
-				if (handsFree && !capturing && state === 'idle') {
+				if (muted) {
+					// Fed nothing while muted, so the VAD cannot be sitting on
+					// half a phrase from before the mute when it comes back.
+					vad.reset();
+				} else if (!capturing && state === 'idle') {
 					if (vad.feed(r) === 'speech-start') void startInteraction();
-				} else if (handsFree && capturing) {
+				} else if (capturing) {
 					if (vad.feed(r) === 'speech-end') stopCapture();
 				}
 				// Barge-in: user speaks over TTS -> kill playback, new run.
-				if (state === 'speaking' && bargeVad.feed(r) === 'speech-start') {
+				if (!muted && state === 'speaking' && bargeVad.feed(r) === 'speech-start') {
 					console.log('[jarvis] barge-in');
 					player.stopAll();
 					void startInteraction();
@@ -164,7 +181,7 @@
 	}
 
 	async function startInteraction(): Promise<void> {
-		if (capturing) return;
+		if (capturing || muted) return;
 		errorMsg = '';
 		transcript = '';
 		response = '';
@@ -211,23 +228,52 @@
 		statusMsg = 'processing';
 	}
 
-	function togglePtt(): void {
-		if (capturing) stopCapture();
-		else void startInteraction();
+	const MUTE_KEY = 'jarvis.muted';
+
+	async function toggleMute(): Promise<void> {
+		muted = !muted;
+		try {
+			localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
+		} catch {
+			// Private mode, or storage disabled. The mute still works for this
+			// page; it just will not be remembered, which is not worth a message.
+		}
+		if (muted) {
+			// Actually stop, rather than merely ignoring what arrives: a run in
+			// flight is already streaming audio, and a mute that lets the current
+			// sentence finish uploading is not a mute.
+			if (capturing) stopCapture();
+			player.stopAll();
+			mic?.stop();
+			micReady = false;
+			mic = null;
+			micLevel = 0;
+			return;
+		}
+		try {
+			await ensureMic();
+			micError = '';
+		} catch (e) {
+			micError = micTrouble(e);
+		}
 	}
 
-	function onKeyDown(e: KeyboardEvent): void {
-		if (e.code === 'Space' && !e.repeat && !capturing) {
-			e.preventDefault();
-			void startInteraction();
+	/** Why getUserMedia said no, in words somebody can act on. */
+	function micTrouble(e: unknown): string {
+		const name = (e as { name?: string } | null)?.name ?? '';
+		if (name === 'NotAllowedError' || name === 'SecurityError') {
+			return 'MIC BLOCKED — ALLOW IT IN THE BROWSER';
 		}
-	}
-	function onKeyUp(e: KeyboardEvent): void {
-		if (e.code === 'Space' && capturing) {
-			e.preventDefault();
-			stopCapture();
+		if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+			return 'NO MICROPHONE FOUND';
 		}
+		return 'MIC UNAVAILABLE';
 	}
+
+	/** What the one remaining control says. */
+	let micLabel = $derived(
+		muted ? 'MUTED — CLICK TO LISTEN' : micError ? micError : 'LISTENING — CLICK TO MUTE'
+	);
 
 	// --- presentation: accent colour + labels that track pipeline state ---
 	// The colours come from `$lib/tokens` (STATE_ACCENT), the same table the
@@ -263,13 +309,42 @@
 
 	onMount(() => {
 		e2eMode = new URLSearchParams(location.search).has('e2e');
+		try {
+			muted = localStorage.getItem(MUTE_KEY) === '1';
+		} catch {
+			muted = false;
+		}
 		fetch('/api/config')
 			.then((r) => r.json())
 			.then((c) => (pipelineName = c.pipeline ?? 'Jarvis'))
 			.catch(() => {});
 		connectWs()
-			.then(() => (statusMsg = 'idle'))
+			.then(() => {
+				statusMsg = 'idle';
+				// Headless Chromium has no microphone, so the VAD that starts
+				// every turn in real use never fires and the suite would wait
+				// forever for a transcript. This is the one thing ?e2e=1 has to
+				// stand in for now that there is no button to click: the turn
+				// itself, its audio and its end are all the real code paths.
+				if (e2eMode) void startInteraction();
+			})
 			.catch(() => (statusMsg = 'disconnected'));
+
+		// Open the microphone with the page. There is no button that does this
+		// any more, so if it does not happen here it does not happen — and the
+		// HUD would sit at STANDBY looking attentive and deaf.
+		//
+		// getUserMedia resolves without a prompt once this origin has been
+		// granted, which is the second visit onward; the first shows the
+		// browser's own permission UI, which is the right place for that
+		// question to be asked. A refusal is reported on the button rather than
+		// retried, because retrying a denial is how a page gets itself blocked.
+		if (!muted) {
+			void ensureMic().catch((e) => {
+				micError = micTrouble(e);
+				console.warn('mic unavailable', e);
+			});
+		}
 
 		tickClock();
 		const clk = setInterval(tickClock, 1000);
@@ -286,8 +361,6 @@
 		};
 	});
 </script>
-
-<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 <main class="hud" style="--accent: {accent}" data-state={state}>
 	<div class="jv-grid" aria-hidden="true"></div>
@@ -338,20 +411,20 @@
 			type="button"
 			class="ptt"
 			class:active={capturing}
-			data-testid="ptt"
-			onclick={togglePtt}
-			aria-pressed={capturing}
-			aria-keyshortcuts="Space"
+			class:muted
+			data-testid="mic"
+			data-mic={micReady ? 'open' : 'closed'}
+			onclick={toggleMute}
+			aria-pressed={muted}
+			aria-label={muted ? 'Unmute the microphone' : 'Mute the microphone'}
 		>
 			<span class="ptt-ring" aria-hidden="true"></span>
-			{capturing ? 'RELEASE TO SEND' : 'PUSH TO TALK'}
+			{micLabel}
 		</button>
 		<div class="meta">
-			<label class="handsfree">
-				<input type="checkbox" bind:checked={handsFree} data-testid="handsfree" />
-				<span>Hands-free</span>
-			</label>
-			<span class="hint" aria-hidden="true">HOLD&nbsp;SPACE</span>
+			<span class="hint" aria-hidden="true">
+				{muted ? 'NOTHING IS BEING HEARD' : 'JUST SPEAK'}
+			</span>
 			{#if latText}<span class="latency" data-testid="latency" aria-label="Pipeline latency"
 					>{latText}</span
 				>{/if}
@@ -626,27 +699,13 @@
 		color: var(--dim);
 		text-transform: uppercase;
 	}
-	.handsfree {
-		display: flex;
-		gap: 0.45rem;
-		align-items: center;
-		cursor: pointer;
-		user-select: none;
+	/* Muted is a state the eye should catch without reading the label. */
+	.ptt.muted {
+		border-color: color-mix(in srgb, var(--jv-text-faint) 60%, transparent);
+		color: var(--jv-text-faint);
+		box-shadow: none;
 	}
-	.handsfree input {
-		appearance: none;
-		width: 0.85rem;
-		height: 0.85rem;
-		border: 1px solid var(--line);
-		border-radius: 3px;
-		background: transparent;
-		cursor: pointer;
-		position: relative;
-	}
-	.handsfree input:checked {
-		background: var(--accent);
-		box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
-	}
+	.ptt.muted .ptt-ring { animation: none; opacity: 0; }
 	.hint {
 		opacity: 0.55;
 	}

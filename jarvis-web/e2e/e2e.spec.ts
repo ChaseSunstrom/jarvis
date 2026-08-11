@@ -26,9 +26,9 @@ async function ensureLabLightOff(
 }
 
 // Full round trip against the built app + mock backend (see serve-e2e.mjs):
-// click push-to-talk -> mic (fake device) -> /ws proxy -> mock pipeline
-// events -> transcript + streamed response rendered in the DOM.
-test("push-to-talk round trip renders transcript and response", async ({
+// page load -> mic opens by itself -> /ws proxy -> mock pipeline events ->
+// transcript + streamed response rendered in the DOM. Nothing is clicked.
+test("a turn runs with nothing clicked, and renders transcript and response", async ({
   page,
 }) => {
   const consoleLatencies: string[] = [];
@@ -38,17 +38,15 @@ test("push-to-talk round trip renders transcript and response", async ({
   });
 
   await page.goto("/?e2e=1");
-  // Status label maps pipeline state to HUD copy: idle -> STANDBY. The HUD
-  // only says STANDBY once it has hydrated and opened its socket (before that
-  // it says CONNECTING), so this doubles as the gate that stops the click
-  // below from landing on a button with no handler bound yet. `goto` resolves
-  // on `load`, which is earlier than that.
-  await expect(page.getByTestId("status")).toContainText(/standby/i, {
-    timeout: 10_000,
-  });
-
-  // ?e2e=1 makes the PTT auto-stop after 1.5 s, so a single click completes a run.
-  await page.getByTestId("ptt").click();
+  // Nothing is clicked. There is no push-to-talk any more: the HUD opens its
+  // microphone with the page and the VAD starts the turn, so the turn starting
+  // by itself IS the assertion. (?e2e=1 stands in for the microphone headless
+  // Chromium does not have, and still auto-stops the capture after 1.5 s.)
+  //
+  // No STANDBY gate ahead of it either — that existed to stop a click landing
+  // before the handlers were bound, and there is no click. Waiting for STANDBY
+  // now would be a race against the run it is supposed to precede.
+  await expect(page.getByTestId("mic")).toBeVisible({ timeout: 10_000 });
 
   await expect(page.getByTestId("transcript")).toContainText(
     "turn on the lab lights",
@@ -122,7 +120,7 @@ test("console nav links the HUD to the management pages", async ({ page }) => {
 
   // and back to the voice HUD
   await page.getByTestId("hud-link").click();
-  await expect(page.getByTestId("ptt")).toBeVisible();
+  await expect(page.getByTestId("mic")).toBeVisible();
 });
 
 test("devices page groups entities by area and a toggle round-trips call_service", async ({
@@ -1563,4 +1561,65 @@ test("the console password is checked on the server, and guessing at it is bound
   expect(refusedAt, "the endpoint answered eight guesses without ever saying no").toBeGreaterThan(
     0,
   );
+});
+
+
+// The mute is the only voice control the HUD has, and the whole design rests on
+// it: a microphone that opens with the page and cannot be closed is not
+// something to ship. So this asserts the two things that make it real rather
+// than decorative — that it survives a reload, and that a muted page does not
+// start a turn even when everything else would have.
+test("the microphone can be muted, and stays muted across a reload", async ({
+  page,
+}) => {
+  await page.goto("/?e2e=1");
+  const mic = page.getByTestId("mic");
+  await expect(mic).toBeVisible({ timeout: 10_000 });
+  await expect(mic).toContainText(/listening/i, { timeout: 10_000 });
+  // Unmuted, a turn happens on its own — the same claim the round-trip test
+  // makes, restated here so the muted case below is a contrast and not just an
+  // absence.
+  await expect(page.getByTestId("transcript")).toContainText(
+    "turn on the lab lights",
+    { timeout: 15_000 },
+  );
+
+  await mic.click();
+  await expect(mic).toHaveAttribute("aria-pressed", "true");
+  await expect(mic).toContainText(/muted/i);
+
+  // Reload muted: the transcript must stay empty for longer than the unmuted
+  // turn above took to appear, or this proves nothing about the mute and only
+  // that reloading is slow.
+  await page.reload();
+  await expect(page.getByTestId("mic")).toHaveAttribute("aria-pressed", "true");
+  await page.waitForTimeout(3_000);
+  await expect(page.getByTestId("transcript")).toHaveText("");
+
+  // And it comes back. Left muted, this would silently break every later run
+  // in this worker, since the mute is remembered per origin.
+  await page.getByTestId("mic").click();
+  await expect(page.getByTestId("mic")).toHaveAttribute("aria-pressed", "false");
+});
+
+
+// The microphone opens with the page, and nothing else opens it.
+//
+// Deliberately NOT ?e2e=1: that mode starts a turn to stand in for the
+// microphone the round-trip test cannot rely on, and starting a turn opens the
+// microphone as a side effect — so on that page this would pass with the
+// on-mount open deleted. On a plain load the only thing that can open it is
+// the code under test.
+//
+// `data-mic` rather than the label, for the same reason: the label reads
+// LISTENING whenever nothing has gone wrong, which includes when nothing has
+// been tried. Chromium runs with a fake capture device (playwright.config.ts),
+// so getUserMedia genuinely resolves and this is the real thing.
+test("the microphone opens with the page, with nothing clicked", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByTestId("mic")).toHaveAttribute("data-mic", "open", {
+    timeout: 15_000,
+  });
 });
