@@ -621,9 +621,13 @@ class ReactorOrb(private val density: Float) {
                 // however well each one is shaded across itself; the ring only
                 // becomes an object once the plate facing the light is visibly
                 // the brightest of them and the plate opposite it is visibly
-                // the dimmest. Same rule as the shader's `dot(n, L)`, sampled
-                // once per plate instead of once per pixel — see
-                // [PLATE_LIGHT_BASE].
+                // the dimmest.
+                //
+                // The shader states this same rule with the same two constants
+                // and takes the same cosine — the plate's own outward direction
+                // against the light flattened onto the screen — once per PIXEL
+                // rather than once per wedge. `reactor_orb_test.py` compares
+                // both halves of it. See [PLATE_LIGHT_BASE].
                 val midRad = mid * RAD_PER_DEG
                 val facing = cos(midRad) * LIGHT_DIR_X - sin(midRad) * LIGHT_DIR_Y
                 val shade = PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * facing.coerceAtLeast(0f)
@@ -1328,9 +1332,11 @@ class ReactorOrb(private val density: Float) {
          * the others giving some up rather than by the whole assembly getting
          * hotter.
          *
-         * The shader does the same cosine per PIXEL, off its sphere normal.
-         * Ten plates at ten identical brightnesses are a printed ring, however
-         * carefully each one is shaded across its own thickness.
+         * The shader carries these two numbers verbatim and takes the same
+         * cosine per PIXEL — `radial` against `Lxy`, which is this file's
+         * [LIGHT_DIR_X]/[LIGHT_DIR_Y]. Ten plates at ten identical brightnesses
+         * are a printed ring, however carefully each one is shaded across its
+         * own thickness.
          */
         const val PLATE_LIGHT_BASE = 0.50f
         const val PLATE_LIGHT_GAIN = 0.50f

@@ -657,6 +657,49 @@ def check_the_two_renderers_are_lit_the_same() -> list[str]:
                 f"PLATE_LIGHT_BASE is {base}; the plate facing away from the light still "
                 "has the core in front of it, and one that dark reads as a missing coil"
             )
+        # ...and the OTHER half of "both sides". This used to check the phone's
+        # two constants and stop, which pins nothing across the two renderers:
+        # the shader was free to light its plates by any rule it liked, and it
+        # did — `0.20 + 0.80 * wrap`, a different base, a different gain and a
+        # cosine off the sphere normal rather than off the ring's azimuth, so
+        # its dimmest plate sat at 0.44 where the phone's sits at 0.50. Which
+        # plate is brightest is the most legible thing about the assembly, and a
+        # spec that only reads one file cannot see the two disagree about it.
+        web_glsl = glsl_consts(web)
+        for name, want in (("PLATE_LIGHT_BASE", base), ("PLATE_LIGHT_GAIN", gain)):
+            got = web_glsl.get(name)
+            if got is None:
+                failures.append(
+                    f"the web shader has no {name}, so its plates are lit by some other "
+                    "rule than the phone's and nothing here can tell"
+                )
+            elif abs(got - want) > 1e-6:
+                failures.append(
+                    f"the web shader's {name} is {got} and ReactorOrb's is {want}: the "
+                    "same plate is a different brightness on the two surfaces"
+                )
+        # The rule itself, not just the numbers — and specifically that the
+        # cosine is taken against the light flattened AND RENORMALISED. `L.xy`
+        # is only length 0.71, so a cosine against it tops out at 0.71 and the
+        # plate pointing straight at the light comes out 29% dark, which is not
+        # the rule either file's comments describe.
+        if not re.search(
+            r"Lxy\s*=\s*normalize\(L\.xy\)", web
+        ) or not re.search(r"radialL\s*=\s*dot\(radial, Lxy\)", web):
+            failures.append(
+                "the web shader no longer takes its screen-space cosines against a "
+                "normalised flattened light, so they cannot reach 1 and everything "
+                "scaled by one is quietly dark where the light actually points"
+            )
+        if not re.search(
+            r"face \*= PLATE_LIGHT_BASE \+ PLATE_LIGHT_GAIN \* clamp\(radialL, 0\.0, 1\.0\)",
+            web,
+        ):
+            failures.append(
+                "the web shader no longer lights its plates by "
+                "PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * max(0, cos(plate - light)), which "
+                "is the phone's rule; the two now disagree about which plate is brightest"
+            )
 
     # The ball's shading is struck between the middle and the true diffuse pole.
     pole = math.hypot(*unit(LIGHT)[:2])
@@ -674,7 +717,9 @@ def check_the_two_renderers_are_lit_the_same() -> list[str]:
         )
 
     # Everything that moves has to stay under the threshold at which the two
-    # surfaces would visibly disagree — the shader holds its light still.
+    # surfaces would visibly disagree. The phone cannot swing its light at all —
+    # it fakes dot(n, L) with gradients struck about an offset point, and all it
+    # can animate is that offset's LENGTH — so both sides are capped near still.
     for name, cap, what in (
         ("SPECULAR_DRIFT", 0.05, "the highlight's drift"),
         ("SPHERE_WANDER", 0.25, "the lit point's wander"),
@@ -687,7 +732,36 @@ def check_the_two_renderers_are_lit_the_same() -> list[str]:
             failures.append(
                 f"{name} is {got}: {what} is meant to be under {cap}, felt and not seen. "
                 "Past that the phone is visibly animating something the browser holds "
-                "still, and the two orbs stop being one object."
+                "nearly still, and the two orbs stop being one object."
+            )
+
+    # ...and the browser's end of that bargain, which nothing used to check. The
+    # shader wanders its whole key light, and the amplitudes are four literals
+    # buried in two lines — they came to a peak swing of ten degrees while the
+    # phone's highlight was nailed to one bearing, so the browser's highlight
+    # walked a fifth of the way round the ball and the phone's did not move. The
+    # cap is stated in DEGREES because that is the thing that would be seen; the
+    # four amplitudes are arithmetic on the way there.
+    kx = re.search(r"float kx = ([0-9.]+) \* sin\(uDrift\) \+ ([0-9.]+) \* sin\(", web)
+    ky = re.search(r"float ky = ([0-9.]+) \* cos\(uDrift \* 2\.0\) \+ ([0-9.]+) \* sin\(", web)
+    if not kx or not ky:
+        failures.append(
+            "cannot find the web shader's key-light wander, so nothing checks that the "
+            "browser holds its light as still as the phone has to"
+        )
+    else:
+        peak = math.hypot(
+            float(kx.group(1)) + float(kx.group(2)),
+            float(ky.group(1)) + float(ky.group(2)),
+        )
+        swing = math.degrees(math.atan2(peak, math.hypot(LIGHT[0], LIGHT[1])))
+        if swing > 4.0:
+            failures.append(
+                f"the web shader's key light swings {swing:.1f} degrees about "
+                f"{LIGHT[:2]}, past the 4 it is allowed. ReactorOrb cannot follow it — "
+                "SPHERE_WANDER only breathes the offset's length, never its angle — so "
+                "past a few degrees the browser's highlight visibly travels and the "
+                "phone's stays put, which is the same two-orbs drift arriving slowly."
             )
     return failures
 
@@ -896,6 +970,48 @@ def check_no_gradient_can_throw() -> list[str]:
                 "and the boot sequence starts the ball at exactly zero."
             )
     return failures
+
+
+def check_the_shader_asks_for_the_precision_it_needs() -> list[str]:
+    """`precision mediump float` is not enough for a phase times ninety-two.
+
+    The chrome's fine dash ring is `sin(ang * 64.0 - uSpin * 92.0)`, and uSpin
+    is a free-running phase wrapped at TAU, so that argument runs to about 578.
+    mediump is only guaranteed ten bits of mantissa — GLSL ES requires a
+    relative precision of 2^-10 and mobile GPUs really do give you fp16 — which
+    at 578 is an ulp of better than half a radian. The ring stops turning and
+    starts strobing.
+
+    Nobody working on this can see that: desktop drivers implement mediump as
+    highp, so the browser it is developed in is the one machine where it looks
+    right. The fix is one guarded qualifier, and the reason it needs a check is
+    that deleting it changes nothing anybody here would notice.
+    """
+    src = WEB_ORB.read_text(encoding="utf-8")
+    coefficients = [
+        float(m) for m in re.findall(r"\b(?:uSpin|spinRad|uCoilSpin|uDrift) \* ([0-9.]+)", src)
+    ]
+    worst = max(coefficients, default=0.0) * 2.0 * math.pi
+    if worst * 2**-10 < 0.02:
+        return []
+    if "precision highp float;" not in src:
+        return [
+            f"the web shader multiplies a wrapping phase up to {worst:.0f} radians but "
+            "does not ask for highp. mediump is ten bits of mantissa, which is an ulp of "
+            f"{worst * 2**-10:.2f} rad up there — the fine dash ring strobes instead of "
+            "turning on any GPU that takes mediump at its word, and desktop drivers "
+            "promote mediump to highp so it looks perfect in the browser you built it in."
+        ]
+    if "precision mediump float;" not in src or not re.search(
+        r"#ifdef GL_FRAGMENT_PRECISION_HIGH\s*\nprecision highp float;\s*\n#else", src
+    ):
+        return [
+            "the web shader asks for highp without guarding it. highp is OPTIONAL in a "
+            "WebGL 1 fragment shader — GL_FRAGMENT_PRECISION_HIGH is how you ask whether "
+            "this GPU has it — and unguarded the shader fails to COMPILE on hardware that "
+            "does not, which is a blank canvas and no error anybody sees."
+        ]
+    return []
 
 
 def check_the_web_ball_fits_its_viewport() -> list[str]:
@@ -1372,6 +1488,7 @@ def main() -> int:
         + check_the_two_renderers_are_lit_the_same()
         + check_the_ball_is_a_sphere()
         + check_no_gradient_can_throw()
+        + check_the_shader_asks_for_the_precision_it_needs()
         + check_the_web_ball_fits_its_viewport()
         + check_the_web_shader_wears_the_same_colours()
         + check_the_rates_are_one_table()

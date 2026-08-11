@@ -103,7 +103,23 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 	 * the CPU instead, exactly as both Android views integrate theirs.
 	 */
 	const FRAG = `
+// highp wherever the hardware has it, because several terms below multiply a
+// WRAPPING phase by a large integer. The worst is the fine dash ring,
+// sin(ang * 64.0 - spinRad * 92.0): spinRad is uSpin, a free-running phase
+// wrapped at TAU, so that term alone runs to 578. mediump is only guaranteed
+// ten bits of mantissa, which up there is an ulp of over half a radian — most
+// of a dash — so the ring would strobe rather than turn on any GPU that takes
+// the qualifier at its word. That is a lot of phones; desktop drivers give you
+// highp whatever you ask for, so this is invisible in the browser it is
+// written in. The 72-tick gauge has the same problem an order of magnitude
+// smaller. reactor_orb_test.py does the arithmetic rather than trusting this
+// comment, and also checks the #ifdef: highp is OPTIONAL in a WebGL 1 fragment
+// shader, and asking for it unguarded fails to COMPILE where it is absent.
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 uniform vec2 uRes;
 uniform float uTime;
 uniform float uLevel;   // 0..1 audio energy, already gained
@@ -130,6 +146,19 @@ const float SPOKE_COUNT   = 10.0;
 // The gap between two plates, in degrees, AT THE COIL ANNULUS' CENTRELINE. Its
 // arc length is what is held fixed, not its angle — see the coil block below.
 const float SPOKE_GAP_DEG = 9.0;
+// The plates' lighting rule, and the same two numbers ReactorOrb states:
+//
+//     PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * max(0, cos(plate - light))
+//
+// They sum to 1, so the plate facing the light is exactly as bright as every
+// plate was before any of them were lit — the ring gains its depth by the
+// others giving some up, not by the assembly getting hotter. A Canvas has no
+// per-pixel shader, so the phone samples that cosine once per plate; this
+// samples the same cosine per pixel. Same rule, same numbers, and
+// reactor_orb_test.py compares them rather than trusting that both files were
+// retuned in step.
+const float PLATE_LIGHT_BASE = 0.50;
+const float PLATE_LIGHT_GAIN = 0.50;
 // SPOKE_SPIN_RATIO is deliberately NOT here. The coil pattern's rotation rate
 // is applied on the CPU now, where uCoilSpin is integrated (see the script
 // block) — a copy of it down here would be dead, and editing the dead one would
@@ -316,9 +345,25 @@ void main() {
 	// catch. Fixed here rather than inside the glass block because the
 	// housing's machined parts are struck by it too: a hub ring lit from
 	// somewhere else is a hub ring that reads as a decal.
-	float kx = 0.07 * sin(uDrift) + 0.03 * sin(uDrift * 3.0 + 1.7);
-	float ky = 0.06 * cos(uDrift * 2.0) + 0.02 * sin(uDrift * 5.0 + 0.6);
+	//
+	// The amplitudes are small on purpose and the spec caps them. The phone
+	// cannot swing its light: it fakes dot(n, L) with gradients struck about an
+	// offset point, and ReactorOrb only breathes that offset's LENGTH by six
+	// percent — its highlight never changes angle. These four numbers used to
+	// come to a peak swing of ten degrees, so the browser's highlight walked a
+	// fifth of the way round the ball while the phone's stayed nailed to one
+	// bearing, which is the same "two orbs lit from two places" drift this
+	// whole rig exists to prevent, arriving slowly instead of all at once.
+	// At these amplitudes the swing is under three degrees: felt, not seen.
+	float kx = 0.018 * sin(uDrift) + 0.008 * sin(uDrift * 3.0 + 1.7);
+	float ky = 0.015 * cos(uDrift * 2.0) + 0.005 * sin(uDrift * 5.0 + 0.6);
 	vec3 L = normalize(vec3(-0.46 + kx, 0.54 + ky, 0.70));
+	// The key flattened onto the screen and renormalised — ReactorOrb's
+	// LIGHT_DIR_X/LIGHT_DIR_Y, which is what every screen-space cosine on the
+	// phone is taken against. L.xy on its own is only 0.71 long, so a cosine
+	// against it can never reach 1 and anything scaled by it is quietly 29%
+	// dark at the very point the light is pointing.
+	vec2 Lxy = normalize(L.xy);
 	// A dim cool fill from the opposite corner. One light in a black room gives
 	// a crescent moon; the fill is what leaves the far side readable.
 	vec3 Fl = normalize(vec3(0.60, -0.46, 0.64));
@@ -400,7 +445,9 @@ void main() {
 	// wider than the offset, so the offset sample lands back on the same plate
 	// almost everywhere and the whole annulus comes out 40% down. That is what
 	// turns lit plates into dark bars, which is the opposite of the object.
-	float thrown = coilAt(p + L.xy * COIL_LIFT, uCoilSpin) * (1.0 - coil) * ball;
+	// Lxy rather than L.xy: COIL_LIFT is documented as a shadow LENGTH, and
+	// stepping along a vector 0.71 long walks 0.71 of it.
+	float thrown = coilAt(p + Lxy * COIL_LIFT, uCoilSpin) * (1.0 - coil) * ball;
 	acc *= 1.0 - 0.42 * thrown;
 
 	// The housing SUBTRACTS. A recess that adds light is not a recess, and
@@ -428,7 +475,7 @@ void main() {
 	// inner wall faces outward and the outer one faces in, so the key strikes
 	// exactly one of them at any given angle. This is the tell that the groove
 	// has depth rather than being a dark ring painted on.
-	float radialL = dot(radial, L.xy);
+	float radialL = dot(radial, Lxy);
 	float lipLight = clamp(radialL, 0.0, 1.0) * ring(q, HOUSING_INNER, 0.05)
 	               + clamp(-radialL, 0.0, 1.0) * ring(q, HOUSING_OUTER, 0.05);
 	acc += HUB_METAL * lipLight * ball * 0.13;
@@ -453,12 +500,26 @@ void main() {
 	// ...the shadow the outer seat's lip casts back down them. An unlit band
 	// right under the ring is what says the plates sit BELOW it.
 	face *= 1.0 - 0.55 * smoothstep(1.0 - SEAT_SHADOW_SPAN, 1.0, across);
-	// ...and where the plate sits on the SPHERE. Ten plates all at one
-	// brightness is a cog; the ones under the key have to be clearly brighter
-	// than the ones opposite, or the assembly stays flat however deep the
-	// recess it sits in. This is the term that turns the annulus from a ring of
-	// identical teeth into something curving away from you.
-	face *= 0.20 + 0.80 * wrap;
+	// ...and where the plate sits AROUND THE RING relative to the light. Ten
+	// plates all at one brightness is a cog; the ones under the key have to be
+	// clearly brighter than the ones opposite, or the assembly stays flat
+	// however deep the recess it sits in.
+	//
+	// This is the one term that is stated identically on both surfaces, because
+	// which plate is brightest is the most legible thing about the assembly and
+	// there is no excuse for the two disagreeing about it. radial is the plate's
+	// own outward direction, Lxy is the light flattened and normalised — so this
+	// is exactly ReactorOrb's per-plate
+	//
+	//     PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * max(0, cos(plate - light))
+	//
+	// evaluated per pixel instead of once per wedge. It was 0.20 + 0.80 * wrap,
+	// which is a different rule off a different cosine — the sphere normal
+	// rather than the ring's azimuth — and it bottomed out at 0.44 where the
+	// phone bottoms out at 0.50. How far the plate has turned away from the EYE
+	// is a separate question and is answered separately, by the z term on the
+	// line below.
+	face *= PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * clamp(radialL, 0.0, 1.0);
 	vec3 plateCol = mix(mix(coreCol, vec3(1.0), 0.25), rimCol, across);
 	acc += plateCol * coil * face * 0.80 * (0.70 + 0.30 * lvl) * (0.55 + 0.45 * z);
 	// The core's own throw across them, falling off with distance from it, so
@@ -545,7 +606,7 @@ void main() {
 	// what a flat stroked circle never does.
 	acc += mix(rimCol, coreCol, 0.20) * (fresBroad * 0.38 + fresTight * 1.00) * ball;
 	// A back rim on the limb opposite the key — separation from the ground.
-	float back = pow(grazing, 2.2) * clamp(dot(n.xy, -L.xy), 0.0, 1.0);
+	float back = pow(grazing, 2.2) * clamp(dot(n.xy, -Lxy), 0.0, 1.0);
 	acc += rimCol * back * ball * 0.42;
 
 	// The rolled inner edge of the cover: a narrow groove the sheen dies in,
@@ -556,7 +617,7 @@ void main() {
 	// opposite: the same fresnel, stated on the stroke so the outline is never
 	// a flat drawn circle.
 	float rim = ring(r, R, 0.006 + 0.004 * lvl);
-	float lit = 0.30 + 0.70 * clamp(dot(radial, -L.xy) * 0.5 + 0.5, 0.0, 1.0);
+	float lit = 0.30 + 0.70 * clamp(dot(radial, -Lxy) * 0.5 + 0.5, 0.0, 1.0);
 	acc += mix(rimCol, coreCol, 0.35) * rim * lit * 1.1;
 	alpha += rim * 0.75;
 
