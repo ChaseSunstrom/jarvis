@@ -168,6 +168,16 @@ class AssistPipelineClient(
 
     @Volatile var sttBinaryHandlerId: Int? = null
         private set
+
+    /**
+     * True once this turn's run has opened. Distinguishes "not yet" from
+     * "already over", which want opposite treatment for a late capture buffer.
+     */
+    @Volatile private var runStarted = false
+
+    /** Audio captured before the run could accept it. See [sendAudio]. */
+    private val prebuffer = ArrayDeque<ByteArray>()
+    private var prebufferedBytes = 0
     private var conversationId: String? = null
     private var pendingRunAfterList = false
 
@@ -296,14 +306,88 @@ class AssistPipelineClient(
         }
     }
 
+    /**
+     * Stream one capture buffer — or keep it until the run can accept it.
+     *
+     * This used to be `val id = sttBinaryHandlerId ?: return`, and that single
+     * `?: return` is why Jarvis could not hear the beginning of anything.
+     *
+     * [JarvisConversation.start] opens the microphone in the same breath as it
+     * dials the socket, but `sttBinaryHandlerId` does not exist until the
+     * server sends `run-start` — which is four round trips away: the WebSocket
+     * upgrade, the auth handshake, `assist_pipeline/pipeline/list`, and then
+     * `assist_pipeline/run`. On a quiet LAN that is a few hundred milliseconds.
+     * Against a cold jarvis-core loading models, or when [ServerEndpoint] tries
+     * the wrong candidate first and waits out its handshake watchdog, it is
+     * seconds. Every frame captured in that window was dropped on the floor.
+     *
+     * After a wake word the user is ALREADY speaking — "Hey Jarvis, turn on the
+     * lights" is one breath — so what was discarded was the front of the
+     * command. The symptom is not silence, which somebody would have debugged:
+     * it is transcripts that are subtly, consistently wrong, missing their
+     * first word or two. "The STT doesn't work that well."
+     *
+     * So audio captured too early is kept and sent the moment the run opens.
+     * Bounded by [MAX_PREBUFFER_BYTES] and dropped oldest-first, because the
+     * useful part of a delayed start is the most recent audio, and an unbounded
+     * queue against a server that never answers is a memory leak on a phone.
+     */
     fun sendAudio(pcm: ByteArray, len: Int) {
-        val id = sttBinaryHandlerId ?: return
+        if (len <= 0) return
+        val id = sttBinaryHandlerId
+        if (id == null) {
+            // After `endAudio` the turn is over and its handler id is gone;
+            // holding that audio would prepend the tail of one utterance to the
+            // start of the next.
+            if (!runStarted) hold(pcm, len)
+            return
+        }
+        ws?.send(frameOf(id, pcm, len))
+    }
+
+    /** Keep a copy of audio the run is not ready for yet. */
+    private fun hold(pcm: ByteArray, len: Int) {
+        if (startStage == StartStage.INTENT) return  // this run carries text
+        synchronized(prebuffer) {
+            prebuffer.addLast(pcm.copyOf(len))
+            prebufferedBytes += len
+            while (prebufferedBytes > MAX_PREBUFFER_BYTES && prebuffer.isNotEmpty()) {
+                prebufferedBytes -= prebuffer.removeFirst().size
+            }
+        }
+    }
+
+    /**
+     * Send everything captured before the run opened, oldest first.
+     *
+     * Called from the `run-start` handler, before anything else can enqueue a
+     * later frame, so the utterance stays in order.
+     */
+    private fun flushPrebuffer(id: Int) {
+        val held = synchronized(prebuffer) {
+            val copy = prebuffer.toList()
+            prebuffer.clear()
+            prebufferedBytes = 0
+            copy
+        }
+        if (held.isEmpty()) return
+        val socket = ws ?: return
+        var bytes = 0
+        for (chunk in held) {
+            socket.send(frameOf(id, chunk, chunk.size))
+            bytes += chunk.size
+        }
+        Log.i(TAG, "sent ${bytes / BYTES_PER_SECOND.toFloat()}s of audio captured before the run opened")
+    }
+
+    /** One binary frame: the run's handler id, then the PCM. */
+    private fun frameOf(id: Int, pcm: ByteArray, len: Int): ByteString {
         val frame = ByteArray(len + 1)
         frame[0] = id.toByte()
         System.arraycopy(pcm, 0, frame, 1, len)
         // ByteString.of(vararg Byte) exists in both okio 2 and 3; frame is
         // already exact-size so no offset variant is needed.
-        ws?.send(ByteString.of(*frame))
+        return ByteString.of(*frame)
     }
 
     /** Signal end-of-audio (lone handler-id byte). */
@@ -313,7 +397,16 @@ class AssistPipelineClient(
         sttBinaryHandlerId = null
     }
 
+    /** Drop anything held. Called when a conversation ends. */
+    private fun clearPrebuffer() {
+        synchronized(prebuffer) {
+            prebuffer.clear()
+            prebufferedBytes = 0
+        }
+    }
+
     fun close() {
+        clearPrebuffer()
         main.removeCallbacks(handshakeWatchdog)
         main.removeCallbacks(assumeAuthed)
         try { ws?.close(1000, null) } catch (_: Exception) {}
@@ -419,6 +512,7 @@ class AssistPipelineClient(
 
     private fun runPipeline() {
         sttBinaryHandlerId = null
+        runStarted = false
         val id = nextId.getAndIncrement()
         val run = JSONObject()
             .put("id", id)
@@ -457,7 +551,14 @@ class AssistPipelineClient(
             "run-start" -> {
                 val handler = data?.optJSONObject("runner_data")
                     ?.optInt("stt_binary_handler_id", -1) ?: -1
-                if (handler >= 0) sttBinaryHandlerId = handler
+                if (handler >= 0) {
+                    // Order matters: the held audio goes out before the id is
+                    // published, so a capture thread calling sendAudio cannot
+                    // slip a later frame in front of the start of the utterance.
+                    flushPrebuffer(handler)
+                    sttBinaryHandlerId = handler
+                    runStarted = true
+                }
             }
             "wake_word-end" -> {
                 // openWakeWord heard the name. The run continues straight into
@@ -596,5 +697,19 @@ class AssistPipelineClient(
          * concluding it never will. Only an older jarvis-web does that.
          */
         private const val HANDSHAKE_QUIET_MS = 2_000L
+
+        /** 16 kHz mono PCM16 — what [MicStreamer] captures. */
+        const val BYTES_PER_SECOND = 16_000 * 2
+
+        /**
+         * How much audio to keep while the run is still opening.
+         *
+         * Six seconds, which is deliberately more than a fast LAN needs: the
+         * case that matters is the slow one — a cold server, or a candidate
+         * rotation that waits out [HANDSHAKE_TIMEOUT_MS] before trying the
+         * other path. Roughly 190 KB, dropped oldest-first, and only ever held
+         * between opening the microphone and the run accepting audio.
+         */
+        const val MAX_PREBUFFER_BYTES = 6 * BYTES_PER_SECOND
     }
 }
