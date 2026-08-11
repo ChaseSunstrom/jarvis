@@ -701,11 +701,42 @@
 .console .panel {
 	position: relative;
 	border: 1px solid var(--jv-line-soft);
-	background: var(--jv-panel);
+	/*
+	 * A panel, not a rectangle with a border.
+	 *
+	 * Three things do the work, and none of them is a colour change big enough
+	 * to notice on its own: a vertical wash so the surface has a top and a
+	 * bottom, a one-pixel inset highlight along the top edge so it reads as
+	 * something with a lip, and the existing drop shadow underneath. Together
+	 * they lift the card off the page; separately they each look like nothing,
+	 * which is why the flat version never looked wrong either.
+	 */
+	background:
+		linear-gradient(180deg, rgba(63, 216, 255, 0.045), transparent 42%),
+		var(--jv-panel);
 	border-radius: var(--jv-radius-sm);
 	padding: var(--jv-space-4) var(--jv-space-4);
 	margin-bottom: var(--jv-space-3);
-	box-shadow: var(--jv-elev-panel);
+	box-shadow:
+		var(--jv-elev-panel),
+		inset 0 1px 0 rgba(63, 216, 255, 0.12);
+}
+/*
+ * The corner tick. A HUD panel is bolted to something; a two-line mark at the
+ * top-left is the cheapest way to say so, and it is drawn rather than added to
+ * the DOM so no page has to know about it.
+ */
+.console .panel::before {
+	content: '';
+	position: absolute;
+	top: -1px;
+	left: -1px;
+	width: 14px;
+	height: 14px;
+	border-top: 1px solid var(--jv-line);
+	border-left: 1px solid var(--jv-line);
+	border-top-left-radius: var(--jv-radius-sm);
+	pointer-events: none;
 }
 .console .panel-head {
 	display: flex;
@@ -727,10 +758,69 @@
 	align-items: center;
 	gap: var(--jv-space-3);
 	flex-wrap: wrap;
-	padding: var(--jv-space-2) 0;
+	/*
+	 * Padded and negatively margined by the same amount, so the hover wash below
+	 * reaches the panel's inner edge instead of stopping short of it and drawing
+	 * a stripe with two gaps in it.
+	 */
+	padding: var(--jv-space-2);
+	margin: 0 calc(-1 * var(--jv-space-2));
+	border-radius: var(--jv-radius-sm);
 	border-bottom: 1px dashed var(--jv-line-hair);
+	transition: background var(--jv-dur-fast) var(--jv-ease-out);
+}
+/* Which row the pointer is on, for a page that is mostly rows of controls. */
+.console .row:hover {
+	background: var(--jv-wash);
 }
 .console .row:last-child {
+	border-bottom: 0;
+}
+
+/*
+ * A row with something bolted to the end of it — on Devices, the MANAGE button
+ * that opens the editor underneath.
+ *
+ * This had no styling at all, so it was a plain block: the row laid itself out
+ * flex and full-width, and the button went UNDER it. Every entity was two
+ * lines tall with a chunky ghost button on the second, which made a column of
+ * nine identical buttons down the left of the page and doubled its height.
+ *
+ * The wrapper owns the separator and the hover wash now, and the row inside
+ * gives both up — otherwise the dashed line stops where the row ends and the
+ * button hangs off the end of it.
+ */
+.console .row-wrap {
+	display: flex;
+	align-items: center;
+	gap: var(--jv-space-2);
+	flex-wrap: wrap;
+	padding: 0 var(--jv-space-2);
+	margin: 0 calc(-1 * var(--jv-space-2));
+	border-radius: var(--jv-radius-sm);
+	border-bottom: 1px dashed var(--jv-line-hair);
+	transition: background var(--jv-dur-fast) var(--jv-ease-out);
+}
+.console .row-wrap:hover {
+	background: var(--jv-wash);
+}
+.console .row-wrap > .row {
+	flex: 1 1 20rem;
+	min-width: 0;
+	margin: 0;
+	border-bottom: 0;
+	border-radius: 0;
+}
+/* One wash, on the wrapper. Two would show as a brighter stripe under the row. */
+.console .row-wrap:hover > .row {
+	background: transparent;
+}
+.console .row-wrap > .btn {
+	flex: 0 0 auto;
+}
+/* The editor drops out of the row above it, so that row's separator would draw
+   a line between a control and the panel it just opened. */
+.console .row-wrap:has(+ .editor) {
 	border-bottom: 0;
 }
 .console .row .name {
@@ -827,9 +917,12 @@
 }
 .console button.btn.on {
 	color: var(--jv-accent-ink);
-	background: var(--jv-accent);
+	/* Lit from above, like every other surface here. */
+	background: linear-gradient(180deg, #7ee6ff, var(--jv-accent));
 	border-color: var(--jv-accent);
-	box-shadow: var(--jv-glow-lg);
+	box-shadow:
+		var(--jv-glow-lg),
+		inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 /* The strip above a panel holding the page's one primary action and a line of
