@@ -185,6 +185,10 @@ dependencies {
     implementation(libs.onnxruntime.android)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+    // Android Auto. See car/JarvisCarAppService.kt — the car surface is
+    // templates, not views, so this brings no UI toolkit with it.
+    implementation(libs.androidx.car.app)
+    implementation(libs.androidx.car.app.projected)
 
     testImplementation(libs.junit)
     // The REAL org.json on the unit-test classpath. `isReturnDefaultValues`

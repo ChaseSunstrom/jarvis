@@ -16,6 +16,10 @@ json = "20240303"
 # nothing loads a session until the user turns the feature on and the weights
 # have been fetched from their own server — see api/models.py.
 onnxruntime = "1.19.2"
+# Android Auto. `app` is the template library; `app-projected` is the host
+# binding for a phone projecting onto a head unit (as opposed to
+# `app-automotive`, which is for cars running Android Automotive OS itself).
+carApp = "1.4.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -31,6 +35,8 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 junit = { module = "junit:junit", version.ref = "junit" }
 json = { module = "org.json:json", version.ref = "json" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+androidx-car-app = { module = "androidx.car.app:app", version.ref = "carApp" }
+androidx-car-app-projected = { module = "androidx.car.app:app-projected", version.ref = "carApp" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 
 [plugins]

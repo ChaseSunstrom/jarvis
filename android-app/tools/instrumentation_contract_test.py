@@ -209,6 +209,22 @@ def expected_onscreen_literals() -> dict[str, tuple[set[str], set[str]]]:
 # "DENY", so a haystack of the WHOLE app would report the button as still
 # present after somebody renamed it to "REFUSE".
 UI_SUBPACKAGES = {"ui", "companion"}
+
+# Sub-packages whose strings a person DOES read, on a surface no instrumented
+# test can reach.
+#
+# `car` is the Android Auto templates. Every literal in it is user-facing — it
+# is the whole visible half of that surface — but nothing in CI can drive a
+# head unit, so no instrumented test can ever wait for one of these words.
+# Keeping them out of the haystack is the point: the haystack exists to prove
+# that a literal a test waits for is really on a screen the test can see, and
+# folding in text that is only ever rendered in a car would let such a test
+# pass against a screen it can never reach.
+#
+# Neither of the two lists above says that. UI would put the words in the
+# haystack; NON_UI would assert they are "a wire value, not something a user
+# reads", which is false. A third answer, rather than a comfortable wrong one.
+OFF_DEVICE_UI_SUBPACKAGES = {"car"}
 NON_UI_SUBPACKAGES = {
     "assist",
     "audio",
@@ -232,13 +248,15 @@ def test_every_shipping_subpackage_is_classified_as_ui_or_not():
     """
     root = MAIN_KOTLIN / "ai" / "jarvis" / "app"
     found = {p.name for p in root.iterdir() if p.is_dir()}
-    unclassified = found - UI_SUBPACKAGES - NON_UI_SUBPACKAGES
+    unclassified = found - UI_SUBPACKAGES - NON_UI_SUBPACKAGES - OFF_DEVICE_UI_SUBPACKAGES
     assert not unclassified, (
         f"new package(s) under ai.jarvis.app: {sorted(unclassified)}. Add each "
-        "to UI_SUBPACKAGES (it draws a screen) or NON_UI_SUBPACKAGES (it does "
-        "not), so the on-screen literal check knows where to look."
+        "to UI_SUBPACKAGES (it draws a screen an instrumented test can read), "
+        "NON_UI_SUBPACKAGES (its strings are wire values), or "
+        "OFF_DEVICE_UI_SUBPACKAGES (a person reads them, but not on this "
+        "device), so the on-screen literal check knows where to look."
     )
-    gone = (UI_SUBPACKAGES | NON_UI_SUBPACKAGES) - found
+    gone = (UI_SUBPACKAGES | NON_UI_SUBPACKAGES | OFF_DEVICE_UI_SUBPACKAGES) - found
     assert not gone, (
         f"these packages are classified but no longer exist: {sorted(gone)}. A "
         "stale UI entry means the haystack silently lost a screen."
@@ -256,7 +274,7 @@ def ui_kotlin_files() -> list[Path]:
     never a false failure.
     """
     root = MAIN_KOTLIN / "ai" / "jarvis" / "app"
-    known = UI_SUBPACKAGES | NON_UI_SUBPACKAGES
+    known = UI_SUBPACKAGES | NON_UI_SUBPACKAGES | OFF_DEVICE_UI_SUBPACKAGES
     files = [p for p in sorted(root.glob("*.kt"))]
     for package in sorted(p.name for p in root.iterdir() if p.is_dir()):
         if package in UI_SUBPACKAGES or package not in known:

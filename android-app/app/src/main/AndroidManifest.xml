@@ -541,5 +541,38 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 
+        <!--
+          Jarvis on the car display. See ai.jarvis.app.car.JarvisCarAppService.
+
+          `exported` must be true — the car host is another process and binds
+          this by intent — which is exactly why the service validates its
+          caller's signature rather than trusting the bind. The category is
+          IOT, the platform's own name for controlling things in a house, which
+          is what Jarvis does; claiming a navigation category would buy a real
+          Canvas on the head unit and would be a lie to the host about what
+          this app is.
+        -->
+        <service
+            android:name=".car.JarvisCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.IOT" />
+            </intent-filter>
+        </service>
+
+        <!--
+          The minimum car API level this app needs. 1 is the templates the car
+          app library shipped with, which is all JarvisCarScreen uses — asking
+          for more would exclude older head units for nothing.
+        -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="1" />
+
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
     </application>
 </manifest>
