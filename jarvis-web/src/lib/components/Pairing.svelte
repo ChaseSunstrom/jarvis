@@ -33,6 +33,18 @@
 	 */
 	let secret = $state('');
 	let code = $state('');
+	/**
+	 * The name of the credential that claimed the last code, once one has.
+	 *
+	 * Single-use is enforced on the server — `PairingCodes.claim` deletes the
+	 * entry it matched — but until this existed the console never SAID so. A QR
+	 * that stays on screen after it has been spent looks exactly like a QR that
+	 * can be scanned again, which is the same screen the operator is looking at
+	 * while wondering why the second phone did not pair.
+	 */
+	let claimedBy = $state('');
+	/** Consecutive codes that expired without anybody scanning them. */
+	let unclaimed = $state(0);
 	let expiresAt = $state(0);
 	let url = $state('');
 	let err = $state('');
@@ -51,6 +63,20 @@
 	let conn = $state<Connection | null>(null);
 	let revoking = $state('');
 
+	/** Credentials that existed when the current code was minted. */
+	let known = new Set<string>();
+
+	/** Where the operator's secret lives for the rest of this tab's life. */
+	const SECRET_KEY = 'jarvis.pairing.secret';
+
+	/**
+	 * How many codes may expire unscanned before the console stops replacing
+	 * them by itself. A tab left open on this page overnight should not mint a
+	 * code every five minutes forever; three is enough to cover somebody
+	 * walking to fetch the phone.
+	 */
+	const MAX_AUTO_REISSUE = 3;
+
 	/** Seconds a code has left, or 0. Drives both the readout and the expiry. */
 	const secondsLeft = $derived(expiresAt ? Math.max(0, Math.round(expiresAt - now / 1000)) : 0);
 	const live = $derived(Boolean(code) && secondsLeft > 0);
@@ -68,9 +94,22 @@
 
 	const svg = $derived(payload ? qrSvg(payload, { title: 'Jarvis pairing code' }) : '');
 
+	/**
+	 * Mint one.
+	 *
+	 * Kept to a single click, which is the whole point of remembering the
+	 * secret: the operator types it once per browser session and every code
+	 * after that is one press. The secret still never leaves this tab except on
+	 * the way to `/api/pair`, and never reaches jarvis-web's own environment —
+	 * it is the second factor precisely because reaching this console is enough
+	 * to be an authenticated API client, so storing it on the server would
+	 * quietly delete the property it exists for.
+	 */
 	async function issue(): Promise<void> {
+		if (!secret.trim() || busy) return;
 		busy = true;
 		err = '';
+		claimedBy = '';
 		try {
 			const res = await fetch('/api/pair', {
 				method: 'POST',
@@ -84,6 +123,18 @@
 			const body = await res.json();
 			code = body.code;
 			expiresAt = body.expires_at ?? Date.now() / 1000 + (body.ttl ?? 300);
+			// Whatever is on the house right now is the baseline; anything that
+			// appears after this is what scanned the code. Re-read rather than
+			// trusted from before, so a device paired from another console does
+			// not read as this code being claimed.
+			if (conn) await loadTokens(conn);
+			known = new Set(tokens.map((t) => t.id));
+			try {
+				sessionStorage.setItem(SECRET_KEY, secret);
+			} catch {
+				// A browser with storage disabled still works; it just asks for
+				// the secret again next reload.
+			}
 		} catch (e) {
 			err = describeError(e);
 			code = '';
@@ -95,11 +146,25 @@
 	function forget(): void {
 		code = '';
 		expiresAt = 0;
+		unclaimed = 0;
 	}
 
 	async function loadTokens(connection: Connection): Promise<void> {
 		try {
 			tokens = (await connection.client.listTokens()) ?? [];
+			// A credential that was not here when the code was minted is the
+			// phone that just scanned it. The code is already gone server-side;
+			// this is only how the screen finds out.
+			if (code) {
+				const fresh = tokens.find((t) => !known.has(t.id));
+				if (fresh) {
+					claimedBy = fresh.name;
+					unclaimed = 0;
+					code = '';
+					expiresAt = 0;
+					toasts.success(`Paired ${fresh.name}`, 'That code is spent — generate another for the next device.');
+				}
+			}
 		} catch {
 			// An older jarvis-core has no such command. The pairing half above
 			// still works, so this hides rather than shouting.
@@ -139,6 +204,16 @@
 				}
 				conn = connection;
 				await loadTokens(connection);
+				// Typed once per tab, then every code after it is one press.
+				// sessionStorage rather than localStorage: it dies with the tab,
+				// so a shared machine does not keep the operator's second factor
+				// on disk.
+				try {
+					secret = sessionStorage.getItem(SECRET_KEY) ?? '';
+				} catch {
+					secret = '';
+				}
+				if (secret) await issue();
 			} catch {
 				tokensSupported = false;
 			}
@@ -158,9 +233,34 @@
 		now = Date.now();
 		// Stop drawing a code the server will no longer honour. A QR that looks
 		// live and is not sends somebody hunting a camera problem.
-		if (code && secondsLeft <= 0) forget();
+		if (code && secondsLeft <= 0) {
+			code = '';
+			expiresAt = 0;
+			// Replace it, so the panel is never sitting there with a dead code
+			// and a button the operator has to notice. Bounded, so a tab left
+			// open overnight stops after MAX_AUTO_REISSUE rather than minting
+			// one every five minutes until the morning.
+			unclaimed += 1;
+			if (secret.trim() && unclaimed <= MAX_AUTO_REISSUE) void issue();
+		}
 	}, 1000);
-	onDestroy(() => clearInterval(ticker));
+
+	/**
+	 * Notice the scan.
+	 *
+	 * The claim happens over HTTP directly against jarvis-core, so nothing
+	 * tells this page about it. Asking every two seconds while a code is live
+	 * is what turns "single use" from a sentence in the copy into something the
+	 * operator watches happen.
+	 */
+	const watcher = setInterval(() => {
+		if (code && conn) void loadTokens(conn);
+	}, 2000);
+
+	onDestroy(() => {
+		clearInterval(ticker);
+		clearInterval(watcher);
+	});
 </script>
 
 <section class="panel" data-testid="pairing">
@@ -174,7 +274,14 @@
 	<p class="muted">
 		Scan this in the Jarvis app — PHONE → SCAN QR. The code is single-use and lasts five
 		minutes; it is not a token, so a photograph of this screen is worthless once it expires.
+		Enter the secret once and the console keeps a live code on screen by itself.
 	</p>
+
+	{#if claimedBy}
+		<p class="ok" data-testid="pair-claimed" role="status">
+			Paired <b>{claimedBy}</b>. That code is spent — press GENERATE for the next device.
+		</p>
+	{/if}
 
 	<div class="row">
 		<span class="name">
@@ -225,7 +332,7 @@
 			disabled={busy || !secret.trim()}
 			onclick={issue}
 		>
-			{live ? 'NEW CODE' : 'SHOW CODE'}
+			{busy ? 'GENERATING…' : 'GENERATE CODE'}
 		</button>
 		{#if live}
 			<button type="button" class="btn ghost" data-testid="pair-hide" onclick={forget}>
@@ -297,5 +404,8 @@
 	.small {
 		font-size: var(--jv-fs-xs);
 		word-break: break-all;
+	}
+	.ok {
+		color: var(--jv-ok, #4ade80);
 	}
 </style>
