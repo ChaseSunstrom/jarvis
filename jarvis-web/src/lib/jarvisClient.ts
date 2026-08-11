@@ -98,6 +98,16 @@ export interface PendingApproval {
 	tainted?: boolean;
 }
 
+/** One long-lived access token. Never carries the secret. */
+export interface AccessToken {
+	id: string;
+	name: string;
+	created_at?: number;
+	last_used_at?: number | null;
+	/** Something is holding a live socket open with it right now. */
+	connected?: boolean;
+}
+
 /** One editable setting, with where its current value came from. */
 export interface SettingRow {
 	key: string;
@@ -567,6 +577,22 @@ export class JarvisClient {
 	 */
 	listCompanions(): Promise<CompanionDevice[]> {
 		return this.command<CompanionDevice[]>({ type: 'config/companion/list' });
+	}
+
+	/**
+	 * Every credential that may talk to this house, and whether one is in use.
+	 *
+	 * Built server-side from the auth manager, not from any pairing record: a
+	 * token store that failed to load would otherwise render as "no devices"
+	 * over a live full-privilege credential.
+	 */
+	listTokens(): Promise<AccessToken[]> {
+		return this.command<AccessToken[]>({ type: 'config/token/list' });
+	}
+
+	/** Revoke a credential, and hang up whatever is holding it open. */
+	revokeToken(tokenId: string): Promise<any> {
+		return this.command({ type: 'config/token/revoke', token_id: tokenId });
 	}
 
 	// --- approvals ---------------------------------------------------------

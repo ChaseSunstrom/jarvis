@@ -356,6 +356,48 @@ async def async_approve(
     return result if isinstance(result, dict) else {"result": result}
 
 
+def token_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
+    """Every stored token, and whether anything is holding it open right now.
+
+    Built from `auth.list_tokens()` rather than from any pairing record, and
+    that is the load-bearing part. A token store that failed to load, or a
+    partial restore, would leave paired full-privilege tokens live and
+    invisible — and a list built from pairing records would render that as "no
+    devices" rather than as something to revoke. Everything the auth manager
+    knows about appears here, named or not.
+    """
+    from ..auth import get_auth
+    from .websocket import DATA_WS_SESSIONS
+
+    auth = get_auth(jarvis)
+    if auth is None:
+        return []
+    live = jarvis.data.get(DATA_WS_SESSIONS)
+    holders = live if isinstance(live, dict) else {}
+    return [
+        {**info.as_dict(), "connected": bool(holders.get(info.id))}
+        for info in auth.list_tokens()
+    ]
+
+
+async def async_revoke_token(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    """Revoke a token and hang up whatever is holding it open."""
+    from ..auth import get_auth
+    from .websocket import close_sockets_for_token
+
+    token_id = str(payload.get("token_id") or payload.get("id") or "")
+    if not token_id:
+        raise ApiError("invalid_format", "a token_id is required", 400)
+    auth = get_auth(jarvis)
+    if auth is None or not await auth.revoke(token_id):
+        raise ApiError("not_found", f"unknown token {token_id}", 404)
+    return {
+        "id": token_id,
+        "revoked": True,
+        "sockets_closed": close_sockets_for_token(jarvis, token_id),
+    }
+
+
 # --- registries -------------------------------------------------------------
 ENTITY_UPDATE_FIELDS = (
     "name",

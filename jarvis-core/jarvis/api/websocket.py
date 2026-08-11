@@ -95,6 +95,9 @@ TYPE_AUTH_REQUIRED = "auth_required"
 TYPE_AUTH = "auth"
 TYPE_AUTH_OK = "auth_ok"
 TYPE_AUTH_INVALID = "auth_invalid"
+
+#: token id -> the live handlers authenticated with it.
+DATA_WS_SESSIONS = "ws_sessions"
 TYPE_RESULT = "result"
 TYPE_EVENT = "event"
 TYPE_PONG = "pong"
@@ -158,6 +161,40 @@ def _run_kwargs(msg: dict[str, Any]) -> dict[str, Any]:
     return kwargs
 
 
+def _sessions(jarvis: "Jarvis") -> dict[str, set["WebSocketHandler"]]:
+    """Live authenticated sockets, keyed by the token that opened them."""
+    live = jarvis.data.get(DATA_WS_SESSIONS)
+    if not isinstance(live, dict):
+        live = jarvis.data.setdefault(DATA_WS_SESSIONS, {})
+    return live
+
+
+def close_sockets_for_token(jarvis: "Jarvis", token_id: str) -> int:
+    """Hang up every socket authenticated with [token_id]. Returns how many.
+
+    Called when a token is revoked. Without it "revoked" means "revoked at the
+    next reconnect", and a phone holds this socket for days — so a device you
+    have just cut off keeps reading every state change and dispatching every
+    service until something unrelated happens to drop the connection.
+
+    Synchronous and best effort: the frame is queued and the close is asked
+    for, and a socket that is already gone is not an error. Callers must not
+    wait on it, because a revoke that hangs on a dead peer is worse than a
+    revoke that races one.
+    """
+    holders = _sessions(jarvis).pop(token_id, None)
+    if not holders:
+        return 0
+    for handler in list(holders):
+        with contextlib.suppress(Exception):
+            # Told, not just dropped: a client that sees `auth_invalid` stops
+            # retrying and says why, instead of reconnecting in a loop against
+            # a token that will never work again.
+            handler.send({"type": TYPE_AUTH_INVALID, "message": "this token was revoked"})
+            handler.request_close()
+    return len(holders)
+
+
 class WebSocketHandler:
     """One connected client."""
 
@@ -209,6 +246,13 @@ class WebSocketHandler:
 
         Returns the tasks it asked to stop, for the caller to await.
         """
+        if self.user_id is not None:
+            live = _sessions(self.jarvis)
+            holders = live.get(self.user_id)
+            if holders is not None:
+                holders.discard(self)
+                if not holders:
+                    del live[self.user_id]
         self._release_device()
         for unsub in list(self._subscriptions.values()):
             with contextlib.suppress(Exception):
@@ -361,7 +405,22 @@ class WebSocketHandler:
                 await self._close(AUTH_CLOSE_CODE)
                 return False
             self.user_id = info.id
+            # Registered so revoking this token can hang the socket up.
+            # Without it a revoked credential keeps working for as long as the
+            # connection happens to stay open — days, on a phone — and
+            # "revoked" would mean "revoked at the next reconnect".
+            _sessions(self.jarvis).setdefault(info.id, set()).add(self)
             return True
+
+    def request_close(self) -> None:
+        """Ask this socket to close, from synchronous code.
+
+        `_close` is a coroutine and the callers that need this — a token being
+        revoked over REST — are not in this connection's task. Scheduling it
+        keeps the close on the loop that owns the socket.
+        """
+        with contextlib.suppress(Exception):
+            self.jarvis.async_create_task(self._close(AUTH_CLOSE_CODE))
 
     async def _close(self, code: int = 1000) -> None:
         self._closed = True
@@ -644,6 +703,13 @@ class WebSocketHandler:
 
     async def _cmd_area_delete(self, msg: dict[str, Any]) -> Any:
         return await common.async_delete_area(self.jarvis, msg)
+
+    # access tokens — what may talk to this house at all
+    async def _cmd_token_list(self, msg: dict[str, Any]) -> Any:
+        return common.token_list_payload(self.jarvis)
+
+    async def _cmd_token_revoke(self, msg: dict[str, Any]) -> Any:
+        return await common.async_revoke_token(self.jarvis, msg)
 
     # companion devices (the phones and desktops, not the house's entities)
     async def _cmd_companion_list(self, msg: dict[str, Any]) -> Any:
@@ -941,6 +1007,8 @@ WebSocketHandler._HANDLERS = {
     "config/area_registry/update": WebSocketHandler._cmd_area_update,
     "config/area_registry/delete": WebSocketHandler._cmd_area_delete,
     "config/companion/list": WebSocketHandler._cmd_companion_list,
+    "config/token/list": WebSocketHandler._cmd_token_list,
+    "config/token/revoke": WebSocketHandler._cmd_token_revoke,
     "config/tool/list": WebSocketHandler._cmd_tool_list,
     "config/tool/create": WebSocketHandler._cmd_tool_create,
     "config/tool/update": WebSocketHandler._cmd_tool_update,

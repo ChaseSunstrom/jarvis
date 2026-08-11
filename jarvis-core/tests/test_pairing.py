@@ -341,3 +341,82 @@ def test_the_secret_is_never_echoed_back(http):
         json={"secret": SECRET},
     )
     assert SECRET not in issued.text
+
+
+# --- un-pairing, which is the half that makes pairing safe to offer ---------
+
+
+def test_a_paired_device_can_be_listed_and_revoked(http):
+    """Pairing without un-pairing is a one-way door.
+
+    A phone that is lost, sold, or simply no longer trusted has to be
+    removable, and the list has to be built from the AUTH manager rather than
+    from any pairing record — a token store that failed to load would otherwise
+    render "no devices" over a live full-privilege credential.
+    """
+    client, token = http
+    auth = {"Authorization": f"Bearer {token}"}
+
+    issued = client.post("/api/pair/new", headers=auth, json={"secret": SECRET})
+    claimed = client.post(
+        "/api/pair/claim", json={"code": issued.json()["code"], "name": "Old Pixel"}
+    ).json()
+
+    listed = client.get("/api/auth/tokens", headers=auth).json()
+    names = {row["name"]: row["id"] for row in listed}
+    assert "Old Pixel" in names
+
+    gone = client.delete(f"/api/auth/tokens/{names['Old Pixel']}", headers=auth)
+    assert gone.status_code == 200
+    assert gone.json()["revoked"] is True
+
+    # And the credential really is dead.
+    refused = client.get(
+        "/api/states", headers={"Authorization": f"Bearer {claimed['token']}"}
+    )
+    assert refused.status_code == 401
+
+
+def test_revoking_hangs_up_the_live_socket(http):
+    """Otherwise "revoked" means "revoked at the next reconnect".
+
+    A phone holds its command socket for days. A device you have just cut off
+    would keep reading every state change and dispatching every service until
+    something unrelated dropped the connection.
+    """
+    client, token = http
+    auth = {"Authorization": f"Bearer {token}"}
+
+    issued = client.post("/api/pair/new", headers=auth, json={"secret": SECRET})
+    claimed = client.post(
+        "/api/pair/claim", json={"code": issued.json()["code"], "name": "Phone"}
+    ).json()
+
+    with client.websocket_connect("/api/websocket") as ws:
+        assert ws.receive_json()["type"] == "auth_required"
+        ws.send_json({"type": "auth", "access_token": claimed["token"]})
+        assert ws.receive_json()["type"] == "auth_ok"
+
+        token_id = claimed["token_id"]
+        # The console can see that something is holding it open.
+        listed = client.get("/api/auth/tokens", headers=auth).json()
+        assert any(row["id"] == token_id for row in listed)
+
+        revoked = client.delete(f"/api/auth/tokens/{token_id}", headers=auth)
+        assert revoked.status_code == 200
+        assert revoked.json()["sockets_closed"] == 1
+
+        # Told, not merely dropped: a client that sees this stops retrying and
+        # says why, rather than reconnecting in a loop forever.
+        assert ws.receive_json()["type"] == "auth_invalid"
+
+
+def test_revoking_a_token_nothing_is_holding_is_fine(http):
+    client, token = http
+    auth = {"Authorization": f"Bearer {token}"}
+    issued = client.post("/api/pair/new", headers=auth, json={"secret": SECRET})
+    claimed = client.post("/api/pair/claim", json={"code": issued.json()["code"]}).json()
+
+    revoked = client.delete(f"/api/auth/tokens/{claimed['token_id']}", headers=auth)
+    assert revoked.status_code == 200
+    assert revoked.json()["sockets_closed"] == 0

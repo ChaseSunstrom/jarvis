@@ -381,7 +381,13 @@ export function makeWorld() {
 		companions, approvals: [], calls: [],
 		// Pairing: a counter for readable code names and the live set, so the
 		// single-use rule is exercised rather than assumed.
-		pairingCodes: 0, livePairingCodes: new Set()
+		pairingCodes: 0, livePairingCodes: new Set(),
+		// One connected and one not: "connected now" is the fact the panel
+		// exists to show before somebody revokes the wrong row.
+		tokens: [
+			{ id: 'tok-console', name: 'console', connected: true, created_at: 1700000000 },
+			{ id: 'tok-oldphone', name: 'Old Pixel', connected: false, created_at: 1700000100 }
+		]
 	};
 }
 
@@ -1000,6 +1006,27 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					world.companions.push(device);
 					ok(msg.id, { registered: device.device_id });
 					broadcast('jarvis_device_registered', device);
+					break;
+				}
+
+				case 'config/token/list':
+					ok(msg.id, world.tokens);
+					break;
+
+				case 'config/token/revoke': {
+					const at = world.tokens.findIndex((t) => t.id === msg.token_id);
+					if (at < 0) {
+						fail(msg.id, 'not_found', `unknown token ${msg.token_id}`);
+						break;
+					}
+					const [gone] = world.tokens.splice(at, 1);
+					// A revoked token's live socket is hung up too, or "revoked"
+					// would mean "revoked at the next reconnect".
+					ok(msg.id, {
+						id: gone.id,
+						revoked: true,
+						sockets_closed: gone.connected ? 1 : 0
+					});
 					break;
 				}
 

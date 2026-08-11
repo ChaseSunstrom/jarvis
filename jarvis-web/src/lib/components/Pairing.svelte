@@ -17,9 +17,11 @@
 	 * console may be open on `localhost` while the phone needs the LAN address,
 	 * and only a person can know which.
 	 */
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { qrSvg } from '$lib/qr';
-	import { describeError } from '$lib/connection';
+	import { describeError, openConnection, type Connection } from '$lib/connection';
+	import { toasts } from '$lib/toast';
+	import type { AccessToken } from '$lib/jarvisClient';
 
 	/**
 	 * The operator's pairing secret. Typed here, forwarded, never stored.
@@ -36,6 +38,18 @@
 	let err = $state('');
 	let busy = $state(false);
 	let now = $state(Date.now());
+
+	/**
+	 * What may talk to this house, so a phone can be un-paired.
+	 *
+	 * Pairing without un-pairing is a one-way door: a phone that is lost, sold
+	 * or simply no longer trusted has to be removable, and until this existed
+	 * the only way was to edit the token store by hand on the server.
+	 */
+	let tokens = $state<AccessToken[]>([]);
+	let tokensSupported = $state(true);
+	let conn = $state<Connection | null>(null);
+	let revoking = $state('');
 
 	/** Seconds a code has left, or 0. Drives both the readout and the expiry. */
 	const secondsLeft = $derived(expiresAt ? Math.max(0, Math.round(expiresAt - now / 1000)) : 0);
@@ -82,6 +96,59 @@
 		code = '';
 		expiresAt = 0;
 	}
+
+	async function loadTokens(connection: Connection): Promise<void> {
+		try {
+			tokens = (await connection.client.listTokens()) ?? [];
+		} catch {
+			// An older jarvis-core has no such command. The pairing half above
+			// still works, so this hides rather than shouting.
+			tokens = [];
+			tokensSupported = false;
+		}
+	}
+
+	async function revoke(row: AccessToken): Promise<void> {
+		const connection = conn;
+		if (!connection) return;
+		revoking = row.id;
+		try {
+			const result = await connection.client.revokeToken(row.id);
+			toasts.success(
+				`Revoked ${row.name}`,
+				result?.sockets_closed
+					? 'Its open connection was closed as well.'
+					: 'It was not connected.'
+			);
+			await loadTokens(connection);
+		} catch (e) {
+			toasts.error(`Could not revoke ${row.name}`, describeError(e));
+		} finally {
+			revoking = '';
+		}
+	}
+
+	onMount(() => {
+		let disposed = false;
+		(async () => {
+			try {
+				const connection = await openConnection({});
+				if (disposed) {
+					connection.close();
+					return;
+				}
+				conn = connection;
+				await loadTokens(connection);
+			} catch {
+				tokensSupported = false;
+			}
+		})();
+		return () => {
+			disposed = true;
+			conn?.close();
+			conn = null;
+		};
+	});
 
 	$effect(() => {
 		if (!url && typeof location !== 'undefined') url = location.origin;
@@ -167,6 +234,51 @@
 		{/if}
 	</div>
 </section>
+
+{#if tokensSupported}
+	<!--
+	  The other half of the door. Every credential the auth manager knows about,
+	  built from IT rather than from any pairing record — a token store that
+	  failed to load would otherwise render as "no devices" over a live
+	  full-privilege credential, with no way to revoke it.
+	-->
+	<section class="panel" data-testid="tokens">
+		<div class="panel-head">
+			<span>What can reach this house</span>
+			<span class="muted">{tokens.length} credential{tokens.length === 1 ? '' : 's'}</span>
+		</div>
+		{#if !tokens.length}
+			<p class="muted" data-testid="tokens-empty">
+				Nothing is stored. The server may be running on a token from its environment, which
+				is not revocable from here — change it where jarvis-core runs.
+			</p>
+		{/if}
+		{#each tokens as row (row.id)}
+			<div class="row" data-testid="token-{row.id}">
+				<span class="name">
+					<b>{row.name}</b><span class="eid">{row.id}</span>
+				</span>
+				<span class="muted" data-testid="token-state-{row.id}">
+					{row.connected ? 'connected now' : 'not connected'}
+				</span>
+				<button
+					type="button"
+					class="btn ghost danger"
+					data-testid="token-revoke-{row.id}"
+					disabled={revoking === row.id}
+					onclick={() => revoke(row)}
+				>
+					REVOKE
+				</button>
+			</div>
+		{/each}
+		<p class="muted small">
+			Revoking cuts a device off immediately, including any connection it already has open —
+			otherwise "revoked" would mean "revoked the next time it reconnects", and a phone holds
+			its connection for days.
+		</p>
+	</section>
+{/if}
 
 <style>
 	.qr {

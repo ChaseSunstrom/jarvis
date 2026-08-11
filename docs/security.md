@@ -78,6 +78,62 @@ jarvis-core also refuses to approve a command the orchestrator echoes back
 differently from the one that was approved: if the stored copy does not match
 byte for byte, nobody saw what would actually run, so it stops.
 
+## Pairing needs a second secret, for the same reason
+
+`POST /api/pair/claim` is the **only unauthenticated write in the API**, and it
+has to be: the phone has no credential yet, which is the entire problem being
+solved. It exchanges a short-lived code for a real token.
+
+The obvious design — put the token in the QR — is worse than typing it by hand.
+A QR on a screen is photographable from across a room, ends up in whatever
+screenshot or shared window captured it, and a token in one stays valid
+indefinitely. So the QR carries a **code**: 192 bits from
+`secrets.token_urlsafe(24)`, five minutes, single use, removed before the token
+is minted so two devices racing the same photograph produce exactly one token.
+Failed claims are counted **per caller** — a global counter would let anybody
+who can reach the endpoint lock the household out of pairing — and a claim
+carrying an `Origin` header is refused outright, because browsers always send
+one on a cross-origin POST and phones never do.
+
+Minting a code needs `JARVIS_PAIRING_SECRET` **as well as** the API token, and
+that is not belt and braces. jarvis-web's relay attaches the server-held admin
+token to whatever connects, and its origin guard deliberately admits a client
+that sends no `Origin`, because that is what a non-browser client looks like.
+So a script with nothing but transient reach to the console's port is already
+an authenticated API client — and with minting gated on the API token alone it
+could mint a code, claim it, and walk away with a permanent token. Reach for as
+long as the script runs, converted into access forever.
+
+The same split as the orchestrator's, then: the relay never holds this secret.
+It is typed into the pairing panel and forwarded. Unset means pairing is off
+and every surface says so.
+
+**Un-pairing is the half that makes pairing safe to offer.** Revoking a token
+closes every socket authenticated with it, and tells them why, rather than
+waiting for a reconnect that may be days away. The console's list is built from
+the auth manager rather than from any pairing record: a token store that failed
+to load would otherwise render as "no devices" over a live full-privilege
+credential, with no way to see it and nothing to revoke.
+
+## A question is shown to a person, so it says where its words came from
+
+The tier system answers "may this run without a human". It cannot answer
+"should the human believe what is on the screen", and those are different
+questions for exactly one tool.
+
+A held **action** displays pinned entity ids — resolved server-side when the
+request was raised — which injected text cannot forge. A held **question**
+(`ask_user`) displays the model's own sentence, so a turn that has read a
+hostile page can put *"confirm your bank password"* in front of somebody in
+Jarvis's voice, on the same consent surface they trust for everything else.
+
+Every approval request therefore carries `tainted`, read from the same
+`UntrustedTurns` store that already raises the tier for device commands. The
+console draws a warning; the phone has no field for provenance, so it goes in
+the words. Nothing is refused — a turn that read a page and needs to ask which
+of three results was meant is the legitimate case, and an attacker who is
+refused simply rephrases. Marking is the control that survives that.
+
 ## Everything that comes back is untrusted too
 
 Search results, fetched pages, crawled pages, specialist-agent prose,

@@ -1107,3 +1107,25 @@ test('the console shows a pairing QR, and what it encodes is a code and not a to
 
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
+
+test('a paired device can be un-paired, and the panel says what is connected', async ({ page }) => {
+	// Pairing without un-pairing is a one-way door. A phone that is lost, sold
+	// or no longer trusted has to be removable, and until this existed the only
+	// way was editing the token store by hand on the server.
+	await page.goto('/settings');
+	const panel = page.getByTestId('tokens');
+	await expect(panel).toBeVisible({ timeout: 15_000 });
+
+	// Built from the auth manager, so everything it knows about appears —
+	// including the credential this console is using.
+	await expect(page.getByTestId('token-tok-console')).toContainText('console');
+	await expect(page.getByTestId('token-state-tok-console')).toHaveText('connected now');
+	await expect(page.getByTestId('token-state-tok-oldphone')).toHaveText('not connected');
+
+	await page.getByTestId('token-revoke-tok-oldphone').click();
+	await expect(page.getByTestId('token-tok-oldphone')).toHaveCount(0, { timeout: 10_000 });
+	// The one still in use is untouched — revoking is per row, not a purge.
+	await expect(page.getByTestId('token-tok-console')).toBeVisible();
+
+	await expect(page.getByTestId('error')).toHaveCount(0);
+});

@@ -599,7 +599,19 @@ async def create_token(request: Request) -> dict[str, Any]:
 
 @api_router.delete("/auth/tokens/{token_id}")
 async def revoke_token(request: Request, token_id: str) -> dict[str, Any]:
-    auth = get_auth(get_jarvis(request))
+    """Revoke a token, and hang up whatever is holding it open.
+
+    The second half is not tidiness. A phone keeps its command socket open for
+    days; without closing it, "revoked" would mean "revoked at the next
+    reconnect", and a device you have just cut off would keep reading every
+    state change and dispatching every service until something unrelated
+    dropped the connection.
+    """
+    from .websocket import close_sockets_for_token
+
+    jarvis = get_jarvis(request)
+    auth = get_auth(jarvis)
     if auth is None or not await auth.revoke(token_id):
         raise HTTPException(404, f"unknown token {token_id}")
-    return {"id": token_id, "revoked": True}
+    closed = close_sockets_for_token(jarvis, token_id)
+    return {"id": token_id, "revoked": True, "sockets_closed": closed}
