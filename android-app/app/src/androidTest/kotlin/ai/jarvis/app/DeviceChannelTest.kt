@@ -80,6 +80,13 @@ class DeviceChannelTest {
 
         // Something on screen, so the screenshots are of an app rather than of a
         // launcher, and so the process is foreground while commands arrive.
+        //
+        // Muted first. The home screen opens a conversation on every resume now,
+        // and the server it would dial is THIS test's fake — which speaks the
+        // device channel and not the assist pipeline, so the conversation gets
+        // nothing usable and retries against the socket this test is waiting on.
+        // Nothing here is about voice; the screen is wanted for its pixels.
+        TestHooks.muteMicrophone(context)
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 

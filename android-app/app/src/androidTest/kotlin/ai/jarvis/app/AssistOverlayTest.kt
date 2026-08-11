@@ -1,6 +1,7 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.AssistOverlay
+import ai.jarvis.app.ui.ReadabilityScrim
 import ai.jarvis.app.support.Device
 import ai.jarvis.app.support.JarvisTestRule
 import ai.jarvis.app.support.Screenshots
@@ -114,6 +115,17 @@ class AssistOverlayTest {
     fun theOrbIsNotInsideABox() {
         // "It is surrounded by boxes, instead of just being the arc reactor
         // circle." The card is gone; this is what stops it coming back.
+        //
+        // The assertion is "not a PANEL", not "no background". It was the
+        // second until the overlay had to become readable over a stranger's
+        // app — *"it is hard to read text/view the entire orb as text behind
+        // the orb is still rendering"* — which needs something behind the
+        // words. A ReadabilityScrim is allowed by name because it is a radial
+        // gradient that reaches zero before the window's edge: there is no
+        // line on screen anywhere. The two shapes a card is made of are not
+        // allowed: a GradientDrawable is what JarvisUi.panel() returns, a
+        // rounded rectangle with a cyan stroke, and a ColorDrawable is a flat
+        // slab. Either one back here is the box coming back.
         var overlay: AssistOverlay? = null
         try {
             onMain {
@@ -123,9 +135,11 @@ class AssistOverlayTest {
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             onMain {
                 val root = rootOf(overlay!!)!!
-                assertNull(
-                    "the overlay draws a background behind the orb again",
-                    root.background,
+                val background = root.background
+                assertTrue(
+                    "the overlay draws a panel behind the orb again: " +
+                        "${background?.javaClass?.name}",
+                    background == null || background is ReadabilityScrim,
                 )
             }
         } finally {

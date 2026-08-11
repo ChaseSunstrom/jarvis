@@ -122,6 +122,31 @@ object Views {
             device.findObject(selector)?.let { return it }
             steps++
         }
+        device.findObject(selector)?.let { return it }
+
+        // And sideways, because not every off-screen control is below.
+        //
+        // The console frame's nav is a HorizontalScrollView — six monospace
+        // labels do not fit a phone's width — and PHONE is the last of them, so
+        // it starts past the right edge on every device this suite runs on.
+        // Scrolling only up and down reported it as "No button labelled PHONE
+        // on screen", which was true and misleading in the same breath: it was
+        // on the screen's strip, one swipe away, and the helper could not
+        // reach it.
+        //
+        // Left first for the same reason the vertical pass starts at the top: a
+        // strip a previous assertion already scrolled would otherwise be
+        // searched in one direction only.
+        steps = 0
+        while (steps < maxScrolls && scrollOnce(Direction.LEFT, 1f)) steps++
+        device.findObject(selector)?.let { return it }
+
+        steps = 0
+        while (steps < maxScrolls) {
+            if (!scrollOnce(Direction.RIGHT, SCROLL_STEP)) break
+            device.findObject(selector)?.let { return it }
+            steps++
+        }
         return device.findObject(selector)
     }
 
@@ -180,7 +205,7 @@ object Views {
      * it just means the tree changed, which is what scrolling does.
      */
     /**
-     * Scroll the first scrollable that can actually move that way.
+     * Scroll a container that is oriented the way we are asking to go.
      *
      * This used to take `findObject(By.scrollable(true))` — THE first
      * scrollable node — and the settings screen now has two: the console's tab
@@ -190,15 +215,27 @@ object Views {
      * "No button labelled APP INFO on screen" about a button that was on the
      * screen and simply below the fold.
      *
-     * Trying each in turn rather than filtering by class name, because the
-     * question being asked is "can anything here scroll this way", and
-     * `UiObject2.scroll` already answers exactly that — it returns false when
-     * the node cannot scroll further in the given direction. Filtering on
-     * `HorizontalScrollView` would fix this screen and break on the next
-     * container that happens to be scrollable.
+     * The first repair tried each scrollable in turn and let `UiObject2.scroll`
+     * answer "can you move this way", on the reasoning that filtering by class
+     * name would break on the next container that happens to scroll. That was
+     * wrong for a reason worth writing down: **`scroll()` is not a question, it
+     * is a swipe.** Asking a horizontal strip to scroll vertically performs a
+     * real vertical drag inside its bounds, and a short one lands as a TAP on
+     * whichever tab is under it — which opens the console frame, which on an
+     * unconfigured emulator bounces straight back to a second SettingsActivity.
+     * The visible symptom was a SAVE that stored everything correctly and then
+     * "did not finish", because finishing the top copy revealed the one
+     * underneath.
+     *
+     * So: match the container's orientation first, and only gesture on
+     * something that could plausibly move. A scrollable that is neither is
+     * skipped rather than poked.
      */
     private fun scrollOnce(direction: Direction, fraction: Float): Boolean {
+        val horizontal = direction == Direction.LEFT || direction == Direction.RIGHT
         for (candidate in Device.ui.findObjects(By.scrollable(true)).orEmpty()) {
+            val name = runCatching { candidate.className }.getOrNull().orEmpty()
+            if (name.endsWith("HorizontalScrollView") != horizontal) continue
             try {
                 if (candidate.scroll(direction, fraction)) return true
             } catch (e: StaleObjectException) {

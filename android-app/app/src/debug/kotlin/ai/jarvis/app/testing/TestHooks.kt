@@ -127,6 +127,26 @@ object TestHooks {
         Log.i(TAG, "configured for ${config.serverUrl} as \"${config.deviceName}\"")
     }
 
+    /**
+     * Close the home screen's microphone before it opens one.
+     *
+     * `MainActivity` holds a continuous conversation for as long as it is in
+     * the foreground — there is no talk button any more — so a test that
+     * launches it against a fake server gets a pipeline socket it never asked
+     * for. `DeviceChannelTest` shows why that matters rather than merely being
+     * untidy: its fake speaks the DEVICE CHANNEL protocol and not the assist
+     * pipeline, so the home screen dials it, gets nothing a conversation can
+     * use, and retries — while the test is waiting on that same server for a
+     * device_result.
+     *
+     * This is the user-facing mute ([JarvisConfig.micMuted]), used honestly:
+     * the screen still comes up, still renders, and is still foreground for the
+     * screenshots. It simply does not listen.
+     */
+    fun muteMicrophone(context: Context) {
+        JarvisConfig(context.applicationContext).micMuted = true
+    }
+
     /** True when the app currently believes it can reach a server. */
     fun isConfigured(context: Context): Boolean =
         JarvisConfig(context.applicationContext).isConfigured

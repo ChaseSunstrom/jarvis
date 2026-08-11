@@ -99,6 +99,11 @@ class NavigationTest {
             serverUrl = Harness.baseUrl,
             token = Harness.token,
         )
+        // Configured means the home screen would open a conversation on resume.
+        // This test is about navigation; a live pipeline socket underneath it is
+        // load and latency it never asked for. ConversationE2ETest is where the
+        // listening itself is proved.
+        TestHooks.muteMicrophone(InstrumentationRegistry.getInstrumentation().targetContext)
         tap("MANAGE")
         val settings = Activities.expect(SettingsActivity::class.java) {
             tap(ConsoleTab.PHONE_LABEL)
@@ -121,6 +126,11 @@ class NavigationTest {
             serverUrl = Harness.baseUrl,
             token = Harness.token,
         )
+        // Configured means the home screen would open a conversation on resume.
+        // This test is about navigation; a live pipeline socket underneath it is
+        // load and latency it never asked for. ConversationE2ETest is where the
+        // listening itself is proved.
+        TestHooks.muteMicrophone(InstrumentationRegistry.getInstrumentation().targetContext)
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
@@ -134,17 +144,23 @@ class NavigationTest {
         // the strip that offers them is the one the console frame draws, not a
         // second copy the home screen kept in step by hand.
         tap("MANAGE")
-        for (tab in ConsoleTab.entries) {
-            Waits.until("the console frame to offer its ${tab.label} tab") {
-                Device.ui.findObject(By.text(Views.textIgnoringCase(tab.label))) != null
-            }
-        }
-        // And the mobile half, in the same strip, which is the other half of
-        // deduplicating the two.
-        Waits.until("the console frame to offer ${ConsoleTab.PHONE_LABEL}") {
+        // Wait for the strip to exist before searching it for six labels: the
+        // first tab is the cheap proof that the frame is up.
+        Waits.until("the console frame to open") {
             Device.ui.findObject(
-                By.text(Views.textIgnoringCase(ConsoleTab.PHONE_LABEL))
+                By.text(Views.textIgnoringCase(ConsoleTab.entries.first().label))
             ) != null
+        }
+        // `findScrolling`, not a bare findObject. The strip is a
+        // HorizontalScrollView because six monospace labels do not fit a
+        // phone's width, so the last of them — PHONE — starts past the right
+        // edge on every device this suite runs on. A plain lookup reported it
+        // as absent, which was true of the viewport and false of the screen.
+        for (label in ConsoleTab.entries.map { it.label } + ConsoleTab.PHONE_LABEL) {
+            assertNotNull(
+                "the console frame does not offer \"$label\".\n${Device.windowDump()}",
+                Views.findScrolling(By.text(Views.textIgnoringCase(label))),
+            )
         }
 
         Screenshots.take("NavigationTest-console-tabs")
