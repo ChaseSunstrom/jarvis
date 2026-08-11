@@ -1,5 +1,28 @@
 import { test, expect } from '@playwright/test';
 
+/**
+ * Put `light.lab_lights` back to `off`, whatever the last test left it as.
+ *
+ * The mock backend keeps one world for the whole run, so a test that toggles a
+ * light leaves it toggled. Two tests below assert on the OFF state — one on the
+ * pill, one on the toggle's `aria-label` — and both were passing only because
+ * the tests that flip it happened to flip it back. Add a test anywhere before
+ * them, or have one time out midway through its own restore step, and they fail
+ * on a light nobody in that test ever touched. CI found exactly that.
+ *
+ * So they set the state they need instead of assuming it. Reading first rather
+ * than clicking blindly keeps it idempotent, which matters because Playwright
+ * may retry a test in the same worker against the world the failed attempt left.
+ */
+async function ensureLabLightOff(page: import('@playwright/test').Page): Promise<void> {
+	const pill = page.getByTestId('state-light.lab_lights');
+	await expect(pill).toBeVisible({ timeout: 15_000 });
+	if ((await pill.textContent())?.trim() === 'on') {
+		await page.getByTestId('toggle-light.lab_lights').click();
+	}
+	await expect(pill).toHaveText('off', { timeout: 10_000 });
+}
+
 // Full round trip against the built app + mock backend (see serve-e2e.mjs):
 // click push-to-talk -> mic (fake device) -> /ws proxy -> mock pipeline
 // events -> transcript + streamed response rendered in the DOM.
@@ -104,8 +127,8 @@ test('devices page groups entities by area and a toggle round-trips call_service
 	// Areas the registry knows are rendered even for non-device entities.
 	await expect(page.getByTestId('area-garage')).toContainText('Garage Door');
 
+	await ensureLabLightOff(page);
 	const pill = page.getByTestId('state-light.lab_lights');
-	await expect(pill).toHaveText('off');
 
 	// click -> call_service over the ws relay -> mock mutates -> state_changed
 	// arrives on the subscribe_events subscription -> DOM updates.
@@ -564,7 +587,7 @@ test('the command palette opens from the keyboard, filters, and toggles an entit
 	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
 		timeout: 15_000
 	});
-	await expect(page.getByTestId('state-light.lab_lights')).toHaveText('off');
+	await ensureLabLightOff(page);
 
 	await page.keyboard.press('Control+k');
 	await expect(page.getByTestId('palette')).toBeVisible();
@@ -594,7 +617,9 @@ test('the command palette opens from the keyboard, filters, and toggles an entit
 	await expect(page.getByTestId('state-light.lab_lights')).toHaveText('on', { timeout: 10_000 });
 	await expect(page.getByTestId('toast').first()).toContainText('Lab Lights');
 
-	// Put the world back the way the earlier tests left it.
+	// Put the world back, as a courtesy rather than as a contract — the tests
+	// that need it off now say so themselves, because this step is skipped
+	// entirely if anything above it fails.
 	await page.keyboard.press('Control+k');
 	await page.getByTestId('palette-input').fill('lab lights');
 	await expect(page.getByTestId('palette-hint')).toContainText('turn off');
@@ -751,6 +776,8 @@ test('keyboard focus is visible, and icon-only controls are labelled', async ({ 
 	await expect(page.getByTestId('link-status')).toHaveAttribute('data-status', 'connected', {
 		timeout: 15_000
 	});
+	// The label assertion at the end reads "turn on", so the light has to be off.
+	await ensureLabLightOff(page);
 
 	// The first tab stop is the skip link, and it is drawn.
 	await page.keyboard.press('Tab');
