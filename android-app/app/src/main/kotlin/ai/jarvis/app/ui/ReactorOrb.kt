@@ -42,23 +42,56 @@ import kotlin.math.sin
  *  2. **[drawBlob] ×3** — the drifting colour field, from [SiriPalette]. Rates
  *     1 : 0.73 : 1.31 never return to the same arrangement, so it does not
  *     visibly loop.
- *  3. **[drawSpokes]** — the reactor's coils, and the single element that most
- *     says "arc reactor" rather than "orb": a dark [drawHousing] recess, a metal
- *     hub ring, then ten filled keystone plates seated in that recess with the
- *     outer lip's shadow across them. The plates are inside the layer
+ *  3. **[drawSphereShading]** — the ball's near side and its terminator, both
+ *     hung off [LIGHT_X]. See below.
+ *  4. **[drawSpokes]** — the reactor's coils, and the single element that most
+ *     says "arc reactor" rather than "orb": a dark [drawHousing] recess with the
+ *     shadow it casts on the ball, a metal hub ring, then ten filled keystone
+ *     plates seated in that recess, each lit by its own angle to the light, with
+ *     the outer lip's shadow across them. The plates are inside the layer
  *     deliberately: the drifting blob colours *light* them, instead of a flat
  *     overprint that would read as a decal. The housing inside it is the one
  *     thing there that is not additive — see [drawHousing] for why it cannot be.
- *  4. **[drawCore]** — the hot centre.
- *  5. **[drawGlass]** — the specular highlight and the inner-edge shadow. This
- *     is what makes a flat circle read as a lit ball under a glass cover, and
- *     it is the whole of the "make it more 3D" ask: a self-luminous sphere has
- *     no terminator, so the depth has to come from the cover over it.
+ *  5. **[drawCore]** — the hot centre.
+ *  6. **[drawGlass]** — limb darkening, the fresnel arc and the specular
+ *     highlight, in that order, over everything the reactor emits.
  *
  * Then, outside the layer, the instrument chrome: a fresnel rim, a rotating
  * dashed ring, counter-rotating fine dashes, a 72/12 gauge and a radar sweep.
  * Outside, because chrome screen-blended against the blob field washes out to
  * white wherever a blob passes under it.
+ *
+ * ## Why it reads as a ball and not as a disc
+ *
+ * The report this half of the file answers is *"I dont want just an orb clock,
+ * I want it to look 3d and actually nice, similar to the rest of the AIs"*. The
+ * orb had structure — a recess, plates, seats — and no DEPTH: every shape was a
+ * gradient about the same centre, so brightness fell off with radius alone and
+ * the whole thing read as concentric rings printed on a circle.
+ *
+ * A Canvas has no per-pixel shader, so there is no `dot(n, l)` to be had here.
+ * The sphere is stacked gradients instead, and the trick that does most of the
+ * work is that their centres are NOT the ball's centre:
+ *
+ *  * [drawSphereShading] lifts a broad highlight centred [SPHERE_LIGHT_OFFSET]
+ *    of the way toward the light, and drops a terminator that grows with
+ *    distance FROM that same point rather than from the middle. Offsetting one
+ *    radial gradient is the whole difference between a disc and a ball;
+ *  * [drawGlass] darkens the limb, then puts a thin bright fresnel arc on the
+ *    side AWAY from the light — an edge brighter than the middle is what says
+ *    "surface at a grazing angle" rather than "gradient";
+ *  * the specular is tight, offset to [SPECULAR_OFFSET] (which is where the
+ *    half-vector actually meets the sphere, not a guess) and drifts a fraction
+ *    of a percent, because a highlight nailed to one pixel reads as a sticker;
+ *  * [drawHousing] casts the assembly's shadow onto the ball, away from the
+ *    light, and [drawSpokes] lights each plate by one cosine of its own angle,
+ *    so the plate facing the light is the brightest of the ten.
+ *
+ * All of it hangs off ONE light direction, [LIGHT_X]/[LIGHT_Y]/[LIGHT_Z], which
+ * is the same vector the web shader normalises into its `L`. Two surfaces lit
+ * from two directions is the most visible drift there is — the highlight is the
+ * first thing anybody looks at — so `reactor_orb_test.py` pins the direction,
+ * the specular offset and the plate-lighting rule across both.
  *
  * ## Geometry
  *
@@ -189,6 +222,7 @@ class ReactorOrb(private val density: Float) {
         val layer = canvas.saveLayer(f.cx - pad, f.cy - pad, f.cx + pad, f.cy + pad, null)
         drawSubstrate(canvas, f)
         for (i in 0 until SiriPalette.BLOB_COUNT) drawBlob(canvas, f, i)
+        drawSphereShading(canvas, f)
         drawSpokes(canvas, f)
         drawCore(canvas, f)
         drawGlass(canvas, f)
@@ -250,6 +284,157 @@ class ReactorOrb(private val density: Float) {
     }
 
     /**
+     * Screen x of a point [fraction] of the ball's radius toward the light.
+     *
+     * Every offset centre in this file goes through these two, so the light can
+     * only be in one place.
+     */
+    private fun litX(f: Frame, fraction: Float) = f.cx + LIGHT_DIR_X * f.radius * fraction
+
+    /**
+     * Screen y of the same point.
+     *
+     * [LIGHT_DIR_Y] is stated with y UP, the way the shader's `vec3 L` is, and
+     * Skia's y points DOWN — hence the sign. Getting this backwards puts the
+     * phone's highlight below the middle and the browser's above it, which is
+     * about the most obvious disagreement two renderers can have.
+     */
+    private fun litY(f: Frame, fraction: Float) = f.cy - LIGHT_DIR_Y * f.radius * fraction
+
+    /** The same two, for the fill. */
+    private fun fillX(f: Frame, fraction: Float) = f.cx + FILL_DIR_X * f.radius * fraction
+
+    private fun fillY(f: Frame, fraction: Float) = f.cy - FILL_DIR_Y * f.radius * fraction
+
+    /**
+     * One specular lobe, as a gradient the size of a Blinn-Phong lobe.
+     *
+     * A Canvas cannot raise anything to a power, so it is handed a gradient
+     * shaped like the answer instead: full at the centre, half at
+     * [SPECULAR_HALF] of the radius — which is where a lobe of that exponent
+     * is at half intensity — and out by the radius, which is where it has
+     * fallen to two percent. See [SPECULAR_POWER]; the caller works out the
+     * radius, this draws it.
+     *
+     * Painted into the BALL rather than into the lobe's own circle. A highlight
+     * sits off centre, so the wide one reaches past the silhouette on the lit
+     * side — and light added outside the ball's own edge is a smear on the
+     * bloom that no amount of shading inside the ball will explain.
+     */
+    private fun drawLobe(
+        canvas: Canvas, f: Frame,
+        x: Float, y: Float, radius: Float, color: Int, alpha: Float,
+    ) {
+        if (radius < MIN_DRAW_PX || f.radius < MIN_DRAW_PX || alpha <= 0f) return
+        additive.shader = RadialGradient(
+            x, y, radius,
+            intArrayOf(
+                withAlpha(color, alpha * f.alpha),
+                withAlpha(color, alpha * 0.5f * f.alpha),
+                withAlpha(color, 0f),
+            ),
+            SPECULAR_STOPS,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(f.cx, f.cy, f.radius, additive)
+        additive.shader = null
+    }
+
+    /**
+     * The sphere: a lit near side, and a terminator away from it.
+     *
+     * This is the function that makes the orb a ball. Everything else in the
+     * layer is a gradient centred on the middle of the circle, and a stack of
+     * those is a disc with rings on it however many of them there are —
+     * brightness that falls off with RADIUS is a flat target lit head-on, which
+     * is exactly what *"I dont want just an orb clock, I want it to look 3d"*
+     * was looking at.
+     *
+     * A real renderer would take `dot(n, l)`. A Canvas has no per-pixel shader,
+     * so that cosine is faked with three gradients struck about points offset
+     * along the two light directions rather than about the middle:
+     *
+     *  * an additive lift toward the key, brightest where the light strikes and
+     *    gone by the time it reaches the far side;
+     *  * a darkening that grows with distance from that same point, which is
+     *    the terminator. Its radius is deliberately larger than the ball, so
+     *    the shading is still climbing at the far limb instead of having
+     *    bottomed out into a black rind;
+     *  * the fill, back over the terminator from the opposite corner, because
+     *    one light in a black room gives a crescent moon.
+     *
+     * The true diffuse pole is further out than [SPHERE_LIGHT_OFFSET] — it is at
+     * `length(L.xy)`, about seven tenths of the way to the edge — but a gradient
+     * centred out there crowds all of its falloff into the last third of the
+     * ball and reads as a crescent moon of a different kind. Pulled in, it
+     * reads as a sphere.
+     *
+     * Both gradients are painted into a circle of the ball's own radius, so
+     * nothing they do can escape the ball and stain the bloom around it.
+     */
+    private fun drawSphereShading(canvas: Canvas, f: Frame) {
+        val r = f.radius
+        if (r < MIN_DRAW_PX) return
+
+        // The light breathes a hair. Nothing about this is legible frame to
+        // frame; it is there so the orb is never completely still, and its rate
+        // is not a multiple of anything else so there is no seam to catch.
+        val wander = 1f + SPHERE_WANDER * sin(f.phase * SPHERE_WANDER_RATE)
+        val lx = litX(f, SPHERE_LIGHT_OFFSET * wander)
+        val ly = litY(f, SPHERE_LIGHT_OFFSET * wander)
+
+        val litRadius = r * SPHERE_LIT_R
+        if (litRadius >= MIN_DRAW_PX) {
+            additive.shader = RadialGradient(
+                lx, ly, litRadius,
+                intArrayOf(
+                    withAlpha(lighten(f.rim, SPHERE_LIT_WHITENESS), SPHERE_LIT_ALPHA * f.alpha),
+                    withAlpha(f.rim, SPHERE_LIT_ALPHA * 0.45f * f.alpha),
+                    withAlpha(f.rim, 0f),
+                ),
+                SPHERE_LIT_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(f.cx, f.cy, r, additive)
+            additive.shader = null
+        }
+
+        val fallRadius = r * TERMINATOR_R
+        if (fallRadius < MIN_DRAW_PX) return
+        plain.shader = RadialGradient(
+            lx, ly, fallRadius,
+            intArrayOf(
+                withAlpha(TERMINATOR_COLOR, 0f),
+                withAlpha(TERMINATOR_COLOR, 0f),
+                withAlpha(TERMINATOR_COLOR, TERMINATOR_ALPHA * f.alpha),
+            ),
+            TERMINATOR_STOPS,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(f.cx, f.cy, r, plain)
+        plain.shader = null
+
+        // The fill, over the terminator it exists to rescue. One light in a
+        // black room gives a crescent moon, and a crescent moon is not what
+        // anybody means by "make it look 3d": the far side has to stay
+        // readable, just cooler and dimmer than the near one.
+        val fillRadius = r * SPHERE_LIT_R
+        if (fillRadius < MIN_DRAW_PX) return
+        additive.shader = RadialGradient(
+            fillX(f, SPHERE_LIGHT_OFFSET), fillY(f, SPHERE_LIGHT_OFFSET), fillRadius,
+            intArrayOf(
+                withAlpha(f.rim, FILL_ALPHA * f.alpha),
+                withAlpha(f.rim, FILL_ALPHA * 0.45f * f.alpha),
+                withAlpha(f.rim, 0f),
+            ),
+            SPHERE_LIT_STOPS,
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(f.cx, f.cy, r, additive)
+        additive.shader = null
+    }
+
+    /**
      * The recess the coils are bolted into, and the hub ring inside it.
      *
      * Drawn with [plain] rather than [additive], and that is not a detail —
@@ -266,6 +451,40 @@ class ReactorOrb(private val density: Float) {
         val hIn = r * HOUSING_INNER
         val hOut = r * HOUSING_OUTER
         if (hIn < MIN_DRAW_PX || hOut <= hIn) return
+
+        // The shadow the whole assembly drops on the ball behind it, and the
+        // only reason the recess reads as being AT a depth rather than merely
+        // being dark. Its ring is struck about a point pushed away from the
+        // light, so it is a sliver on the lit side — where the housing covers
+        // it up entirely — and a band on the far side, which is what a shadow
+        // under an object lit from up and to the left looks like.
+        //
+        // Painted into a circle of the ball's radius: past the far limb the
+        // ring would otherwise reach outside the ball and smear the bloom.
+        val shadowR = hOut + r * HOUSING_SHADOW_SPREAD
+        if (shadowR >= MIN_DRAW_PX) {
+            // The band is struck ON the outer lip and falls off either side of
+            // it, so its darkest line is exactly where the assembly meets the
+            // ball. The stops are clamped rather than trusted: a retuned spread
+            // that puts them out of order throws, and this is drawn 60 times a
+            // second on the main thread.
+            val ringIn = ((HOUSING_OUTER - HOUSING_SHADOW_SPREAD) * r / shadowR)
+                .coerceIn(0.02f, 0.94f)
+            val ringMid = (HOUSING_OUTER * r / shadowR).coerceIn(ringIn + 0.01f, 0.99f)
+            plain.shader = RadialGradient(
+                litX(f, -HOUSING_SHADOW_OFFSET), litY(f, -HOUSING_SHADOW_OFFSET), shadowR,
+                intArrayOf(
+                    withAlpha(HOUSING_COLOR, 0f),
+                    withAlpha(HOUSING_COLOR, 0f),
+                    withAlpha(HOUSING_COLOR, HOUSING_SHADOW_ALPHA * f.alpha),
+                    withAlpha(HOUSING_COLOR, 0f),
+                ),
+                floatArrayOf(0f, ringIn, ringMid, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(f.cx, f.cy, r, plain)
+            plain.shader = null
+        }
 
         annulus.reset()
         annulus.fillType = Path.FillType.EVEN_ODD
@@ -286,17 +505,42 @@ class ReactorOrb(private val density: Float) {
         canvas.drawPath(annulus, plain)
         plain.shader = null
 
+        // ...and the floor's own occlusion, on the same path so it cannot leak
+        // out of the recess. A washer that is uniformly dark is a hole cut out
+        // of a picture; a recess has a wall on the light's side catching what
+        // falls in and a wall opposite it in shadow, and the near-to-far ramp
+        // across the floor is the whole of that read. Struck about the lit
+        // point, exactly like the ball's own terminator.
+        val floorR = r * TERMINATOR_R
+        if (floorR >= MIN_DRAW_PX) {
+            plain.shader = RadialGradient(
+                litX(f, SPHERE_LIGHT_OFFSET), litY(f, SPHERE_LIGHT_OFFSET), floorR,
+                intArrayOf(
+                    withAlpha(HOUSING_COLOR, 0f),
+                    withAlpha(HOUSING_COLOR, 0f),
+                    withAlpha(HOUSING_COLOR, HOUSING_WALL_ALPHA * f.alpha),
+                ),
+                TERMINATOR_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawPath(annulus, plain)
+            plain.shader = null
+        }
+
         val hubR = r * HUB_FACTOR
         if (hubR < MIN_DRAW_PX) return
-        // Lit from up and to the left — the same source [drawGlass] fixes — so
-        // the hub is a turned ring catching light rather than a fourth circle
-        // emitting it.
+        // Struck by the one light this whole file hangs off, along its actual
+        // direction rather than along the diagonal of a bounding box, so the
+        // hub is a turned ring catching light rather than a fourth circle
+        // emitting it. Bright where the light lands, through to
+        // [HUB_SHADOW_COLOR] directly opposite.
         metal.strokeWidth = dp(HUB_WIDTH_DP)
         metal.alpha = 255
         metal.shader = LinearGradient(
-            f.cx - hubR, f.cy - hubR, f.cx + hubR, f.cy + hubR,
+            litX(f, HUB_FACTOR), litY(f, HUB_FACTOR),
+            litX(f, -HUB_FACTOR), litY(f, -HUB_FACTOR),
             intArrayOf(
-                withAlpha(HUB_COLOR, HUB_ALPHA * f.alpha),
+                withAlpha(lighten(HUB_COLOR, HUB_SHEEN), HUB_ALPHA * f.alpha),
                 withAlpha(HUB_COLOR, HUB_ALPHA * 0.45f * f.alpha),
                 withAlpha(HUB_SHADOW_COLOR, HUB_ALPHA * 0.85f * f.alpha),
             ),
@@ -372,12 +616,29 @@ class ReactorOrb(private val density: Float) {
             )
             for (i in 0 until SPOKE_COUNT) {
                 val mid = spin + i * span
+                // One cosine per plate, and the cheapest depth in the assembly.
+                // Ten plates at ten identical brightnesses are a printed ring
+                // however well each one is shaded across itself; the ring only
+                // becomes an object once the plate facing the light is visibly
+                // the brightest of them and the plate opposite it is visibly
+                // the dimmest. Same rule as the shader's `dot(n, L)`, sampled
+                // once per plate instead of once per pixel — see
+                // [PLATE_LIGHT_BASE].
+                val midRad = mid * RAD_PER_DEG
+                val facing = cos(midRad) * LIGHT_DIR_X - sin(midRad) * LIGHT_DIR_Y
+                val shade = PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * facing.coerceAtLeast(0f)
+                // Paint alpha modulates the shared shader, so the ten plates
+                // still cost one gradient between them.
+                additive.alpha = (255f * shade).toInt().coerceIn(0, 255)
                 plate.reset()
                 plate.arcTo(seatInRect, mid - halfIn, 2f * halfIn)
                 plate.arcTo(seatOutRect, mid + halfOut, -2f * halfOut)
                 plate.close()
                 canvas.drawPath(plate, additive)
             }
+            // Back to opaque, or every later user of this paint — the core, the
+            // glass, the next frame's blobs — inherits the last plate's shade.
+            additive.alpha = 255
             additive.shader = null
         }
 
@@ -422,8 +683,27 @@ class ReactorOrb(private val density: Float) {
         // plates and the shadow one of them casts. These are the edges of the
         // recess, and what make the annulus read as an assembly with an inside
         // and an outside rather than as ten highlights floating in the glow.
+        //
+        // Lit along the light rather than flat: these are the two hardest edges
+        // in the assembly, and an edge of even brightness all the way round is
+        // the one thing that will keep reading as a drawn circle no matter what
+        // is shaded behind it.
         strokeAdditive.strokeWidth = dp(SPOKE_SEAT_DP)
-        strokeAdditive.color = withAlpha(f.core, SPOKE_SEAT_ALPHA * f.alpha)
+        // Opaque paint, alpha carried by the gradient's own colours: paint alpha
+        // modulates a shader rather than replacing it, and the dividers above
+        // leave theirs at a quarter.
+        strokeAdditive.alpha = 255
+        strokeAdditive.shader = LinearGradient(
+            litX(f, SPOKE_OUTER), litY(f, SPOKE_OUTER),
+            litX(f, -SPOKE_OUTER), litY(f, -SPOKE_OUTER),
+            intArrayOf(
+                withAlpha(lighten(f.core, SEAT_SHEEN), SPOKE_SEAT_ALPHA * f.alpha),
+                withAlpha(f.core, SPOKE_SEAT_ALPHA * 0.72f * f.alpha),
+                withAlpha(f.rim, SPOKE_SEAT_ALPHA * PLATE_LIGHT_BASE * f.alpha),
+            ),
+            RIM_STOPS,
+            Shader.TileMode.CLAMP,
+        )
         canvas.drawCircle(f.cx, f.cy, rIn, strokeAdditive)
         canvas.drawCircle(f.cx, f.cy, rOut, strokeAdditive)
         strokeAdditive.shader = null
@@ -455,26 +735,38 @@ class ReactorOrb(private val density: Float) {
     }
 
     /**
-     * The cover over the reactor: a specular highlight and a darkened inner
-     * edge.
+     * The cover over the reactor: limb darkening, a fresnel arc and the
+     * specular highlight, in that order.
      *
-     * A self-luminous sphere has no terminator — it is its own light source, so
-     * shading it from outside is simply wrong and reads as dirt. The depth has
-     * to come from the glass in front of it, which is what these two do: the
-     * highlight fixes a light source somewhere up and to the left, and the
-     * inner shadow gives the cover a thickness for that light to fall off
-     * across. Together they are the difference between a circle and a ball.
+     * A self-luminous sphere has no terminator of its own — it is its own light
+     * source — so the *surface* cues all have to come from the cover in front
+     * of it, and these are the three that carry them:
+     *
+     *  * **limb darkening**, transparent through the middle and deepest at the
+     *    edge. A ball is dimmer where you see it at a grazing angle;
+     *  * **the fresnel arc**, thin, bright, and struck about the lit point so
+     *    it lands on the limb AWAY from the light. An edge brighter than the
+     *    middle is the single clearest statement that this is a surface curving
+     *    out of view and not a gradient painted on a circle;
+     *  * **the specular**, tight and offset. It sits at [SPECULAR_OFFSET],
+     *    which is where the half-vector between the light and the viewer
+     *    actually meets a unit sphere, and it drifts by [SPECULAR_DRIFT] so it
+     *    is never quite nailed to one pixel.
      */
     private fun drawGlass(canvas: Canvas, f: Frame) {
         val r = f.radius
         if (r < MIN_DRAW_PX) return
 
-        // The rolled inner edge, painted over everything the reactor emits.
+        // The limb, painted over everything the reactor emits. Four stops, not
+        // two: a single ramp into the last fifth of the ball is a dark rind
+        // with a visible inside edge, and the thing being drawn here is a
+        // curve, so it has to start early and shallow.
         plain.shader = RadialGradient(
             f.cx, f.cy, r,
             intArrayOf(
                 withAlpha(EDGE_SHADOW_COLOR, 0f),
                 withAlpha(EDGE_SHADOW_COLOR, 0f),
+                withAlpha(EDGE_SHADOW_COLOR, EDGE_SHADOW_ALPHA * 0.42f * f.alpha),
                 withAlpha(EDGE_SHADOW_COLOR, EDGE_SHADOW_ALPHA * f.alpha),
             ),
             EDGE_SHADOW_STOPS,
@@ -483,30 +775,97 @@ class ReactorOrb(private val density: Float) {
         canvas.drawCircle(f.cx, f.cy, r, plain)
         plain.shader = null
 
-        val sx = f.cx - r * SPECULAR_X
-        val sy = f.cy - r * SPECULAR_Y
-        val sr = r * SPECULAR_R
-        if (sr < MIN_DRAW_PX) return
-        additive.shader = RadialGradient(
-            sx, sy, sr,
-            intArrayOf(
-                withAlpha(Color.WHITE, SPECULAR_ALPHA * f.alpha),
-                withAlpha(Color.WHITE, 0f),
-            ),
-            SPECULAR_STOPS,
-            Shader.TileMode.CLAMP,
+        // The fresnel arc. Struck about the lit point with a radius of exactly
+        // the far limb's distance from it, so the bright end of the gradient
+        // lands on the limb opposite the light and the near limb — at roughly
+        // half that distance — gets none of it.
+        val fresnelR = r * (1f + FRESNEL_OFFSET)
+        if (fresnelR >= MIN_DRAW_PX) {
+            additive.shader = RadialGradient(
+                litX(f, FRESNEL_OFFSET), litY(f, FRESNEL_OFFSET), fresnelR,
+                intArrayOf(
+                    withAlpha(f.rim, 0f),
+                    withAlpha(f.rim, 0f),
+                    withAlpha(f.rim, FRESNEL_ALPHA * f.alpha),
+                ),
+                FRESNEL_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(f.cx, f.cy, r, additive)
+            additive.shader = null
+        }
+
+        // Three lobes, and the drift is what stops any of them reading as a
+        // decal: a slow figure a fraction of a percent of the ball wide, on two
+        // rates that are not multiples of each other, so the highlight never
+        // returns to a place it has been and there is no seam to catch. The
+        // browser wanders its whole light for the same reason.
+        val drift = r * SPECULAR_DRIFT
+        val dx = drift * sin(f.phase * SPECULAR_DRIFT_RATE)
+        val dy = drift * cos(f.phase * SPECULAR_DRIFT_RATE * 0.73f)
+
+        // Wide first, so the tight one lands on top of its own sheen. Tinted:
+        // it covers a good part of the face and white over a good part of the
+        // face is how a coloured orb turns into a grey one.
+        drawLobe(
+            canvas, f,
+            litX(f, SPECULAR_OFFSET) + dx, litY(f, SPECULAR_OFFSET) + dy,
+            r * SPECULAR_WIDE_R, lighten(f.rim, SPECULAR_WIDE_TINT), SPECULAR_WIDE_ALPHA,
         )
-        canvas.drawCircle(sx, sy, sr, additive)
-        additive.shader = null
+        // The fill's catchlight, low and to the right, and the reason the ball
+        // has two highlights rather than the one a drawing of a ball has.
+        drawLobe(
+            canvas, f,
+            fillX(f, FILL_SPECULAR_OFFSET), fillY(f, FILL_SPECULAR_OFFSET),
+            r * FILL_SPECULAR_R, lighten(f.rim, SPECULAR_WIDE_TINT), FILL_SPECULAR_ALPHA,
+        )
+        // ...and the point itself. The only white thing on the ball.
+        drawLobe(
+            canvas, f,
+            litX(f, SPECULAR_OFFSET) + dx, litY(f, SPECULAR_OFFSET) + dy,
+            r * SPECULAR_R, Color.WHITE, SPECULAR_ALPHA,
+        )
     }
 
     // --- outside the layer -------------------------------------------------------
 
-    /** The bloom, which is what makes the ball read as light rather than paint. */
+    /**
+     * The bloom, which is what makes the ball read as light rather than paint.
+     *
+     * Two passes, and the second is the one that matters: a wide, very dim
+     * skirt at [BLOOM_WIDE] of the halo's radius. Light in air does not stop at
+     * a boundary — it falls off for a long way at an intensity you would not
+     * notice if you looked for it — and a single tight halo is a painted ring
+     * around the orb, which is the "sticker" read. Both are clamped to
+     * [Frame.maxRadius]: the bloom is the only thing that can exceed the view,
+     * and clipped, a gradient becomes a bright SQUARE.
+     */
     private fun drawHalo(canvas: Canvas, f: Frame) {
-        val haloRadius =
-            minOf(f.radius * (HALO_FRACTION + HALO_LEVEL_GAIN * f.level), f.maxRadius)
+        // Breathing, at a rate that is nothing else's, so the orb is never
+        // completely static even in a silent room.
+        val breath = 1f + HALO_BREATH * sin(f.phase * HALO_BREATH_RATE)
+        val haloRadius = minOf(
+            f.radius * (HALO_FRACTION + HALO_LEVEL_GAIN * f.level) * breath,
+            f.maxRadius,
+        )
         if (haloRadius < MIN_DRAW_PX) return
+
+        val wide = minOf(haloRadius * BLOOM_WIDE, f.maxRadius)
+        if (wide >= MIN_DRAW_PX) {
+            plain.shader = RadialGradient(
+                f.cx, f.cy, wide,
+                intArrayOf(
+                    withAlpha(f.rim, HALO_ALPHA * BLOOM_WIDE_ALPHA * f.alpha),
+                    withAlpha(f.rim, HALO_ALPHA * BLOOM_WIDE_ALPHA * 0.40f * f.alpha),
+                    withAlpha(f.rim, 0f),
+                ),
+                BLOOM_WIDE_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawCircle(f.cx, f.cy, wide, plain)
+            plain.shader = null
+        }
+
         plain.shader = RadialGradient(
             f.cx, f.cy, haloRadius,
             intArrayOf(
@@ -525,8 +884,14 @@ class ReactorOrb(private val density: Float) {
      * The ball's own edge, lit.
      *
      * A single flat stroke is a drawn circle. Running it from dim where the
-     * specular is to bright directly opposite is the fresnel every rounded
-     * transparent object has, and it costs one gradient.
+     * light lands to bright directly opposite is the fresnel every rounded
+     * transparent object has, and it costs one gradient — the same arc
+     * [drawGlass] puts just inside the ball, stated again on the stroke so the
+     * outline agrees with the surface it bounds.
+     *
+     * The gradient runs along the light's own direction. It used to run down
+     * the diagonal of the bounding box, which is a different angle, and two
+     * fresnels that disagree about where the light is read as neither.
      */
     private fun drawRim(canvas: Canvas, f: Frame) {
         val r = f.radius
@@ -534,7 +899,8 @@ class ReactorOrb(private val density: Float) {
         val a = RIM_ALPHA * f.alpha * (0.7f + 0.3f * f.level)
         rimPaint.strokeWidth = dp(RIM_WIDTH_DP)
         rimPaint.shader = LinearGradient(
-            f.cx - r, f.cy - r, f.cx + r, f.cy + r,
+            litX(f, 1f), litY(f, 1f),
+            litX(f, -1f), litY(f, -1f),
             intArrayOf(
                 withAlpha(f.rim, a * 0.30f),
                 withAlpha(f.rim, a),
@@ -828,6 +1194,14 @@ class ReactorOrb(private val density: Float) {
         const val EDGE_SHADOW_ALPHA = 0.55f
 
         /**
+         * The shaded side of the ball. A shade off [SUBSTRATE_COLOR] rather
+         * than black: the terminator crosses the outer band where the substrate
+         * has already faded out, so at the limb it is drawn against the bloom,
+         * and black there is a smudge rather than a shadow.
+         */
+        val TERMINATOR_COLOR = 0xFF03060E.toInt()
+
+        /**
          * The recess, and the machined ring in it.
          *
          * The housing is darker than [SUBSTRATE_COLOR] because it has to read as
@@ -837,21 +1211,228 @@ class ReactorOrb(private val density: Float) {
         val HUB_COLOR = 0xFFA8BDD2.toInt()
         val HUB_SHADOW_COLOR = 0xFF1B2836.toInt()
 
-        /** Where the highlight sits, and how big it is. Up and to the left. */
-        const val SPECULAR_X = 0.34f
-        const val SPECULAR_Y = 0.38f
-        const val SPECULAR_R = 0.46f
-        const val SPECULAR_ALPHA = 0.26f
+        // --- the light -------------------------------------------------------
+
+        /**
+         * The key light, as a direction in the ball's own space: x right, y UP,
+         * z toward the viewer. Up, to the left, and slightly in front.
+         *
+         * Written out component by component because the web shader's
+         * `normalize(vec3(-0.46 + kx, 0.54 + ky, 0.70))` is the same three
+         * numbers — it wanders a couple of degrees about them — and
+         * `reactor_orb_test.py` compares them. The shader has a real sphere
+         * normal and takes `dot(n, L)` per pixel; this file has no per-pixel
+         * shader at all and fakes that cosine with gradients whose centres are
+         * offset along this direction. Faking it from a DIFFERENT direction is
+         * the loudest drift available to us — a highlight up-left on the phone
+         * and up-right in the browser is the first thing anybody would see.
+         */
+        const val LIGHT_X = -0.46f
+        const val LIGHT_Y = 0.54f
+        const val LIGHT_Z = 0.70f
+
+        /**
+         * The fill: dim, cool, and from the opposite corner.
+         *
+         * One light in a black room gives a crescent moon. The fill is what
+         * leaves the far side of the ball readable, and its own small
+         * catchlight low and to the right is the second one — a glass ball on a
+         * desk has two, and a drawing of a glass ball has one.
+         */
+        const val FILL_X = 0.60f
+        const val FILL_Y = -0.46f
+        const val FILL_Z = 0.64f
+
+        /**
+         * The same direction flattened onto the screen and normalised, y still
+         * UP. Skia's y points DOWN, so [litY] subtracts it; nothing else in
+         * this file may touch it without going through [litX] and [litY].
+         *
+         * `normalize(LIGHT_X, LIGHT_Y)`, written out because `const val` wants
+         * a literal. The test recomputes it.
+         */
+        const val LIGHT_DIR_X = -0.6485f
+        const val LIGHT_DIR_Y = 0.7612f
+
+        /** The fill, flattened the same way. */
+        const val FILL_DIR_X = 0.7936f
+        const val FILL_DIR_Y = -0.6084f
+
+        /** How much the fill lifts the side the key cannot reach. */
+        const val FILL_ALPHA = 0.11f
+
+        /**
+         * How far toward the light the ball's shading is struck, as a fraction
+         * of its radius.
+         *
+         * The true diffuse pole — where `n` equals the light — is out at
+         * `length(LIGHT_X, LIGHT_Y)`, about 0.71 of the radius. A gradient
+         * centred out there spends all its falloff in the last third of the
+         * ball and reads as a crescent moon, so it is pulled in. This is the
+         * number that turns a disc into a ball; at zero the orb is concentric
+         * rings again however much else is stacked on it.
+         */
+        const val SPHERE_LIGHT_OFFSET = 0.35f
+
+        /** The lit near side: how far it reaches, and how hard it lifts. */
+        const val SPHERE_LIT_R = 0.95f
+        const val SPHERE_LIT_ALPHA = 0.20f
+        const val SPHERE_LIT_WHITENESS = 0.35f
+
+        /**
+         * The terminator's radius, larger than the ball on purpose: the shading
+         * is still climbing when it reaches the far limb, instead of having
+         * bottomed out into a flat black rind partway across.
+         */
+        const val TERMINATOR_R = 1.55f
+        const val TERMINATOR_ALPHA = 0.34f
+
+        /**
+         * How far the lit point wanders, and how fast. Both deliberately below
+         * the threshold of anything you could point at: the orb must never be
+         * completely still, and must never be seen to loop.
+         */
+        const val SPHERE_WANDER = 0.06f
+        const val SPHERE_WANDER_RATE = 0.29f
+
+        /** The assembly's shadow on the ball behind it. */
+        const val HOUSING_SHADOW_OFFSET = 0.03f
+        const val HOUSING_SHADOW_SPREAD = 0.05f
+        const val HOUSING_SHADOW_ALPHA = 0.50f
+
+        /**
+         * How dark the recess floor goes on the side away from the light. The
+         * recess's own occlusion: a wall catching light on one side and a wall
+         * in shadow opposite it is the difference between a recess and a hole
+         * cut out of a picture.
+         */
+        const val HOUSING_WALL_ALPHA = 0.38f
+
+        /** How far the machined parts' lit edges are pushed toward white. */
+        const val HUB_SHEEN = 0.30f
+        const val SEAT_SHEEN = 0.30f
+
+        /**
+         * The plates' lighting rule, and one of the three things pinned across
+         * both implementations: a plate's brightness is
+         *
+         *     PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN * max(0, cos(plate - light))
+         *
+         * so the plate facing the light is fully lit and the plate opposite it
+         * falls to the base. The two sum to 1: the brightest plate is exactly
+         * as bright as every plate used to be, and the ring gains its depth by
+         * the others giving some up rather than by the whole assembly getting
+         * hotter.
+         *
+         * The shader does the same cosine per PIXEL, off its sphere normal.
+         * Ten plates at ten identical brightnesses are a printed ring, however
+         * carefully each one is shaded across its own thickness.
+         */
+        const val PLATE_LIGHT_BASE = 0.55f
+        const val PLATE_LIGHT_GAIN = 0.45f
+
+        /**
+         * The specular, and the second thing pinned across both.
+         *
+         * [SPECULAR_POWER] is the shader's tight Blinn-Phong exponent — it has
+         * three lobes and this file has the same three, one gradient each. A
+         * Canvas has no exponent to give, so each highlight is a gradient sized
+         * off its lobe rather than by eye:
+         *
+         *  * [SPECULAR_OFFSET] is `length(normalize(L + view).xy)` — where the
+         *    half-vector actually meets a unit sphere, which is where a
+         *    highlight goes. It is not "about a third of the way out"; it is
+         *    that number, and the shader puts its own highlight there because
+         *    the same arithmetic happens per pixel;
+         *  * [SPECULAR_R] is where a lobe of that exponent has fallen to 2% —
+         *    `sqrt(2 * ln(50) / power)` — so the gradient ends where the lobe
+         *    does;
+         *  * [SPECULAR_HALF] is the fraction of that radius at which the lobe
+         *    is at half intensity, `sqrt(2 * ln(2) / power) / SPECULAR_R`, and
+         *    it is where the middle stop sits at half alpha. That is what makes
+         *    the falloff steep: most of the brightness inside a fifth of the
+         *    ball, and a thin tail after it.
+         */
+        const val SPECULAR_POWER = 96f
+        const val SPECULAR_OFFSET = 0.386f
+        const val SPECULAR_R = 0.285f
+        const val SPECULAR_HALF = 0.421f
+        const val SPECULAR_ALPHA = 0.55f
+
+        /**
+         * The second lobe, off the same key: wide enough to be the sheen around
+         * the point rather than the point itself.
+         *
+         * Tinted rather than white. The tight lobe covers a hundredth of the
+         * face and can be white; this one covers a good part of it, and white
+         * over a good part of the face is how a coloured orb turns grey.
+         */
+        const val SPECULAR_WIDE_POWER = 16f
+        const val SPECULAR_WIDE_R = 0.699f
+        const val SPECULAR_WIDE_ALPHA = 0.16f
+        const val SPECULAR_WIDE_TINT = 0.45f
+
+        /** The fill's catchlight, low and to the right. */
+        const val FILL_SPECULAR_POWER = 46f
+        const val FILL_SPECULAR_OFFSET = 0.421f
+        const val FILL_SPECULAR_R = 0.412f
+        const val FILL_SPECULAR_ALPHA = 0.18f
+
+        /**
+         * How far the highlight drifts, and how fast. A specular nailed to one
+         * pixel reads as a sticker on the glass; a specular that moves a
+         * percent of the ball's width over a few seconds reads as glass.
+         */
+        const val SPECULAR_DRIFT = 0.018f
+        const val SPECULAR_DRIFT_RATE = 0.19f
+
+        /**
+         * The fresnel arc just inside the ball's edge: how far its gradient is
+         * struck from the lit point, and how bright it gets.
+         *
+         * At [FRESNEL_OFFSET] the far limb is at the gradient's full radius and
+         * the near limb is at about half of it, so a stop late in the ramp
+         * lands the bright arc on the side away from the light and nowhere
+         * else.
+         */
+        const val FRESNEL_OFFSET = 0.30f
+        const val FRESNEL_ALPHA = 0.30f
+
+        /**
+         * The wide skirt of the bloom, as a multiple of the halo's own radius,
+         * and how much dimmer it is. Wider and dimmer than the object is what
+         * makes light look like it is in the air rather than painted on.
+         */
+        const val BLOOM_WIDE = 1.55f
+        const val BLOOM_WIDE_ALPHA = 0.38f
+
+        /** How much the bloom breathes, and how fast. Nothing else's rate. */
+        const val HALO_BREATH = 0.03f
+        const val HALO_BREATH_RATE = 0.41f
 
         private val BLOB_STOPS = floatArrayOf(0f, 0.45f, 1f)
         private val CORE_STOPS = floatArrayOf(0f, 0.38f, 1f)
         private val HALO_STOPS = floatArrayOf(0f, 0.55f, 1f)
-        private val SPECULAR_STOPS = floatArrayOf(0f, 1f)
+        private val BLOOM_WIDE_STOPS = floatArrayOf(0f, 0.42f, 1f)
+        private val SPECULAR_STOPS = floatArrayOf(0f, SPECULAR_HALF, 1f)
         private val RIM_STOPS = floatArrayOf(0f, 0.5f, 1f)
         private val SWEEP_STOPS = floatArrayOf(0f, 0.62f, 0.92f, 1f)
 
-        /** Transparent until 82% of the ball, then down into the edge shadow. */
-        private val EDGE_SHADOW_STOPS = floatArrayOf(0f, 0.82f, 1f)
+        /** Transparent through the near side, then down into the terminator. */
+        private val TERMINATOR_STOPS = floatArrayOf(0f, 0.45f, 1f)
+
+        /** The lit near side, gone before it reaches the far one. */
+        private val SPHERE_LIT_STOPS = floatArrayOf(0f, 0.45f, 1f)
+
+        /** Nothing until the last seventh, so the arc stays thin. */
+        private val FRESNEL_STOPS = floatArrayOf(0f, 0.86f, 1f)
+
+        /**
+         * The limb, in four stops rather than two: shallow from 58% of the ball
+         * and steep at the edge. A curve is what is being drawn, and a single
+         * ramp into the last fifth reads as a dark rind with an inside edge.
+         */
+        private val EDGE_SHADOW_STOPS = floatArrayOf(0f, 0.58f, 0.86f, 1f)
 
         /**
          * Flat across the recess floor, lifting over the last third toward the

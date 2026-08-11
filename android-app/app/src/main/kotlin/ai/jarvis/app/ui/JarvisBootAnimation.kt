@@ -249,9 +249,9 @@ class JarvisBootAnimation @JvmOverloads constructor(
         // orbChromeAlpha, NOT homeAlpha. Both wordmarks are the same glyphs in
         // the same colour on the same pixels, so this is a crossfade of one
         // object, and homeAlpha starts HOME_FADE_DELAY_MS late — which put a
-        // hole in the middle of it and made the wordmark dip almost out at
-        // around 1263ms before coming back. The host still gets homeAlpha for
-        // its controls, which are crossfading with nothing.
+        // hole in the middle of it and dropped the wordmark to a quarter of its
+        // opacity at 1260ms before it came back. The host still gets homeAlpha
+        // for its controls, which are crossfading with nothing.
         drive.chromeAlpha = BootTimeline.orbChromeAlpha(t)
         for (i in 0 until JarvisOrbView.RING_COUNT) {
             drive.ringReveal[i] = BootTimeline.ringReveal(t, i)

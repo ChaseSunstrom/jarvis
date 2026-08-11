@@ -36,6 +36,7 @@ Run:  python3 android-app/tools/reactor_orb_test.py
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 from pathlib import Path
@@ -80,6 +81,41 @@ GEOMETRY = {
     "MAJOR_TICK": "MAJOR_TICK",
     "HALO_FRACTION": "HALO_FRACTION",
     "SPOKE_COUNT": "SPOKE_COUNT",
+}
+
+#: The light, and everything hung off it.
+#:
+#: The second half of the same report: *"I dont want just an orb clock, I want it
+#: to look 3d and actually nice, similar to the rest of the AIs"*. Structure was
+#: not the problem by then — there was a recess, there were plates. DEPTH was:
+#: every shape was a gradient about the same centre, so brightness fell off with
+#: radius alone, which is a flat target lit head-on.
+#:
+#: Both implementations light the object now, and they are lighting it from very
+#: different machines: the shader has a real sphere normal and takes `dot(n, L)`
+#: per pixel, while a Canvas has no per-pixel shader at all and has to fake that
+#: cosine with gradients struck about a point offset toward the light. Faking it
+#: from a DIFFERENT direction is the loudest drift available — the highlight is
+#: the first thing anybody looks at, and up-left on the phone against up-right in
+#: the browser needs no measuring to see. So the direction is one number here,
+#: and the two things derived from it are derived rather than eyeballed.
+LIGHT = (-0.46, 0.54, 0.70)
+
+#: The fill, from the opposite corner. One light in a black room gives a
+#: crescent moon; this is what leaves the far side readable, and its own small
+#: catchlight is the second one — a glass ball on a desk has two highlights, a
+#: drawing of a glass ball has one.
+FILL = (0.60, -0.46, 0.64)
+
+#: The Blinn-Phong exponents the shader's lobes use, and the Kotlin constant
+#: each one sizes. A Canvas cannot raise anything to a power, so the phone's
+#: highlights are gradients sized off these lobes — see
+#: `check_the_two_renderers_are_lit_the_same`, which does that arithmetic rather
+#: than trusting either side's number.
+LOBES = {
+    "SPECULAR_POWER": ("SPECULAR_R", 96.0, "the key's tight lobe"),
+    "SPECULAR_WIDE_POWER": ("SPECULAR_WIDE_R", 16.0, "the sheen around it"),
+    "FILL_SPECULAR_POWER": ("FILL_SPECULAR_R", 46.0, "the fill's catchlight"),
 }
 
 #: What the numbers have to BE, so a coordinated edit to both files still has to
@@ -370,27 +406,479 @@ def check_the_coils_are_a_layered_assembly() -> list[str]:
         )
 
     # --- GLSL: the same assembly, with the sphere normal doing the depth ---
-    for needle, what in (
-        ("acc = mix(acc, HOUSING,", "a housing that takes light away rather than adding it"),
-        ("ring(q, HUB_FACTOR,", "the metal hub ring"),
-        ("gapArc / max(q,", "the gap that widens inward, which is the plates' taper"),
-        ("float across = clamp((q - SPOKE_INNER)", "the gradient across the plate's thickness"),
-        ("SEAT_SHADOW_SPAN, 1.0, across", "the outer seat's shadow on the plates"),
+    #
+    # Matched as patterns rather than as literal lines: the shader is written by
+    # hand against a different machine, and it renames its own locals. What has
+    # to survive is the ARITHMETIC — a housing that subtracts, a hub struck by
+    # the light, a gap divided by the radius so it widens inward, a ramp across
+    # the plate's thickness and the seat's shadow at the end of it.
+    for pattern, what in (
+        (r"acc = mix\(acc, HOUSING,", "a housing that takes light away rather than adding it"),
+        (r"ring\(q, HUB_FACTOR,", "the metal hub ring"),
+        (r"gapArc / max\(\w+,", "the gap that widens inward, which is the plates' taper"),
+        (
+            r"across = clamp\(\(q\w* - SPOKE_INNER\)",
+            "the gradient across the plate's thickness",
+        ),
+        (r"SEAT_SHADOW_SPAN, 1\.0, across", "the outer seat's shadow on the plates"),
     ):
-        if needle not in web:
-            failures.append(f"the web orb has lost {what} ({needle})")
+        if not re.search(pattern, web):
+            failures.append(f"the web orb has lost {what} ({pattern})")
     # The browser has a real normal; the recess and the machined ring are where
     # it is worth spending, because the phone can only fake that depth with a
     # flat gradient. The INVERTED term is the recess's own: it deepens where the
     # sphere turns away from the light, which is what occlusion does.
-    if "(1.0 - clamp(dot(n, L), 0.0, 1.0))" not in web:
+    diffuse = re.search(r"(\w+)\s*=\s*clamp\(\s*(?:dot\(n, L\)|ndl)\s*,\s*0\.0,\s*1\.0\)", web)
+    if not diffuse:
+        failures.append("the web orb's machined parts are no longer lit off the normal")
+    elif not re.search(rf"1\.0 - (?:{diffuse.group(1)}|clamp\(dot\(n, L\), 0\.0, 1\.0\))", web):
         failures.append(
             "the web orb's recess no longer deepens away from the light, so it is as "
             "flat as the one the Canvas has to fake and the shader is spending a real "
             "sphere normal on nothing"
         )
-    if "clamp(dot(n, L), 0.0, 1.0)" not in web:
-        failures.append("the web orb's machined parts are no longer lit off the normal")
+    return failures
+
+
+def glsl_light(src: str, name: str) -> tuple[float, float, float] | None:
+    """One of the shader's light directions, however it happens to spell it.
+
+    Reads the leading literal of each component, so a light that WANDERS —
+    `normalize(vec3(-0.46 + kx, 0.54 + ky, 0.70))` — still states the direction
+    it wanders about. What is pinned is that direction, not the spelling: a
+    check that only recognised one form would fail the day the other side tidied
+    its own file, and a spec that fails for cosmetic reasons is a spec people
+    start ignoring.
+    """
+    inline = re.search(
+        rf"\b{name}\s*=\s*normalize\(\s*vec3\(\s*"
+        r"(-?[0-9.]+)[^,]*,\s*(-?[0-9.]+)[^,]*,\s*(-?[0-9.]+)[^)]*\)",
+        src,
+    )
+    if inline:
+        return tuple(float(g) for g in inline.groups())  # type: ignore[return-value]
+    return None
+
+
+def unit(v: tuple[float, ...]) -> tuple[float, ...]:
+    n = math.sqrt(sum(c * c for c in v))
+    return tuple(c / n for c in v) if n else v
+
+
+def check_the_two_renderers_are_lit_the_same() -> list[str]:
+    """One light, and the two things derived from it.
+
+    This is the check that the "make it 3d" pass cannot quietly come apart. The
+    phone fakes `dot(n, L)` with offset gradients and the browser computes it;
+    what they must share is WHERE THE LIGHT IS, because everything either of
+    them does about depth — the highlight, the terminator, the fresnel's bias,
+    which coil plate is brightest, which way the assembly's shadow falls — is
+    that one vector, and all of it points the wrong way together if it moves.
+
+    Two of the numbers are derived here rather than compared, so neither file
+    can hold a plausible-looking value that is simply wrong:
+
+      * the specular sits at `length(normalize(L + view).xy)` — where the
+        half-vector meets a unit sphere. The shader gets that for free from its
+        normal; the Canvas has to be TOLD, and this is the telling;
+      * the highlight's radius is where a lobe of the shader's own exponent has
+        fallen to 2%, and its middle stop is that lobe's half-intensity point.
+        A Canvas cannot raise anything to a power, but it can be handed a
+        gradient shaped like the answer.
+    """
+    failures = []
+    kot = REACTOR.read_text(encoding="utf-8")
+    kotlin = kotlin_consts(kot)
+    web = WEB_ORB.read_text(encoding="utf-8")
+
+    for rig, spec, glsl_name in (
+        ("key", LIGHT, "L"),
+        ("fill", FILL, "Fl"),
+    ):
+        prefix = "LIGHT" if rig == "key" else "FILL"
+        for axis, want in zip("XYZ", spec):
+            name = f"{prefix}_{axis}"
+            got = kotlin.get(name)
+            if got is None:
+                failures.append(
+                    f"ReactorOrb has no {name}; the {rig} light is somewhere else again"
+                )
+            elif abs(got - want) > 1e-6:
+                failures.append(f"ReactorOrb.{name} is {got}, this spec says {want}")
+
+        there = glsl_light(web, glsl_name)
+        if there is None:
+            failures.append(
+                f"the web shader states no {rig} light this file can find, so nothing "
+                "checks that the two surfaces are lit from the same place"
+            )
+        else:
+            want_v = unit(spec)
+            got_v = unit(there)
+            if max(abs(a - b) for a, b in zip(want_v, got_v)) > 0.01:
+                failures.append(
+                    f"the web shader's {rig} light is {tuple(round(c, 4) for c in got_v)} "
+                    f"and this spec says {tuple(round(c, 4) for c in want_v)}. The "
+                    "highlight is the first thing anybody looks at; two surfaces lit "
+                    "from two directions is the most visible drift there is."
+                )
+
+        # The flattened direction the Canvas actually uses has to BE that light,
+        # normalised. Nothing in ReactorOrb may touch a light except through the
+        # two of these, which is why they are derived here rather than eyeballed.
+        flat = unit((spec[0], spec[1]))
+        for name, want in ((f"{prefix}_DIR_X", flat[0]), (f"{prefix}_DIR_Y", flat[1])):
+            got = kotlin.get(name)
+            if got is None:
+                failures.append(f"ReactorOrb has no {name}")
+            elif abs(got - want) > 1e-3:
+                failures.append(
+                    f"ReactorOrb.{name} is {got}, but normalising the {rig} light's x "
+                    f"and y gives {want:.4f}. The screen-space direction has to be the "
+                    "light itself."
+                )
+
+    # ...and Skia's y points DOWN while the light is stated y-UP, so the one
+    # helper that converts has to subtract. Get this backwards and the phone's
+    # highlight is below the middle while the browser's is above it.
+    if "f.cy - LIGHT_DIR_Y" not in kot:
+        failures.append(
+            "ReactorOrb no longer flips the light's y for Skia's downward axis, so the "
+            "phone is lit from below and the browser from above"
+        )
+
+    # Each highlight sits where its own half-vector meets the sphere. The shader
+    # gets that for free from the normal; the Canvas has to be TOLD, and this is
+    # the telling — "about a third of the way out" is a guess, and a guess is
+    # what puts the phone's highlight somewhere the browser's is not.
+    for spec, name in ((LIGHT, "SPECULAR_OFFSET"), (FILL, "FILL_SPECULAR_OFFSET")):
+        u = unit(spec)
+        half = unit((u[0], u[1], u[2] + 1.0))
+        want = math.hypot(half[0], half[1])
+        got = kotlin.get(name)
+        if got is None:
+            failures.append(f"ReactorOrb has no {name}")
+        elif abs(got - want) > 0.01:
+            failures.append(
+                f"ReactorOrb.{name} is {got}, but the half-vector between that light and "
+                f"the viewer meets a unit sphere at {want:.3f} of its radius. That is "
+                "where a highlight goes, and where the shader puts its own."
+            )
+
+    # ...and each is sized off the exponent of the lobe it stands in for. A
+    # Canvas cannot raise anything to a power; it can be handed a gradient the
+    # shape of the answer.
+    exponents = set()
+    for m in re.finditer(r"\bpow\(", web):
+        args = terms(call_args(web, m.end() - 1))
+        try:
+            exponents.add(float(args[-1]))
+        except (IndexError, ValueError):
+            continue
+    for power_name, (radius_name, want_power, what) in LOBES.items():
+        power = kotlin.get(power_name)
+        if power is None:
+            failures.append(f"ReactorOrb has no {power_name} to size {what} against")
+            continue
+        if abs(power - want_power) > 1e-6:
+            failures.append(f"ReactorOrb.{power_name} is {power}, this spec says {want_power}")
+        if not any(abs(e - want_power) < 1e-6 for e in exponents):
+            failures.append(
+                f"the web shader raises nothing to {want_power:g}, so {what} is a "
+                f"different size there from the gradient ReactorOrb sizes off it"
+            )
+        want_r = math.sqrt(2.0 * math.log(50.0) / want_power)
+        got_r = kotlin.get(radius_name)
+        if got_r is None:
+            failures.append(f"ReactorOrb has no {radius_name}")
+        elif abs(got_r - want_r) > 0.01:
+            failures.append(
+                f"ReactorOrb.{radius_name} is {got_r}, but a lobe of exponent "
+                f"{want_power:g} has fallen to 2% by {want_r:.3f} of the ball's radius"
+            )
+
+    # One shared middle stop: the fraction of any such radius at which any such
+    # lobe is at half intensity. It is the same number for every exponent —
+    # sqrt(ln 2 / ln 50) — which is why one constant does for all three.
+    want_half = math.sqrt(math.log(2.0) / math.log(50.0))
+    got_half = kotlin.get("SPECULAR_HALF")
+    if got_half is None:
+        failures.append("ReactorOrb has no SPECULAR_HALF")
+    elif abs(got_half - want_half) > 0.02:
+        failures.append(
+            f"ReactorOrb.SPECULAR_HALF is {got_half}; a Blinn-Phong lobe is at half "
+            f"intensity by {want_half:.3f} of the radius at which it dies. The middle "
+            "stop is what makes the falloff steep, and a highlight that is not steep "
+            "is a smudge."
+        )
+
+    # The plate rule. Both sides take a cosine against the light; the phone once
+    # per plate, the browser once per pixel. Base plus gain is 1 so the brightest
+    # plate is exactly as bright as every plate used to be — the ring gains its
+    # depth by the others giving some up, not by the assembly getting hotter.
+    base = kotlin.get("PLATE_LIGHT_BASE")
+    gain = kotlin.get("PLATE_LIGHT_GAIN")
+    if base is None or gain is None:
+        failures.append(
+            "ReactorOrb states no plate-lighting rule, so its ten plates are ten "
+            "identical brightnesses again — which is a printed ring however well each "
+            "one is shaded across its own thickness"
+        )
+    else:
+        if abs(base + gain - 1.0) > 1e-6:
+            failures.append(
+                f"PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN is {base + gain}, not 1: the plate "
+                "facing the light is no longer exactly as bright as the plates were "
+                "before they were lit, so the whole assembly changed brightness"
+            )
+        if gain < 0.15:
+            failures.append(
+                f"PLATE_LIGHT_GAIN is {gain}; under about 0.15 the lit plate and the "
+                "unlit one are the same plate and the ring is flat again"
+            )
+        if base < 0.35:
+            failures.append(
+                f"PLATE_LIGHT_BASE is {base}; the plate facing away from the light still "
+                "has the core in front of it, and one that dark reads as a missing coil"
+            )
+
+    # The ball's shading is struck between the middle and the true diffuse pole.
+    pole = math.hypot(*unit(LIGHT)[:2])
+    offset = kotlin.get("SPHERE_LIGHT_OFFSET")
+    if offset is None:
+        failures.append(
+            "ReactorOrb has no SPHERE_LIGHT_OFFSET, so its gradients are struck about "
+            "the middle again and the orb is a disc with rings on it"
+        )
+    elif not 0.15 <= offset <= pole + 1e-6:
+        failures.append(
+            f"SPHERE_LIGHT_OFFSET is {offset}; it has to be between 0.15 (below which "
+            f"there is no ball) and the true diffuse pole at {pole:.3f} (past which the "
+            "falloff is all crowded into the limb and reads as a crescent moon)"
+        )
+
+    # Everything that moves has to stay under the threshold at which the two
+    # surfaces would visibly disagree — the shader holds its light still.
+    for name, cap, what in (
+        ("SPECULAR_DRIFT", 0.05, "the highlight's drift"),
+        ("SPHERE_WANDER", 0.25, "the lit point's wander"),
+        ("HALO_BREATH", 0.10, "the bloom's breathing"),
+    ):
+        got = kotlin.get(name)
+        if got is None:
+            failures.append(f"ReactorOrb has no {name}")
+        elif got > cap:
+            failures.append(
+                f"{name} is {got}: {what} is meant to be under {cap}, felt and not seen. "
+                "Past that the phone is visibly animating something the browser holds "
+                "still, and the two orbs stop being one object."
+            )
+    return failures
+
+
+def check_the_ball_is_a_sphere() -> list[str]:
+    """Skia has no per-pixel shader, so the sphere is stacked gradients.
+
+    That is a real technique, not a compromise, and it has parts. Each of these
+    is one line to delete and none of them is visible in a diff:
+
+      * a gradient struck OFF CENTRE, toward the light. This one alone is the
+        difference between a disc and a ball, and it is what nothing in this
+        renderer had: every shape was concentric, so brightness fell off with
+        radius and the orb read as rings printed on a circle;
+      * a terminator, dropping away from that same point;
+      * limb darkening, and a fresnel arc opposite the light — an edge brighter
+        than the middle is what says "surface curving out of view";
+      * the assembly's shadow on the ball, and one cosine per coil plate;
+      * a bloom wider and dimmer than the object, so the light looks like it is
+        in the air rather than painted on.
+    """
+    failures = []
+    src = REACTOR.read_text(encoding="utf-8")
+
+    sphere = kotlin_body(src, "drawSphereShading")
+    if not sphere:
+        return [
+            "ReactorOrb has no drawSphereShading. Without it every gradient in the "
+            "layer is struck about the ball's centre, brightness falls off with radius "
+            "alone, and the orb is a flat disc with rings on it."
+        ]
+    if "litX(f, SPHERE_LIGHT_OFFSET" not in sphere:
+        failures.append(
+            "the ball's shading is no longer struck about a point offset toward the "
+            "light; a radial gradient on the centre is a disc"
+        )
+    if "additive.shader = RadialGradient" not in sphere:
+        failures.append("the ball has no lit near side")
+    if "plain.shader = RadialGradient" not in sphere:
+        failures.append(
+            "the ball has no terminator. It has to be the non-additive paint: screening "
+            "a dark colour onto anything is very nearly a no-op."
+        )
+
+    glass = kotlin_body(src, "drawGlass")
+    if "FRESNEL_ALPHA" not in glass or "litX(f, FRESNEL_OFFSET" not in glass:
+        failures.append(
+            "the glass has no fresnel arc struck about the lit point, so the limb is "
+            "darker than the middle everywhere and the ball has no surface"
+        )
+    if "litX(f, SPECULAR_OFFSET" not in glass:
+        failures.append("the highlight is no longer offset toward the light")
+    if "SPECULAR_DRIFT" not in glass:
+        failures.append(
+            "the highlight is nailed to one pixel again, which reads as a sticker on "
+            "the glass rather than as glass"
+        )
+    if "SPECULAR_X" in src or "SPECULAR_Y" in src:
+        failures.append(
+            "the highlight's position is hard-coded again instead of being derived from "
+            "the light, so it can disagree with everything else lit by it"
+        )
+
+    spokes = kotlin_body(src, "drawSpokes")
+    if "PLATE_LIGHT_BASE + PLATE_LIGHT_GAIN" not in spokes:
+        failures.append(
+            "the plates are no longer lit per plate by their angle to the light; ten "
+            "identical plates are a printed ring"
+        )
+    if "additive.alpha = 255" not in spokes:
+        failures.append(
+            "drawSpokes leaves the shared paint at the last plate's alpha, so the core, "
+            "the glass and the next frame's blobs all inherit one plate's shading"
+        )
+
+    housing = kotlin_body(src, "drawHousing")
+    if "HOUSING_SHADOW_ALPHA" not in housing:
+        failures.append(
+            "the coil assembly casts no shadow on the ball behind it, so it is dark "
+            "rather than at a depth"
+        )
+    if "HOUSING_WALL_ALPHA" not in housing:
+        failures.append(
+            "the recess floor is uniformly dark again: a recess has a wall catching the "
+            "light and a wall opposite it in shadow, and that ramp is the whole read"
+        )
+    if "litX(f, HUB_FACTOR" not in housing:
+        failures.append(
+            "the hub ring is struck along the diagonal of a box again rather than along "
+            "the light, and a machined part lit from somewhere else reads as a decal"
+        )
+
+    halo = kotlin_body(src, "drawHalo")
+    if "BLOOM_WIDE" not in halo:
+        failures.append(
+            "the bloom has lost its wide dim skirt. Light in air falls off for a long "
+            "way at an intensity you would not look for; a single tight halo is a ring "
+            "painted round the orb."
+        )
+    if halo.count("f.maxRadius") < 2:
+        failures.append(
+            "one of the bloom's passes is no longer clamped to the view's own bounds, "
+            "and a clipped gradient is the bright SQUARE this whole file budgets against"
+        )
+    return failures
+
+
+def call_args(src: str, at: int) -> str:
+    """The text between the parens of the call whose `(` is at [at]."""
+    depth = 0
+    for i in range(at, len(src)):
+        if src[i] == "(":
+            depth += 1
+        elif src[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return src[at + 1 : i]
+    return ""
+
+
+def terms(text: str) -> list[str]:
+    """A comma-separated argument list, split at the TOP level only."""
+    depth = 0
+    out = [""]
+    for ch in text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("")
+        else:
+            out[-1] += ch
+    return [t.strip() for t in out if t.strip()]
+
+
+def items(text: str) -> int:
+    """How many top-level arguments a list has.
+
+    Kotlin allows a trailing comma and this file uses them, so an empty last
+    term is not an argument.
+    """
+    return len(terms(text))
+
+
+def check_no_gradient_can_throw() -> list[str]:
+    """The failure mode of this file is a crash, not an ugly orb.
+
+    `RadialGradient` throws on a radius of zero or less, and every gradient
+    throws when its colours and its stops are different lengths — and the boot
+    sequence starts the ball at exactly zero, so the first of those is a live
+    path rather than a theoretical one. None of it is visible by reading the
+    call: the stops are usually a named constant declared two hundred lines
+    away, and the depth pass added four-stop gradients beside three-stop ones.
+
+    Nobody working on this can see the result. So the arithmetic is checked
+    here instead of on a phone.
+    """
+    failures = []
+    src = REACTOR.read_text(encoding="utf-8")
+
+    stop_arrays: dict[str, int] = {}
+    for m in re.finditer(r"val ([A-Z][A-Z0-9_]*)\s*=\s*floatArrayOf\(", src):
+        stop_arrays[m.group(1)] = items(call_args(src, m.end() - 1))
+
+    for m in re.finditer(r"\b(RadialGradient|LinearGradient|SweepGradient)\(", src):
+        args = call_args(src, m.end() - 1)
+        if "intArrayOf(" not in args:
+            continue
+        colours = items(call_args(args, args.index("intArrayOf(") + len("intArrayOf")))
+        after = args[args.index("intArrayOf(") :]
+        if "floatArrayOf(" in after:
+            stops = items(call_args(after, after.index("floatArrayOf(") + len("floatArrayOf")))
+            where = "its inline stops"
+        else:
+            named = re.search(r"\b([A-Z][A-Z0-9_]*_STOPS)\b", after)
+            if not named:
+                failures.append(
+                    f"a {m.group(1)} at offset {m.start()} passes no stops this file can "
+                    "find, so nothing checks it against its colours"
+                )
+                continue
+            stops = stop_arrays.get(named.group(1), -1)
+            where = named.group(1)
+            if stops < 0:
+                failures.append(f"{where} is used as stops but never declared")
+                continue
+        if colours != stops:
+            failures.append(
+                f"a {m.group(1)} has {colours} colours and {stops} stops ({where}). "
+                "Skia throws on that, and it throws on the main thread, sixty times a "
+                "second, on a surface nobody can see from here."
+            )
+        if colours < 2:
+            failures.append(f"a {m.group(1)} has {colours} colour(s); it needs at least 2")
+
+    # ...and a radius of zero. Every function that builds a gradient has to have
+    # measured something against MIN_DRAW_PX before it gets there.
+    for m in re.finditer(r"\bRadialGradient\(", src):
+        head = src.rfind("private fun ", 0, m.start())
+        if head < 0 or "MIN_DRAW_PX" not in src[head : m.start()]:
+            fn = re.match(r"private fun (\w+)", src[head:]) if head >= 0 else None
+            failures.append(
+                f"{fn.group(1) if fn else 'a function'} builds a RadialGradient without "
+                "guarding its radius against MIN_DRAW_PX first. A radius of zero throws, "
+                "and the boot sequence starts the ball at exactly zero."
+            )
     return failures
 
 
@@ -409,7 +897,7 @@ def check_the_web_ball_fits_its_viewport() -> list[str]:
         return ["the web shader has no BALL constant"]
 
     breath = re.search(r"breath = 1\.0 \+ ([0-9.]+) \* sin\(uBreath\)", src)
-    swell = re.search(r"R = BALL \* breath \* \(1\.0 \+ ([0-9.]+) \* lvl\)", src)
+    swell = re.search(r"R = (?:max\()?BALL \* breath \* \(1\.0 \+ ([0-9.]+) \* lvl\)", src)
     if not breath or not swell:
         return ["cannot find the web shader's scale terms; the budget cannot be checked"]
     max_scale = (1 + float(breath.group(1))) * (1 + float(swell.group(1)))
@@ -570,6 +1058,9 @@ def check_the_draw_order() -> list[str]:
 
       * the **substrate** before the blobs, or additive blending has nothing to
         add to and the orb is whatever is behind it, tinted;
+      * the **sphere's shading after the blobs and before the coils**: it is
+        the colour field it has to shade, and the coils have their own
+        per-plate lighting. Drawn last it would grey the plates and the core;
       * the **coils inside** the layer, so the drifting blob colours light them.
         Outside, the same shape is a flat overprint that reads as a decal stuck
         on the front of a ball;
@@ -594,6 +1085,7 @@ def check_the_draw_order() -> list[str]:
         ("canvas.saveLayer(", "the additive layer opening"),
         ("drawSubstrate(", "the dark ground"),
         ("drawBlob(", "the colour field"),
+        ("drawSphereShading(", "the sphere's near side and terminator"),
         ("drawSpokes(", "the coils"),
         ("drawCore(", "the hot centre"),
         ("drawGlass(", "the cover"),
@@ -748,13 +1240,16 @@ def check_the_reactor_is_recognisable() -> list[str]:
         failures.append("the web orb has no coils")
     # And the browser's version has to be genuinely three-dimensional, which is
     # the whole reason it is a shader and not a canvas: a sphere normal, a
-    # specular off the cover, and a fresnel limb.
-    for needle, what in (
-        ("sqrt(max(1.0 - q * q, 0.0))", "the sphere normal"),
-        ("pow(max(dot(n, H), 0.0)", "the specular highlight"),
-        ("pow(1.0 - z,", "the fresnel limb"),
+    # specular off the cover, and a fresnel limb. Patterns, not literals — the
+    # shader clamps and names its own terms, and what is pinned is that it still
+    # computes them.
+    for pattern, what in (
+        (r"sqrt\(max\(1\.0 - \w+ \* \w+, 0\.0\)\)", "the sphere normal"),
+        (r"dot\(n, H\)", "the half-vector its specular stands on"),
+        (r"pow\(\s*(?:ndh|clamp\(dot\(n, H\)|max\(dot\(n, H\))", "the specular highlight"),
+        (r"pow\(\s*(?:grazing|1\.0 - n\.z|1\.0 - z)", "the fresnel limb"),
     ):
-        if needle not in web:
+        if not re.search(pattern, web):
             failures.append(f"the web orb has lost {what} and is a flat disc again")
     return failures
 
@@ -769,7 +1264,16 @@ def check_the_phases_are_integrated() -> list[str]:
     """
     failures = []
     web = WEB_ORB.read_text(encoding="utf-8")
-    for uniform in ("uPhase", "uSpin", "uBreath"):
+    # The blob phases may arrive as one float or as a vec3 of three — each blob
+    # integrating its own is strictly better, since multiplying one shared phase
+    # by 0.73 puts a jump in the second blob every time that phase wraps — but
+    # either way they must be integrated on the CPU and arrive as uniforms.
+    if not re.search(r"uniform (?:float uPhase|vec3 uPhases);", web):
+        failures.append(
+            "the web shader derives its blob phases from uTime again; a state change "
+            "would jump the animation by several turns"
+        )
+    for uniform in ("uSpin", "uBreath"):
         if f"uniform float {uniform};" not in web:
             failures.append(
                 f"the web shader derives {uniform} from uTime again; a state change "
@@ -797,6 +1301,9 @@ def main() -> int:
         check_the_two_renderers_agree()
         + check_the_geometry_budget_holds()
         + check_the_coils_are_a_layered_assembly()
+        + check_the_two_renderers_are_lit_the_same()
+        + check_the_ball_is_a_sphere()
+        + check_no_gradient_can_throw()
         + check_the_web_ball_fits_its_viewport()
         + check_the_web_shader_wears_the_same_colours()
         + check_the_rates_are_one_table()
@@ -813,8 +1320,9 @@ def main() -> int:
         print(f"\n{len(failures)} failure(s)", file=sys.stderr)
         return 1
     print(
-        f"reactor orb: {len(GEOMETRY)} proportions, 4 palettes, 3 rate tables, the "
-        "draw order and the geometry budget agree across Skia and GLSL"
+        f"reactor orb: {len(GEOMETRY)} proportions, one light at {LIGHT}, 4 palettes, "
+        "3 rate tables, the draw order and the geometry budget agree across Skia and "
+        "GLSL"
     )
     return 0
 

@@ -32,8 +32,14 @@ function shader(name: 'VERT' | 'FRAG'): string {
 	return src.slice(start, end);
 }
 
-/** Every uniform the draw loop sets. A shader that dropped one draws garbage. */
-const UNIFORMS = ['uRes', 'uTime', 'uLevel', 'uState', 'uPhase', 'uSpin', 'uBreath'];
+/**
+ * Every uniform the draw loop sets. A shader that dropped one draws garbage.
+ *
+ * `uPhases` is a vec3 and not the single `uPhase` it replaced: the three blobs
+ * orbit at 1 : 0.73 : 1.31, and one shared phase wrapped at TAU makes the two
+ * fractional ones jump every wrap. They integrate separately now.
+ */
+const UNIFORMS = ['uRes', 'uTime', 'uLevel', 'uState', 'uPhases', 'uSpin', 'uBreath', 'uDrift'];
 
 test.describe('the orb shader', () => {
 	test('has no backtick in its source, which would truncate it', () => {
@@ -108,9 +114,10 @@ test.describe('the orb shader', () => {
 				gl.uniform1f(gl.getUniformLocation(program, 'uTime'), 1.0);
 				gl.uniform1f(gl.getUniformLocation(program, 'uLevel'), 0.4);
 				gl.uniform1f(gl.getUniformLocation(program, 'uState'), 1.0);
-				gl.uniform1f(gl.getUniformLocation(program, 'uPhase'), 1.1);
+				gl.uniform3f(gl.getUniformLocation(program, 'uPhases'), 1.1, 0.8, 1.4);
 				gl.uniform1f(gl.getUniformLocation(program, 'uSpin'), 2.2);
 				gl.uniform1f(gl.getUniformLocation(program, 'uBreath'), 0.5);
+				gl.uniform1f(gl.getUniformLocation(program, 'uDrift'), 0.9);
 				gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
 				const centre = new Uint8Array(4);

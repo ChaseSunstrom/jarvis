@@ -339,7 +339,7 @@ object TestHooks {
         screenshotDir(context).listFiles()?.forEach { runCatching { it.delete() } }
     }
 
-    // --- 5. the orb's frame clock -------------------------------------------
+    // --- holding the orb still, so Espresso can see an idle main thread ------
 
     /**
      * Keep [JarvisOrbView] on its `ValueAnimator` frame clock for the whole

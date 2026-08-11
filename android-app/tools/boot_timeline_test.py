@@ -732,8 +732,8 @@ def test_the_wordmark_crossfade_has_no_hole_in_it():
 
     It used to be `homeAlpha`, which starts HOME_FADE_DELAY_MS after the chrome
     begins leaving — right for the home CONTROLS, which crossfade with nothing,
-    and a 60ms hole in the middle of this one. The wordmark fell to under a
-    third of its opacity and came back, which is the flicker at the end of the
+    and a 60ms hole in the middle of this one. The wordmark fell to 0.26 of its
+    opacity at t=1260 and came back, which is the flicker at the end of the
     power-on.
     """
     worst_correct = min(

@@ -262,8 +262,9 @@ object BootTimeline {
      * crossfade of ONE object; [homeAlpha] deliberately starts
      * [HOME_FADE_DELAY_MS] late so the home CONTROLS arrive after the chrome
      * has begun leaving, which left a hole in the middle of that crossfade.
-     * Combined opacity bottomed out near 0.29 around t = 1263 ms: the wordmark
-     * dipped almost out and came back, half a breath before the orb settled.
+     * Combined opacity bottomed out at 0.26 at t = 1260 ms: the wordmark dipped
+     * to a quarter and came back, half a breath before the orb settled. The
+     * complement bottoms out at 0.75, which is an ordinary crossfade.
      *
      * The controls keep [homeAlpha] — they are not crossfading with anything.
      */
