@@ -128,10 +128,13 @@ def check_every_mode_has_a_tone(android: Path) -> int:
     """The two state machines must line up.
 
     `JarvisOrbView.Mode` is what the conversation engine speaks; `SiriPalette.Tone`
-    is what the floating orb wears. A mode with no arm in `setMode` is a Kotlin
-    compile error only because the `when` is exhaustive — this checks the
-    mapping exists at all, and that it is one-to-one rather than several modes
-    collapsing onto one tone.
+    is what the orb wears. The mapping used to be a `when` inside `SiriOrbView`,
+    which meant a third file had to be kept in step with two others by hand; it
+    is on the mode itself now, so a state added without a tone will not compile.
+
+    What can still go wrong, and is what this checks: several modes collapsing
+    onto one tone. That compiles perfectly and makes two states of the house
+    indistinguishable from across a room.
     """
     view = android / "app/src/main/kotlin/ai/jarvis/app/ui/SiriOrbView.kt"
     orb = android / "app/src/main/kotlin/ai/jarvis/app/ui/JarvisOrbView.kt"
@@ -139,17 +142,27 @@ def check_every_mode_has_a_tone(android: Path) -> int:
         print(f"FAIL  {view} is missing")
         return 1
     text = view.read_text(encoding="utf-8")
-    modes = set(re.findall(r"^\s{8}(\w+)\(0x", orb.read_text(encoding="utf-8"), re.M))
     failures = 0
+
     mapping = dict(
-        re.findall(r"JarvisOrbView\.Mode\.(\w+)\s*->\s*SiriPalette\.Tone\.(\w+)", text)
+        re.findall(
+            r"^\s{8}(\w+)\(SiriPalette\.Tone\.(\w+)\)[,;]",
+            orb.read_text(encoding="utf-8"),
+            re.M,
+        )
     )
-    for mode in sorted(modes):
-        if mode not in mapping:
-            print(f"FAIL  JarvisOrbView.Mode.{mode} has no tone on the floating orb")
+    if not mapping:
+        print("FAIL  JarvisOrbView.Mode no longer names a tone per state")
+        return 1
+    for tone in TONES:
+        if tone not in mapping.values():
+            print(f"FAIL  no mode ever puts the orb into the {tone} tone")
             failures += 1
     if len(set(mapping.values())) != len(mapping):
         print("FAIL  two modes share one tone; those states are indistinguishable")
+        failures += 1
+    if "fun setMode(mode: JarvisOrbView.Mode) = setTone(mode.tone)" not in text:
+        print("FAIL  the floating orb maps modes to tones itself again, in a third place")
         failures += 1
     return failures
 
@@ -342,15 +355,6 @@ def check_the_clock_runs(android: Path) -> int:
     if "import android.animation.ValueAnimator" in text:
         print("FAIL  the floating orb uses a ValueAnimator, which stops at scale 0")
         failures += 1
-    if "PorterDuff.Mode.SCREEN" not in text:
-        print("FAIL  the blobs no longer blend additively, so they read as flat discs")
-        failures += 1
-    if "saveLayer" not in text:
-        print(
-            "FAIL  the additive blend is not confined to a layer; it would brighten "
-            "the app behind the overlay instead of the orb"
-        )
-        failures += 1
     return failures
 
 
@@ -361,47 +365,43 @@ def check_the_orb_is_solid_and_fits(android: Path) -> int:
     behind them have nothing to add to, so over a white app the orb was a pale
     smudge. The fix is structural rather than a tuned alpha: a nearly opaque
     ball is drawn inside the layer FIRST, and the colours are lit against it.
-    An orb with no substrate is transparent again no matter what the other
-    alphas say, so the draw order is what is pinned here.
 
-    **Boxed in.** A View's canvas is clipped to its bounds by its parent, and
-    the halo is the only thing here that can exceed them — it grows with the
-    microphone level, and at full level it reached ~1.29x the half-width and got
-    cut into a bright square. The clamp is the fix, and it has to stay.
+    **Boxed in.** A View's canvas is clipped to its bounds by its parent, so
+    anything that exceeds them is cut into a bright rectangle. Two things can:
+    the halo, which grows with the microphone level, and — now that the floating
+    orb wears the reactor's rings too — the outermost ring itself.
+
+    The renderer's draw order and its geometry budget belong to
+    `reactor_orb_test.py`, which checks them once for both surfaces. What is
+    checked HERE is the overlay's own half: that this view tells the shared
+    renderer where its edges are, and that the ground the colours are lit
+    against is still opaque enough to be one.
     """
-    path = android / "app/src/main/kotlin/ai/jarvis/app/ui/SiriOrbView.kt"
-    if not path.is_file():
-        print(f"FAIL  {path} is missing")
-        return 1
-    src = path.read_text(encoding="utf-8")
+    view = android / "app/src/main/kotlin/ai/jarvis/app/ui/SiriOrbView.kt"
+    reactor = android / "app/src/main/kotlin/ai/jarvis/app/ui/ReactorOrb.kt"
+    for path in (view, reactor):
+        if not path.is_file():
+            print(f"FAIL  {path} is missing")
+            return 1
+    src = view.read_text(encoding="utf-8")
     failures = 0
 
-    if "min(radius * (HALO_FRACTION + 0.25f * smoothed), span)" not in src:
+    if "f.maxRadius = span" not in src:
         print(
             "FAIL  the halo is no longer clamped to the view. At full microphone "
             "level it exceeds the bounds and the parent's clip turns it into a box."
         )
         failures += 1
-
-    order = src.find("drawSubstrate(canvas")
-    blobs = src.find("drawBlob(canvas")
-    if order < 0:
-        print("FAIL  there is no substrate; the orb is transparent over a bright app")
-        failures += 1
-    elif not (0 < order < blobs):
-        print("FAIL  the substrate is not drawn before the blobs, so nothing is lit")
+    if "span / (ReactorOrb.OUTER_FACTOR * MAX_SCALE)" not in src:
+        print(
+            "FAIL  the floating orb no longer sizes itself against the renderer's "
+            "own outermost radius, so a retuned ring can be clipped into a box"
+        )
         failures += 1
 
-    if "const val SUBSTRATE_ALPHA = 0.90f" not in src:
+    rsrc = reactor.read_text(encoding="utf-8")
+    if "const val SUBSTRATE_ALPHA = 0.90f" not in rsrc:
         print("FAIL  the substrate is no longer nearly opaque at the middle")
-        failures += 1
-
-    # It must be inside the layer, or it grounds the whole window rather than
-    # the orb — a dark rectangle over the app behind, which is the box again.
-    layer = src.find("canvas.saveLayer(null, null)")
-    restore = src.find("canvas.restoreToCount(layer)")
-    if not (0 < layer < order < restore):
-        print("FAIL  the substrate is drawn outside the additive layer")
         failures += 1
     return failures
 

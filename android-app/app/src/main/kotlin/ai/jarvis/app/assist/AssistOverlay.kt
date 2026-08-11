@@ -284,8 +284,17 @@ class AssistOverlay(
     companion object {
         private const val TAG = "JarvisOverlay"
 
-        /** Side of the orb's slot in the card. */
-        private const val ORB_DP = 132
+        /**
+         * Side of the orb's slot in the card.
+         *
+         * Raised from 132 when the floating orb became the whole arc reactor
+         * rather than a bare ball. The renderer sizes the glowing centre so its
+         * outermost ring still fits — `half / (OUTER_FACTOR * maxScale)` — so
+         * the same slot that held a 132dp ball now has to hold a 132dp
+         * *assembly*, and the ball inside it would have come out at a third of
+         * that. The card is 340dp wide; this leaves a comfortable margin.
+         */
+        private const val ORB_DP = 176
 
         /**
          * Whether "display over other apps" is granted.

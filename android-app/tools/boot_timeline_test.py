@@ -34,6 +34,10 @@ ROOT = Path(__file__).resolve().parent.parent
 KOTLIN_TIMELINE = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/BootTimeline.kt"
 KOTLIN_ANIMATION = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/JarvisBootAnimation.kt"
 KOTLIN_ORB = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/JarvisOrbView.kt"
+#: The reactor itself. `JarvisOrbView` is the HUD that hosts it — scrim,
+#: brackets, wordmark, boot hooks — and the geometry the boot sequence drives
+#: lives one level down, shared with the floating overlay window.
+KOTLIN_REACTOR = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/ReactorOrb.kt"
 KOTLIN_COMPAT = ROOT / "app/src/main/kotlin/ai/jarvis/app/compat/GrapheneCompat.kt"
 KOTLIN_CRASH = ROOT / "app/src/main/kotlin/ai/jarvis/app/crash/JarvisCrashHandler.kt"
 KOTLIN_APP = ROOT / "app/src/main/kotlin/ai/jarvis/app/JarvisApp.kt"
@@ -56,6 +60,7 @@ TRACKED_KOTLIN = [
     KOTLIN_TIMELINE,
     KOTLIN_ANIMATION,
     KOTLIN_ORB,
+    KOTLIN_REACTOR,
     KOTLIN_COMPAT,
     KOTLIN_CRASH,
     KOTLIN_CRASH_UI,
@@ -1051,17 +1056,30 @@ def test_kotlin_orb_exposes_the_boot_hooks():
     ):
         assert needle in src, f"JarvisOrbView no longer has: {needle}"
     k = kotlin_consts(KOTLIN_ORB)
-    assert k.get("RING_COUNT") == RING_COUNT, "orb ring count must match the timeline"
     # The wordmark the boot resolves in must settle onto the orb's own spacing.
     assert abs(k.get("WORDMARK_SPACING", -1) - LETTER_SPACING_END) < 1e-9, (
         "JarvisOrbView.WORDMARK_SPACING must equal BootTimeline.LETTER_SPACING_END, "
         "or the wordmark jumps at the handoff"
     )
-    for name in ("RING_INNER_RIM", "RING_MID_DASH", "RING_FINE_DASH", "RING_GAUGE"):
-        assert name in k, f"JarvisOrbView is missing {name}"
-    assert [k["RING_INNER_RIM"], k["RING_MID_DASH"], k["RING_FINE_DASH"], k["RING_GAUGE"]] == [
-        0, 1, 2, 3
-    ], "rings must be indexed inner -> outer, the order they materialise in"
+
+    # The ring identifiers are ReactorOrb's — JarvisOrbView aliases them so
+    # BootDrive can size its arrays, and the alias is what stops the two from
+    # drifting apart. Both halves are checked: the names still resolve from the
+    # view the boot animation talks to, and the values live in one place.
+    ring_names = ("RING_INNER_RIM", "RING_MID_DASH", "RING_FINE_DASH", "RING_GAUGE")
+    orb_src = KOTLIN_ORB.read_text()
+    for name in ring_names + ("RING_COUNT",):
+        assert f"const val {name} = ReactorOrb.{name}" in orb_src, (
+            f"JarvisOrbView.{name} must alias ReactorOrb.{name}; a second copy of "
+            "the ring indices is a second copy that can disagree with the renderer"
+        )
+    r = kotlin_consts(KOTLIN_REACTOR)
+    assert r.get("RING_COUNT") == RING_COUNT, "orb ring count must match the timeline"
+    for name in ring_names:
+        assert name in r, f"ReactorOrb is missing {name}"
+    assert [r[name] for name in ring_names] == [0, 1, 2, 3], (
+        "rings must be indexed inner -> outer, the order they materialise in"
+    )
 
 
 def test_orb_guards_the_zero_radius_the_boot_starts_from():
@@ -1074,10 +1092,22 @@ def test_orb_guards_the_zero_radius_the_boot_starts_from():
     bail out first.
     """
     assert core_scale(0) == 0.0, "the premise: the boot starts the core at zero"
-    src = KOTLIN_ORB.read_text()
-    assert "MIN_DRAW_PX" in src, "JarvisOrbView has no degenerate-geometry guard"
-    for fn in ("drawCore", "drawRing", "drawDashedRing", "drawTicks", "drawAnnulusSweep"):
-        body = src.split(f"private fun {fn}(", 1)[1][:700]
+    src = KOTLIN_REACTOR.read_text()
+    assert "MIN_DRAW_PX" in src, "ReactorOrb has no degenerate-geometry guard"
+    for fn in (
+        "drawSubstrate",
+        "drawBlob",
+        "drawSpokes",
+        "drawCore",
+        "drawGlass",
+        "drawHalo",
+        "drawRim",
+        "drawRing",
+        "drawDashedRing",
+        "drawTicks",
+        "drawAnnulusSweep",
+    ):
+        body = src.split(f"private fun {fn}(", 1)[1][:900]
         assert "MIN_DRAW_PX" in body, f"{fn} does not guard against a sub-pixel radius"
     dashed = src.split("private fun drawDashedRing(", 1)[1][:900]
     assert "if (seg <= 0f) return" in dashed, (

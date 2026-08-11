@@ -5,8 +5,6 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.DashPathEffect
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
@@ -18,28 +16,24 @@ import android.util.AttributeSet
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Pure android.graphics arc-reactor HUD, visually matching the Jarvis web HUD.
- * No dependencies beyond the platform SDK.
+ * The Jarvis HUD: the arc reactor, plus everything that frames it on a surface
+ * the app owns outright.
  *
- * Layers (centre out), all scaled by entrance + mic amplitude:
- *  - dark vignette scrim so the orb reads on any background;
- *  - optional chrome (corner brackets + JARVIS wordmark + state caption);
- *  - arc-reactor core: hot white centre falling to the mode colour, with glow;
- *  - bright inner rim ring;
- *  - rotating dashed mid ring + counter-rotating fine dashes;
- *  - 72-tick gauge ring with 12 major ticks;
- *  - a radar sweep wedge in the annulus;
- *  - faint outer boundary ring.
+ * The reactor itself is [ReactorOrb] — the same object, drawn the same way, as
+ * the floating overlay window shows. This class is the *host*: the full-view
+ * vignette, the corner brackets, the JARVIS wordmark and state caption, the
+ * one-shot edge-light sweep, and the hooks the power-on sequence drives it
+ * through ([BootDrive]).
  *
- * Entrance also runs a one-shot edge-light sweep around the screen border.
- * Colours follow the HUD: cyan idle/listening, amber thinking, gold speaking.
- * Switch with [setMode]; transitions blend. [setAmplitude] feeds live mic level.
+ * Colours follow the HUD: cyan idle/listening, amber thinking, gold speaking,
+ * red on failure — and they are [SiriPalette]'s, not a second table that agrees
+ * with it by hand. Switch with [setMode]; transitions blend. [setAmplitude]
+ * feeds the live mic level.
  */
 class JarvisOrbView @JvmOverloads constructor(
     context: Context,
@@ -47,14 +41,29 @@ class JarvisOrbView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    enum class Mode(val color: Int) {
+    /**
+     * What the reactor is doing, and what it wears while doing it.
+     *
+     * The colour is *derived* from [SiriPalette] rather than restated. It was
+     * restated — five ARGB literals here and the same five over there — and two
+     * tables that have to agree by hand are two tables that eventually do not.
+     */
+    enum class Mode(val tone: SiriPalette.Tone) {
         /** Nothing running. Deep cyan — jarvis-web's `--jv-accent-deep`. */
-        IDLE(0xFF2BB0D8.toInt()),
-        LISTENING(0xFF3FD8FF.toInt()), // cyan
-        THINKING(0xFFFF9E2C.toInt()),  // amber
-        SPEAKING(0xFFFFCF5C.toInt()),  // gold
+        IDLE(SiriPalette.Tone.IDLE),
+        LISTENING(SiriPalette.Tone.LISTENING),
+        THINKING(SiriPalette.Tone.THINKING),
+        SPEAKING(SiriPalette.Tone.SPEAKING),
+
         /** Something failed. Red — jarvis-web's `--jv-danger`. */
-        ERROR(0xFFFF6B5C.toInt())
+        ERROR(SiriPalette.Tone.ERROR);
+
+        /**
+         * The one colour this state is, for everything that is not the orb:
+         * captions, brackets, the edge light. The reactor itself uses all three
+         * of the tone's blob colours.
+         */
+        val color: Int get() = SiriPalette.rim(tone)
     }
 
     /**
@@ -86,12 +95,24 @@ class JarvisOrbView @JvmOverloads constructor(
     // --- state -------------------------------------------------------------
 
     private var mode = Mode.LISTENING
+
+    /** The single colour the chrome wears; the blend's current value. */
     private var currentColor = mode.color
+
+    /** Live reactor colours, blended toward the mode's over [COLOR_BLEND_MS]. */
+    private val blobColors = SiriPalette.blobs(mode.tone).copyOf()
+    private var coreColor = SiriPalette.core(mode.tone)
+
+    /** Where the blend started. */
+    private var blendFrom = blobColors.copyOf()
+    private var blendCoreFrom = coreColor
+    private var blendRimFrom = currentColor
 
     private var entranceProgress = 0f
     private var edgeSweepProgress = 0f
     private var edgeSweepDone = false
     private var breathPhase = 0f
+    private var orbitPhase = 0f
     private var amplitude = 0f
     private var smoothedAmplitude = 0f
 
@@ -125,14 +146,9 @@ class JarvisOrbView @JvmOverloads constructor(
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
-    private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val sweepPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reactor = ReactorOrb(density)
+    private val frameSpec = ReactorOrb.Frame()
+
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bracketPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -150,8 +166,7 @@ class JarvisOrbView @JvmOverloads constructor(
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val edgePath = Path()
     private val edgeRect = RectF()
-    private val annulus = Path()
-    private val sweepMatrix = Matrix()
+    private val edgeMatrix = android.graphics.Matrix()
     private var edgeShader: SweepGradient? = null
     private val argbEvaluator = ArgbEvaluator()
 
@@ -174,13 +189,13 @@ class JarvisOrbView @JvmOverloads constructor(
     // --- the frame clock ----------------------------------------------------
 
     /**
-     * The 60 fps tick: ring rotation, breathing, amplitude smoothing and the
-     * sole `invalidate`. One clock now, where there used to be two — a spin
-     * animator whose `animatedFraction` WAS the rotation, and a breath animator
-     * whose `animatedValue` WAS the phase.
+     * The 60 fps tick: ring rotation, blob drift, breathing, amplitude
+     * smoothing and the sole `invalidate`. One clock now, where there used to be
+     * two — a spin animator whose `animatedFraction` WAS the rotation, and a
+     * breath animator whose `animatedValue` WAS the phase.
      *
      * Neither could be given a per-state rate without restarting it, which
-     * jumps the phase. So the animator is only a ticker: both quantities are
+     * jumps the phase. So the animator is only a ticker: every quantity is
      * integrated against the wall clock in [advance], and changing rate mid-turn
      * is continuous by construction.
      *
@@ -188,8 +203,8 @@ class JarvisOrbView @JvmOverloads constructor(
      * scale** at 0 — developer options, or a battery saver forcing it — an
      * infinite `ValueAnimator` ends on its first frame and this whole view
      * stops redrawing: no breathing, no amplitude, no colour blend. A
-     * `Choreographer.FrameCallback` is immune to that, and is the right long-term
-     * answer, but the instrumented suite sets exactly that scale to 0
+     * `Choreographer.FrameCallback` is immune to that, and is what [SiriOrbView]
+     * uses, but the instrumented suite sets exactly that scale to 0
      * (`animationsDisabled = true`) precisely so Espresso is not waiting on an
      * animation that never ends. Swapping clocks would trade a bug nobody has
      * confirmed for a suite that hangs. If the orb is *totally* static on a real
@@ -214,7 +229,12 @@ class JarvisOrbView @JvmOverloads constructor(
         val dt = dtMs / 1000f
 
         spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
-        breathPhase = (breathPhase + dt * TWO_PI / breathPeriodSeconds()) % TWO_PI
+        breathPhase = (breathPhase + dt * ReactorOrb.TWO_PI / breathPeriodSeconds()) %
+            ReactorOrb.TWO_PI
+        // The blob field drifts at the same per-state rate the overlay uses, and
+        // faster with a voice, so both surfaces move alike.
+        val hz = SiriPalette.orbitHz(mode.tone) * (1f + 0.6f * smoothedAmplitude)
+        orbitPhase = (orbitPhase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
         smoothedAmplitude += (amplitude - smoothedAmplitude) * 0.22f
         invalidate()
     }
@@ -330,12 +350,34 @@ class JarvisOrbView @JvmOverloads constructor(
     fun setMode(newMode: Mode) {
         if (newMode == mode) return
         mode = newMode
+        blendFrom = blobColors.copyOf()
+        blendCoreFrom = coreColor
+        blendRimFrom = currentColor
         colorAnimator?.cancel()
-        colorAnimator = ValueAnimator.ofObject(argbEvaluator, currentColor, newMode.color).apply {
-            duration = 220L
-            addUpdateListener { currentColor = it.animatedValue as Int; invalidate() }
+        // With the system animator duration scale at 0 — developer options, a
+        // battery saver, or the instrumented suite — an animator's update
+        // listener may never fire, and a state change that leaves the PREVIOUS
+        // colour on screen is worse than one that skips its transition. Ask
+        // first, and snap when there is nothing to animate with.
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            applyBlend(1f)
+            invalidate()
+            return
+        }
+        colorAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = COLOR_BLEND_MS
+            addUpdateListener { applyBlend(it.animatedValue as Float); invalidate() }
             start()
         }
+    }
+
+    private fun applyBlend(t: Float) {
+        val target = SiriPalette.blobs(mode.tone)
+        for (i in blobColors.indices) {
+            blobColors[i] = argbEvaluator.evaluate(t, blendFrom[i], target[i]) as Int
+        }
+        coreColor = argbEvaluator.evaluate(t, blendCoreFrom, SiriPalette.core(mode.tone)) as Int
+        currentColor = argbEvaluator.evaluate(t, blendRimFrom, mode.color) as Int
     }
 
     // --- lifecycle ---------------------------------------------------------
@@ -385,73 +427,52 @@ class JarvisOrbView @JvmOverloads constructor(
         val cx = width / 2f
         val cy = height / 2f
         val base = baseRadius()
-        val breath = 1f + 0.04f * sin(breathPhase.toDouble()).toFloat()
+        val breath = 1f + 0.04f * sin(breathPhase)
         // During the boot the core scale IS the ignition: it starts at a point
         // and decelerates out to full size. Outside it, the entrance animator.
         val arrival = boot?.coreScale ?: (0.7f + 0.3f * entranceProgress)
-        // The GLOBAL amplitude term stays small: the web shader grows the core,
-        // not the rings, so a loud voice must not push the boundary ring into
-        // the margin baseRadius() reserved for it.
+        // The GLOBAL amplitude term stays small: the reactor grows its CORE with
+        // the voice, not its rings, so a loud voice must not push the boundary
+        // ring into the margin baseRadius() reserved for it.
         val scale = arrival * breath * (1f + 0.06f * smoothedAmplitude)
-        val r = base * scale
         val a = boot?.coreAlpha ?: entranceProgress          // master fade
         val chromeA = boot?.chromeAlpha ?: a
-        // The web shader's global brightness term: everything lifts with the
-        // voice, which is most of what makes the orb feel driven by the mic.
-        val lift = 0.88f + 0.5f * smoothedAmplitude
 
         if (scrimEnabled) drawScrim(canvas, cx, cy, a)
         if (chromeEnabled) drawBrackets(canvas, chromeA)
-        // The boot draws its own scan line; the edge sweep would fight it.
-        if (boot == null) drawEdgeLight(canvas)
+        // The boot draws its own scan line; the edge sweep would fight it. And
+        // it is chrome: a rounded rectangle traced around the VIEW is exactly
+        // the box every report of one has meant, so it goes wherever the
+        // brackets and the wordmark go.
+        if (boot == null && chromeEnabled) drawEdgeLight(canvas)
 
-        // radii as fractions of r (mirror the web shader proportions). During
-        // the boot each ring is also pushed out from 55% to its resting radius,
-        // one at a time, overshooting slightly as it lands.
-        val rInnerRim = r * 1.45f * ringScale(boot, RING_INNER_RIM)
-        val rMidDash = r * 2.15f * ringScale(boot, RING_MID_DASH)
-        val rFineDash = r * 2.55f * ringScale(boot, RING_FINE_DASH)
-        val rGauge = r * GAUGE_FACTOR * ringScale(boot, RING_GAUGE)
-        val rOuter = r * OUTER_FACTOR * ringScale(boot, RING_GAUGE)
-
-        val aInnerRim = a * ringAlpha(boot, RING_INNER_RIM) * lift
-        val aMidDash = a * ringAlpha(boot, RING_MID_DASH) * lift
-        val aFineDash = a * ringAlpha(boot, RING_FINE_DASH) * lift
-        val aGauge = a * ringAlpha(boot, RING_GAUGE) * lift
-
-        drawAnnulusSweep(canvas, cx, cy, r * 1.5f, rGauge, -spinDeg, aGauge)
-        drawTicks(canvas, cx, cy, rGauge, 72, dp(6f), dp(1f), aGauge * 0.8f)
-        drawTicks(canvas, cx, cy, rGauge, 12, dp(11f), dp(1.6f), aGauge)
-        drawDashedRing(canvas, cx, cy, rMidDash, 28, spinDeg, dp(2.5f), aMidDash)
-        drawDashedRing(canvas, cx, cy, rFineDash, 64, -spinDeg * 1.43f, dp(1.4f), aFineDash * 0.75f)
-        drawRing(canvas, cx, cy, rOuter, dp(1f), aGauge * 0.4f)
-        drawRing(canvas, cx, cy, rInnerRim, dp(1.6f), aInnerRim)
-        if (mode == Mode.THINKING && boot == null) drawTurbulence(canvas, cx, cy, r, a)
-        drawCore(canvas, cx, cy, r, a * lift)
+        val f = frameSpec
+        f.cx = cx
+        f.cy = cy
+        f.radius = base * scale
+        f.alpha = a
+        f.level = smoothedAmplitude
+        f.phase = orbitPhase
+        f.spinDeg = spinDeg
+        f.blobs = blobColors
+        f.core = coreColor
+        f.rim = currentColor
+        f.maxRadius = min(width, height) / 2f
+        f.turbulence = mode == Mode.THINKING && boot == null
+        if (boot == null) {
+            f.settleRings()
+        } else {
+            for (i in 0 until RING_COUNT) {
+                // Each ring is pushed out from 55% to its resting radius, one at
+                // a time, overshooting slightly as it lands.
+                f.ringScale[i] = 0.55f + 0.45f * boot.ringReveal[i]
+                f.ringAlpha[i] = boot.ringAlpha[i]
+            }
+        }
+        reactor.draw(canvas, f)
 
         if (chromeEnabled) drawText(canvas, cx, cy, chromeA)
     }
-
-    /**
-     * The THINKING-only ring, wobbling in radius at ~2 rad/s.
-     *
-     * The web shader's turbulence band (Orb.svelte), and the single cheapest
-     * cue that Jarvis is working rather than merely a different colour. Sits
-     * between the inner rim and the mid dashes so it cannot collide with the
-     * boundary ring the geometry is budgeted against.
-     */
-    private fun drawTurbulence(canvas: Canvas, cx: Float, cy: Float, r: Float, a: Float) {
-        val wobble = 1f + 0.02f * sin(breathPhase.toDouble() * 2.0).toFloat()
-        drawRing(canvas, cx, cy, r * 1.88f * wobble, dp(1.2f), a * 0.4f)
-    }
-
-    /** Ring radius multiplier: 1 when idle, pushing outward during the boot. */
-    private fun ringScale(boot: BootDrive?, index: Int): Float =
-        if (boot == null) 1f else 0.55f + 0.45f * boot.ringReveal[index]
-
-    /** Ring opacity multiplier: 1 when idle, per-ring arrival during the boot. */
-    private fun ringAlpha(boot: BootDrive?, index: Int): Float =
-        if (boot == null) 1f else boot.ringAlpha[index]
 
     private fun drawScrim(canvas: Canvas, cx: Float, cy: Float, a: Float) {
         scrimPaint.shader = RadialGradient(
@@ -489,8 +510,8 @@ class JarvisOrbView @JvmOverloads constructor(
     private fun drawEdgeLight(canvas: Canvas) {
         val shader = edgeShader ?: return
         if (!edgeSweepDone) {
-            sweepMatrix.setRotate(edgeSweepProgress * 360f - 90f, width / 2f, height / 2f)
-            shader.setLocalMatrix(sweepMatrix)
+            edgeMatrix.setRotate(edgeSweepProgress * 360f - 90f, width / 2f, height / 2f)
+            shader.setLocalMatrix(edgeMatrix)
             edgePaint.shader = shader
             edgePaint.alpha = (255 * (1f - 0.3f * edgeSweepProgress)).toInt()
         } else {
@@ -499,113 +520,6 @@ class JarvisOrbView @JvmOverloads constructor(
             edgePaint.alpha = (30 + 80 * smoothedAmplitude).toInt().coerceIn(0, 255)
         }
         canvas.drawPath(edgePath, edgePaint)
-    }
-
-    private fun drawCore(canvas: Canvas, cx: Float, cy: Float, rBase: Float, a: Float) {
-        // The boot ignites the core from a literal point, so the first frames
-        // ask for a zero radius — and RadialGradient throws on that. Every
-        // primitive below takes the same precaution: nothing invisible is worth
-        // a shader, and nothing degenerate is worth a crash.
-        if (rBase < MIN_DRAW_PX || a <= 0f) return
-        // The CORE is where the mic level lives, exactly as in the web shader
-        // (core radius 0.125 + level*0.05, i.e. up to +40%). Growing this
-        // rather than the whole reactor is what makes speech visible without
-        // pushing the outer rings off the edge of the view.
-        val r = rBase * (1f + 0.35f * smoothedAmplitude)
-        val glowR = r * 2.4f
-        glowPaint.shader = RadialGradient(
-            cx, cy, glowR,
-            intArrayOf(withAlpha(currentColor, 120), withAlpha(currentColor, 30), Color.TRANSPARENT),
-            floatArrayOf(0f, 0.45f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        glowPaint.alpha = (255 * a).toInt().coerceIn(0, 255)
-        canvas.drawCircle(cx, cy, glowR, glowPaint)
-
-        corePaint.shader = RadialGradient(
-            cx, cy, r,
-            intArrayOf(Color.WHITE, lighten(currentColor, 0.4f), currentColor),
-            floatArrayOf(0f, 0.35f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        corePaint.alpha = (255 * a).toInt().coerceIn(0, 255)
-        canvas.drawCircle(cx, cy, r, corePaint)
-    }
-
-    private fun drawRing(canvas: Canvas, cx: Float, cy: Float, r: Float, stroke: Float, a: Float) {
-        if (r < MIN_DRAW_PX || a <= 0f) return
-        ringPaint.shader = null
-        ringPaint.color = currentColor
-        ringPaint.strokeWidth = stroke
-        ringPaint.alpha = (255 * a).toInt().coerceIn(0, 255)
-        canvas.drawCircle(cx, cy, r, ringPaint)
-    }
-
-    private fun drawDashedRing(
-        canvas: Canvas, cx: Float, cy: Float, r: Float,
-        dashes: Int, rotationDeg: Float, stroke: Float, a: Float
-    ) {
-        if (r < MIN_DRAW_PX || a <= 0f || dashes <= 0) return
-        val circumference = (2.0 * Math.PI * r).toFloat()
-        val seg = circumference / (dashes * 2f)
-        // A DashPathEffect whose intervals sum to zero is undefined behaviour
-        // in Skia; at a sub-pixel radius the ring is invisible anyway.
-        if (seg <= 0f) return
-        ringPaint.shader = null
-        ringPaint.color = currentColor
-        ringPaint.strokeWidth = stroke
-        ringPaint.alpha = (255 * a).toInt().coerceIn(0, 255)
-        ringPaint.pathEffect = DashPathEffect(floatArrayOf(seg, seg), 0f)
-        canvas.save()
-        canvas.rotate(rotationDeg, cx, cy)
-        canvas.drawCircle(cx, cy, r, ringPaint)
-        canvas.restore()
-        ringPaint.pathEffect = null
-    }
-
-    private fun drawTicks(
-        canvas: Canvas, cx: Float, cy: Float, r: Float,
-        count: Int, length: Float, stroke: Float, a: Float
-    ) {
-        if (r < MIN_DRAW_PX || a <= 0f || count <= 0) return
-        tickPaint.color = currentColor
-        tickPaint.strokeWidth = stroke
-        tickPaint.alpha = (255 * a).toInt().coerceIn(0, 255)
-        val rIn = r - length / 2f
-        val rOut = r + length / 2f
-        for (i in 0 until count) {
-            val ang = (i.toFloat() / count) * 2.0 * Math.PI
-            val ca = cos(ang).toFloat()
-            val sa = sin(ang).toFloat()
-            canvas.drawLine(cx + ca * rIn, cy + sa * rIn, cx + ca * rOut, cy + sa * rOut, tickPaint)
-        }
-    }
-
-    private fun drawAnnulusSweep(
-        canvas: Canvas, cx: Float, cy: Float, rIn: Float, rOut: Float,
-        rotationDeg: Float, a: Float
-    ) {
-        if (rOut < MIN_DRAW_PX || rOut <= rIn || a <= 0f) return
-        annulus.reset()
-        annulus.fillType = Path.FillType.EVEN_ODD
-        annulus.addCircle(cx, cy, rOut, Path.Direction.CW)
-        annulus.addCircle(cx, cy, rIn, Path.Direction.CW)
-
-        val sweep = SweepGradient(
-            cx, cy,
-            intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, withAlpha(currentColor, 150), Color.TRANSPARENT),
-            floatArrayOf(0f, 0.62f, 0.92f, 1f)
-        )
-        sweepMatrix.setRotate(rotationDeg, cx, cy)
-        sweep.setLocalMatrix(sweepMatrix)
-        sweepPaint.shader = sweep
-        sweepPaint.alpha = (110 * a * (0.6f + 0.4f * smoothedAmplitude)).toInt().coerceIn(0, 255)
-
-        canvas.save()
-        canvas.clipPath(annulus)
-        canvas.drawRect(cx - rOut, cy - rOut, cx + rOut, cy + rOut, sweepPaint)
-        canvas.restore()
-        sweepPaint.shader = null
     }
 
     private fun drawText(canvas: Canvas, cx: Float, cy: Float, a: Float) {
@@ -623,24 +537,25 @@ class JarvisOrbView @JvmOverloads constructor(
     }
 
     /**
-     * Core radius. Everything else this class draws is a fraction of it.
+     * The glowing ball's radius. Everything the reactor draws is a multiple of
+     * it, and [ReactorOrb.OUTER_FACTOR] is the largest of those multiples.
      *
      * Derived from the space available rather than picked, because it was
-     * picked before and picked wrong: `min(width, height) * 0.20f`, with the
-     * comment "fits the smaller screen dimension", while the outermost ring is
-     * drawn at [OUTER_FACTOR] × that and scaled up again by breathing and mic
+     * picked before and picked wrong: a fraction of `min(width, height)` with
+     * the comment "fits the smaller screen dimension", while the outermost ring
+     * is drawn at OUTER_FACTOR × that and scaled up again by breathing and mic
      * amplitude. The outer radius came out at 0.85 × min(w, h) against a
      * largest-possible 0.5, so the gauge ring and the boundary ring ran off the
      * left and right edges and the reactor read as two arcs rather than a ring.
      *
      * Inverting the relationship is what keeps it fixed: whatever the ring
-     * multipliers become, the core is whatever leaves the OUTERMOST primitive —
+     * multipliers become, the ball is whatever leaves the OUTERMOST primitive —
      * at its largest breath-plus-amplitude scale, plus its own stroke — inside
      * the view.
      */
     private fun baseRadius(): Float {
         val half = min(width, height) / 2f - dp(2f)   // the outer ring's stroke
-        return max(0f, half) / (OUTER_FACTOR * MAX_SCALE)
+        return max(0f, half) / (ReactorOrb.OUTER_FACTOR * MAX_SCALE)
     }
 
     /**
@@ -649,7 +564,7 @@ class JarvisOrbView @JvmOverloads constructor(
      * wordmark and the caption stay put while the orb breathes — and so the
      * boot animation can land its own wordmark on exactly this baseline.
      */
-    private fun restingOuterRadius(): Float = baseRadius() * OUTER_FACTOR
+    private fun restingOuterRadius(): Float = baseRadius() * ReactorOrb.OUTER_FACTOR
 
     /**
      * Baseline of the JARVIS wordmark. [JarvisBootAnimation] calls this so the
@@ -664,13 +579,6 @@ class JarvisOrbView @JvmOverloads constructor(
     private fun withAlpha(color: Int, alpha: Int): Int =
         Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
 
-    private fun lighten(color: Int, fraction: Float): Int {
-        val r = Color.red(color) + ((255 - Color.red(color)) * fraction).toInt()
-        val g = Color.green(color) + ((255 - Color.green(color)) * fraction).toInt()
-        val b = Color.blue(color) + ((255 - Color.blue(color)) * fraction).toInt()
-        return Color.rgb(min(r, 255), min(g, 255), min(b, 255))
-    }
-
     companion object {
         /** Orb scale-in + fade; keep under the 300 ms activation budget. */
         const val ENTRANCE_MS = 260L
@@ -678,27 +586,24 @@ class JarvisOrbView @JvmOverloads constructor(
         /** One full edge-light sweep. */
         const val EDGE_SWEEP_MS = 350L
 
-        /** Rings, outward. The boot sequence brings them in in this order. */
-        const val RING_INNER_RIM = 0
-        const val RING_MID_DASH = 1
-        const val RING_FINE_DASH = 2
-        const val RING_GAUGE = 3
-        const val RING_COUNT = 4
+        /** State-to-state colour crossfade. */
+        const val COLOR_BLEND_MS = 260L
+
+        /**
+         * Rings, outward. The boot sequence brings them in in this order, and
+         * these are [ReactorOrb]'s own indices — aliased rather than restated,
+         * because [BootDrive] sizes its arrays from RING_COUNT and the renderer
+         * indexes them.
+         */
+        const val RING_INNER_RIM = ReactorOrb.RING_INNER_RIM
+        const val RING_MID_DASH = ReactorOrb.RING_MID_DASH
+        const val RING_FINE_DASH = ReactorOrb.RING_FINE_DASH
+        const val RING_GAUGE = ReactorOrb.RING_GAUGE
+        const val RING_COUNT = ReactorOrb.RING_COUNT
 
         /** Wordmark metrics, shared with [JarvisBootAnimation]. */
         const val WORDMARK_DP = 26f
         const val WORDMARK_SPACING = 0.55f
-
-        /** The 72/12-tick gauge ring, as a multiple of the core radius. */
-        const val GAUGE_FACTOR = 3.0f
-
-        /**
-         * Outermost radius drawn, as a multiple of the core radius. Read by
-         * [baseRadius], which sizes the core so THIS still fits — so a retuned
-         * ring cannot silently decouple from the safety margin. Anything drawn
-         * beyond it must raise this constant.
-         */
-        const val OUTER_FACTOR = 3.6f
 
         /**
          * The largest scale `onDraw` can ask for: the breathing peak times the
@@ -712,7 +617,7 @@ class JarvisOrbView @JvmOverloads constructor(
          * Outer boundary radius as a fraction of the smaller screen edge.
          *
          * Only read by `JarvisBootAnimation.fallbackBaselineY`, for the case
-         * where there is no orb to ask. Mirrors [baseRadius] × [OUTER_FACTOR]
+         * where there is no orb to ask. Mirrors [baseRadius] × OUTER_FACTOR
          * modulo the stroke inset, so the fallback lands on the real baseline.
          */
         const val REST_OUTER_FACTOR = 0.5f / (1.04f * 1.14f)
@@ -731,17 +636,5 @@ class JarvisOrbView @JvmOverloads constructor(
          * integrated from the wall clock — so this is only how often it wraps.
          */
         private const val FRAME_CLOCK_MS = 4000L
-
-        /** `(2 * PI).toFloat()`, written out because `const val` wants a literal. */
-        private const val TWO_PI = 6.2831855f
-
-        /**
-         * Below this radius (in px) a shape is not worth drawing, and a shader
-         * built for it is worth a crash: `RadialGradient` rejects a radius of
-         * zero outright, and a `DashPathEffect` whose intervals sum to zero is
-         * undefined in Skia. The boot sequence starts the core at exactly zero,
-         * so this is a live path, not a theoretical one.
-         */
-        private const val MIN_DRAW_PX = 0.5f
     }
 }

@@ -2,7 +2,10 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
 	testDir: 'e2e',
-	testMatch: 'e2e.spec.ts',
+	// Every *.spec.ts in e2e/, not one named file. It WAS one named file, which
+	// meant a new spec added beside it was collected by nothing and reported as
+	// passing by being absent.
+	testMatch: '*.spec.ts',
 	timeout: 60_000,
 	fullyParallel: false,
 	workers: 1,
