@@ -46,6 +46,10 @@ KOTLIN_CONFIG = ROOT / "app/src/main/kotlin/ai/jarvis/app/config/JarvisConfig.kt
 KOTLIN_CHANNEL = ROOT / "app/src/main/kotlin/ai/jarvis/app/channel/JarvisChannel.kt"
 KOTLIN_CRASH_UI = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/CrashLogActivity.kt"
 KOTLIN_SETTINGS = ROOT / "app/src/main/kotlin/ai/jarvis/app/SettingsActivity.kt"
+#: Debug source set, so it is outside KOTLIN_SRC_ROOT and the structural checks
+#: below never see it. Read by name because it owns the one switch that decides
+#: which frame clock the orb runs under instrumentation.
+KOTLIN_TEST_HOOKS = ROOT / "app/src/debug/kotlin/ai/jarvis/app/testing/TestHooks.kt"
 MANIFEST = ROOT / "app/src/main/AndroidManifest.xml"
 THEMES = ROOT / "app/src/main/res/values/themes.xml"
 THEMES_V31 = ROOT / "app/src/main/res/values-v31/themes.xml"
@@ -68,6 +72,7 @@ TRACKED_KOTLIN = [
     KOTLIN_MAIN,
     KOTLIN_CONFIG,
     KOTLIN_CHANNEL,
+    KOTLIN_TEST_HOOKS,
     ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/SystemCheckActivity.kt",
 ]
 
@@ -712,6 +717,52 @@ def test_home_ui_starts_arriving_while_the_chrome_is_still_leaving():
     assert overlap, "chrome and home never overlap — the handoff is a cut"
 
 
+def composited(a: float, b: float) -> float:
+    """Opacity of two stacked draws of the same thing at `a` and `b`."""
+    return a + b - a * b
+
+
+def test_the_wordmark_crossfade_has_no_hole_in_it():
+    """The handoff draws ONE wordmark through two views, so it must not dip.
+
+    `JarvisBootAnimation` paints "JARVIS" with `chromeAlpha`, and the orb paints
+    the identical glyphs, in the identical colour, on the identical baseline,
+    with whatever `JarvisBootAnimation.pushFrame` puts in `drive.chromeAlpha`.
+    Those two are a crossfade of one object.
+
+    It used to be `homeAlpha`, which starts HOME_FADE_DELAY_MS after the chrome
+    begins leaving — right for the home CONTROLS, which crossfade with nothing,
+    and a 60ms hole in the middle of this one. The wordmark fell to under a
+    third of its opacity and came back, which is the flicker at the end of the
+    power-on.
+    """
+    worst_correct = min(
+        composited(chrome_alpha(t), orb_chrome_alpha(t))
+        for t in range(HANDOFF_START_MS, TOTAL_MS + 1)
+    )
+    assert worst_correct > 0.7, (
+        f"the wordmark drops to {worst_correct:.3f} of its opacity mid-handoff"
+    )
+
+    # The bug this replaced, kept as an executable statement of it: with
+    # homeAlpha driving the orb's chrome the same crossfade collapses.
+    worst_buggy = min(
+        composited(chrome_alpha(t), home_alpha(t))
+        for t in range(HANDOFF_START_MS, TOTAL_MS + 1)
+    )
+    assert worst_buggy < 0.35, (
+        "homeAlpha no longer produces the dip this function exists to avoid; if "
+        "the handoff constants changed, re-derive which curve the orb's chrome "
+        "should follow rather than deleting this"
+    )
+
+    # Complementary, so the two curves also meet the frame the orb takes over on.
+    for t in range(HANDOFF_START_MS - 200, TOTAL_MS + 200):
+        assert abs(chrome_alpha(t) + orb_chrome_alpha(t) - 1.0) < 1e-9, (
+            f"the orb's chrome is not the complement of the overlay's at t={t}"
+        )
+
+
 # =========================================================================
 # Tests: skip() and the animation scale
 # =========================================================================
@@ -1045,6 +1096,120 @@ def test_kotlin_animation_uses_one_clock_and_cleans_up():
     # The animation scale is read, and read defensively.
     assert "Settings.Global.ANIMATOR_DURATION_SCALE" in src
     assert "BootTimeline.scaledDurationMs(animatorScale(), reducedMotion())" in flat_src
+
+
+def test_kotlin_hands_the_wordmark_over_without_a_hole():
+    """The Kotlin half of `test_the_wordmark_crossfade_has_no_hole_in_it`."""
+    timeline = flat(KOTLIN_TIMELINE)
+    # Both halves, because "complement" is a claim about the pair: pinning only
+    # orbChromeAlpha would let chromeAlpha drift out from under it.
+    assert (
+        "fun chromeAlpha(tMs: Long): Float = "
+        "1f - decelerate(window(tMs, HANDOFF_START_MS, HANDOFF_FADE_MS), 1.2f)"
+    ) in timeline, "BootTimeline.chromeAlpha has changed shape"
+    assert (
+        "fun orbChromeAlpha(tMs: Long): Float = "
+        "decelerate(window(tMs, HANDOFF_START_MS, HANDOFF_FADE_MS), 1.2f)"
+    ) in timeline, (
+        "BootTimeline.orbChromeAlpha must be the exact complement of chromeAlpha"
+    )
+    # It is part of the frame, so `stateAt` reports it and skip() cannot land on
+    # a different value from the one the last animated frame had.
+    assert "val orbChromeAlpha: Float," in KOTLIN_TIMELINE.read_text()
+    assert "orbChromeAlpha = orbChromeAlpha(tMs)," in KOTLIN_TIMELINE.read_text()
+
+    animation = flat(KOTLIN_ANIMATION)
+    assert "drive.chromeAlpha = BootTimeline.orbChromeAlpha(t)" in animation, (
+        "the orb's chrome is driven by something other than orbChromeAlpha again; "
+        "with homeAlpha the JARVIS wordmark dips to under a third mid-handoff"
+    )
+    # The HOST still gets homeAlpha — its controls are crossfading with nothing.
+    assert "onHomeAlpha?.invoke(BootTimeline.homeAlpha(t))" in animation
+
+
+def test_the_orb_keeps_a_frame_clock_when_the_animator_scale_is_zero():
+    """A frozen orb is what "the animation isn't looped" meant.
+
+    An infinite `ValueAnimator` ends on its FIRST frame when the system animator
+    duration scale is 0 — developer options, or a battery saver, both routine on
+    GrapheneOS — and `JarvisOrbView` integrates every quantity it draws off that
+    one clock. When it dies the view stops calling `invalidate` at all: no
+    breathing, no ring rotation, no microphone response, no colour blend.
+
+    So there has to be a second clock the scale cannot reach, and it has to stop
+    with the view — a vsync callback still posting itself after a detach is a
+    leaked Activity.
+    """
+    src = KOTLIN_ORB.read_text()
+    code = code_only(KOTLIN_ORB)
+    flat_src = flat(KOTLIN_ORB)
+
+    assert "import android.view.Choreographer" in src, (
+        "JarvisOrbView has no clock the animator duration scale cannot switch off"
+    )
+    assert "Choreographer.getInstance().postFrameCallback(frameCallback)" in flat_src
+    assert "!ValueAnimator.areAnimatorsEnabled()" in code, (
+        "nothing asks whether the animator clock will run before starting it"
+    )
+    # Two ways in, because the scale can also be dropped after the animator is
+    # already running: an INFINITE animator that reaches onAnimationEnd died.
+    assert "if (clockRunning) startFrameCallback()" in code, (
+        "an animator clock that ends while the view still wants one is not "
+        "noticed, so a battery saver switching on mid-conversation freezes the orb"
+    )
+
+    stop = src.split("private fun stopClock()", 1)[1].split("\n    }", 1)[0]
+    for needle in (
+        "clockRunning = false",
+        "frameAnimator.cancel()",
+        "Choreographer.getInstance().removeFrameCallback(frameCallback)",
+    ):
+        assert needle in stop, f"stopClock does not do: {needle}"
+    # Order is load-bearing: cancel() delivers onAnimationEnd, and the listener
+    # reads clockRunning to tell a deliberate stop from a death.
+    assert stop.index("clockRunning = false") < stop.index("frameAnimator.cancel()"), (
+        "stopClock cancels before it clears clockRunning, so stopping the clock "
+        "immediately restarts it on the vsync callback"
+    )
+    detach = src.split("override fun onDetachedFromWindow()", 1)[1].split(
+        "super.onDetachedFromWindow()", 1
+    )[0]
+    assert "stopClock()" in detach, "the frame clock outlives the view"
+
+    # The fallback is on unless the debug-only hooks turn it off, and a release
+    # build cannot even ask the question.
+    assert "var frameClockFallbackEnabled = true" in code
+    assert "!BuildConfig.DEBUG || frameClockFallbackEnabled" in code, (
+        "the test seam is readable from a release build"
+    )
+    hooks = KOTLIN_TEST_HOOKS.read_text()
+    assert "JarvisOrbView.frameClockFallbackEnabled = false" in hooks, (
+        "nothing holds the orb to its animator clock under instrumentation, so "
+        "AppLaunchTest's onView would be matching a view that repaints forever"
+    )
+    init_block = hooks.split("    init {", 1)[1].split("\n    }", 1)[0]
+    assert "holdTheOrbToItsAnimatorClock()" in init_block, (
+        "the hold is left to individual tests to remember, which is how the "
+        "Espresso suite goes red again"
+    )
+
+
+def test_the_orbs_edge_light_fades_in_with_the_rest_of_its_chrome():
+    """Nothing may appear whole on the frame the boot lets go of the orb.
+
+    The edge light is a rounded rectangle traced around the WHOLE view. It was
+    suppressed for the entire power-on and then drawn at full strength the
+    instant `bootDrive` went null — a box snapping on around the screen while
+    everything beside it was still fading up.
+    """
+    src = KOTLIN_ORB.read_text()
+    code = code_only(KOTLIN_ORB)
+    assert "if (chromeEnabled) drawEdgeLight(canvas, chromeA)" in code, (
+        "the edge light is gated on the boot rather than faded with the chrome"
+    )
+    body = src.split("private fun drawEdgeLight(canvas: Canvas, chromeA: Float)", 1)[1]
+    body = body.split("\n    }", 1)[0]
+    assert "* chromeA" in body, "the resting edge light ignores the chrome opacity"
 
 
 def test_kotlin_animation_reuses_the_orb_rather_than_drawing_its_own():

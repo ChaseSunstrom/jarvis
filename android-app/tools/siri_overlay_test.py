@@ -364,14 +364,22 @@ def check_the_microphone_comes_back(android: Path) -> int:
 
 
 def check_the_clock_runs(android: Path) -> int:
-    """The orb has to actually move.
+    """Both orbs have to keep moving when animations are switched off.
 
-    `JarvisOrbView` drives itself with an infinite `ValueAnimator`, which ends
-    on its first frame when the system animator duration scale is 0 — developer
-    options, or a battery saver. That trade is deliberate there (Espresso would
-    otherwise never see an idle main thread). It is the wrong trade for a
-    surface nothing automated ever opens and whose entire job is to look alive,
-    so this one uses a Choreographer, and stops when it is detached.
+    An infinite `ValueAnimator` ends on its first frame when the system animator
+    duration scale is 0 — developer options, or a battery saver, neither of them
+    exotic on GrapheneOS — and a view that integrates everything it draws off
+    that one clock then stops redrawing entirely.
+
+    This surface never had the problem: nothing automated opens the floating
+    orb, so it uses a `Choreographer` outright and there was never a reason not
+    to. `JarvisOrbView` did, and kept a `ValueAnimator` for it — Espresso drives
+    that view and the instrumented suite sets the scale to 0 on purpose. It now
+    keeps the animator as its preferred clock and falls back to a
+    `Choreographer` when that clock proves dead, which is checked in full by
+    `boot_timeline_test.py`. What is checked HERE is the invariant the two
+    surfaces share: neither of them is left with a frame clock the animator
+    duration scale can switch off, and both stop when they are detached.
     """
     path = android / "app/src/main/kotlin/ai/jarvis/app/ui/SiriOrbView.kt"
     text = path.read_text(encoding="utf-8")
@@ -384,6 +392,19 @@ def check_the_clock_runs(android: Path) -> int:
         failures += 1
     if "import android.animation.ValueAnimator" in text:
         print("FAIL  the floating orb uses a ValueAnimator, which stops at scale 0")
+        failures += 1
+
+    orb = android / "app/src/main/kotlin/ai/jarvis/app/ui/JarvisOrbView.kt"
+    in_app = orb.read_text(encoding="utf-8")
+    if "Choreographer" not in in_app:
+        print(
+            "FAIL  the in-app orb has only its ValueAnimator again. At animator "
+            "duration scale 0 that ends on its first frame and the reactor freezes "
+            "solid — no breathing, no rotation, no colour blend."
+        )
+        failures += 1
+    if "removeFrameCallback" not in in_app:
+        print("FAIL  the in-app orb's fallback clock is never stopped")
         failures += 1
     return failures
 
