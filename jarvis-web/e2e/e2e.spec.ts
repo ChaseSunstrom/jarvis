@@ -1623,3 +1623,41 @@ test("the microphone opens with the page, with nothing clicked", async ({
     timeout: 15_000,
   });
 });
+
+
+// Inside the Android app's console frame, the page must not draw the frame's
+// own nav a second time.
+//
+// ManagementActivity puts a native tab strip above this WebView and has to: a
+// link tapped inside a WebView is a page-initiated navigation, and WebView does
+// not attach `additionalHeaders` to those, so the page's nav cannot carry the
+// bearer token. Two rows of tabs, one of which silently does not work.
+//
+// Driven by the User-Agent ManagementActivity actually sends, so this and the
+// Kotlin cannot drift apart quietly — console_parity_test.py pins the same pair
+// from the other side.
+test("the console drops its own nav when the Android app is framing it", async ({
+  browser,
+}) => {
+  const framed = await browser.newContext({
+    userAgent: "JarvisAndroid/1.0.0 (ai.jarvis.app; management)",
+  });
+  const page = await framed.newPage();
+  await page.goto("/devices");
+
+  // The page is there and working...
+  await expect(page.getByTestId("area-lab")).toBeVisible({ timeout: 15_000 });
+  // ...and its copy of the frame's chrome is not.
+  await expect(page.getByTestId("nav-devices")).toBeHidden();
+  await expect(page.getByTestId("hud-link")).toBeHidden();
+  await framed.close();
+
+  // In an ordinary browser nothing is hidden — the console is the whole chrome
+  // there, and a rule that hid it everywhere would pass the assertions above.
+  const plain = await browser.newContext();
+  const normal = await plain.newPage();
+  await normal.goto("/devices");
+  await expect(normal.getByTestId("nav-devices")).toBeVisible({ timeout: 15_000 });
+  await expect(normal.getByTestId("hud-link")).toBeVisible();
+  await plain.close();
+});

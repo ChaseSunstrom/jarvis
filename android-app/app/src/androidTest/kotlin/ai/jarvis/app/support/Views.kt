@@ -179,10 +179,35 @@ object Views {
      * `StaleObjectException` halfway through a search is not a test failure —
      * it just means the tree changed, which is what scrolling does.
      */
-    private fun scrollOnce(direction: Direction, fraction: Float): Boolean = try {
-        Device.ui.findObject(By.scrollable(true))?.scroll(direction, fraction) ?: false
-    } catch (e: StaleObjectException) {
-        false
+    /**
+     * Scroll the first scrollable that can actually move that way.
+     *
+     * This used to take `findObject(By.scrollable(true))` — THE first
+     * scrollable node — and the settings screen now has two: the console's tab
+     * strip, a `HorizontalScrollView` at the top, and the settings body under
+     * it. The strip won, every vertical scroll went to a container that cannot
+     * scroll vertically, the body never moved, and nine tests failed saying
+     * "No button labelled APP INFO on screen" about a button that was on the
+     * screen and simply below the fold.
+     *
+     * Trying each in turn rather than filtering by class name, because the
+     * question being asked is "can anything here scroll this way", and
+     * `UiObject2.scroll` already answers exactly that — it returns false when
+     * the node cannot scroll further in the given direction. Filtering on
+     * `HorizontalScrollView` would fix this screen and break on the next
+     * container that happens to be scrollable.
+     */
+    private fun scrollOnce(direction: Direction, fraction: Float): Boolean {
+        for (candidate in Device.ui.findObjects(By.scrollable(true)).orEmpty()) {
+            try {
+                if (candidate.scroll(direction, fraction)) return true
+            } catch (e: StaleObjectException) {
+                // The screen changed under us — whatever is there now is a
+                // different question, and the caller re-queries anyway.
+                return false
+            }
+        }
+        return false
     }
 
     private const val DEFAULT_MAX_SCROLLS = 10

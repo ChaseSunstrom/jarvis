@@ -668,12 +668,17 @@ class MainActivity : Activity(), JarvisConversation.Ui {
      * Open one of the console's sections.
      *
      * The phone and the browser show the same pages; this is the phone's way in
-     * to one of them. Unconfigured, it says so rather than opening a WebView
-     * onto nothing — the console is not something this app can render itself.
+     * to one of them. Unconfigured it opens the phone's own settings instead,
+     * because that is where the answer is and because the alternative was
+     * circular: with PHONE moved into the console frame's tab strip, MANAGE is
+     * the only way to that strip, and telling somebody who just tapped MANAGE
+     * to go and find PHONE — which lives behind MANAGE — is a loop. Nothing is
+     * lost by going straight there: the sentence it used to print named the one
+     * screen this now opens.
      */
     private fun openConsole(tab: ConsoleTab) {
         if (!config.isConfigured) {
-            responseView.text = "Set the server URL and token under ${ConsoleTab.PHONE_LABEL} first."
+            openSettings()
             return
         }
         startActivity(ManagementActivity.intent(this, tab))

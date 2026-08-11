@@ -245,6 +245,31 @@
 		gap: 0.3rem;
 		min-width: 0;
 	}
+
+	/*
+	 * Inside the Android app's console frame, this page is not the chrome.
+	 *
+	 * ManagementActivity already draws the origin, a RELOAD and the console's
+	 * own sections as a native tab strip — it has to, because a link tapped in
+	 * a WebView is a page-initiated navigation and does not carry the bearer
+	 * header. So the page's copy of that nav is a second row of tabs that
+	 * cannot work, and the JARVIS/CONSOLE wordmark repeats a title bar an inch
+	 * above it.
+	 *
+	 * The status readout and the palette button stay: neither is duplicated by
+	 * the native frame, and the link indicator is the one thing on this header
+	 * that says whether the console is talking to anything.
+	 *
+	 * See src/app.html for where the marker comes from.
+	 */
+	:global(html[data-embed='android']) nav[aria-label='Management sections'],
+	:global(html[data-embed='android']) .brand {
+		display: none;
+	}
+	:global(html[data-embed='android']) .console-top {
+		/* Without a brand to sit beside, the status must not float mid-header. */
+		justify-content: flex-end;
+	}
 	nav a {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-xs);

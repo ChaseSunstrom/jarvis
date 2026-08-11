@@ -1,12 +1,15 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.support.Activities
+import ai.jarvis.app.support.Harness
 import ai.jarvis.app.support.Device
 import ai.jarvis.app.support.JarvisTestRule
 import ai.jarvis.app.support.Screenshots
 import ai.jarvis.app.support.Toasts
 import ai.jarvis.app.support.Views
 import ai.jarvis.app.support.Waits
+import ai.jarvis.app.testing.TestHooks
+import androidx.test.platform.app.InstrumentationRegistry
 import ai.jarvis.app.ui.CrashLogActivity
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisScreens
@@ -59,23 +62,22 @@ class NavigationTest {
     // --- MainActivity -------------------------------------------------------
 
     @Test
-    fun homeConsoleTabExplainsItselfWhenNothingIsConfigured() {
+    fun manageTakesAnUnconfiguredUserSomewhereTheyCanActuallyFixIt() {
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 
-        tap(ConsoleTab.DEVICES.label)
+        // With no server configured, MANAGE must not open a WebView onto
+        // nothing — and must not lecture either. It used to print "set the
+        // server URL and token under PHONE", which became a loop the moment
+        // PHONE moved into the console frame's tab strip: the strip is behind
+        // MANAGE, so that sentence told somebody who had just tapped MANAGE to
+        // go and find something only MANAGE could reach.
+        val settings = Activities.expect(SettingsActivity::class.java) { tap("MANAGE") }
+        Activities.awaitResumed(settings)
 
-        // No server configured, so a console tab must say so rather than
-        // opening a WebView onto nowhere.
-        Waits.until("the home screen to explain that the console needs a server first") {
-            Device.ui.findObject(
-                By.text(Views.containingIgnoringCase("Set the server URL and token"))
-            ) != null
+        Waits.until("the settings screen to render its server URL field") {
+            Device.ui.findObject(By.text(Views.textIgnoringCase("Server URL"))) != null
         }
-        assertTrue(
-            "MainActivity must still be the foreground activity",
-            Activities.isResumed(MainActivity::class.java),
-        )
 
         Screenshots.take("NavigationTest-home-console-unconfigured")
     }
@@ -89,9 +91,14 @@ class NavigationTest {
         // HOUSE's settings; this one is the mobile half — permissions, the wake
         // word, which server this device talks to.
         //
-        // Reached through MANAGE now rather than from the home screen directly:
-        // PHONE is one of the tabs in the console frame's strip, so the phone's
-        // own half and the house's sit in one place under one nav.
+        // Configured first, or MANAGE would short-circuit to these settings on
+        // its own (see manageTakesAnUnconfiguredUserSomewhereTheyCanActuallyFixIt)
+        // and this would pass without the tab strip existing at all.
+        TestHooks.configure(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            serverUrl = Harness.baseUrl,
+            token = Harness.token,
+        )
         tap("MANAGE")
         val settings = Activities.expect(SettingsActivity::class.java) {
             tap(ConsoleTab.PHONE_LABEL)
@@ -107,6 +114,13 @@ class NavigationTest {
 
     @Test
     fun everyConsoleTabIsReachableFromManage() {
+        // Configured, because MANAGE sends an unconfigured user straight to the
+        // phone's own settings instead of opening the frame.
+        TestHooks.configure(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            serverUrl = Harness.baseUrl,
+            token = Harness.token,
+        )
         val main = Activities.launch(MainActivity::class.java)
         Activities.awaitResumed(main)
 

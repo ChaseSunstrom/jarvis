@@ -228,6 +228,89 @@ def check_the_console_names_the_phones_screens_correctly() -> list[str]:
     return failures
 
 
+def check_the_console_hides_the_nav_the_frame_already_draws() -> list[str]:
+    """Two rows of tabs, one of which does not work.
+
+    *"theres still duplicate tabs in the mobile app for the manage"* — and they
+    were: ManagementActivity draws the console's sections as a native strip,
+    and the page inside its WebView drew the same sections again, plus a
+    JARVIS/CONSOLE wordmark an inch under the native title bar.
+
+    The native one is the one that has to stay. A link tapped inside a WebView
+    is a page-initiated navigation, and WebView does not attach
+    `additionalHeaders` to those, so the page's own nav cannot carry the bearer
+    token — it is the copy that looks right and does not work.
+
+    The coupling is a User-Agent string in Kotlin and a regex in `app.html`,
+    which is exactly the kind of pair that goes quietly wrong: change the UA and
+    nothing fails, the duplicate nav just comes back.
+    """
+    failures = []
+    src = MANAGEMENT.read_text(encoding="utf-8")
+    app_html = REPO / "jarvis-web/src/app.html"
+    layout = REPO / "jarvis-web/src/routes/+layout.svelte"
+
+    agent = re.search(r'private val USER_AGENT =\s*\n\s*"([^"/]+)/', src)
+    if not agent:
+        return ["ManagementActivity no longer sets a User-Agent for its WebView"]
+    marker = agent.group(1)
+
+    if not app_html.is_file():
+        return ["jarvis-web has no app.html"]
+    html = app_html.read_text(encoding="utf-8")
+    if "data-embed" not in html:
+        failures.append("app.html leaves no embed marker for the server to fill")
+
+    # Detected on the SERVER, from the request header. An inline script sniffing
+    # navigator.userAgent is what the first attempt used, and this app's CSP is
+    # `script-src: 'self'` with no unsafe-inline — so it was blocked, silently,
+    # leaving a working page with no marker on it. Checked here because the CSP
+    # and this detection live in different files and neither mentions the other.
+    hooks = REPO / "jarvis-web/src/hooks.server.ts"
+    if not hooks.is_file():
+        failures.append("jarvis-web has no server hooks, so nothing can fill the marker")
+    elif marker not in hooks.read_text(encoding="utf-8"):
+        failures.append(
+            f"hooks.server.ts does not look for {marker!r} in the User-Agent, so the "
+            "console cannot tell it is inside the phone's console frame and draws a "
+            "second copy of the frame's own nav"
+        )
+    if re.search(r"<script(?![^>]*\bsrc=)", html):
+        failures.append(
+            "app.html has an inline script. The CSP is script-src 'self' with no "
+            "unsafe-inline, so it will not run — and a blocked inline script fails "
+            "silently, leaving the page working and whatever it set missing."
+        )
+
+    if not layout.is_file():
+        return failures + ["jarvis-web has no root layout"]
+    css = layout.read_text(encoding="utf-8")
+    if "data-embed='android'" not in css and 'data-embed="android"' not in css:
+        failures.append(
+            "the console's layout never reacts to the embed marker, so the marker is "
+            "set and nothing is hidden"
+        )
+    else:
+        # Every selector that mentions the marker, so a rule can be split across
+        # a selector list without this reading only the first line of it. The
+        # first draft sliced from the FIRST occurrence and stopped short of the
+        # second selector in the very list it was checking.
+        guarded = " ".join(re.findall(r"data-embed[^{}]*", css))
+        # Bounded patterns, not substrings: `.brand` matches inside
+        # `.brand-disabled`, so renaming the rule to something that no longer
+        # hides anything read as a pass. Found by trying exactly that.
+        for what, pattern in (
+            ("nav[aria-label='Management sections']", r"nav\[aria-label='Management sections'\]"),
+            (".brand", r"\.brand(?![-\w])"),
+        ):
+            if not re.search(pattern, guarded):
+                failures.append(
+                    f"the embedded console still draws {what}, which the native frame "
+                    "already draws above it"
+                )
+    return failures
+
+
 def check_the_webview_is_not_handed_a_url() -> list[str]:
     """The token rides on this navigation. The path must not come from a caller.
 
@@ -369,6 +452,7 @@ def main() -> int:
         + check_the_phones_own_screens_do_not_borrow_the_consoles_words()
         + check_the_console_names_the_phones_screens_correctly()
         + check_the_webview_is_not_handed_a_url()
+        + check_the_console_hides_the_nav_the_frame_already_draws()
         + check_the_console_screen_can_reach_every_section()
     )
     for failure in failures:
