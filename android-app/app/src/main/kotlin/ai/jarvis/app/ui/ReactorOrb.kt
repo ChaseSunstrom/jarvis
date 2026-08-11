@@ -716,15 +716,19 @@ class ReactorOrb(private val density: Float) {
         // the margin the caller sized the ball against.
         val coreRadius = r * (CORE_FRACTION + CORE_LEVEL_GAIN * f.level)
         if (coreRadius < MIN_DRAW_PX) return
-        // Short of white on purpose. Screen-blended over a colour field that is
-        // already near its own ceiling, a white core clips the middle of the orb
-        // flat and erases both the drifting colour and the inner half of the
-        // coils — which is most of what there is to look at.
+        // Short of white on purpose, and tight. Screen-blended over a colour
+        // field that is already near its own ceiling, a white core clips the
+        // middle of the orb flat and erases both the drifting colour and the
+        // inner half of the coils — which is most of what there is to look at.
+        // Spread wide it stops being the hot centre OF something and becomes
+        // the ball's own colour, and then there is nothing for the plates to be
+        // lit by and nothing for the glass to sit over. The shader keeps its
+        // own core to the same tight falloff for the same reason.
         additive.shader = RadialGradient(
             f.cx, f.cy, coreRadius,
             intArrayOf(
                 withAlpha(lighten(f.core, CORE_WHITENESS), CORE_ALPHA * f.alpha),
-                withAlpha(f.core, CORE_ALPHA * 0.80f * f.alpha),
+                withAlpha(f.core, CORE_ALPHA * 0.55f * f.alpha),
                 withAlpha(f.core, 0f),
             ),
             CORE_STOPS,
@@ -1169,7 +1173,7 @@ class ReactorOrb(private val density: Float) {
         // --- colour ------------------------------------------------------------
 
         const val BLOB_ALPHA = 0.92f
-        const val CORE_ALPHA = 0.62f
+        const val CORE_ALPHA = 0.46f
 
         /** How far the core's centre is pushed toward white. */
         const val CORE_WHITENESS = 0.35f
@@ -1259,7 +1263,7 @@ class ReactorOrb(private val density: Float) {
         const val FILL_DIR_Y = -0.6084f
 
         /** How much the fill lifts the side the key cannot reach. */
-        const val FILL_ALPHA = 0.11f
+        const val FILL_ALPHA = 0.14f
 
         /**
          * How far toward the light the ball's shading is struck, as a fraction
@@ -1276,7 +1280,7 @@ class ReactorOrb(private val density: Float) {
 
         /** The lit near side: how far it reaches, and how hard it lifts. */
         const val SPHERE_LIT_R = 0.95f
-        const val SPHERE_LIT_ALPHA = 0.20f
+        const val SPHERE_LIT_ALPHA = 0.26f
         const val SPHERE_LIT_WHITENESS = 0.35f
 
         /**
@@ -1285,7 +1289,7 @@ class ReactorOrb(private val density: Float) {
          * bottomed out into a flat black rind partway across.
          */
         const val TERMINATOR_R = 1.55f
-        const val TERMINATOR_ALPHA = 0.34f
+        const val TERMINATOR_ALPHA = 0.44f
 
         /**
          * How far the lit point wanders, and how fast. Both deliberately below
@@ -1298,7 +1302,7 @@ class ReactorOrb(private val density: Float) {
         /** The assembly's shadow on the ball behind it. */
         const val HOUSING_SHADOW_OFFSET = 0.03f
         const val HOUSING_SHADOW_SPREAD = 0.05f
-        const val HOUSING_SHADOW_ALPHA = 0.50f
+        const val HOUSING_SHADOW_ALPHA = 0.62f
 
         /**
          * How dark the recess floor goes on the side away from the light. The
@@ -1328,8 +1332,8 @@ class ReactorOrb(private val density: Float) {
          * Ten plates at ten identical brightnesses are a printed ring, however
          * carefully each one is shaded across its own thickness.
          */
-        const val PLATE_LIGHT_BASE = 0.55f
-        const val PLATE_LIGHT_GAIN = 0.45f
+        const val PLATE_LIGHT_BASE = 0.50f
+        const val PLATE_LIGHT_GAIN = 0.50f
 
         /**
          * The specular, and the second thing pinned across both.
@@ -1411,7 +1415,7 @@ class ReactorOrb(private val density: Float) {
         const val HALO_BREATH_RATE = 0.41f
 
         private val BLOB_STOPS = floatArrayOf(0f, 0.45f, 1f)
-        private val CORE_STOPS = floatArrayOf(0f, 0.38f, 1f)
+        private val CORE_STOPS = floatArrayOf(0f, 0.45f, 1f)
         private val HALO_STOPS = floatArrayOf(0f, 0.55f, 1f)
         private val BLOOM_WIDE_STOPS = floatArrayOf(0f, 0.42f, 1f)
         private val SPECULAR_STOPS = floatArrayOf(0f, SPECULAR_HALF, 1f)

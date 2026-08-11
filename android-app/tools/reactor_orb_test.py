@@ -1037,7 +1037,12 @@ def check_the_rates_are_one_table() -> list[str]:
             failures.append(
                 f"{path.name} no longer turns its chrome at 20/40 degrees a second"
             )
-    if "spin + dt * (0.35 + (smoothState > 0.5 ? 0.35 : 0.0))" not in web:
+    # The rate, and that the spin integrates it — either written into the
+    # integration or lifted out into a `spinRate`, since the coils turn at
+    # SPOKE_SPIN_RATIO of the same number and may want it named.
+    if not re.search(r"0\.35 \+ \(smoothState > 0\.5 \? 0\.35 : 0\.0\)", web) or not re.search(
+        r"spin = \(spin \+ dt \*", web
+    ):
         failures.append(
             "the web orb's chrome no longer turns at 0.35/0.70 rad/s, which is the "
             "20/40 degrees a second the phone turns its own at"
@@ -1291,6 +1296,52 @@ def check_the_phases_are_integrated() -> list[str]:
     return failures
 
 
+def check_the_shader_source_survives_being_a_template_literal() -> list[str]:
+    """No backtick inside the GLSL.
+
+    Orb.svelte holds its shader in a JS template literal, so ONE backtick ends
+    the string early. What follows is then parsed as TypeScript, which is a
+    syntax error somewhere far away, and — much worse when it happens to parse —
+    a shader that compiles to nothing and a canvas that renders nothing. There
+    is no visual test here to catch that.
+
+    It is not hypothetical: this file's own house style writes identifiers in
+    prose as `name`, and a comment added to the coil function did exactly that,
+    took svelte-check from 28 errors to 32, and would have shipped a blank orb.
+    Inside the shader, name functions as coilAt() and variables bare.
+    """
+    text = WEB_ORB.read_text(encoding="utf-8")
+    failures: list[str] = []
+    # The shader literals, not the component's own TypeScript: everything from
+    # the first `const ... = \`` that contains GLSL through its closing
+    # backtick. Located by the precision qualifier every fragment shader here
+    # opens with, so this cannot drift onto some other string.
+    for marker in ("precision highp float", "precision mediump float"):
+        at = text.find(marker)
+        if at < 0:
+            continue
+        opened = text.rfind("`", 0, at)
+        closed = text.find("`", at)
+        if opened < 0 or closed < 0:
+            failures.append(
+                f"the shader containing {marker!r} is not inside a template "
+                "literal any more; this check no longer guards anything"
+            )
+            continue
+        body = text[opened + 1 : closed]
+        # `void main` sits near the END of the shader, so a stray backtick
+        # anywhere above it closes the literal before this is inside. Testing
+        # for the marker itself would be vacuous: it is what located `opened`.
+        if "void main" not in body:
+            failures.append(
+                "a backtick inside the GLSL ends the template literal early. "
+                "The shader then compiles to nothing and the orb renders as an "
+                "empty canvas, with no error anybody sees. Write identifiers "
+                "bare in shader comments, not in backticks."
+            )
+    return failures
+
+
 def main() -> int:
     for path in (REACTOR, SIRI_VIEW, HUD_VIEW, PALETTE, WEB_ORB):
         if not path.is_file():
@@ -1299,6 +1350,7 @@ def main() -> int:
 
     failures = (
         check_the_two_renderers_agree()
+        + check_the_shader_source_survives_being_a_template_literal()
         + check_the_geometry_budget_holds()
         + check_the_coils_are_a_layered_assembly()
         + check_the_two_renderers_are_lit_the_same()

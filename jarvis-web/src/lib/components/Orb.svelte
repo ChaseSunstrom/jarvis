@@ -38,6 +38,16 @@
 	/** Seconds for the key light to walk once around its small drift path. */
 	const DRIFT_S = 17;
 
+	/**
+	 * Mirrors of the shader's own constants, needed here because the coil
+	 * pattern's phase is integrated in PATTERN turns rather than in physical
+	 * radians — see coilAt(). Wrapping a physical-radian spin at TAU moved the
+	 * plates by SPOKE_SPIN_RATIO * SPOKE_COUNT = 3.5 segments per wrap, and the
+	 * half segment was a visible eighteen-degree jump every time round.
+	 */
+	const SPOKE_SPIN_RATIO = 0.35;
+	const SPOKE_COUNT = 10;
+
 	const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -100,6 +110,7 @@ uniform float uLevel;   // 0..1 audio energy, already gained
 uniform float uState;   // 0 idle, 1 listen, 2 think, 3 speak (fractional while blending)
 uniform vec3 uPhases;   // the three blob orbits, radians, each free-running
 uniform float uSpin;    // chrome rotation, radians, free-running
+uniform float uCoilSpin;// coil-pattern rotation, in PATTERN turns * TAU (below)
 uniform float uBreath;  // breathing, radians, free-running
 uniform float uDrift;   // key-light wander, radians, free-running
 
@@ -204,6 +215,14 @@ float blob(vec2 p, vec2 centre, float radius) {
  * are, and once offset along the light to find out what they are standing on
  * top of. An object that does not occlude anything is a sticker.
  */
+// spin is uCoilSpin: the plate pattern's own rotation, counted in pattern
+// turns rather than in physical radians (the CPU has already multiplied by
+// SPOKE_SPIN_RATIO * SPOKE_COUNT). That is the whole trick to the wrap. The
+// pattern repeats every TAU/SPOKE_COUNT of angle, so feeding it physical
+// radians wrapped at TAU shifted the pattern by SPOKE_SPIN_RATIO * SPOKE_COUNT
+// = 3.5 segments per wrap — and the half is a hard jump of eighteen degrees,
+// once every wrap, forever. Counted in pattern turns, a TAU wrap moves it by
+// exactly one whole segment, which is no movement at all.
 float coilAt(vec2 pp, float spin) {
 	float qq = length(pp);
 	float band = smoothstep(SPOKE_INNER - 0.012, SPOKE_INNER + 0.008, qq)
@@ -220,7 +239,7 @@ float coilAt(vec2 pp, float spin) {
 	float segSpan = 360.0 / SPOKE_COUNT;
 	float gapArc = SPOKE_GAP_DEG * (SPOKE_INNER + SPOKE_OUTER) * 0.5;
 	float halfPlate = max((segSpan - gapArc / max(qq, SPOKE_INNER * 0.5)) * 0.5, 0.0);
-	float segDeg = (fract((aa * INV2PI - spin * INV2PI * SPOKE_SPIN_RATIO) * SPOKE_COUNT) - 0.5) * segSpan;
+	float segDeg = (fract(aa * INV2PI * SPOKE_COUNT - spin * INV2PI) - 0.5) * segSpan;
 	return band * smoothstep(halfPlate, halfPlate - 1.4, abs(segDeg));
 }
 
@@ -367,7 +386,7 @@ void main() {
 	// element that most says "arc reactor" rather than "orb", and the blob
 	// field lights them rather than being covered by them.
 
-	float coil = coilAt(p, uSpin);
+	float coil = coilAt(p, uCoilSpin);
 
 	// Their shadow, before the plates themselves, because it falls on what is
 	// already down. Sampling the plates at p + L.xy * lift asks "is there a
@@ -378,7 +397,7 @@ void main() {
 	// wider than the offset, so the offset sample lands back on the same plate
 	// almost everywhere and the whole annulus comes out 40% down. That is what
 	// turns lit plates into dark bars, which is the opposite of the object.
-	float thrown = coilAt(p + L.xy * COIL_LIFT, uSpin) * (1.0 - coil) * ball;
+	float thrown = coilAt(p + L.xy * COIL_LIFT, uCoilSpin) * (1.0 - coil) * ball;
 	acc *= 1.0 - 0.42 * thrown;
 
 	// The housing SUBTRACTS. A recess that adds light is not a recess, and
@@ -451,7 +470,7 @@ void main() {
 	float segSpan = 360.0 / SPOKE_COUNT;
 	float coilBand = smoothstep(SPOKE_INNER - 0.012, SPOKE_INNER + 0.008, q)
 	               * smoothstep(SPOKE_OUTER + 0.012, SPOKE_OUTER - 0.008, q);
-	float segDeg = (fract((ang * INV2PI - uSpin * INV2PI * SPOKE_SPIN_RATIO) * SPOKE_COUNT) - 0.5) * segSpan;
+	float segDeg = (fract(ang * INV2PI * SPOKE_COUNT - uCoilSpin * INV2PI) - 0.5) * segSpan;
 	float divider = coilBand * smoothstep(1.3, 0.0, abs(abs(segDeg) - segSpan * 0.5));
 	acc += rimCol * divider * 0.28 * (0.45 + 0.55 * wrap);
 
@@ -550,8 +569,12 @@ void main() {
 	float mid = ring(r, R * MID_DASH_FACTOR, 0.012) * dash;
 	acc += rimCol * mid * 1.2; alpha += mid * 0.8;
 
-	// counter-rotating fine dashes
-	float dash2 = smoothstep(0.6, 0.96, 0.5 + 0.5 * sin((ang - spinRad * 1.43) * 64.0));
+	// Counter-rotating fine dashes. The 92 is uSpin's coefficient once the ring
+	// count is folded in, and it is an INTEGER on purpose: at 1.43 * 64 = 91.52
+	// a TAU wrap of uSpin slid this ring by 0.52 of a turn, which is a hard jump
+	// of half the dash pattern every wrap. 92 is the same rate to within half a
+	// percent and comes back to exactly where it started.
+	float dash2 = smoothstep(0.6, 0.96, 0.5 + 0.5 * sin(ang * 64.0 - spinRad * 92.0));
 	float mid2 = ring(r, R * FINE_DASH_FACTOR, 0.006) * dash2;
 	acc += rimCol * mid2 * 0.85; alpha += mid2 * 0.6;
 
@@ -687,6 +710,7 @@ void main() {
 		const uState = gl.getUniformLocation(program, 'uState');
 		const uPhases = gl.getUniformLocation(program, 'uPhases');
 		const uSpin = gl.getUniformLocation(program, 'uSpin');
+		const uCoilSpin = gl.getUniformLocation(program, 'uCoilSpin');
 		const uBreath = gl.getUniformLocation(program, 'uBreath');
 		const uDrift = gl.getUniformLocation(program, 'uDrift');
 
@@ -703,6 +727,7 @@ void main() {
 		// change moved the rate — several full turns, mid-animation.
 		const phases = [0, 0, 0];
 		let spin = 0;
+		let coilSpin = 0;
 		let breath = 0;
 		let drift = 0;
 
@@ -734,7 +759,11 @@ void main() {
 			}
 			// 0.35 rad/s at rest, 0.70 while a turn is live — the 20/40 degrees a
 			// second the phone turns its chrome at.
-			spin = (spin + dt * (0.35 + (smoothState > 0.5 ? 0.35 : 0.0))) % TAU;
+			const spinRate = 0.35 + (smoothState > 0.5 ? 0.35 : 0.0);
+			spin = (spin + dt * spinRate) % TAU;
+			// The same rotation, counted in pattern turns so its own TAU wrap lands
+			// on a whole segment.
+			coilSpin = (coilSpin + dt * spinRate * SPOKE_SPIN_RATIO * SPOKE_COUNT) % TAU;
 			breath = (breath + (dt * TAU) / mix4(BREATH_S, smoothState)) % TAU;
 			drift = (drift + (dt * TAU) / DRIFT_S) % TAU;
 
@@ -744,6 +773,7 @@ void main() {
 			gl.uniform1f(uState, smoothState);
 			gl.uniform3f(uPhases, phases[0], phases[1], phases[2]);
 			gl.uniform1f(uSpin, spin);
+			gl.uniform1f(uCoilSpin, coilSpin);
 			gl.uniform1f(uBreath, breath);
 			gl.uniform1f(uDrift, drift);
 			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
