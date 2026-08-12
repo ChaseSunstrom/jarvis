@@ -53,11 +53,11 @@ done
 ./scripts/e2e-smoke.sh
 ```
 
-### Suite sizes, measured 2026-08-09
+### Suite sizes, measured 2026-08-12
 
 | Suite | Tests | Result | Runtime |
 |---|---:|---|---:|
-| `jarvis-core` | 1545 | all pass | ~150 s |
+| `jarvis-core` | 1554 | all pass | ~150 s |
 | `jarvis-desktop` | 722 | all pass | ~16 s |
 | `jarvis-browser` | 328 | all pass | ~2 s |
 | `jarvis-orchestrator` + `jarvis-sandbox` | 23 | all pass | ~2 s |

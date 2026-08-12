@@ -137,8 +137,8 @@ pip install -r jarvis-core/requirements.txt -r testing/requirements.txt
 python3 -m pytest testing/e2e -q
 ```
 
-41 tests, about 8 seconds. No GPU, no models, no hardware, no network beyond
-loopback.
+186 tests, about 13 seconds (measured 2026-08-12). No GPU, no models, no
+hardware, no network beyond loopback.
 
 ### What it starts
 
