@@ -133,6 +133,11 @@ class UpdateChecker(
         if (update.sizeBytes > 0) params.setSize(update.sizeBytes)
 
         var sessionId = -1
+        // Set immediately after commit() returns, and read only by the
+        // `finally`. A session that was committed belongs to the platform now;
+        // abandoning it would cancel the very install this method just asked
+        // for. Everything else must be handed back.
+        var committed = false
         try {
             sessionId = installer.createSession(params)
             installer.openSession(sessionId).use { session ->
@@ -150,6 +155,7 @@ class UpdateChecker(
                         }
                 }
                 session.commit(confirmationIntent().intentSender)
+                committed = true
             }
             // Committed, not installed. commit() shows nothing by itself: it
             // sends STATUS_PENDING_USER_ACTION to the IntentSender above, and
@@ -157,11 +163,30 @@ class UpdateChecker(
             return Result.Handed(update)
         } catch (t: Throwable) {
             Log.w(TAG, "install failed", t)
-            // Abandon explicitly: a half-written session left behind counts
-            // against the installer's limits and the next attempt fails for a
-            // reason that has nothing to do with the real problem.
-            if (sessionId >= 0) runCatching { installer.abandonSession(sessionId) }
             return Result.Failed(installFailureMessage(t))
+        } finally {
+            // A `finally`, NOT the catch — which is where this used to live, and
+            // which the two `return Result.Failed(...)` above walk straight past.
+            //
+            // `use` is inline, so those returns are non-local returns from
+            // `install` itself: they unwind the sessions and close the streams,
+            // and they never enter the catch. So the two most ordinary failures
+            // there are — the server answering with anything but 200, and a
+            // response with no body — each leaked a created, half-written
+            // session, silently.
+            //
+            // That is not a slow leak. PackageInstaller caps ACTIVE sessions per
+            // app (50 on current Android), and an abandoned-but-unclosed session
+            // stays active for MAX_ACTIVE_SESSIONS' own lifetime — days. Around
+            // fifty taps of CHECK FOR UPDATES against a flaky network and
+            // `createSession` starts throwing IllegalStateException("Too many
+            // active sessions"), so the updater is wedged for days by a failure
+            // that has nothing to do with the real problem — which is precisely
+            // the outcome the comment that used to sit in the catch promised to
+            // prevent.
+            if (sessionId >= 0 && !committed) {
+                runCatching { installer.abandonSession(sessionId) }
+            }
         }
     }
 

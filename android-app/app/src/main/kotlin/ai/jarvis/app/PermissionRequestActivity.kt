@@ -47,6 +47,11 @@ class PermissionRequestActivity : Activity() {
         }
         requestId = id
         wanted = asked
+        // Reached the screen. This is the only positive evidence the bridge can
+        // get that the start was not silently dropped — neither `startActivity`
+        // returning nor `notify` returning proves anything — and without it a
+        // dropped start costs the caller a full sixty-five-second timeout.
+        PermissionBridge.raised(id)
 
         // Already granted between the request being raised and this appearing —
         // the user may have tapped the notification long after fixing it in

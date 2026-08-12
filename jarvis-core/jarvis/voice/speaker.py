@@ -105,6 +105,7 @@ __all__ = [
     "Embedding",
     "MAX_ENROLMENT_SAMPLES",
     "MIN_ENROLMENT_SAMPLES",
+    "MIN_MEASURABLE_SAMPLES",
     "MIN_SPEECH_MS",
     "SpeakerError",
     "Verdict",
@@ -190,6 +191,18 @@ MIN_SPEECH_MS = 400.0
 #: this and the per-dimension variance is guesswork wearing a decimal point.
 MIN_ENROLMENT_SAMPLES = 3
 MAX_ENROLMENT_SAMPLES = 20
+
+#: Samples needed before the owner's own score can be MEASURED, as opposed to
+#: merely verified against.
+#:
+#: One more than the minimum, and it is arithmetic rather than a policy: the
+#: leave-one-out estimate scores each sample against a profile built from the
+#: others, and that profile must itself clear :data:`MIN_ENROLMENT_SAMPLES` or
+#: `verify` refuses to answer it. So four samples is the first number that
+#: produces a real score, and at three the honest answer is "not yet" — not a
+#: list of infinities, and not `DEFAULT_THRESHOLD` wearing the same clothes a
+#: measurement would.
+MIN_MEASURABLE_SAMPLES = MIN_ENROLMENT_SAMPLES + 1
 
 #: What enrolment asks you to say, in order, and why each one is there.
 #:
@@ -871,16 +884,34 @@ class VoiceProfile:
         the console draws them, because a biometric gate whose threshold was
         guessed is a gate that locks you out on the first cold morning.
         """
-        if len(self.samples) < MIN_ENROLMENT_SAMPLES:
+        if len(self.samples) < MIN_MEASURABLE_SAMPLES:
             return []
         scores: list[float] = []
         for index in range(len(self.samples)):
             held_out = self.samples[index]
             rest = self.samples[:index] + self.samples[index + 1 :]
-            if len(rest) < 2:
+            # The SAME bar `verify` applies, because `verify` is what is about
+            # to be called on the trimmed profile. The guard used to be
+            # `len(rest) < 2`, one short of it, and one short is the whole bug:
+            # at exactly the advertised minimum of three samples every
+            # leave-one-out left two behind, `trimmed.enrolled` was False, and
+            # `verify` answered `Verdict(score=inf, reason="not-enrolled")`
+            # rather than refusing to answer.
+            #
+            # So a profile with three samples reported `self_scores` of
+            # `[inf, inf, inf]`, a `worst_self_score` of `inf`, and — because
+            # `suggested_threshold` falls back on an empty-or-useless list —
+            # DEFAULT_THRESHOLD, presented in the console and on the phone
+            # exactly as a measured number would be. The owner then turned
+            # enforcement on against a threshold nothing had measured.
+            if len(rest) < MIN_ENROLMENT_SAMPLES:
                 continue
             trimmed = VoiceProfile(samples=list(rest), threshold=self.threshold)
-            scores.append(trimmed.verify(held_out).score)
+            score = trimmed.verify(held_out).score
+            # Nothing non-finite may leave here. It is not a measurement, it
+            # does not survive JSON, and every consumer treats a float as one.
+            if math.isfinite(score):
+                scores.append(score)
         return scores
 
     def self_score(self) -> float:
@@ -937,12 +968,21 @@ class VoiceProfile:
             "enrolled": self.enrolled,
             "samples": len(self.samples),
             "min_samples": MIN_ENROLMENT_SAMPLES,
+            # What it takes to measure a threshold rather than inherit one. The
+            # console and the phone both drew `suggested_threshold` as the
+            # number enrolment had arrived at; with three samples that number
+            # was DEFAULT_THRESHOLD and nothing said so, so "enrol, read the
+            # scores, then enforce" was advice the screen could not support.
+            "measure_samples": MIN_MEASURABLE_SAMPLES,
             "max_samples": MAX_ENROLMENT_SAMPLES,
             "threshold": round(self.threshold, 3),
             "self_score": None if not math.isfinite(self_score) else round(self_score, 3),
             "self_scores": [round(value, 3) for value in scores],
             "worst_self_score": round(max(scores), 3) if scores else None,
             "suggested_threshold": round(self.suggested_threshold(), 3),
+            #: False means `suggested_threshold` is DEFAULT_THRESHOLD — a
+            #: starting point, not something this owner's voice produced.
+            "threshold_measured": bool(scores),
             "label": self.label,
             "embedder": self.embedder,
             "created": self.created,

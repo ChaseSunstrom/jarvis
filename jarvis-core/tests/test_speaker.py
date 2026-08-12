@@ -43,6 +43,7 @@ from jarvis.voice.speaker import (  # noqa: E402
     MAX_ENROLMENT_SAMPLES,
     MAX_THRESHOLD,
     MIN_ENROLMENT_SAMPLES,
+    MIN_MEASURABLE_SAMPLES,
     MIN_PITCH_FRAMES,
     MIN_SPEECH_MS,
     Embedding,
@@ -537,3 +538,98 @@ def test_a_narrow_enrolment_is_measurably_worse_than_a_broad_one():
         return impostor_best / owner_worst
 
     assert margin(broad) > margin(narrow)
+
+
+# ---------------------------------------------------------------------------
+# A threshold nobody measured must not look like one somebody did
+# ---------------------------------------------------------------------------
+def _profile_of(count: int) -> VoiceProfile:
+    """`count` distinct enrolment samples, deterministically."""
+    import random
+
+    rng = random.Random(count * 7717)
+    return VoiceProfile(
+        samples=[
+            tuple(rng.gauss(0.0, 1.0) for _ in range(EMBEDDING_DIMS)) for _ in range(count)
+        ]
+    )
+
+
+def test_a_profile_at_the_minimum_reports_no_self_scores():
+    """Leave-one-out means rebuilding the profile from the OTHERS, and that
+    rebuilt profile has to clear MIN_ENROLMENT_SAMPLES itself or `verify`
+    refuses to answer it.
+
+    So at exactly the advertised minimum there is nothing to measure with. The
+    guard was `len(rest) < 2` — one short of what `verify` requires — so every
+    leave-one-out ran against a two-sample profile, `verify` returned
+    `Verdict(score=inf, reason="not-enrolled")`, and the honest "cannot measure
+    this yet" came out as three infinities dressed as measurements.
+    """
+    profile = _profile_of(MIN_ENROLMENT_SAMPLES)
+    assert profile.enrolled, "the minimum must still be enough to verify against"
+    assert profile.self_scores() == [], (
+        "a profile at the minimum reported leave-one-out scores it cannot have"
+    )
+    assert profile.summary()["worst_self_score"] is None
+    assert profile.summary()["threshold_measured"] is False
+
+
+def test_one_more_sample_makes_it_measurable():
+    profile = _profile_of(MIN_MEASURABLE_SAMPLES)
+    scores = profile.self_scores()
+    assert len(scores) == MIN_MEASURABLE_SAMPLES
+    assert all(math.isfinite(value) for value in scores)
+    assert profile.summary()["threshold_measured"] is True
+
+
+def test_no_self_score_is_ever_non_finite():
+    """`inf` is not a measurement, it does not survive strict JSON, and every
+    consumer of these numbers formats them as one — the phone printed "∞" and
+    the console printed "Infinity" beside the word "scores"."""
+    import json
+
+    for count in range(MIN_ENROLMENT_SAMPLES, MIN_ENROLMENT_SAMPLES + 4):
+        summary = _profile_of(count).summary()
+        assert all(math.isfinite(v) for v in summary["self_scores"]), count
+        # strict: `allow_nan=False` is what a real HTTP encoder does.
+        json.dumps(summary, allow_nan=False)
+
+
+def test_an_unmeasured_suggestion_is_labelled_as_the_default():
+    """The suggestion falls back to DEFAULT_THRESHOLD when there is nothing to
+    build one from — which is correct, and was indistinguishable from a
+    measured one on both surfaces. The owner was told to read the scores and
+    then enforce; `threshold_measured` is what makes that possible."""
+    unmeasured = _profile_of(MIN_ENROLMENT_SAMPLES).summary()
+    assert unmeasured["suggested_threshold"] == pytest.approx(DEFAULT_THRESHOLD)
+    assert unmeasured["threshold_measured"] is False
+
+    measured = _profile_of(MIN_MEASURABLE_SAMPLES).summary()
+    assert measured["threshold_measured"] is True
+    assert measured["suggested_threshold"] != pytest.approx(DEFAULT_THRESHOLD), (
+        "the measured suggestion happens to equal the default; pick another seed"
+    )
+
+
+def test_the_leave_one_out_guard_is_the_same_bar_verify_applies():
+    """Two defences cover this bug — the guard, and a finiteness filter on the
+    way out — and either one alone hides a revert of the other. That is worth
+    having and worth being explicit about: this pins the guard itself, so the
+    filter cannot quietly become the only thing holding the invariant up.
+
+    The bar has to be `verify`'s own, because `verify` is what is called on the
+    trimmed profile one line later. `2` is the number it was, and one short of
+    the requirement is the whole defect.
+    """
+    import inspect
+
+    source = inspect.getsource(VoiceProfile.self_scores)
+    assert "if len(rest) < MIN_ENROLMENT_SAMPLES:" in source, (
+        "the leave-one-out guard no longer matches what `verify` requires, so "
+        "it can hand `verify` a profile that is not enrolled and read the "
+        "refusal back as a score"
+    )
+    assert "math.isfinite(score)" in source, (
+        "nothing stops a non-finite verdict reaching a JSON response again"
+    )

@@ -154,12 +154,39 @@ def _walk(node: Any, found: list[str]) -> None:
         if key in node:
             _walk(node[key], found)
 
-    # A service call can also name its target through `target`/`entity_id`
-    # without a service, which is not a call and needs no handling — but an
-    # `if` block's branches do.
-    for key in ("if", "repeat"):
-        if key in node:
-            _walk(node[key], found)
+    # `repeat` holds its steps one level down, in a mapping this walker has to
+    # descend into before `_NESTED_KEYS` can see the `sequence` inside it:
+    #
+    #     {"repeat": {"count": 3, "sequence": [{"service": "light.turn_on"}]}}
+    #
+    # `while`/`until`/`for_each` inside that mapping are conditions and values,
+    # not steps, and are correctly left alone by the key list above.
+    #
+    # `if` IS NOT HERE, and used to be. `ScriptRunner._async_if` reads it as the
+    # CONDITION and runs `then`/`else` — both already in `_NESTED_KEYS`:
+    #
+    #     if await async_check_all(self.jarvis, step.get("if"), ...):
+    #         await self._async_run_sequence(as_list(step.get("then")))
+    #
+    # So walking it added the condition to the call list, and a condition
+    # written as the documented bare template string became a `'?'` — this
+    # module's word for "a call decided at run time, escalate". A porch light on
+    # a sun trigger::
+    #
+    #     [{"if": "{{ is_state('sun.sun','below_horizon') }}",
+    #       "then": [{"service": "light.turn_on", "target": {...}}]}]
+    #
+    # reported `['light.turn_on', '?']` and `needs_approval=True`, so
+    # `automation_control` held it for a human every time, while
+    # `collect_domains` — the other walker, over the same config — said `light`
+    # and nothing more. Two analysers disagreeing about one automation is worse
+    # than either being wrong alone: whichever is consulted decides.
+    #
+    # Escalating in the safe direction is this module's rule and it stays the
+    # rule. It costs a confirmation. It is not licence to escalate on something
+    # that is not a call at all.
+    if "repeat" in node:
+        _walk(node["repeat"], found)
 
 
 def _name_of(raw: Any) -> str:

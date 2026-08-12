@@ -55,6 +55,8 @@ class VoiceIdentityClient(
         val enrolled: Boolean,
         val samples: Int,
         val minSamples: Int,
+        /** Samples needed before the owner's own score can be MEASURED. */
+        val measureSamples: Int,
         val maxSamples: Int,
         val mode: String,
         val active: Boolean,
@@ -62,9 +64,24 @@ class VoiceIdentityClient(
         val threshold: Double,
         val worstSelfScore: Double?,
         val suggestedThreshold: Double,
+        /**
+         * False when [suggestedThreshold] is the server's default rather than
+         * anything this voice produced.
+         *
+         * The screen drew the two identically — "enrolment suggests a threshold
+         * of 4.00" — on a profile whose leave-one-out scores were every one of
+         * them infinite, because at exactly `minSamples` there are not enough
+         * samples left over to score one against. The advice on this same
+         * screen is "enrol, read the scores, then enforce", and there were no
+         * scores to read.
+         */
+        val thresholdMeasured: Boolean,
     ) {
         /** True once there are enough samples for the profile to verify at all. */
         val usable: Boolean get() = samples >= minSamples
+
+        /** True once enrolment can say what the owner's own worst sample scores. */
+        val measurable: Boolean get() = samples >= measureSamples
 
         companion object {
             fun from(json: JSONObject): Status {
@@ -78,13 +95,25 @@ class VoiceIdentityClient(
                     enrolled = json.optBoolean("enrolled", false),
                     samples = json.optInt("samples", 0),
                     minSamples = json.optInt("min_samples", 3),
+                    // Defaults to one past the minimum for a server that predates
+                    // the field, which is the arithmetic the server does too.
+                    measureSamples = json.optInt("measure_samples", json.optInt("min_samples", 3) + 1),
                     maxSamples = json.optInt("max_samples", 20),
                     mode = json.optString("mode", "off"),
                     active = json.optBoolean("active", false),
                     prompts = prompts,
                     threshold = json.optDouble("threshold", 0.0),
-                    worstSelfScore = json.optDouble("worst_self_score").takeIf { !it.isNaN() },
+                    // `!isNaN` is not enough on its own: a server that has not
+                    // been updated still sends Infinity here, and `%.2f` of it
+                    // renders as the literal "∞" beside the word "scores".
+                    worstSelfScore = json.optDouble("worst_self_score")
+                        .takeIf { !it.isNaN() && !it.isInfinite() },
                     suggestedThreshold = json.optDouble("suggested_threshold", 0.0),
+                    thresholdMeasured = json.optBoolean(
+                        "threshold_measured",
+                        // Older server: infer it the way the number itself does.
+                        json.optDouble("worst_self_score").let { !it.isNaN() && !it.isInfinite() },
+                    ),
                 )
             }
         }

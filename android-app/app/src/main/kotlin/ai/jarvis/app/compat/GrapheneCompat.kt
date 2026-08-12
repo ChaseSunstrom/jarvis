@@ -616,15 +616,25 @@ object GrapheneCompat {
      *
      * A runtime permission since Android 13 (API 33), and — until this — one
      * nothing in the app had ever asked for. Below 33 it is granted by being
-     * declared, so the check is version-gated rather than always run.
+     * declared, so that half of the check is version-gated.
+     *
+     * `areNotificationsEnabled` is the other half and is not version-gated,
+     * because the permission is not the only way to end up silent: the user can
+     * switch Jarvis's notifications off in Settings on any Android version, and
+     * from 13 the two answers can also disagree in the permission's favour.
+     * Both matter for the same reason — `NotificationManager.notify` DOES NOT
+     * THROW when the notification will not be shown. It returns normally and
+     * posts nothing. Anything that treats a clean return as "the user can see
+     * this" is wrong on both paths, which is exactly how [PermissionBridge]
+     * came to block a command for 65 seconds waiting on a prompt that had never
+     * been on screen.
      */
     @JvmStatic
     fun canPostNotifications(context: Context): Boolean = try {
-        if (Build.VERSION.SDK_INT < 33) {
-            true
-        } else {
+        val permitted = Build.VERSION.SDK_INT < 33 ||
             hasPermission(context, "android.permission.POST_NOTIFICATIONS")
-        }
+        permitted && context.getSystemService(NotificationManager::class.java)
+            ?.areNotificationsEnabled() == true
     } catch (t: Throwable) {
         Log.w(TAG, "notification permission check failed", t)
         false

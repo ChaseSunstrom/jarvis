@@ -217,3 +217,82 @@ def test_the_engine_and_the_gate_cannot_drift_apart():
     assert 'part_of(self.config, "action")' in source, (
         "the engine parses its actions with its own copy of the precedence again"
     )
+
+
+# ---------------------------------------------------------------------------
+# `if` is a condition, not a step
+# ---------------------------------------------------------------------------
+def test_an_if_condition_is_not_read_as_a_service_call():
+    """`_async_if` reads `step["if"]` as the CONDITION and runs `then`/`else`::
+
+        if await async_check_all(self.jarvis, step.get("if"), self.variables):
+            await self._async_run_sequence(as_list(step.get("then")))
+
+    The walker recursed into it anyway. A condition written as the documented
+    bare template string has no `.` outside the braces, so `_name_of` returned
+    `"?"` — this module's word for "decided at run time, escalate" — and the
+    most ordinary automation anyone writes was held for a human every time.
+    """
+    porch = [
+        {
+            "if": "{{ is_state('sun.sun','below_horizon') }}",
+            "then": [{"service": "light.turn_on", "target": {"entity_id": "light.porch"}}],
+        }
+    ]
+    assert service_calls(porch) == ["light.turn_on"]
+    assert gated_reach(porch) == set()
+    assert needs_approval(porch) is False
+    assert describe_reach(porch) == "touches nothing that needs approval"
+
+
+def test_both_branches_of_an_if_are_still_walked():
+    """Not walking the condition must not mean not walking the block. `then`
+    and `else` are where the steps are, and a gated call in EITHER counts."""
+    either = [
+        {
+            "if": [{"condition": "state", "entity_id": "person.me", "state": "home"}],
+            "then": [{"service": "light.turn_on"}],
+            "else": [{"service": "lock.unlock"}],
+        }
+    ]
+    assert sorted(service_calls(either)) == ["light.turn_on", "lock.unlock"]
+    assert needs_approval(either) is True
+
+
+def test_a_repeat_still_reaches_the_steps_inside_it():
+    """`repeat` is the one key that genuinely does need descending into: its
+    steps are a level down, in the mapping's `sequence`, where the shared key
+    list cannot see them. Its `while`/`until` are conditions and stay unread."""
+    counted = [{"repeat": {"count": 3, "sequence": [{"service": "lock.unlock"}]}}]
+    assert service_calls(counted) == ["lock.unlock"]
+    assert needs_approval(counted) is True
+
+    guarded = [{"repeat": {"while": "{{ x }}", "sequence": [{"service": "light.turn_on"}]}}]
+    assert service_calls(guarded) == ["light.turn_on"], (
+        "the `while` condition was read as a call"
+    )
+
+
+@pytest.mark.parametrize(
+    "actions",
+    [
+        [{"if": "{{ now().hour > 20 }}", "then": [{"service": "light.turn_off"}]}],
+        [{"repeat": {"count": 2, "sequence": [{"service": "light.turn_on"}]}}],
+        [{"choose": [{"conditions": "{{ x }}", "sequence": [{"service": "light.toggle"}]}]}],
+        [{"service": "light.turn_on"}, {"delay": {"seconds": 5}}],
+    ],
+)
+def test_the_two_walkers_agree_about_the_same_automation(actions):
+    """`reach.service_calls` and `actions.collect_domains` walk the same config
+    for the same purpose, and they disagreed about `if`: one saw a phantom
+    unknown call, the other saw a porch light.
+
+    Two analysers disagreeing about one automation is worse than either being
+    wrong on its own — whichever a caller happens to consult decides. This does
+    not demand identical answers (reach is deliberately the more pessimistic of
+    the two about `scene`, `event` and indirection); it demands they agree on
+    whether anything at all is unreadable, which is what the `?` means.
+    """
+    from jarvis.automation.actions import DOMAIN_UNKNOWN, collect_domains
+
+    assert ("?" in service_calls(actions)) == (DOMAIN_UNKNOWN in collect_domains(actions))

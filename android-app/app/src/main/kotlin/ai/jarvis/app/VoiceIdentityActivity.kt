@@ -487,12 +487,26 @@ class VoiceIdentityActivity : Activity() {
         detailView.text = when {
             !fresh.usable ->
                 "Nothing is checked until there are ${fresh.minSamples} samples."
-            worst != null -> String.format(
+            // A threshold that was never measured must not be reported as one.
+            // The screen used to print "enrolment suggests 4.00" on a profile
+            // whose leave-one-out scores were every one of them infinite —
+            // 4.00 is the server's default — while telling the owner to read
+            // the scores before enforcing. There were no scores.
+            !fresh.thresholdMeasured || worst == null -> String.format(
+                "%d samples is enough to check against, but not enough to measure " +
+                    "against: scoring one of your samples needs the other %d. Record " +
+                    "%d more and this will say what your own worst sample scores. " +
+                    "Until then %.2f is the server's default, not a measurement.",
+                fresh.samples,
+                fresh.minSamples,
+                (fresh.measureSamples - fresh.samples).coerceAtLeast(1),
+                fresh.suggestedThreshold,
+            )
+            else -> String.format(
                 "Your own worst sample scores %.2f. Enrolment suggests a threshold of " +
                     "%.2f, which is what is in force unless the server names one.",
                 worst, fresh.suggestedThreshold,
             )
-            else -> ""
         }
         syncButtons()
     }

@@ -3,6 +3,7 @@ package ai.jarvis.app.ui
 import ai.jarvis.app.JarvisApp
 import ai.jarvis.app.PermissionRequestActivity
 import ai.jarvis.app.R
+import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.compat.RuntimePermissions
 import android.app.Notification
 import android.app.NotificationManager
@@ -70,9 +71,26 @@ object PermissionBridge {
 
     private const val TAG = "JarvisPermission"
 
+    /**
+     * How long to wait for [PermissionRequestActivity] to say it is on screen,
+     * when nothing else could put the request in front of the user.
+     *
+     * An activity start that is going to happen has happened well inside this.
+     * One the platform dropped never will, and that is the case worth spending
+     * four seconds to distinguish rather than sixty-five.
+     */
+    private const val START_GRACE_MS = 4_000L
+
     private val pending = ConcurrentHashMap<String, CompletableDeferred<List<String>>>()
+
+    /** Completed by [raised] the moment the host activity actually runs. */
+    private val onScreen = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
     private val notificationIds = ConcurrentHashMap<String, Int>()
     private val codes = AtomicInteger(2000)
+
+    /** How the request reached the user, or that it did not reach them at all. */
+    private enum class Route { NONE, ACTIVITY_ONLY, NOTIFICATION }
 
     /**
      * Permissions this user has refused with "don't ask again", for the life of
@@ -110,15 +128,29 @@ object PermissionBridge {
         val id = UUID.randomUUID().toString()
         val answer = CompletableDeferred<List<String>>()
         pending[id] = answer
+        onScreen[id] = CompletableDeferred()
         return try {
-            if (!raise(app, id, actionId, askable)) {
-                Log.w(TAG, "no way to put a permission dialog on screen for $actionId")
-                wanted
-            } else {
-                val still = withTimeoutOrNull(TIMEOUT_MS + DELIVERY_GRACE_MS) { answer.await() }
-                // A timeout is not consent and not a refusal. Report what the
-                // device actually holds rather than guessing either way.
-                still ?: RuntimePermissions.missing(app, permissions)
+            when (raise(app, id, actionId, askable)) {
+                Route.NONE -> {
+                    Log.w(TAG, "no way to put a permission dialog on screen for $actionId")
+                    wanted
+                }
+                // The activity start was accepted and there is no notification
+                // to fall back on, so confirm the activity RAN before waiting a
+                // minute on it. A background activity start the platform
+                // refuses does not throw — it logs and drops the intent — and
+                // waiting out the full timeout on a dropped one, once per
+                // command for the life of the process, is what this whole
+                // branch exists to avoid.
+                Route.ACTIVITY_ONLY -> {
+                    if (withTimeoutOrNull(START_GRACE_MS) { onScreen[id]?.await() } == null) {
+                        Log.w(TAG, "the permission prompt for $actionId never reached the screen")
+                        wanted
+                    } else {
+                        await(app, answer, permissions)
+                    }
+                }
+                Route.NOTIFICATION -> await(app, answer, permissions)
             }
         } catch (ce: CancellationException) {
             throw ce
@@ -127,8 +159,32 @@ object PermissionBridge {
             wanted
         } finally {
             pending.remove(id)
+            onScreen.remove(id)
             clearNotification(app, id)
         }
+    }
+
+    private suspend fun await(
+        app: Context,
+        answer: CompletableDeferred<List<String>>,
+        permissions: List<String>,
+    ): List<String> {
+        val still = withTimeoutOrNull(TIMEOUT_MS + DELIVERY_GRACE_MS) { answer.await() }
+        // A timeout is not consent and not a refusal. Report what the device
+        // actually holds rather than guessing either way.
+        return still ?: RuntimePermissions.missing(app, permissions)
+    }
+
+    /**
+     * Called by [PermissionRequestActivity] as it starts, before it can have
+     * anything to report.
+     *
+     * The only positive evidence available that the request is in front of a
+     * person. Everything else on this path — `startActivity` returning, `notify`
+     * returning — is evidence of nothing at all.
+     */
+    fun raised(requestId: String) {
+        onScreen[requestId]?.complete(Unit)
     }
 
     /**
@@ -180,7 +236,7 @@ object PermissionBridge {
         id: String,
         actionId: String,
         permissions: List<String>,
-    ): Boolean {
+    ): Route {
         val intent = Intent(app, PermissionRequestActivity::class.java)
             .addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -194,14 +250,41 @@ object PermissionBridge {
         // Notification first, for the same reason ApprovalBridge does it: if
         // the direct start is refused by background activity-start rules, this
         // is the user's only route, and posting it afterwards would be too late.
-        var reachable = postNotification(app, id, actionId, permissions, intent)
+        //
+        // ASKED BEFORE POSTING, because `nm.notify` cannot answer it. With
+        // notifications off — POST_NOTIFICATIONS refused on 13+, or the user
+        // switching them off in Settings on any version — `notify` returns
+        // perfectly normally and shows nothing. So this reported a route that
+        // did not exist, and [ensure] then suspended the whole dispatch for
+        // TIMEOUT_MS + DELIVERY_GRACE_MS waiting for a dialog nobody could see.
+        //
+        // Sixty-five seconds, on EVERY command that wants a permission, for
+        // ever: no answer is ever delivered, so nothing is added to
+        // [permanentlyDenied] and the next command pays it again. The phone
+        // looked like it had stopped taking orders.
+        val notified = if (GrapheneCompat.canPostNotifications(app)) {
+            postNotification(app, id, actionId, permissions, intent)
+        } else {
+            Log.i(TAG, "notifications are off; there is no fallback route to a permission dialog")
+            false
+        }
+        var started = false
         try {
             app.startActivity(intent)
-            reachable = true
+            // "The start was ACCEPTED", which is the most this can know. A
+            // background activity start the platform refuses does not throw
+            // either. That is why an accepted start with no notification behind
+            // it is [Route.ACTIVITY_ONLY] rather than a promise: the caller
+            // waits for the activity to say it ran.
+            started = true
         } catch (t: Throwable) {
             Log.w(TAG, "direct start of the permission prompt refused", t)
         }
-        return reachable
+        return when {
+            notified -> Route.NOTIFICATION
+            started -> Route.ACTIVITY_ONLY
+            else -> Route.NONE
+        }
     }
 
     private fun postNotification(

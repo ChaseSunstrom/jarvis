@@ -158,6 +158,47 @@ def test_the_install_permission_is_checked_before_the_download():
     )
 
 
+def test_no_failure_path_leaks_an_install_session():
+    """`use` is inline, so a `return` inside one is a NON-LOCAL return.
+
+    `install()` has two of them — HTTP not-200, and a response with no body —
+    sitting inside `openSession(...).use { ... execute().use { ... } }`. They
+    unwind the sessions and close the streams, and they do not enter the
+    `catch`. The `catch` was the only caller of `abandonSession`, so the two
+    most ordinary download failures each left a created, half-written session
+    behind, silently.
+
+    PackageInstaller caps ACTIVE sessions per app (50 on current Android) and a
+    session that is never abandoned stays active for days. Around fifty taps of
+    CHECK FOR UPDATES on a flaky network and `createSession` throws
+    IllegalStateException("Too many active sessions") — the updater wedged for
+    days by a failure with nothing to do with the real problem, which is the
+    exact outcome the comment in that catch promised to prevent.
+
+    So the release moves to a `finally`, and the check is that it stays there.
+    """
+    src = code_only(read(CHECKER))
+    body = src.split("fun install(", 1)
+    assert len(body) == 2, "UpdateChecker.install is gone"
+    body = body[1]
+    assert "abandonSession(" in body, "a failed install no longer releases its session"
+    finally_at = body.find("} finally {")
+    assert finally_at >= 0, (
+        "install() has no finally block, so the early returns inside its `use` "
+        "blocks can bypass whatever releases the session"
+    )
+    assert body.index("abandonSession(") > finally_at, (
+        "the session is released outside the finally, so a non-local return "
+        "from one of the nested `use` blocks walks past it"
+    )
+    # ...and only when there is something to release. Abandoning a COMMITTED
+    # session would cancel the install this method exists to start.
+    assert "committed = true" in body and "!committed" in body, (
+        "the finally cannot tell a committed session from an abandoned one, so "
+        "it either leaks or cancels the install it just asked for"
+    )
+
+
 def test_committed_is_not_the_same_word_as_found():
     """`check()` returning `Offered` and `install()` returning `Offered` shared
     a name and meant different things, which is how "Ready to install — confirm

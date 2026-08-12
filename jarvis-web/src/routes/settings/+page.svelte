@@ -429,10 +429,24 @@
 				</span>
 				<span class="muted" data-testid="speaker-threshold">
 					{speaker.threshold}
-					{#if speaker.worst_self_score != null}
+					{#if speaker.threshold_measured !== false && speaker.worst_self_score != null}
 						<span class="eid">
 							· their own worst sample scores {speaker.worst_self_score}, enrolment
 							suggests {speaker.suggested_threshold}
+						</span>
+					{:else}
+						<!--
+							Scoring one enrolment sample means holding it out and rebuilding the
+							profile from the rest, and that rebuilt profile needs the minimum too.
+							So at exactly the minimum there is nothing to measure with, and this
+							row used to print "their own worst sample scores Infinity, enrolment
+							suggests 4" — 4 being the server's default — beside advice that says
+							to read the scores before enforcing.
+						-->
+						<span class="eid">
+							· not measurable yet: scoring one sample needs {speaker.min_samples} others,
+							so this needs {speaker.measure_samples ?? speaker.min_samples + 1} in all.
+							{speaker.suggested_threshold} is the default, not a measurement.
 						</span>
 					{/if}
 				</span>

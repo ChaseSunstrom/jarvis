@@ -452,6 +452,57 @@ def test_the_bridge_can_reach_the_user_when_the_app_is_in_the_background():
     )
 
 
+def test_a_notification_that_cannot_be_shown_is_not_a_route():
+    """`nm.notify` DOES NOT THROW when notifications are off.
+
+    With POST_NOTIFICATIONS refused on Android 13+, or the user having switched
+    Jarvis's notifications off in Settings on any version, `notify` returns
+    perfectly normally and posts nothing. The bridge treated a clean return as
+    "the user can see this", reported the request as raised, and `ensure` then
+    suspended the dispatch for TIMEOUT_MS + DELIVERY_GRACE_MS — sixty-five
+    seconds — waiting for an answer to a dialog that had never been on screen.
+
+    And it never got cheaper. No answer is delivered, so nothing is added to
+    `permanentlyDenied`, so the NEXT command that wants a permission pays the
+    same sixty-five seconds. From the outside the phone has stopped taking
+    orders, with a foreground service running and nothing logged as an error.
+    """
+    src = code_only(read(BRIDGE))
+    assert "GrapheneCompat.canPostNotifications(app)" in src, (
+        "the bridge posts a notification without asking whether one can be "
+        "shown, and `notify` will not tell it"
+    )
+    ask = src.index("GrapheneCompat.canPostNotifications(app)")
+    post = src.index("postNotification(app, id, actionId, permissions, intent)")
+    assert ask < post, "asked after posting, which answers nothing"
+
+
+def test_a_dropped_activity_start_is_not_waited_out():
+    """A background activity start the platform refuses does not throw either.
+
+    So `startActivity` returning is evidence of nothing, exactly as `notify`
+    returning is. When it is the ONLY route — no notification behind it — the
+    bridge waits for the activity to say it ran, and gives up in seconds rather
+    than in a minute if it never does.
+    """
+    src = code_only(read(BRIDGE))
+    assert "START_GRACE_MS" in src, "no short wait for the activity to appear"
+    assert "Route.ACTIVITY_ONLY" in src, (
+        "the bridge cannot tell an accepted start with a notification behind it "
+        "from one without, so it must treat both as reachable"
+    )
+    assert "fun raised(" in src, "nothing can report that the prompt appeared"
+    assert "PermissionBridge.raised(" in code_only(read(TRAMPOLINE)), (
+        "the prompt never reports itself, so the positive evidence never exists"
+    )
+    grace = int(re.search(r"START_GRACE_MS = ([\d_]+)L", src).group(1).replace("_", ""))
+    timeout = int(re.search(r"TIMEOUT_MS = ([\d_]+)L", src).group(1).replace("_", ""))
+    assert grace < timeout / 4, (
+        f"the confirmation wait ({grace}ms) is not meaningfully shorter than "
+        f"the answer wait ({timeout}ms), so it saves nothing"
+    )
+
+
 def test_it_stops_asking_once_the_user_means_it():
     """"Don't ask again" makes `requestPermissions` return instantly with no
     dialog. Re-asking per command would be an invisible Activity flash on every
