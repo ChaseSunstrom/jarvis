@@ -33,7 +33,7 @@ says where it went.
 | [`jarvis-core/`](jarvis-core/) | the assistant: state machine, event bus, service registry, automations, MQTT discovery, voice pipeline, LLM agent, tool registry, approval gate | 1203 |
 | [`jarvis-desktop/`](jarvis-desktop/) | desktop agent for Linux/macOS/Windows; device-side policy enforcement | 722 |
 | [`jarvis-browser/`](jarvis-browser/) | fetching, crawling and gated browser automation | 328 |
-| [`jarvis-web/`](jarvis-web/) | SvelteKit HUD — WebGL orb, mic capture, streaming, barge-in; the token stays server-side | 194 + 20 e2e |
+| [`jarvis-web/`](jarvis-web/) | SvelteKit HUD — WebGL orb, mic capture, streaming, barge-in; the token stays server-side | 325 + 44 e2e |
 | [`android-app/`](android-app/) | standalone Android app (`ai.jarvis.app`): ASSIST role, lock-screen activation, wake word | executable specs in `tools/` |
 | [`jarvis-orchestrator/`](jarvis-orchestrator/) | FastAPI: agent fan-out, OpenCode coding jobs, the approval-gated command broker | 17 |
 | [`jarvis-sandbox/`](jarvis-sandbox/) | network-less execution jail | 6 |

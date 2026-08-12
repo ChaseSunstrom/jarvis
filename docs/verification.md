@@ -9,7 +9,7 @@ Read it as a claims register. Every row says what is proven, what proves it, and
 what command reproduces the proof. Anything that nothing checks is listed as
 **Unproven** and named — not softened, not omitted.
 
-Counts and results below were measured on **2026-08-09**. Re-measure before
+Counts and results below were measured on **2026-08-12**. Re-measure before
 trusting them; the commands are given so you can.
 
 ---
@@ -57,38 +57,39 @@ done
 
 | Suite | Tests | Result | Runtime |
 |---|---:|---|---:|
-| `jarvis-core` | 1203 | all pass | ~53 s |
+| `jarvis-core` | 1545 | all pass | ~150 s |
 | `jarvis-desktop` | 722 | all pass | ~16 s |
 | `jarvis-browser` | 328 | all pass | ~2 s |
-| `jarvis-orchestrator` | 17 | all pass | ~1 s |
-| `jarvis-sandbox` | 6 | all pass | ~1 s |
+| `jarvis-orchestrator` + `jarvis-sandbox` | 23 | all pass | ~2 s |
 | `evals` (routing table + its mirrors) | 17 | all pass | <1 s |
-| `jarvis-web` (vitest, 13 files) | 203 | all pass | ~2 s |
-| `jarvis-web` (Playwright, chromium) | 20 | all pass | ~19 s |
+| `jarvis-web` (vitest, 20 files) | 325 | all pass | ~4 s |
+| `jarvis-web` (Playwright, chromium) | 44 | all pass | ~56 s |
 | `android-app/tools` (spec files) | all pass | all pass | ~3 s |
 
 Within `jarvis-core`, by file:
 
 | File | Tests | Covers |
 |---|---:|---|
-| `test_sensors.py` | 173 | the sensor layer and its inference |
-| `test_features.py` | 115 | the shipped feature set, end to end |
-| `test_web_integration.py` | 109 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
+| `test_sensors.py` | 195 | the sensor layer and its inference |
+| `test_features.py` | 119 | the shipped feature set, end to end |
+| `test_web_integration.py` | 112 | `web.search`/`fetch`/`crawl`/`browse`, fencing, and the turn-taint that backs it |
 | `test_vision.py` | 106 | camera frames as fenced, untrusted input |
 | `test_api.py` | 94 | REST + websocket wire contract, auth, binary audio frames |
-| `test_packaging.py` | 74 | the shipped `config/` is coherent; compose/YAML agreement |
-| `test_automation.py` | 72 | triggers, conditions, actions, run modes |
-| `test_voice.py` | 67 | pipeline runner, Wyoming protocol framing, pipeline store |
-| `test_mqtt.py` | 50 | discovery, entity mapping, value templates |
-| `test_llm.py` | 48 | agent, tool registry, the approval gate |
+| `test_packaging.py` | 88 | the shipped `config/` is coherent; compose/YAML agreement |
+| `test_automation.py` | 75 | triggers, conditions, actions, run modes |
+| `test_voice.py` | 68 | pipeline runner, Wyoming protocol framing, pipeline store |
+| `test_mqtt.py` | 53 | discovery, entity mapping, value templates |
+| `test_llm.py` | 60 | agent, tool registry, the approval gate |
 | `test_domains.py` | 47 | every domain service verb |
-| `test_orchestrator.py` | 47 | delegation, coding jobs, the double-gated shell path |
+| `test_speaker.py` | 55 | the voiceprint: DSP against the DFT definition, and whether it separates anyone |
+| `test_speaker_gate.py` | 33 | what the system does with that answer — what a refused turn reaches, and what the API hands out |
+| `test_orchestrator.py` | 49 | delegation, coding jobs, the double-gated shell path |
 | `test_recorder.py` | 44 | SQLite recorder, history, logbook, sun, person |
 | `test_device_control.py` | 38 | cross-device command dispatch and tiering |
-| `test_local_integrations.py` | 36 | template, rest, command_line, hue, wled, demo |
+| `test_local_integrations.py` | 37 | template, rest, command_line, hue, wled, demo |
 | `test_api_companion.py` | 28 | the device channel over the websocket |
 | `test_companion.py` | 26 | presence ranking, routing, escalation |
-| `test_core.py` | 17 | bus, state machine, services, registries |
+| `test_core.py` | 28 | bus, state machine, services, registries |
 | **`test_e2e.py`** | **12** | **the whole platform booted from a config file** |
 
 ---
@@ -333,7 +334,7 @@ they are the only places that particular bug can come back.
 | **Wake word detected on the phone rather than the server** | Automated *as a Python mirror* | `OnDeviceWakeWord` runs openWakeWord's three-model ONNX chain locally, so nothing is streamed until the name is said. `wake_score_test.py` pins the threshold / consecutive-frames / refractory logic — the half that can be proved without a device — and `tool_run_test.py`'s neighbours cover the rest. The weights are downloaded from the user's own server at runtime, never bundled: `jarvis-core/tests/test_model_mirror.py`. |
 | **Speaker verification separates two voices** | Automated *against synthetic speech* | `jarvis-core/tests/test_speaker.py` (55). `tests/synth_voice.py` generates talkers from a source-filter model — the verifier's own claim about what distinguishes people, written as a signal generator. The cast includes two deliberately hard cases: a speaker at the owner's pitch with a different tract, and a breathy one whose pitch is not measurable at all. Everything is seeded. |
 | **Speaker verification on REAL human speech** | **Unproven** | Nothing here has heard a person. Synthetic voices settle that the code separates signals differing in the cues it claims to use; they say nothing about false-accept and false-reject rates on real speech in a real room. This is why `observe` mode exists and why `docs/voice-identity.md` tells you to spend a few days in it reading your own scores. Only your own voice can close this row. |
-| **A refused turn cannot reach a tool** | Automated | `jarvis-core/tests/test_speaker_gate.py` (28) asserts it by behaviour — the fake conversation agent records whether it was called — rather than by reading the code meant to prevent it. Also covers: `observe` never blocks, `off` does not even buffer the audio, a crashing verifier lets the turn through, a bad `mode:` falls back to `off`, and the wake leg is never used to identify anyone. |
+| **A refused turn cannot reach a tool** | Automated | `jarvis-core/tests/test_speaker_gate.py` (33) asserts it by behaviour — the fake conversation agent records whether it was called — rather than by reading the code meant to prevent it. Also covers: `observe` never blocks, `off` does not even buffer the audio, a crashing verifier lets the turn through, a bad `mode:` falls back to `off`, and the wake leg is never used to identify anyone. |
 | **The voiceprint never leaves the server** | Automated | Same file: every enrolment response is searched for the profile's own numbers. The audio is checked to be dropped when the run ends. |
 | **Enrolment from the phone** | **Unproven** | `VoiceIdentityActivity` and `VoiceIdentityClient` are written and wired, and the server half they call is covered above. Nothing has driven the screen — it needs a device with a microphone. |
 | **On-device transcription cannot bypass the speaker gate** | Automated | `test_speaker_gate.py` — a transcript flagged `audio_derived` is refused while enforcing, typed text is not, `observe` and `off` still let it through, and a server with nobody enrolled is unaffected. The phone's half (suspending the local path) is structural in `JarvisConversation.startLocalTurn`. The two are independent: the server holds even if the phone is wrong. |
