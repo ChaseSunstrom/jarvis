@@ -11,6 +11,26 @@ import ai.jarvis.app.automation.policy.PolicyStore
 /**
  * Brings the automation layer back after a reboot or an app update.
  *
+ * ## Which boot, and why not the other one
+ *
+ * `BOOT_COMPLETED` only. On a file-based-encryption device — which every
+ * modern Android is, and GrapheneOS emphatically is — that broadcast is
+ * delivered **after the first unlock**, which is exactly the moment Jarvis
+ * wants: credential-encrypted storage is readable, so the pairing token, the
+ * policy store and the user's preferences all exist.
+ *
+ * This class used to also accept `ACTION_LOCKED_BOOT_COMPLETED`, the
+ * before-first-unlock broadcast. It could never arrive — the manifest declares
+ * this receiver `directBootAware="false"` and does not filter for that action —
+ * so the branch was dead code that read like a capability.
+ *
+ * It is not an oversight to be fixed by turning direct boot on. Before the
+ * first unlock this receiver could not read `PolicyStore`, so `policy.panic`
+ * would come back `false` because the file is *unreadable*, not because the
+ * user cleared it — and "the kill switch is off" would be indistinguishable
+ * from "I cannot tell whether the kill switch is on". Starting a microphone
+ * service on that basis is the wrong side of a fail-closed design.
+ *
  * Three checks before anything starts, in order of how badly the user wants
  * them respected:
  *
@@ -28,8 +48,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_MY_PACKAGE_REPLACED &&
-            action != Intent.ACTION_LOCKED_BOOT_COMPLETED
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
             return
         }

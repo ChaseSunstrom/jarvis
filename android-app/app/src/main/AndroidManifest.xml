@@ -500,7 +500,19 @@
             </intent-filter>
         </service>
 
-        <!-- Restarts the command channel after a reboot. Protected broadcast. -->
+        <!--
+          Restarts the command channel, the wake listener and any pending
+          reminders after a reboot. Protected broadcast.
+
+          `directBootAware="false"` is deliberate, and BOOT_COMPLETED is the
+          right broadcast for it: on a file-based-encryption device that is
+          delivered AFTER the first unlock, which is when this receiver can
+          actually read the token, the policy store and the user's preferences.
+          The before-first-unlock broadcast is not filtered for, because at that
+          point `PolicyStore` is unreadable and "panic is not set" would be
+          indistinguishable from "I cannot tell whether panic is set". See
+          BootReceiver's KDoc.
+        -->
         <receiver
             android:name="ai.jarvis.app.automation.triggers.BootReceiver"
             android:exported="true"
