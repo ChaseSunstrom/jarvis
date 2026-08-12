@@ -56,14 +56,31 @@ import type { RequestHandler } from './$types';
  * do, so this costs the real client nothing and takes the hostile-web-page
  * attacker off the one unauthenticated write here."
  *
- * A server-side `fetch` does not send `Origin`. So a naive relay would strip
- * the header on the way through and hand a hostile page exactly the door
- * jarvis-core had shut — the console being the softer of the two front doors,
- * which is the opposite of what a relay is allowed to be. The guard is
- * therefore re-applied HERE, against the request this route received, before
- * anything is forwarded.
+ * The header does not survive the hop by itself, so the guard is re-applied
+ * HERE, against the request this route received, before anything is forwarded.
+ * Otherwise the console would be the softer of the two front doors, which is
+ * the opposite of what a relay is allowed to be.
+ *
+ * **It uses the PLATFORM fetch, not SvelteKit's `event.fetch`.** This one cost
+ * a round trip to find and it is the reason the first version of this file did
+ * not work. `event.fetch` stamps an Origin on anything that does not already
+ * have one::
+ *
+ *     // @sveltejs/kit/src/runtime/server/fetch.js
+ *     if (!request.headers.has('origin')) {
+ *       request.headers.set('origin', event.url.origin);
+ *     }
+ *
+ * and only removes it again for GET and HEAD. So the relay's POST arrived at
+ * jarvis-core wearing the console's origin, jarvis-core's browser guard fired
+ * exactly as designed, and the phone was told *"Pairing codes are claimed by
+ * the app, not from a browser"* — a true sentence about a request no browser
+ * had made. The console is not a page making a cross-origin request; it is a
+ * server relaying one, and `event.fetch` cannot represent that. Every proxy in
+ * this directory now uses the platform fetch for the same reason, before the
+ * next guard jarvis-core grows finds them one at a time.
  */
-export const POST: RequestHandler = async ({ request, fetch }) => {
+export const POST: RequestHandler = async ({ request }) => {
 	const backend = resolveBackend(env);
 	const problem = backendProblem(backend);
 	if (problem) throw error(500, problem);

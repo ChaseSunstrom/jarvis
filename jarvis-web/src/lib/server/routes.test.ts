@@ -178,6 +178,34 @@ describe('the admin token never reaches the browser', () => {
 		).toBe(true);
 	});
 
+	it('no backend proxy uses SvelteKit\'s event.fetch', () => {
+		// `event.fetch` STAMPS AN ORIGIN on anything that does not have one:
+		//
+		//   if (!request.headers.has('origin'))
+		//     request.headers.set('origin', event.url.origin);
+		//
+		// and only removes it again for GET and HEAD. So a relayed POST reaches
+		// jarvis-core wearing the console's origin — and jarvis-core refuses a
+		// pairing claim that carries one, because browsers always send it and
+		// phones never do. The phone was told "Pairing codes are claimed by the
+		// app, not from a browser": a true sentence about a request no browser
+		// had made.
+		//
+		// The console is not a page making a cross-origin request. It is a server
+		// relaying one, and `event.fetch` cannot represent that. Only the claim
+		// route meets a guard today; this keeps the next one from finding the
+		// others one at a time.
+		for (const route of routes) {
+			const body = readFileSync(join(ROUTES, route), 'utf8');
+			if (!/backend\.url|relaySpeakerWrite/.test(body)) continue;
+			expect(
+				/async \(\{[^}]*\bfetch\b[^}]*\}\)/.test(body),
+				`${route} destructures SvelteKit's event.fetch, which will put an ` +
+					"Origin header on every POST it relays to jarvis-core"
+			).toBe(false);
+		}
+	});
+
 	it('every named route still exists', () => {
 		// A stale entry is worse than a missing one: it reads as a considered
 		// exemption for a guard nobody has looked at since the file was deleted.

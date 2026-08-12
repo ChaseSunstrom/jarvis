@@ -147,11 +147,29 @@ class VoiceIdentityActivity : Activity() {
         // in the same breath as constructing it; `orb_is_started_test.py` now
         // fails the build for one that does not.
         orb = JarvisOrbView(this).apply {
+            // NO CHROME. Reported as *"in the teach Jarvis voice, Jarvis is
+            // overlayed by text of Jarvis"* — which is exactly what it looked
+            // like: the wordmark is anchored to the resting outer radius and
+            // the corner brackets sit 18dp from the VIEW edges, both measured
+            // for a screen-sized surface. In a 200dp slot on a scrolling
+            // settings page the wordmark lands on top of the orb it is meant
+            // to sit above.
+            //
+            // `JarvisAssistActivity` turns it off for the same reason, in the
+            // same words: "both of which are nonsense inside a 200dp box". This
+            // screen is the third host of this view and the second to need it,
+            // so `orb_is_started_test` now checks for it rather than leaving
+            // the fourth to rediscover it.
+            //
+            // The caption goes with the chrome, so the countdown this screen
+            // used to put under the orb now goes in the status line, where
+            // there are already words and where it does not depend on a custom
+            // view drawing at all.
+            chromeEnabled = false
             // The card supplies its own ground, so the full-view vignette would
             // just be a dark rectangle across the middle of a settings screen.
             scrimEnabled = false
             setMode(JarvisOrbView.Mode.IDLE)
-            setStateLabel("")
             startEntrance()
         }
         column.addView(
@@ -251,10 +269,17 @@ class VoiceIdentityActivity : Activity() {
             if (!recording) return
             val left = captureEndsAt - SystemClock.uptimeMillis()
             val seconds = ((left + 999L) / 1000L).coerceAtLeast(0L)
-            orb.setStateLabel("LISTENING · ${seconds}s")
+            // The status line, not the orb's caption. The caption is part of
+            // the orb's chrome, which this screen turns off because at 200dp
+            // the wordmark lands on top of the orb — so a countdown drawn there
+            // would not appear at all.
+            statusView.text = "$listeningPrompt  ${seconds}s"
             main.postDelayed(this, 200L)
         }
     }
+
+    /** The first half of the listening line; the countdown appends to it. */
+    private var listeningPrompt = ""
 
     private var captureEndsAt = 0L
 
@@ -317,11 +342,12 @@ class VoiceIdentityActivity : Activity() {
         val window = if (which == Mode.TEST) TEST_WINDOW_MS else ENROL_WINDOW_MS
         captureEndsAt = SystemClock.uptimeMillis() + window
         orb.setMode(JarvisOrbView.Mode.LISTENING)
-        statusView.text = if (which == Mode.TEST) {
+        listeningPrompt = if (which == Mode.TEST) {
             "Listening — say anything, then tap again."
         } else {
             "Listening — say the line, then tap again."
         }
+        statusView.text = listeningPrompt
         detailView.text = ""
         main.postDelayed(autoStop, window)
         main.post(countdown)
@@ -340,7 +366,7 @@ class VoiceIdentityActivity : Activity() {
         // the moment you stop talking reads as a screen that has stopped
         // working, which is most of what the original bug felt like.
         orb.setMode(JarvisOrbView.Mode.THINKING)
-        orb.setStateLabel(if (which == Mode.TEST) "CHECKING" else "LEARNING")
+        statusView.text = if (which == Mode.TEST) "Checking…" else "Learning your voice…"
         if (which == Mode.TEST) submitTest(pcm) else submitEnrolment(pcm)
     }
 
@@ -358,7 +384,6 @@ class VoiceIdentityActivity : Activity() {
         capture = null
         orb.setAmplitude(0f)
         orb.setMode(JarvisOrbView.Mode.IDLE)
-        orb.setStateLabel("")
         syncButtons()
     }
 
@@ -423,10 +448,7 @@ class VoiceIdentityActivity : Activity() {
             main.post {
                 busy = false
                 // Whatever the answer, the orb stops pretending to think.
-                if (!recording) {
-                    orb.setMode(JarvisOrbView.Mode.IDLE)
-                    orb.setStateLabel("")
-                }
+                if (!recording) orb.setMode(JarvisOrbView.Mode.IDLE)
                 syncButtons()
                 when (result) {
                     is VoiceIdentityClient.Result.Ok -> onOk(result.value)
@@ -438,10 +460,7 @@ class VoiceIdentityActivity : Activity() {
                         // version. See VoiceIdentityClient.failureFor.
                         statusView.text = result.headline
                         detailView.text = result.message
-                        if (!recording) {
-                            orb.setMode(JarvisOrbView.Mode.ERROR)
-                            orb.setStateLabel("FAILED")
-                        }
+                        if (!recording) orb.setMode(JarvisOrbView.Mode.ERROR)
                     }
                 }
             }

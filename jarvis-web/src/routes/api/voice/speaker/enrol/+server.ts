@@ -8,5 +8,5 @@ import type { RequestHandler } from './$types';
 // server-held admin token: enrolling changes whose voice Jarvis answers, and
 // doing that on the strength of "you could reach this port" would be the
 // opposite of the feature.
-export const POST: RequestHandler = async ({ request, fetch }) =>
-	relaySpeakerWrite(request, fetch, 'enrol');
+export const POST: RequestHandler = async ({ request }) =>
+	relaySpeakerWrite(request, globalThis.fetch, 'enrol');

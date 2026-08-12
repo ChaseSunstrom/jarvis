@@ -29,7 +29,8 @@ function upstreamUrl(base: string): string {
 	return `${base.replace(/\/+$/, '')}/api/voice/speaker`;
 }
 
-export const GET: RequestHandler = async ({ fetch }) => {
+export const GET: RequestHandler = async () => {
+	const fetch = globalThis.fetch;
 	const backend = resolveBackend(env);
 	const problem = backendProblem(backend);
 	if (problem) throw error(500, problem);
@@ -57,7 +58,8 @@ export const GET: RequestHandler = async ({ fetch }) => {
 	return json({ supported: true, ...payload });
 };
 
-export const DELETE: RequestHandler = async ({ cookies, fetch }) => {
+export const DELETE: RequestHandler = async ({ cookies }) => {
+	const fetch = globalThis.fetch;
 	const backend = resolveBackend(env);
 	const problem = backendProblem(backend);
 	if (problem) throw error(500, problem);

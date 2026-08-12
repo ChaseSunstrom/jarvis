@@ -6,5 +6,5 @@ import type { RequestHandler } from './$types';
 // Same door as `enrol`: the caller's own token, never the admin one. It changes
 // nothing, but it does report how close a voice is to the owner's, which is not
 // something to hand out to whoever can reach this port.
-export const POST: RequestHandler = async ({ request, fetch }) =>
-	relaySpeakerWrite(request, fetch, 'verify');
+export const POST: RequestHandler = async ({ request }) =>
+	relaySpeakerWrite(request, globalThis.fetch, 'verify');

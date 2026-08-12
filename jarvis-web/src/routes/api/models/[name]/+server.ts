@@ -18,7 +18,8 @@ import type { RequestHandler } from './$types';
 // jarvis-core does the authorising exactly as it would if the phone had dialled
 // it directly. An unauthenticated request is refused here rather than upstream,
 // so this route cannot become a way to reach the backend without a token.
-export const GET: RequestHandler = async ({ params, request, fetch }) => {
+export const GET: RequestHandler = async ({ params, request }) => {
+	const fetch = globalThis.fetch;
 	const authorization = request.headers.get('authorization');
 	if (!authorization) throw error(401, 'a bearer token is required for model downloads');
 

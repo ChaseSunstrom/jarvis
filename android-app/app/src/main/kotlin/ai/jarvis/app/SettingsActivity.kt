@@ -28,7 +28,9 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -105,13 +107,23 @@ class SettingsActivity : Activity() {
             }
         )
 
+        // One control for the fourteen paragraphs below it. See [explain].
+        explanationsToggle = JarvisUi.ghost(ctx, explanationsLabel()) { toggleExplanations() }
+        col.addView(
+            explanationsToggle,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = JarvisUi.dp(ctx, 12) },
+        )
+
         // --- server ---------------------------------------------------------
 
         col.addView(JarvisUi.label(ctx, "Server URL"))
         urlField = JarvisUi.field(ctx, "http://192.168.2.10:8123", config.serverUrl)
         col.addView(urlField, matchWidth())
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "The address you reach jarvis-core on over LAN or WireGuard. Plain http is " +
                     "accepted only for private addresses, and only for the hosts listed in " +
@@ -129,7 +141,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Create it in the Jarvis management UI. It is stored on this device only, is " +
                     "excluded from backups, and is never sent anywhere but your server."
@@ -144,7 +156,7 @@ class SettingsActivity : Activity() {
         deviceNameField = JarvisUi.field(ctx, "This phone", config.deviceName)
         col.addView(deviceNameField, matchWidth())
         col.addView(
-            JarvisUi.hint(ctx, "Shown on the server when this device registers. Device id: ${config.deviceId}")
+            explain(ctx, "Shown on the server when this device registers. Device id: ${config.deviceId}")
         )
 
         // --- voice ----------------------------------------------------------
@@ -153,7 +165,7 @@ class SettingsActivity : Activity() {
         wakeEnabled = switchRow(ctx, "Listen for \"Hey Jarvis\"", config.wakeWordEnabled)
         col.addView(wakeEnabled, matchWidth())
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Android gives third-party apps no low-power hotword path, so always-on " +
                     "detection means a genuinely open mic and real battery cost."
@@ -186,7 +198,7 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "On this phone"))
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Off, the microphone streams continuously to your server, which does the " +
                     "detecting — everything the room says, all the time. On, the phone " +
@@ -222,7 +234,7 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "Speech to text"))
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Separate from the models above. Transcription uses Android's own " +
                     "offline recogniser, which is part of the system rather than " +
@@ -249,7 +261,7 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "In the car"))
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Jarvis has an Android Auto screen — the orb, what you said and the " +
                     "reply — but a SIDELOADED build never appears in the car. Android " +
@@ -271,7 +283,7 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "Whose voice"))
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Jarvis can be told to answer only you. Enrolling teaches it what you " +
                     "sound like; whether it refuses anyone else is a setting on the server, " +
@@ -286,7 +298,7 @@ class SettingsActivity : Activity() {
             matchWidth()
         )
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Transcribing on this phone and \"only my voice\" cannot both be in " +
                     "force: the check runs on your server, on the sound, and a turn this " +
@@ -317,7 +329,7 @@ class SettingsActivity : Activity() {
         col.addView(wakeAtHome, matchWidth())
         col.addView(hourRow(ctx), matchWidth())
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Jarvis has no home-presence signal on this device yet, so these are " +
                     "remembered but not applied — the switch above is what decides. A window " +
@@ -345,7 +357,7 @@ class SettingsActivity : Activity() {
         headsetWarmLink = switchRow(ctx, "Keep listening after a reply", config.warmLink)
         col.addView(headsetWarmLink, matchWidth())
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Only when the headset has a microphone of its own. Jarvis then captures " +
                     "through the phone's call path, where the hardware echo canceller stops " +
@@ -381,7 +393,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "System check lists every permission and special access Jarvis can use, " +
                     "whether it is granted, and what stops working without it. None of them " +
@@ -409,7 +421,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "Phone tasks are what THIS device does on its own \u2014 a geofence, a media " +
                     "button, a rule pushed to it. The house's automations live in the " +
@@ -441,7 +453,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.hint(
+            explain(
                 ctx,
                 "The audit log records every action this device actually executed, with its " +
                     "tier and how it was authorised. Both it and the crash logs are local and yours."
@@ -1102,16 +1114,61 @@ class SettingsActivity : Activity() {
         ViewGroup.LayoutParams.WRAP_CONTENT
     )
 
+
+    // --- explanations, folded away by default -------------------------------
+
+    /**
+     * Every explanatory paragraph on this screen, so one control can hide them.
+     *
+     * Reported as *"clean up the settings in the android app, there's a lot of
+     * text, buttons are too close together, it's hard to understand/navigate"*.
+     * There are fourteen sections here and fourteen paragraphs explaining them —
+     * around 570 words — and every one of them is worth reading ONCE. Read
+     * every time, they are what makes the screen hard to navigate: the labels
+     * and the controls, which are the things somebody came here to find, are
+     * separated by prose they have already read.
+     *
+     * So nothing is deleted and nothing is shortened. It starts folded, and one
+     * control at the top unfolds all of it. Deliberately not persisted: the
+     * default is the state that makes the screen usable, and a person who wants
+     * the prose wants it for the visit they are on.
+     */
+    private val explanations = mutableListOf<TextView>()
+
+    private var explanationsShown = false
+
+    private lateinit var explanationsToggle: Button
+
+    /** [JarvisUi.hint], remembered, and hidden until asked for. */
+    private fun explain(context: Context, text: String): TextView =
+        JarvisUi.hint(context, text).also {
+            it.visibility = if (explanationsShown) View.VISIBLE else View.GONE
+            explanations += it
+        }
+
+    private fun toggleExplanations() {
+        explanationsShown = !explanationsShown
+        val visibility = if (explanationsShown) View.VISIBLE else View.GONE
+        for (view in explanations) view.visibility = visibility
+        explanationsToggle.text = explanationsLabel()
+    }
+
+    private fun explanationsLabel(): String =
+        if (explanationsShown) "HIDE EXPLANATIONS" else "WHAT DOES ALL THIS DO?"
+
     private fun row(vararg children: android.view.View): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, JarvisUi.dp(this@SettingsActivity, 8), 0, 0)
+            // 14, not 8. Reported as "buttons are too close together": a row
+            // of outlined ghost buttons with 8dp above it and 10dp between
+            // reads as one control with lines through it rather than two.
+            setPadding(0, JarvisUi.dp(this@SettingsActivity, 14), 0, 0)
             children.forEachIndexed { index, child ->
                 if (index > 0) {
                     addView(
                         android.view.View(this@SettingsActivity),
-                        LinearLayout.LayoutParams(JarvisUi.dp(this@SettingsActivity, 10), 1)
+                        LinearLayout.LayoutParams(JarvisUi.dp(this@SettingsActivity, 16), 1)
                     )
                 }
                 addView(

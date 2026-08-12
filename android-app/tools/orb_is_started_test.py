@@ -196,6 +196,47 @@ def test_every_orb_is_started_by_the_code_that_builds_it() -> None:
 # ---------------------------------------------------------------------------
 # The enrolment screen specifically, which is where this was found.
 # ---------------------------------------------------------------------------
+def test_a_small_orb_draws_no_chrome() -> None:
+    """Reported as *"in the teach Jarvis voice, Jarvis is overlayed by text of
+    Jarvis"*, and that is literally what it was.
+
+    `JarvisOrbView`'s chrome is measured for a screen-sized surface: the
+    wordmark is anchored to the resting outer radius and the corner brackets sit
+    18dp from the VIEW edges. Dropped into a 200dp slot on a scrolling page, the
+    word JARVIS lands on top of the orb it is meant to sit above.
+
+    `JarvisAssistActivity` already turned it off, in its own words: "both of
+    which are nonsense inside a 200dp box". The enrolment screen is the second
+    host to need that and rediscovered it the hard way, which is what makes it
+    worth a check rather than another comment.
+
+    Deliberately keyed on the LAYOUT SIZE rather than on a list of screens: a
+    host that gives the orb a fixed box this small has the problem whoever
+    writes it, and one that gives it the screen does not.
+    """
+    offenders: list[str] = []
+    for path in kotlin_files():
+        if path == ORB:
+            continue
+        src = code_of(path)
+        at = src.find("JarvisOrbView(")
+        if at < 0:
+            continue
+        window = src[at:at + 2400]
+        # The orb's OWN layout params, not any `dp()` that happens to be
+        # nearby: the first draft of this check read a `dp(this, 4)` belonging
+        # to something else two statements away and reported the home screen,
+        # whose orb is match_parent and correctly keeps its chrome.
+        params = re.search(r"addView\(\s*\w*[Oo]rb\w*,\s*(.*?)\n\s*\)", window, re.S)
+        boxed = bool(params) and "dp(" in params.group(1)
+        if boxed and "chromeEnabled = false" not in window:
+            offenders.append(str(path.relative_to(ROOT)))
+    assert not offenders, (
+        "these give the orb a fixed dp-sized box and leave its chrome on, so the "
+        f"JARVIS wordmark is drawn across the orb: {offenders}"
+    )
+
+
 def test_enrolment_records_on_a_tap_rather_than_a_hold() -> None:
     """Reported alongside the dead orb: *"I shouldn't have to hold it down,
     just press for it to listen"*.
@@ -248,8 +289,14 @@ def test_the_screen_says_it_is_listening_in_words_as_well() -> None:
     """The orb is the indicator, and the orb is what failed. A caption and a
     status line cost nothing and do not depend on a custom view drawing."""
     src = code_of(ENROLMENT)
-    assert 'setStateLabel("LISTENING' in src, "no caption under the orb"
-    assert "Listening — say the line" in src, "no words on the screen either"
+    # NOT the orb's caption: that is chrome, and this screen turns chrome off
+    # because at 200dp the wordmark lands on the orb. Words in the status line
+    # do not depend on a custom view drawing at all, which is the whole lesson
+    # of the dead-orb bug above.
+    assert "Listening — say the line" in src, "the screen never says it is listening"
+    assert "listeningPrompt" in src and "}s\"" in src, (
+        "the countdown is gone, or still being written to a caption nothing draws"
+    )
     assert "Mode.THINKING" in src, (
         "the orb goes still while the server answers, which is what a broken "
         "screen looks like"

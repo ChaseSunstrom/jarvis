@@ -17,7 +17,8 @@ import type { RequestHandler } from './$types';
 // asks here, this asks jarvis-core with the token, and only the CODE comes
 // back — and a code is not a credential. See `jarvis-core/jarvis/api/pairing.py`
 // for why the QR deliberately does not carry a token.
-export const POST: RequestHandler = async ({ cookies, fetch }) => {
+export const POST: RequestHandler = async ({ cookies }) => {
+	const fetch = globalThis.fetch;
 	const backend = resolveBackend(env);
 	const problem = backendProblem(backend);
 	if (problem) throw error(500, problem);
