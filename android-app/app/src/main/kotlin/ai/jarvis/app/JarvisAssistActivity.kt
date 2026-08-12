@@ -368,6 +368,14 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         // Back on screen — either from the very first frame, or because a
         // prompt of ours has just been answered and handed the foreground back.
         main.removeCallbacks(giveUp)
+        // Carry on from where the prompt interrupted — the same call the ask
+        // host makes when a question is answered, declined or times out, and
+        // for the same reason: the conversation is owed its microphone back in
+        // all three cases. A no-op on the first frame, where nothing was held.
+        if (held) {
+            held = false
+            convo?.resumeAfterQuestion()
+        }
     }
 
     /**
@@ -397,7 +405,28 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         // request itself and there is nothing to come back to.
         Log.i(TAG, "staying alive behind a prompt of ours")
         main.postDelayed(giveUp, ApprovalBridge.TIMEOUT_MS + GIVE_UP_SLACK_MS)
+
+        // PUT THE CONVERSATION DOWN while the prompt is up.
+        //
+        // `holdForQuestion` exists for exactly this and says why: "Give the
+        // microphone up completely rather than muting it. Two owners of one
+        // AudioRecord is the coin toss this whole area exists to avoid." It was
+        // written for a question taking the mic, and a consent prompt covering
+        // the screen is the same situation — the user is reading, not talking,
+        // and `running` deliberately stays true so no inactivity timer pulls
+        // the surface out from under them.
+        //
+        // This is not tidiness. Under `noHistory` the activity was destroyed
+        // here and the microphone went back with it; now it can sit stopped for
+        // over a minute, and a live AudioRecord behind a full-screen consent
+        // prompt would be recording a room whose owner believes the
+        // conversation is paused — while the inactivity timer and the VAD ran
+        // against audio nobody meant to send.
+        held = convo?.holdForQuestion() ?: false
     }
+
+    /** True while [onStop] has parked the conversation behind a prompt. */
+    private var held = false
 
     /**
      * True while something this app put on screen is waiting for the user.

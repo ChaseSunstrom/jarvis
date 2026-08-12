@@ -128,6 +128,40 @@ def test_it_closes_itself_when_the_user_actually_leaves() -> None:
     )
 
 
+def test_the_conversation_is_put_down_while_the_prompt_is_up() -> None:
+    """A live AudioRecord behind a full-screen consent prompt is recording a
+    room whose owner believes the conversation is paused.
+
+    Under `noHistory` this activity was destroyed here and the microphone went
+    with it. Now it can sit stopped for over a minute, so it has to give the
+    microphone up explicitly — and `holdForQuestion` is exactly that call,
+    written for a question taking the mic and saying why in its own words:
+    "Give the microphone up completely rather than muting it. Two owners of one
+    AudioRecord is the coin toss this whole area exists to avoid."
+
+    `running` stays true through it, deliberately, so no inactivity timer pulls
+    the surface out from under a user who is reading a prompt.
+    """
+    src = code_of(ASSIST)
+    stop = src.index("override fun onStop()")
+    start = src.index("override fun onStart()")
+    assert "holdForQuestion()" in src[stop:stop + 1400], (
+        "the conversation keeps its microphone open behind the prompt, so the "
+        "VAD and the inactivity timer run against audio nobody meant to send"
+    )
+    assert "resumeAfterQuestion()" in src[start:start + 900], (
+        "the conversation never gets its microphone back, so answering the "
+        "prompt returns to a surface that cannot hear"
+    )
+    # Held, not assumed: `holdForQuestion` returns false when there was nothing
+    # to hold, and resuming something that was never held restarts a mic the
+    # conversation had deliberately stopped.
+    assert "held = convo?.holdForQuestion()" in src, (
+        "the resume is unconditional, so it can take a microphone back that was "
+        "never given up"
+    )
+
+
 def test_the_bridges_can_answer_that_question() -> None:
     for path in (APPROVAL_BRIDGE, KOTLIN / "ui" / "PermissionBridge.kt"):
         assert "val anyPending: Boolean" in code_of(path), (
