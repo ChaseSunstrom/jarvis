@@ -28,7 +28,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * |---|---|---|
  * | [ActionDispatcher] | **actions agent** — a thin adapter over `ActionRegistry` (see below) | the channel, the task runner |
  * | [ChannelHandle] | **channel agent** — `ai.jarvis.app.channel.JarvisChannel` | triggers, task runner, settings UI |
- * | [UiAutomationStatus] | **accessibility agent** — the `AccessibilityService` | the channel, for the capability list |
+ * | [UiAutomationStatus] | **accessibility agent** — the `AccessibilityService` | the channel, which advertises `ui_automation` only while it says yes |
  * | [DeviceEventSubscriber] | **channel agent** (forwards to the server) and **task runner agent** (matches tasks) | [publishEvent] |
  *
  * Nothing in this file starts anything. The app's foreground service
@@ -223,11 +223,17 @@ object AutomationBridge {
      * separate so the channel does not have to import the actions package.
      */
     interface UiAutomationStatus {
-        /** True when the service is enabled AND currently connected. */
+        /**
+         * True when the service is enabled AND currently connected.
+         *
+         * Read by [ai.jarvis.app.channel.JarvisChannel], which folds it into
+         * the capability list it registers with. That list is what the server
+         * hands the model, so this is the difference between "the phone has UI
+         * actions in its build" and "the phone can drive another app's screen
+         * right now" — a switch in system settings that can change while the
+         * socket is open.
+         */
         fun isReady(): Boolean
-
-        /** Action ids that would work right now. */
-        fun supportedActions(): Set<String>
     }
 
     @Volatile

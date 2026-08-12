@@ -107,10 +107,14 @@ class JarvisAccessibilityService : AccessibilityService() {
      */
     private fun publishCapabilities() {
         runCatching {
+            // One method, deliberately. This used to also report the UI action
+            // ids that would work right now, and nothing read either half —
+            // but the id list was the worse of the two even in principle: the
+            // action manifest already carries per-action availability, because
+            // each UI action's `isAvailable` consults `ActionEnv.uiDelegate`.
+            // A second list of the same fact is a list that drifts.
             AutomationBridge.uiAutomation = object : AutomationBridge.UiAutomationStatus {
                 override fun isReady(): Boolean = JarvisAccessibilityService.isRunning()
-                override fun supportedActions(): Set<String> =
-                    ActionEnv.uiDelegate?.supportedActions.orEmpty()
             }
             AutomationBridge.onCapabilitiesChanged()
         }.onFailure { Log.w(TAG, "could not publish UI-automation capabilities", it) }

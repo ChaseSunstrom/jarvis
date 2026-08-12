@@ -208,11 +208,21 @@ class JarvisConfig(context: Context) {
         get() = prefs.getBoolean(KEY_SPEAKER_GATE, false)
         set(v) = prefs.edit().putBoolean(KEY_SPEAKER_GATE, v).apply()
 
-    /** BCP-47 tag the on-device recogniser is asked for. */
-    var sttLanguage: String
-        get() = prefs.getString(KEY_STT_LANGUAGE, null)?.takeIf { it.isNotBlank() }
-            ?: java.util.Locale.getDefault().toLanguageTag()
-        set(v) = prefs.edit().putString(KEY_STT_LANGUAGE, v.trim()).apply()
+    /**
+     * BCP-47 tag the on-device recogniser is asked for: this phone's language.
+     *
+     * A `var` backed by a preference key until `no_empty_seams_test.py` pointed
+     * out that nothing in the app ever wrote it, so the stored value could only
+     * ever be absent and the getter could only ever return the locale. A
+     * setting that cannot be set is a setting that does not exist, and the two
+     * honest ways out are to give it a screen or to stop pretending — this took
+     * the second. "Change the language your phone is in" is the platform's own
+     * answer, and a second place to configure it is a second place to be wrong.
+     *
+     * Read fresh rather than cached: the user can change the system language
+     * while Jarvis is running, and the next turn should be transcribed in it.
+     */
+    val sttLanguage: String get() = java.util.Locale.getDefault().toLanguageTag()
 
     /** Master switch for always-on "Hey Jarvis" detection. */
     var wakeWordEnabled: Boolean
@@ -308,7 +318,6 @@ class JarvisConfig(context: Context) {
         private const val KEY_WAKE_ON_DEVICE = "wake_on_device"
         private const val KEY_STT_ON_DEVICE = "stt_on_device"
         private const val KEY_SPEAKER_GATE = "speaker_gate_enforcing"
-        private const val KEY_STT_LANGUAGE = "stt_language"
         private const val KEY_WAKE_ENABLED = "wake_enabled"
         private const val KEY_MIC_MUTED = "mic_muted"
         private const val KEY_WAKE_IN_CAR = "wake_in_car"

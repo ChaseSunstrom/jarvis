@@ -282,7 +282,13 @@ Two things come out of the manifest and both matter:
 1. **`capabilities`** — coarse strings the server uses to decide which tools to
    offer the model. Only actions that are `available` *right now* contribute, so
    a phone with no SMS radio does not advertise `sms` and the model never plans
-   around it.
+   around it. One entry does not come from the manifest: `ui_automation` is
+   added by the channel itself, from `AutomationBridge.uiAutomation`, and only
+   while the accessibility service is enabled **and connected**. It rides in
+   this list rather than in a field of its own precisely because this list has
+   consumers end to end — the slot spent its whole life filled by the
+   accessibility service and read by nothing, which is what
+   `tools/no_empty_seams_test.py` exists to catch.
 2. **`tierTable`** — `action id → tier`, kept by the channel. This is the
    channel's own copy of the local tier table, built from the device's own
    manifest and never from anything the server sent. It is what lets a

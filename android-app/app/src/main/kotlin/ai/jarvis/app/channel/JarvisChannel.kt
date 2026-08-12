@@ -453,12 +453,32 @@ class JarvisChannel(
             Log.w(TAG, "the action manifest could not be built", t)
             null
         }
-        val capabilities: List<String> = if (dispatcher == null) emptyList() else try {
+        val declared: List<String> = if (dispatcher == null) emptyList() else try {
             dispatcher.capabilities()
         } catch (t: Throwable) {
             Log.w(TAG, "the capability list could not be built", t)
             emptyList()
         }
+
+        // Whether UI automation is live RIGHT NOW, which is a different
+        // question from whether the actions exist. The accessibility service is
+        // switched on in system settings, can be switched off at any moment,
+        // and takes a beat to connect after a boot — so this is a promise the
+        // phone can only keep while it is connected, and the register frame is
+        // where promises to the server are made.
+        //
+        // `AutomationBridge.uiAutomation` is the slot for exactly this. The
+        // accessibility service filled it in from the day it was written and
+        // NOTHING read it: an interface whose KDoc said "the channel, for the
+        // capability list" and a channel that had never heard of it.
+        // `tools/no_empty_seams_test.py` is what found it.
+        //
+        // Folded into the capability list rather than sent as a field of its
+        // own, because the capability list already has consumers all the way
+        // through — the server stores it, presence ranks on it, the model sees
+        // it — and a new wire field would be one more thing nothing reads.
+        val capabilities =
+            if (uiAutomationReady()) declared + CAPABILITY_UI_AUTOMATION else declared
 
         // The channel's own tier table, from OUR manifest, never from the server.
         tierTable = ChannelFrames.tierTable(manifest)
@@ -482,6 +502,22 @@ class JarvisChannel(
                 "${capabilities.size} capabilities and ${tierTable.size} actions"
         )
         if (!current.send(frame)) current.finish("could not send the registration frame")
+    }
+
+    /**
+     * Is the accessibility service enabled AND connected right now?
+     *
+     * Exception-safe in both directions: the implementation lives in another
+     * module behind an interface, and a status probe that threw would take the
+     * whole registration with it. An unanswerable question is answered "no" —
+     * over-promising here means the model plans around a phone that cannot do
+     * what it said.
+     */
+    private fun uiAutomationReady(): Boolean = try {
+        AutomationBridge.uiAutomation?.isReady() == true
+    } catch (t: Throwable) {
+        Log.w(TAG, "the accessibility status could not be read", t)
+        false
     }
 
     private fun onRegistered(current: Session) {
@@ -1244,6 +1280,15 @@ class JarvisChannel(
         private const val TAG = "JarvisChannel"
 
         private const val NORMAL_CLOSE = 1000
+
+        /**
+         * Advertised only while the accessibility service is enabled AND
+         * connected — not merely while the UI actions exist in the build. The
+         * server hands the capability list to the model, so this is the phone
+         * saying "I can drive another app's screen right now", which stops
+         * being true the moment the user turns the service off.
+         */
+        const val CAPABILITY_UI_AUTOMATION = "ui_automation"
 
         /**
          * Largest inbound text frame we will parse. A `device_command` is a few
