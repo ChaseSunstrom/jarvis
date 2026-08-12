@@ -221,6 +221,15 @@ object PermissionBridge {
     /** True while a request for this id is still waiting. */
     fun isPending(requestId: String): Boolean = pending.containsKey(requestId)
 
+    /**
+     * True while ANY permission request is waiting for the user.
+     *
+     * Read by [ai.jarvis.app.JarvisAssistActivity] to tell "the user walked
+     * away" from "a prompt this app raised is covering me", which is the
+     * difference between closing the conversation and keeping it.
+     */
+    val anyPending: Boolean get() = pending.isNotEmpty()
+
     /** Test seam: forget every remembered refusal. */
     fun forgetRefusals() = permanentlyDenied.clear()
 

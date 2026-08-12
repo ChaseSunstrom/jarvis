@@ -25,6 +25,9 @@ object JarvisScreens {
     /** The user-viewable audit log of every executed action. */
     const val AUDIT_LOG = "ai.jarvis.app.automation.ui.AuditLogActivity"
 
+    /** Per-action ASK / ALWAYS / NEVER — the only writer of the policy store. */
+    const val ACTION_POLICY = "ai.jarvis.app.automation.ui.ActionPolicyActivity"
+
     private const val TAG = "JarvisScreens"
 
     /**

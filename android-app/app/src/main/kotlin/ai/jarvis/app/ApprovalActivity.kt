@@ -104,6 +104,13 @@ class ApprovalActivity : Activity() {
             return
         }
         requestId = id
+        // Reached the screen. `startActivity` returning tells the bridge
+        // nothing — a background start the platform refuses does not throw, and
+        // a full-screen intent degrades to a heads-up notification whenever the
+        // screen is on and unlocked. This is the only positive evidence, and
+        // without it the app could not tell "the user is reading the prompt"
+        // from "the prompt is sitting in the shade waiting to be tapped".
+        ApprovalBridge.raised(id)
 
         val actionId = intent?.getStringExtra(ApprovalBridge.EXTRA_ACTION_ID).orEmpty()
         val reason = intent?.getStringExtra(ApprovalBridge.EXTRA_REASON).orEmpty()

@@ -73,6 +73,9 @@ class CompanionAskActivity : Activity() {
     private var answered = false
     private var locked = false
     private var armed = false
+
+    /** So unlocking the phone does not re-read the question from the top. */
+    private var spokeQuestion = false
     private var dismissRequested = false
     private var listening = false
 
@@ -165,7 +168,17 @@ class CompanionAskActivity : Activity() {
         setContentView(buildUi())
         refreshGate()
         when (mode) {
-            CompanionProtocol.MODE_ASK -> startCountdown()
+            CompanionProtocol.MODE_ASK -> {
+                startCountdown()
+                // AND SAY IT OUT LOUD. Only `speak` messages were ever spoken,
+                // so Jarvis asking a question produced a silent card the user
+                // had to notice and read — on a phone that may be in a pocket,
+                // in a car, or across the room, which is where a voice
+                // assistant asking a question is most likely to be useful.
+                // Reported as *"it should be able to ask me questions over
+                // voice"*.
+                askAloud()
+            }
             // A message the server wanted spoken, opened from the notification
             // it fell back to. Say it now.
             CompanionProtocol.MODE_SPEAK -> speakIt()
@@ -214,6 +227,11 @@ class CompanionAskActivity : Activity() {
         val note = CompanionAskGate.blockedReason(locked, armed, importance)
         noteView.text = note.orEmpty()
         noteView.visibility = if (note == null) View.GONE else View.VISIBLE
+
+        // A question this screen declined to read out because the phone was
+        // locked gets its voice back the moment it is not. `spokeQuestion`
+        // keeps that to once.
+        if (mode == CompanionProtocol.MODE_ASK && !locked) askAloud()
     }
 
     /** Ask the system to take the user through the keyguard. Once per screen. */
@@ -526,6 +544,59 @@ class CompanionAskActivity : Activity() {
         } else if (requestCode == REQ_MIC) {
             noteView.text = "No microphone access — type your answer instead."
             noteView.visibility = View.VISIBLE
+        }
+    }
+
+    // --- asking out loud ----------------------------------------------------
+
+    /**
+     * Read the question aloud, then open the microphone for the answer.
+     *
+     * ## Why the keyguard decides whether this happens
+     *
+     * The notification for this card is `VISIBILITY_PRIVATE` and
+     * [CompanionAskGate] hides the text of a `high`/`critical` question while
+     * the phone is locked, both for the same reason: a question can name a
+     * person, a place or an amount, and a locked phone is one anybody may be
+     * holding. Speaking it aloud is a strictly louder version of printing it on
+     * the lock screen, so it obeys the same rule — [CompanionAskGate.textVisible]
+     * is the single authority, and if the text may not be shown it may not be
+     * said.
+     *
+     * When the phone is unlocked later, [refreshGate] runs and this is retried
+     * once, so the question is not lost — it just waits for its owner.
+     */
+    private fun askAloud() {
+        if (spokeQuestion || answered) return
+        if (questionText.isBlank() || !config.isConfigured) return
+        if (!CompanionAskGate.textVisible(isLocked(), importance)) return
+        spokeQuestion = true
+
+        val client = CompanionVoiceClient(config.serverUrl, config.token, config.serverKind)
+        voice = client
+        orb.setMode(JarvisOrbView.Mode.SPEAKING)
+        client.speak(questionText) { url ->
+            if (url == null) {
+                // No voice available — the card is still on screen and still
+                // answerable. A failed round trip to the TTS server is not a
+                // reason to make the question disappear.
+                orb.setMode(JarvisOrbView.Mode.IDLE)
+                return@speak
+            }
+            val player = TtsPlayer(this, config.token, config.serverUrl)
+            speechPlayer = player
+            player.play(url) {
+                orb.setMode(JarvisOrbView.Mode.IDLE)
+                // Straight into listening, so answering is not a second thing
+                // to notice and tap. Through the same gate as the button: if
+                // the user cannot answer right now, nothing opens the mic.
+                if (CompanionAskGate.answerEnabled(isLocked(), armed, answered, importance) &&
+                    checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    toggleListening()
+                }
+            }
         }
     }
 

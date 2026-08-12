@@ -255,8 +255,28 @@
             android:turnScreenOn="true"
             android:launchMode="singleTask"
             android:taskAffinity="ai.jarvis.app.assist"
-            android:noHistory="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            <!--
+              NO android:noHistory. It was here, and it is the reason the
+              "Hey Jarvis" surface vanished the moment Jarvis asked anything.
+
+              `noHistory` finishes an activity as soon as it stops being
+              visible — and it cannot tell WHY. The consent prompt, a question,
+              and the runtime-permission trampoline all appear over this
+              activity by design, in tasks of their own, and every one of them
+              destroyed the conversation underneath on the way up. Answering
+              the prompt then returned to nothing, so a turn that needed one
+              approval could not be finished at all.
+
+              PermissionRequestActivity carries the same warning for the same
+              reason, in its own words: "a `noHistory` host is finished the
+              moment it loses the foreground and the result lands on a dead
+              window".
+
+              What noHistory was genuinely providing — not lingering invisibly
+              once the user has moved on — is now done deliberately in
+              onStop(), which finishes UNLESS one of our own prompts is up.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <action android:name="android.intent.action.VOICE_COMMAND" />
@@ -623,6 +643,17 @@
 
         <activity
             android:name="ai.jarvis.app.automation.ui.AuditLogActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!--
+          Per-action ASK / ALWAYS / NEVER. The only thing in the app that writes
+          PolicyStore.setPolicy, which had been sitting there with no caller
+          since it was written — so "may Jarvis do this without asking?" was a
+          question the user could not answer.
+        -->
+        <activity
+            android:name="ai.jarvis.app.automation.ui.ActionPolicyActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 

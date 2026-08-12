@@ -363,6 +363,20 @@ KNOWN_SEAMS: list[tuple[str, str, str]] = [
         r"UiPermissionGateway\(",
         "no dangerous Android permission is ever requested",
     ),
+    (
+        "PolicyStore.setPolicy",
+        r"\.setPolicy\(",
+        "the user cannot say which actions may run without approval — the "
+        "store, its Tier-3 guard and the whole UserPolicy vocabulary exist "
+        "with nothing able to write a value into them",
+    ),
+    (
+        "ApprovalBridge.raised",
+        r"ApprovalBridge\.raised\(",
+        "nothing can tell whether the consent prompt reached the screen, so a "
+        "background activity start the platform silently dropped is "
+        "indistinguishable from one the user is reading",
+    ),
 ]
 
 

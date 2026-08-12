@@ -3,17 +3,21 @@ package ai.jarvis.app.ui
 import ai.jarvis.app.ApprovalActivity
 import ai.jarvis.app.JarvisApp
 import ai.jarvis.app.R
+import ai.jarvis.app.compat.GrapheneCompat
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -83,6 +87,19 @@ object ApprovalBridge {
     /** Slack so the activity's own countdown always fires first. */
     private const val DELIVERY_GRACE_MS = 5_000L
 
+    /**
+     * How long to wait for [ApprovalActivity] to say it reached the screen
+     * before concluding it never will.
+     *
+     * Only ever used to decide whether to EXPLAIN something — the request goes
+     * on waiting either way — so it is short. A prompt that is going to raise
+     * itself has done so long before this.
+     */
+    private const val RAISE_GRACE_MS = 3_000L
+
+    /** Fixed id: the hint replaces itself rather than stacking. */
+    private const val OVERLAY_HINT_NOTIFICATION_ID = 91_301
+
     private const val TAG = "JarvisApproval"
 
     /** What actually happened, so callers can log a denial apart from a lapse. */
@@ -97,6 +114,12 @@ object ApprovalBridge {
     }
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Outcome>>()
+    /** Completed by [raised] when the prompt's activity actually runs. */
+    private val onScreen = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    /** So a run of gated commands is not a run of identical complaints. */
+    private val explainedOverlayGrant = AtomicBoolean(false)
+
     private val notificationIds = ConcurrentHashMap<String, Int>()
     private val codes = AtomicInteger(1000)
 
@@ -143,6 +166,11 @@ object ApprovalBridge {
         val effectiveTimeout = clampTimeout(timeoutMs)
         val answer = CompletableDeferred<Outcome>()
         pending[id] = answer
+        // Registered BEFORE anything can start the activity. `startActivity` is
+        // asynchronous but not slow, and a prompt that reported itself before
+        // this map had an entry for it would look exactly like one that never
+        // appeared.
+        onScreen[id] = CompletableDeferred()
         return try {
             val shown = raisePrompt(
                 app = app,
@@ -159,6 +187,16 @@ object ApprovalBridge {
                 Log.w(TAG, "no way to show the prompt for $actionId; denying")
                 Outcome.UNDELIVERABLE
             } else {
+                // Did it actually appear, or is it sitting in the shade waiting
+                // to be tapped? The answer changes nothing about the outcome —
+                // a notification IS a route, and the user may well tap it —
+                // but it is the one moment the app can tell the user that this
+                // is a settings problem with a one-tap fix, rather than leaving
+                // them to conclude Jarvis is just like this.
+                if (withTimeoutOrNull(RAISE_GRACE_MS) { onScreen[id]?.await() } == null) {
+                    Log.i(TAG, "the prompt for $actionId did not raise itself")
+                    explainWhyNothingAppeared(app)
+                }
                 withTimeoutOrNull(effectiveTimeout + DELIVERY_GRACE_MS) { answer.await() }
                     ?: Outcome.TIMED_OUT
             }
@@ -171,6 +209,7 @@ object ApprovalBridge {
             Outcome.DENIED
         } finally {
             pending.remove(id)
+            onScreen.remove(id)
             clearNotification(app, id)
         }
     }
@@ -312,7 +351,71 @@ object ApprovalBridge {
             // display-over-other-apps grant. The notification carries it.
             Log.w(TAG, "direct start of the consent prompt refused", t)
         }
+
+        // WHETHER THE PROMPT ACTUALLY APPEARED IS A DIFFERENT QUESTION, and
+        // `startActivity` will not answer it: a background activity start the
+        // platform refuses does not throw, it logs and drops the intent. Nor
+        // does the full-screen intent above rescue it on the case that matters
+        // — while the screen is on and unlocked, the platform deliberately
+        // renders a full-screen intent as an ordinary heads-up notification
+        // rather than taking the screen over.
+        //
+        // So on a phone in use, with no "display over other apps" grant, there
+        // is no route that raises this by itself, and the reported symptom is
+        // exactly that: *"the popup doesn't auto come up, and I have to
+        // manually click on the tool call for it to work"*. That is one grant
+        // away from working and the app never said so.
         return reachable
+    }
+
+    /**
+     * Called by [ApprovalActivity] as it starts. The only positive evidence
+     * that the prompt is in front of a person.
+     */
+    fun raised(requestId: String) {
+        onScreen[requestId]?.complete(Unit)
+    }
+
+    /**
+     * Tell the user, once, that Jarvis cannot raise its own prompts.
+     *
+     * Deliberately its own notification on the alerts channel rather than more
+     * words on the consent one: the consent notification is about a decision
+     * waiting to be made, and this is about the phone's configuration. It is
+     * posted at most once per process so a run of gated commands does not
+     * become a run of identical complaints.
+     */
+    private fun explainWhyNothingAppeared(app: Context) {
+        if (!explainedOverlayGrant.compareAndSet(false, true)) return
+        if (GrapheneCompat.canDrawOverlays(app)) return
+        val why = "Jarvis had to ask you something and Android would not let it open the " +
+            "prompt on its own, so it arrived as a notification you had to tap. Allow " +
+            "“display over other apps” and it will come up by itself."
+        runCatching {
+            val settings = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${app.packageName}"),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val nm = app.getSystemService(NotificationManager::class.java) ?: return
+            nm.notify(
+                OVERLAY_HINT_NOTIFICATION_ID,
+                Notification.Builder(app, JarvisApp.CHANNEL_ALERTS)
+                    .setSmallIcon(R.drawable.ic_jarvis_status)
+                    .setContentTitle("Let Jarvis show you its questions")
+                    .setContentText(why)
+                    .setStyle(Notification.BigTextStyle().bigText(why))
+                    .setContentIntent(
+                        PendingIntent.getActivity(
+                            app,
+                            OVERLAY_HINT_NOTIFICATION_ID,
+                            settings,
+                            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                        )
+                    )
+                    .setAutoCancel(true)
+                    .build()
+            )
+        }.onFailure { Log.w(TAG, "could not explain the overlay grant", it) }
     }
 
     private fun postNotification(

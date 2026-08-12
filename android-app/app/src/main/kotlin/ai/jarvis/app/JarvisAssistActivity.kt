@@ -7,8 +7,10 @@ import ai.jarvis.app.assist.ToolActivityView
 import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.ui.ApprovalBridge
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.PermissionBridge
 import ai.jarvis.app.ui.ReadabilityScrim
 import android.Manifest
 import android.app.Activity
@@ -17,6 +19,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.graphics.Typeface
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -55,6 +59,8 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
      */
     private var askHost: ConversationAskHost? = null
 
+    private val main = Handler(Looper.getMainLooper())
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -74,15 +80,14 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            // NOT requestPermissions() from here. This activity is
-            // android:noHistory, so the platform finishes it the moment the
-            // permission dialog covers it — onRequestPermissionsResult would
-            // never run, and the first grant would land on a dead activity.
-            // That is a first-run dead end: the assist gesture appears to do
-            // nothing, forever, until the user finds the app icon.
+            // NOT requestPermissions() from here, even though this activity is
+            // no longer android:noHistory and could now survive the dialog.
             //
-            // So hand off to the home screen, which is an ordinary activity
-            // that can hold a permission round trip — the same shape as the
+            // A first run with no microphone grant is not a conversation that
+            // was interrupted — it is a conversation that has not started, and
+            // there is nothing on this card worth returning to. The home screen
+            // is where the rest of first-run setup lives, it can hold the round
+            // trip, and it can say what else is missing. Same shape as the
             // not-configured hand-off above.
             startActivity(
                 Intent(this, MainActivity::class.java)
@@ -358,7 +363,63 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Back on screen — either from the very first frame, or because a
+        // prompt of ours has just been answered and handed the foreground back.
+        main.removeCallbacks(giveUp)
+    }
+
+    /**
+     * What `android:noHistory` used to do, done deliberately.
+     *
+     * `noHistory` finished this activity whenever it stopped being visible and
+     * could not tell why. Our own prompts — the consent screen, a question, the
+     * permission trampoline — appear over it in tasks of their own, so every
+     * one of them destroyed the conversation on the way up and answering it
+     * returned to nothing. That is the reported *"it closes the Hey Jarvis
+     * popup instead of persisting the conversation"*, and a turn needing one
+     * approval could not be completed at all.
+     *
+     * So: still finish when the user has genuinely moved on — pressed home,
+     * opened something else, turned the screen off — and stay for a prompt this
+     * app itself raised.
+     */
+    override fun onStop() {
+        super.onStop()
+        if (isFinishing) return
+        if (!ourOwnPromptIsUp()) {
+            finish()
+            return
+        }
+        // A prompt that is never answered must not leave this alive for ever.
+        // Its own timeout plus slack: by then the bridge has settled the
+        // request itself and there is nothing to come back to.
+        Log.i(TAG, "staying alive behind a prompt of ours")
+        main.postDelayed(giveUp, ApprovalBridge.TIMEOUT_MS + GIVE_UP_SLACK_MS)
+    }
+
+    /**
+     * True while something this app put on screen is waiting for the user.
+     *
+     * Deliberately asked of the bridges rather than tracked here: the prompt is
+     * raised by the service that received the command, not by this activity, so
+     * a flag set locally would be set by the wrong object at the wrong time.
+     */
+    private fun ourOwnPromptIsUp(): Boolean =
+        ApprovalBridge.anyPending ||
+            PermissionBridge.anyPending ||
+            CompanionMessageHandler.ledger.inFlightCount > 0
+
+    private val giveUp = Runnable {
+        if (!isFinishing) {
+            Log.i(TAG, "nothing came back from the prompt; closing the conversation")
+            finish()
+        }
+    }
+
     override fun onDestroy() {
+        main.removeCallbacks(giveUp)
         askHost?.let { CompanionMessageHandler.clearSpeechHost(it); it.stop() }
         askHost = null
         convo?.stop(); convo = null
@@ -389,6 +450,15 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
         /** Side of the orb's slot in the card. The reactor sizes itself to it. */
         private const val ORB_DP = 200
+
+        /**
+         * How long past a prompt's own deadline to wait before closing anyway.
+         *
+         * The bridge has settled the request by then, so there is nothing left
+         * to be returned to — this only stops a crashed or swiped-away prompt
+         * from leaving an invisible conversation alive.
+         */
+        private const val GIVE_UP_SLACK_MS = 15_000L
 
         fun newIntent(context: Context): Intent =
             Intent(context, JarvisAssistActivity::class.java)

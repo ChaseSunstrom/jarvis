@@ -409,6 +409,23 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
+            JarvisUi.ghost(ctx, "WHAT JARVIS MAY DO WITHOUT ASKING") {
+                JarvisScreens.open(this, JarvisScreens.ACTION_POLICY, "Action approvals")
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Set any action to ALWAYS and Jarvis stops asking about it; set one to " +
+                    "NEVER and nothing can run it. The tier is the default and it is a good " +
+                    "one — this is for the handful where you disagree with it."
+            )
+        )
+        col.addView(
             JarvisUi.hint(
                 ctx,
                 "Phone tasks are what THIS device does on its own \u2014 a geofence, a media " +
