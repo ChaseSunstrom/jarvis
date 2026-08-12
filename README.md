@@ -112,8 +112,8 @@ for anything dangerous:
   path enforced twice — once in `jarvis-core`, once in the orchestrator, with
   different credentials in different processes.
 - **What was approved is what runs**: fuzzy targets are resolved to concrete
-  entity ids before a human is shown the prompt, and commands are stored
-  verbatim.
+  entity ids, and contact names to numbers on the device, before a human is
+  shown the prompt; commands are stored verbatim.
 - **Everything from outside is fenced** as data before the model sees it, and
   cannot close its own fence.
 - **A network-less sandbox**, LAN/WireGuard only, nightly purge.
@@ -126,17 +126,23 @@ The full model is [`docs/security.md`](docs/security.md).
   assistant on Android Auto — no API, no role, no category. Jarvis in the car
   is a phone-side experience playing through the car speakers.
   [`docs/android-auto.md`](docs/android-auto.md).
-- **Wake word is not implemented on the phone.** Say it plainly: there is no
-  hotword service in `android-app`. `config/WakeWordGate.kt` decides *when*
-  listening would be worth the battery, and it is tested — but nothing calls
-  it, the "Listen for Hey Jarvis" switch in Settings writes a preference
-  nothing reads, and no code opens a mic to look for the word. Activation today
-  is the assistant gesture, the app, or a headset button.
-  `jarvis-core` already runs the detector — the pipeline's `wake` stage drives
-  openWakeWord over Wyoming — so the missing piece is a foreground service on
-  the phone that streams audio with `start_stage: "wake"` rather than the
-  hardcoded `"stt"` in `AssistPipelineClient`. That is the work; it has not
-  been done.
+- **The wake word works on the phone, and cannot be proven from here.**
+  `WakeWordService` is a real foreground service with real callers, it detects
+  on-device, and `WakeStartPolicy` pins when Android will let it start — which
+  is the fiddly part, because a `microphone` foreground service may not start
+  from the background, so a reboot needs a battery-optimisation exemption or
+  the overlay grant, and without one the service leaves a notification that
+  starts it in a tap. Whether a phone in a pocket actually hears you across a
+  room is a claim only a phone can settle, and no row here says otherwise.
+- **Jarvis can be told to answer only your voice, and it is off by default.**
+  A classical verifier — MFCC statistics and a pitch distribution, compared
+  against an enrolled profile — runs on the turn's audio before the intent
+  stage. It stops a house guest, a television and a stranger at the window. It
+  does **not** stop a recording of you, and it is not a second factor for
+  anything: the tier system and its human approval gate are still what stand in
+  front of the dangerous verbs. Enrol on the phone, leave it in `observe` until
+  you have read your own scores, and only then enforce.
+  [`docs/voice-identity.md`](docs/voice-identity.md).
 - **An earpiece is the good hands-free story, and it works today.** Capture
   moves to the headset, the reply is echo-cancelled so Jarvis does not hear
   itself, and the headset button starts a turn. See
@@ -165,6 +171,7 @@ The full model is [`docs/security.md`](docs/security.md).
 | [`docs/android.md`](docs/android.md) | the phone, and where its docs live |
 | [`docs/grapheneos.md`](docs/grapheneos.md) | why the old fork crashed, what replaced it |
 | [`docs/cross-device.md`](docs/cross-device.md) | one conversation across phone, desktop and HUD |
+| [`docs/voice-identity.md`](docs/voice-identity.md) | answering only your voice: how it works, what it is worth, how to tune it |
 | [`docs/wake-word-training.md`](docs/wake-word-training.md) | training `hey_jarvis` |
 | [`jarvis-core/docs/`](jarvis-core/docs/) | configuration, integrations, voice, search, clients, migrating from HA |
 

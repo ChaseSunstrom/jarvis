@@ -54,6 +54,21 @@ curl -s localhost:8080/api/config -H "Authorization: Bearer $TOKEN"
 docker compose logs wyoming-piper | tail
 ```
 
+## Whose voice
+
+Jarvis can be told to answer only you. It is off by default, and turning it on
+has a right order — enrol, observe, then enforce — because the threshold is not
+knowable in advance and guessing it locks you out rather than a stranger.
+
+```yaml
+voice:
+  speaker:
+    mode: observe        # off (default) | observe | enforce
+```
+
+The whole thing, including what it is and is not worth, is in
+[`../../docs/voice-identity.md`](../../docs/voice-identity.md).
+
 ## Pipelines
 
 A pipeline is a named end-to-end configuration a client asks for by name. The

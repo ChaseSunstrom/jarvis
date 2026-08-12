@@ -112,6 +112,45 @@ Android SDK here. So "the tier system is enforced on the device" is proven in
 the mirror and unproven in the shipped binary. `docs/verification.md` says so
 in the row where it matters.
 
+## 9. Voice identity is a classical verifier, not a neural one
+
+`voice/speaker.py` is MFCC statistics plus a pitch distribution with a
+per-dimension z-test. An ECAPA-TDNN trained on thousands of speakers is
+markedly better at this, and if you have somewhere to run one, `Embedder` is the
+seam.
+
+The classical route was chosen for one reason: it runs in the process that is
+already running, with no model file, no GPU and no new dependency, on the same
+Pi that is already doing STT — which is the difference between a feature that is
+ON and a feature that is documented. jarvis-core's requirements are deliberately
+pure-Python-installs-from-a-wheel, and adding numpy or onnxruntime for one
+feature would end that.
+
+Two consequences, both stated in `docs/voice-identity.md` and both real:
+
+* **Accuracy on human speech is Unproven here.** The tests run against a
+  source-filter synthesiser, which settles that the code separates signals
+  differing in the cues it claims to use and nothing about false-accept rates in
+  a real room. `observe` mode exists precisely so you find that out on your own
+  voice before enforcement can refuse you.
+* **It does not stop a recording of you.** It raises the cost from "be in the
+  room" to "sound like the owner to a spectral matcher", which stops a guest, a
+  television and a stranger at the window. It is not a second factor, and the
+  tier system still stands in front of every dangerous verb.
+
+## 10. On-device transcription and voice identity do not compose
+
+The speaker check runs on the server, on the turn's audio. A turn the phone
+transcribes locally sends words rather than sound, so there is nothing to check
+and that turn is simply not verified.
+
+Rather than silently disable one of them, both stay available and the settings
+screen says plainly to leave on-device transcription off while the gate is
+enforcing. Closing it properly means porting `voice/dsp.py` and the embedding to
+Kotlin so the phone can verify locally, with a shared test fixture pinning
+numeric parity between the two implementations. That work has not been done, and
+`docs/verification.md` carries the row.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).
