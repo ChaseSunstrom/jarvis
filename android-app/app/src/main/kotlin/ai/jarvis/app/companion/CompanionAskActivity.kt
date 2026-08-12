@@ -588,9 +588,22 @@ class CompanionAskActivity : Activity() {
             player.play(url) {
                 orb.setMode(JarvisOrbView.Mode.IDLE)
                 // Straight into listening, so answering is not a second thing
-                // to notice and tap. Through the same gate as the button: if
-                // the user cannot answer right now, nothing opens the mic.
-                if (CompanionAskGate.answerEnabled(isLocked(), armed, answered, importance) &&
+                // to notice and tap — but ONLY for a question with no options.
+                //
+                // A question with options is answered by tapping one of them,
+                // and the answer has to be one of those exact strings. Opening
+                // the microphone over the top of that offers a way to reply
+                // that the caller cannot accept, and it changes the screen
+                // underneath a user who is already reaching for a button.
+                //
+                // It also stopped `CompanionAskTest` answering at all, which is
+                // the same fact from the other side: the option path is the one
+                // that must not be disturbed.
+                //
+                // Through the same gate as the mic button either way: if the
+                // user cannot answer right now, nothing opens the microphone.
+                if (options.isEmpty() &&
+                    CompanionAskGate.answerEnabled(isLocked(), armed, answered, importance) &&
                     checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED
                 ) {

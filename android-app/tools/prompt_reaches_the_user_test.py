@@ -281,7 +281,7 @@ def test_it_will_not_say_out_loud_what_it_would_not_print() -> None:
 
 def test_answering_does_not_need_a_second_tap() -> None:
     src = code_of(ASK)
-    body = src[src.index("fun askAloud("):][:1600]
+    body = src[src.index("fun askAloud("):][:2200]
     assert "toggleListening()" in body, "the mic does not open after the question"
     assert "CompanionAskGate.answerEnabled(" in body, (
         "the mic opens without going through the same gate as the button"
@@ -289,6 +289,25 @@ def test_answering_does_not_need_a_second_tap() -> None:
     assert "PackageManager.PERMISSION_GRANTED" in body, (
         "auto-listening does not check RECORD_AUDIO, so it raises a permission "
         "dialog nobody asked for on top of a question"
+    )
+
+
+def test_a_question_with_options_is_not_answered_by_voice() -> None:
+    """A question carrying options is answered by tapping one, and the answer
+    must be one of those exact strings. Opening the microphone over the top of
+    that offers a reply the caller cannot accept, and moves the screen under a
+    user already reaching for a button.
+
+    It also stopped `CompanionAskTest` answering at all — the same fact seen
+    from the other side, and the reason this check exists rather than a note.
+    """
+    src = code_of(ASK)
+    body = src[src.index("fun askAloud("):][:2200]
+    assert "options.isEmpty()" in body, (
+        "the microphone opens over a question that has buttons"
+    )
+    assert body.index("options.isEmpty()") < body.index("toggleListening()"), (
+        "the options check does not guard the microphone"
     )
 
 

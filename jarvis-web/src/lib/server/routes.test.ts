@@ -145,6 +145,39 @@ describe('the admin token never reaches the browser', () => {
 		).toBe(true);
 	});
 
+	it('the pairing claim adds no authority and keeps the browser guard', () => {
+		// The one unauthenticated write in the whole API, and it has to be: the
+		// phone has no credential yet, which is the entire problem being solved.
+		// What makes it safe is on jarvis-core's side — a 192-bit single-use code
+		// that expires in five minutes and stops being answerable after ten
+		// failures — so this hop must add nothing and take nothing away.
+		const route = 'api/pair/claim/+server.ts';
+		expect(
+			routes,
+			`${route} is missing — scanning the QR against the console 404s, which is ` +
+				'exactly what "that url has no endpoint" was'
+		).toContain(route);
+		const body = readFileSync(join(ROUTES, route), 'utf8');
+		expect(
+			body.includes('backend.token'),
+			'the claim attaches the admin token; it needs no authority and must carry none'
+		).toBe(false);
+		// jarvis-core refuses a claim carrying Origin, because browsers always send
+		// one cross-origin and phones never do. A server-side fetch does not send
+		// it — so a relay that simply forwarded would STRIP the header and hand a
+		// hostile page the door jarvis-core had shut, with the console as the
+		// softer of the two front doors. The guard is re-applied here or it is gone.
+		expect(
+			/request\.headers\.get\('origin'\)/.test(body),
+			'the claim relay does not re-apply the browser guard, so proxying through ' +
+				'the console defeats it'
+		).toBe(true);
+		expect(
+			body.includes("redirect: 'error'"),
+			'a 30x could decide who supplies the token this request answers with'
+		).toBe(true);
+	});
+
 	it('every named route still exists', () => {
 		// A stale entry is worse than a missing one: it reads as a considered
 		// exemption for a guard nobody has looked at since the file was deleted.

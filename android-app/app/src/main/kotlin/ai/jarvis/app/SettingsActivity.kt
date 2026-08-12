@@ -409,34 +409,34 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.ghost(ctx, "WHAT JARVIS MAY DO WITHOUT ASKING") {
-                JarvisScreens.open(this, JarvisScreens.ACTION_POLICY, "Action approvals")
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        col.addView(
-            JarvisUi.hint(
-                ctx,
-                "Set any action to ALWAYS and Jarvis stops asking about it; set one to " +
-                    "NEVER and nothing can run it. The tier is the default and it is a good " +
-                    "one — this is for the handful where you disagree with it."
-            )
-        )
-        col.addView(
             JarvisUi.hint(
                 ctx,
                 "Phone tasks are what THIS device does on its own \u2014 a geofence, a media " +
                     "button, a rule pushed to it. The house's automations live in the " +
-                    "console's AUTOMATIONS tab, on this phone and in a browser alike."
+                    "console's AUTOMATIONS tab, on this phone and in a browser alike.\n\n" +
+                    "APPROVALS is where you say which actions Jarvis may run without asking. " +
+                    "The tier is the default and it is a good one; this is for the handful " +
+                    "where you disagree with it."
             )
         )
         col.addView(
             row(
                 JarvisUi.ghost(ctx, "CRASH LOGS") {
                     startActivity(Intent(this, ai.jarvis.app.ui.CrashLogActivity::class.java))
+                },
+                // SHARES A ROW rather than taking one of its own.
+                //
+                // SAVE is the last control on a screen that is already several
+                // screens long, and the instrumented suite reaches it by
+                // scrolling a bounded number of steps. A full-width button plus
+                // a paragraph of its own added just enough height above SAVE to
+                // put it out of that reach: three SettingsPersistenceTest cases
+                // went from passing to "No SAVE button on screen" on the run
+                // that introduced them, over something none of them tests. A
+                // row that already exists costs no height, and the sentence
+                // explaining it goes in the hint that was already here.
+                JarvisUi.ghost(ctx, "APPROVALS") {
+                    JarvisScreens.open(this, JarvisScreens.ACTION_POLICY, "Action approvals")
                 },
             )
         )
