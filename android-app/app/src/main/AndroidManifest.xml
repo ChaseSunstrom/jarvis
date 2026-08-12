@@ -551,6 +551,27 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          The in-app updater's other half. PackageInstaller.commit() does not
+          show anything: it sends STATUS_PENDING_USER_ACTION to an IntentSender,
+          carrying the system's "install this update?" activity, and SOMEBODY
+          HAS TO START IT. Nothing did, so the updater downloaded an APK,
+          committed a session, and installed nothing on any device.
+
+          In the manifest rather than registered in code, because the install
+          can outlive the Activity that started it — and not exported, so no
+          other app can fabricate an install verdict. The broadcast that reaches
+          it is addressed by component, so the implicit-broadcast restrictions
+          never apply.
+        -->
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ai.jarvis.app.INSTALL_RESULT" />
+            </intent-filter>
+        </receiver>
+
         <!-- Trigger sources: power, connectivity, headset, airplane mode.
              All protected system broadcasts. -->
         <!--

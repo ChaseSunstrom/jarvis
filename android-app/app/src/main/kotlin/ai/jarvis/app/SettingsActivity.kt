@@ -415,6 +415,13 @@ class SettingsActivity : Activity() {
                 JarvisUi.ghost(ctx, "RELEASES") { openReleasesPage() },
             )
         )
+        // The grant without which none of the above can finish. Declared in the
+        // manifest since the app was written, and a per-app user decision since
+        // Android 8 — so it is another one that looked handled and was not.
+        col.addView(
+            JarvisUi.ghost(ctx, "INSTALL PERMISSION") { openInstallPermission() },
+            matchWidth()
+        )
 
         // --- save -----------------------------------------------------------
 
@@ -949,8 +956,36 @@ class SettingsActivity : Activity() {
         is UpdateChecker.Result.UpToDate ->
             "Up to date — version ${appVersionName()} (build ${appVersionCode()})"
         is UpdateChecker.Result.Offered ->
-            "Ready to install ${result.update.versionName} — confirm the system prompt."
+            "${result.update.versionName} is available."
+        // "Confirm the system prompt" was printed for the whole life of the app
+        // by a build in which no prompt could appear — nothing received the
+        // installer's STATUS_PENDING_USER_ACTION, so the activity that carries
+        // was never started. InstallResultReceiver starts it now, and falls
+        // back to a notification when Android refuses the background start.
+        is UpdateChecker.Result.Handed ->
+            "Downloaded ${result.update.versionName}. Confirm the install prompt — " +
+                "if it does not appear, look in your notifications."
         is UpdateChecker.Result.Failed -> result.message
+    }
+
+    /**
+     * "Install unknown apps" for this app.
+     *
+     * `ACTION_MANAGE_UNKNOWN_APP_SOURCES` wants a `package:` URI to land on
+     * Jarvis's own switch; without it some ROMs open the full list and some
+     * open nothing at all, so the plain action is the fallback rather than the
+     * first try.
+     */
+    private fun openInstallPermission() {
+        val direct = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:$packageName")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(direct)
+        } catch (e: ActivityNotFoundException) {
+            openSetting(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+        }
     }
 
     private fun openReleasesPage() {

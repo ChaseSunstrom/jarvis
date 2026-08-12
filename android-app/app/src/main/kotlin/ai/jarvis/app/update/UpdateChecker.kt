@@ -34,8 +34,19 @@ class UpdateChecker(
 ) {
 
     sealed interface Result {
-        /** An installable update, already downloaded and handed to the installer. */
+        /** [check] found an installable update. Nothing has been downloaded yet. */
         data class Offered(val update: ReleaseFeed.Update) : Result
+
+        /**
+         * [install] downloaded it and committed the session. The system's
+         * install prompt comes next, raised by [InstallResultReceiver] when the
+         * platform asks for it.
+         *
+         * Split from [Offered] on purpose. The two meant different things and
+         * shared a name, which is how "Ready to install — confirm the system
+         * prompt" came to be printed by a build where no prompt could appear.
+         */
+        data class Handed(val update: ReleaseFeed.Update) : Result
 
         /** Checked successfully; this is already the newest build. */
         data object UpToDate : Result
@@ -102,6 +113,19 @@ class UpdateChecker(
             return Result.Failed("Refusing to download from ${update.downloadUrl}")
         }
 
+        // Checked BEFORE the download, not after. Without "install unknown
+        // apps" the commit below succeeds and the prompt is refused — sixty
+        // megabytes spent to arrive at a silence. `REQUEST_INSTALL_PACKAGES` is
+        // in the manifest but has been a per-app user grant since Android 8,
+        // which is the same declared-but-not-held shape as the rest of them.
+        if (!canInstallPackages()) {
+            return Result.Failed(
+                "Android will not let Jarvis install an app until you allow it: " +
+                    "Settings → Apps → Jarvis → Install unknown apps. Tap " +
+                    "INSTALL PERMISSION below."
+            )
+        }
+
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(
             PackageInstaller.SessionParams.MODE_FULL_INSTALL
@@ -127,7 +151,10 @@ class UpdateChecker(
                 }
                 session.commit(confirmationIntent().intentSender)
             }
-            return Result.Offered(update)
+            // Committed, not installed. commit() shows nothing by itself: it
+            // sends STATUS_PENDING_USER_ACTION to the IntentSender above, and
+            // InstallResultReceiver starts the system prompt that carries.
+            return Result.Handed(update)
         } catch (t: Throwable) {
             Log.w(TAG, "install failed", t)
             // Abandon explicitly: a half-written session left behind counts
@@ -139,18 +166,41 @@ class UpdateChecker(
     }
 
     /**
-     * Where the installer reports its verdict.
+     * Where the installer reports its verdict — **and raises the prompt**.
      *
-     * Broadcast to ourselves. The user sees the system's install prompt either
-     * way; this exists so a refusal has somewhere to be logged rather than
-     * vanishing.
+     * This is not a logging convenience, which is what the comment here used to
+     * claim and what made the missing receiver look harmless. `commit()` shows
+     * nothing. It sends [PackageInstaller.STATUS_PENDING_USER_ACTION] here,
+     * with the system's install activity in `Intent.EXTRA_INTENT`, and if
+     * nobody starts that activity there is no prompt and no install — which is
+     * exactly what this app did until [InstallResultReceiver] existed.
+     *
+     * Addressed by component rather than by action + package: an explicit
+     * broadcast is never subject to the Android 8 implicit-broadcast
+     * restrictions, and it cannot be intercepted or forged.
      */
     private fun confirmationIntent(): PendingIntent = PendingIntent.getBroadcast(
         context,
         0,
-        Intent(ACTION_INSTALL_RESULT).setPackage(context.packageName),
+        Intent(context, InstallResultReceiver::class.java).setAction(ACTION_INSTALL_RESULT),
+        // MUTABLE because the installer fills in its own extras. Explicit, so
+        // the Android 14 ban on mutable implicit PendingIntents does not apply.
         PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
+
+    /**
+     * Whether the user has allowed Jarvis to install apps.
+     *
+     * `REQUEST_INSTALL_PACKAGES` is declared in the manifest and, since Android
+     * 8, granted per-app by the user in "Install unknown apps". Declaring it is
+     * not holding it.
+     */
+    fun canInstallPackages(): Boolean = try {
+        context.packageManager.canRequestPackageInstalls()
+    } catch (t: Throwable) {
+        Log.w(TAG, "install-permission check failed", t)
+        false
+    }
 
     private fun installFailureMessage(t: Throwable): String {
         val detail = t.message ?: t::class.java.simpleName
