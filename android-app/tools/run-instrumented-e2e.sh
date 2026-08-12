@@ -91,6 +91,33 @@ else
 fi
 echo "harness for the app: ${HARNESS_URL}"
 
+# --- make the logcat this job collects actually contain the app -------------
+#
+# The logcat is pulled with `adb logcat -d` AFTER the suite, which means it is
+# whatever survived in logd's ring buffer for the whole thirteen-minute run.
+# Two things were eating it, and between them they cost a real diagnosis:
+#
+#  * **chatty.** logd dedups and prunes noisy uids and replaces the lines with
+#    "uid=10167(ai.jarvis.app) expire N lines". Run 31610213287 has 192 of those
+#    and exactly 8 surviving lines from the app's own tags — so when
+#    ConsentGateTest failed with "ApprovalActivity did not start", the entire
+#    record of what the dispatcher did had been thrown away. Setting the filter
+#    property empty turns the pruning off.
+#  * **buffer size.** The default 256 KiB per buffer is a couple of minutes of a
+#    busy emulator. 64 MiB covers the run.
+#
+# All best-effort: an emulator image that refuses either is no worse off than
+# before, and neither is worth failing the suite over.
+adb shell setprop persist.logd.filter "" || true
+adb shell setprop logd.filter "" || true
+adb logcat -G 64M || true
+# The properties are read by logd at init, so restart it — otherwise the filter
+# change applies to the next boot, which is the next job.
+adb shell stop logd || true
+adb shell start logd || true
+adb wait-for-device || true
+echo "logcat buffer: $(adb logcat -g 2>/dev/null | head -n 2 | tr '\n' ' ')"
+
 adb logcat -c || true
 
 status=0
