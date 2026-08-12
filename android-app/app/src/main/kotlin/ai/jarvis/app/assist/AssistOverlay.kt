@@ -100,6 +100,27 @@ class AssistOverlay(
         }
     }
 
+    /**
+     * Get out of the way of a prompt, without ending the conversation.
+     *
+     * A `TYPE_APPLICATION_OVERLAY` window is drawn **above every Activity**, so
+     * while this card is up it is on top of `ApprovalActivity` — and that screen
+     * puts DENY and APPROVE at the end of its column, which is where this card
+     * sits: 340dp wide, anchored 72dp off the bottom. `FLAG_NOT_TOUCH_MODAL`
+     * passes through only the touches that land OUTSIDE the card, so the two
+     * buttons were on screen and unpressable. The only way through was the
+     * notification, which is exactly what was reported: *"it still forces me to
+     * click on the tool call to approve"*.
+     *
+     * `View.GONE` rather than [detach]: detaching would drop the whole view
+     * tree and the conversation's callbacks with it, and this has to be
+     * reversible — the orb comes back when the prompt is answered, with the
+     * conversation still running underneath it.
+     */
+    fun setHiddenForPrompt(hidden: Boolean) {
+        root?.visibility = if (hidden) View.GONE else View.VISIBLE
+    }
+
     fun detach() {
         val view = root ?: return
         root = null

@@ -129,6 +129,9 @@ object PermissionBridge {
         val answer = CompletableDeferred<List<String>>()
         pending[id] = answer
         onScreen[id] = CompletableDeferred()
+        // Same reason as the consent prompt: the Android permission dialog is a
+        // SYSTEM window and the orb would be over it too.
+        PromptPresence.raised()
         return try {
             when (raise(app, id, actionId, askable)) {
                 Route.NONE -> {
@@ -158,6 +161,7 @@ object PermissionBridge {
             Log.e(TAG, "permission request for $actionId failed", t)
             wanted
         } finally {
+            PromptPresence.settled()
             pending.remove(id)
             onScreen.remove(id)
             clearNotification(app, id)

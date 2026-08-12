@@ -171,6 +171,10 @@ object ApprovalBridge {
         // this map had an entry for it would look exactly like one that never
         // appeared.
         onScreen[id] = CompletableDeferred()
+        // The surfaces need to know before anything is on screen: the orb is a
+        // TYPE_APPLICATION_OVERLAY window drawn ABOVE every Activity, so a
+        // prompt raised under it lands on buttons the user cannot press.
+        PromptPresence.raised()
         return try {
             val shown = raisePrompt(
                 app = app,
@@ -208,6 +212,10 @@ object ApprovalBridge {
             Log.e(TAG, "approval request for $actionId failed; denying", t)
             Outcome.DENIED
         } finally {
+            // In the `finally`, so every path pairs — including the throw that
+            // `error` and cancellation take. A leaked `raised` leaves the orb
+            // hidden and the conversation held for the life of the process.
+            PromptPresence.settled()
             pending.remove(id)
             onScreen.remove(id)
             clearNotification(app, id)

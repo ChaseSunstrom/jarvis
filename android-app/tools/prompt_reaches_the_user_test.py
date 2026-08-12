@@ -67,6 +67,18 @@ APPROVAL_ACTIVITY = KOTLIN / "ApprovalActivity.kt"
 POLICY_STORE = KOTLIN / "automation" / "policy" / "PolicyStore.kt"
 POLICY_SCREEN = KOTLIN / "automation" / "ui" / "ActionPolicyActivity.kt"
 ASK = KOTLIN / "companion" / "CompanionAskActivity.kt"
+OVERLAY = KOTLIN / "assist" / "AssistOverlay.kt"
+WAKE = KOTLIN / "assist" / "WakeWordService.kt"
+PRESENCE = KOTLIN / "ui" / "PromptPresence.kt"
+
+#: The two surfaces that host a live conversation, and therefore the two that a
+#: prompt appears over. Getting this list wrong is the bug: the first fix for
+#: "the prompt closes the overlay" was applied to the ACTIVITY, and the wake
+#: word — which is what people actually use — shows the OVERLAY.
+CONVERSATION_SURFACES = {
+    "JarvisAssistActivity.kt": "the assist-gesture card (an Activity)",
+    "WakeWordService.kt": "the wake-word orb (a TYPE_APPLICATION_OVERLAY window)",
+}
 
 
 def read(path: Path) -> str:
@@ -167,6 +179,94 @@ def test_the_bridges_can_answer_that_question() -> None:
         assert "val anyPending: Boolean" in code_of(path), (
             f"{path.name} cannot say whether anything is waiting"
         )
+
+
+def test_both_conversation_surfaces_survive_a_prompt() -> None:
+    """THE MISTAKE THIS FILE MADE ONCE, WRITTEN DOWN.
+
+    There are two "Hey Jarvis" surfaces and only one is an Activity:
+
+      * `JarvisAssistActivity` — the assist gesture. Gets `onStop` when a
+        full-screen prompt covers it, and holds the conversation from there.
+      * `AssistOverlay` — a `TYPE_APPLICATION_OVERLAY` window put up by
+        `WakeWordService`. This is what the WAKE WORD shows, which is to say
+        the one people actually see.
+
+    An overlay window has no activity lifecycle at all. The `noHistory` fix and
+    the `onStop`/`onStart` hold were correct for the activity and could not
+    possibly have applied to the overlay, and the report came back unchanged:
+    *"the prompt and such with the siri orb overlay, is still closing the
+    overlay when I try to approve permissions"*.
+
+    What tore it down there was a TIMER. `JarvisConversation` runs an 8-second
+    inactivity timer; somebody reading a consent prompt says nothing; `onIdle`
+    fires and `endOverlayConversation` takes the orb away. `holdForQuestion`
+    stops exactly that and had two callers, both for questions.
+
+    So this checks BOTH surfaces, by name, and fails if a third one appears
+    without holding.
+    """
+    for name, what in CONVERSATION_SURFACES.items():
+        path = ASSIST if name == "JarvisAssistActivity.kt" else WAKE
+        src = code_of(path)
+        assert "holdForQuestion()" in src, (
+            f"{name} ({what}) never holds its conversation, so the inactivity "
+            "timer tears the surface down while the user answers a prompt"
+        )
+        assert "resumeAfterQuestion()" in src, (
+            f"{name} ({what}) never resumes, so answering leaves a surface that "
+            "cannot hear"
+        )
+
+
+def test_the_overlay_gets_off_the_prompts_buttons() -> None:
+    """An overlay window is drawn ABOVE every Activity.
+
+    The orb is a 340dp card anchored 72dp off the bottom; `ApprovalActivity`
+    puts DENY and APPROVE at the end of its column. `FLAG_NOT_TOUCH_MODAL`
+    passes through only the touches that land OUTSIDE the card — so the buttons
+    were on screen and unpressable, and the notification was the only way
+    through. That is *"it still forces me to click on the tool call to
+    approve"*, and it is not a background-activity-start problem at all: the
+    prompt was there the whole time.
+    """
+    overlay = code_of(OVERLAY)
+    assert "fun setHiddenForPrompt(" in overlay, (
+        "the overlay cannot be moved out of a prompt's way"
+    )
+    # The function's own body, cut at the next declaration. A 400-char window
+    # ran straight into `fun detach()` below it and failed on its own name.
+    after = overlay[overlay.index("fun setHiddenForPrompt("):]
+    body = after[: after.index("\n    fun ", 1)]
+    assert "View.GONE" in body, "hidden by something other than visibility"
+    assert "detach" not in body, (
+        "hiding by detaching drops the view tree and the conversation's "
+        "callbacks with it; the orb has to come back when the prompt is answered"
+    )
+    assert "setHiddenForPrompt(true)" in code_of(WAKE), "nothing ever hides it"
+    assert "setHiddenForPrompt(false)" in code_of(WAKE), "nothing ever brings it back"
+
+
+def test_a_prompt_announces_itself_to_the_surfaces() -> None:
+    """Both bridges, both edges, and the settle in a `finally`.
+
+    A leaked `raised()` leaves the orb hidden and the conversation held for the
+    life of the process — worse than the bug it fixes — so the pairing is
+    checked rather than assumed.
+    """
+    presence = code_of(PRESENCE)
+    assert "fun raised()" in presence and "fun settled()" in presence
+    for path in (APPROVAL_BRIDGE, KOTLIN / "ui" / "PermissionBridge.kt"):
+        src = code_of(path)
+        assert "PromptPresence.raised()" in src, f"{path.name} announces nothing"
+        settled = src.index("PromptPresence.settled()")
+        finally_at = src.rindex("} finally {", 0, settled)
+        assert finally_at >= 0, f"{path.name} settles outside a finally"
+    # ...and the count floors at zero, so an unpaired settle cannot swallow the
+    # next prompt's raise.
+    assert "if (it > 0) it - 1 else 0" in presence, (
+        "the prompt count can go negative, which silently disables the next one"
+    )
 
 
 # ---------------------------------------------------------------------------

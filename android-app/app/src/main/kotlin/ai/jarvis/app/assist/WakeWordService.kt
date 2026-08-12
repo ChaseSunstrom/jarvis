@@ -8,6 +8,7 @@ import ai.jarvis.app.companion.ConversationAskHost
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
+import ai.jarvis.app.ui.PromptPresence
 import android.Manifest
 import android.app.AlarmManager
 import android.app.KeyguardManager
@@ -127,6 +128,49 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
      */
     private var askHost: ConversationAskHost? = null
 
+    /**
+     * Whether this service has parked the conversation behind a prompt.
+     *
+     * See [PromptPresence]. Two things had to happen and neither did:
+     *
+     *  * **The conversation had to be held.** `JarvisConversation` runs an
+     *    8-second inactivity timer, and somebody reading a consent prompt is
+     *    somebody saying nothing — so eight seconds in, `onIdle` fired,
+     *    [endOverlayConversation] ran, and the orb vanished out from under the
+     *    prompt. That is the reported *"still closing the overlay when I try to
+     *    approve"*. `holdForQuestion` exists for exactly this and says so:
+     *    "`running` stays true throughout, deliberately ... so an inactivity
+     *    timer or an `onIdle` cannot pull the surface out from under the
+     *    question." It had two callers, both for QUESTIONS.
+     *  * **The orb had to move.** An overlay window is drawn above every
+     *    Activity, so it was sitting on the consent prompt's own buttons.
+     *
+     * The ACTIVITY surface solved the first half through `onStop`, which an
+     * overlay window never gets — which is why the earlier fix could not have
+     * helped anybody using the wake word.
+     */
+    private var heldForPrompt = false
+
+    private val promptListener: (Boolean) -> Unit = { up ->
+        main.post {
+            if (up) {
+                if (!heldForPrompt) {
+                    heldForPrompt = convo?.holdForQuestion() ?: false
+                    // Hidden even when there was no conversation to hold: the
+                    // orb can be up with the turn already finished, and it
+                    // would still be over the buttons.
+                    overlay?.setHiddenForPrompt(true)
+                }
+            } else if (heldForPrompt || overlay != null) {
+                overlay?.setHiddenForPrompt(false)
+                if (heldForPrompt) {
+                    heldForPrompt = false
+                    convo?.resumeAfterQuestion()
+                }
+            }
+        }
+    }
+
     private val reconnect = Runnable { if (running) openLink() }
 
     /**
@@ -146,6 +190,7 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
     override fun onCreate() {
         super.onCreate()
+        PromptPresence.addListener(promptListener)
         config = JarvisConfig(this)
     }
 
@@ -223,6 +268,7 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     }
 
     override fun onDestroy() {
+        PromptPresence.removeListener(promptListener)
         running = false
         main.removeCallbacks(reconnect)
         main.removeCallbacks(rearm)
