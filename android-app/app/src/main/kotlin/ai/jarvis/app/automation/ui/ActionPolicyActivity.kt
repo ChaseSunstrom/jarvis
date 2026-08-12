@@ -193,7 +193,7 @@ class ActionPolicyActivity : Activity() {
         panel.addView(
             JarvisUi.chooser(this, actionId, labels, selected) { which ->
                 val picked = choices.getOrNull(which) ?: return@chooser
-                apply(actionId, picked, tier)
+                applyPolicy(actionId, picked, tier)
             },
             matchWidth(),
         )
@@ -204,7 +204,7 @@ class ActionPolicyActivity : Activity() {
         }
     }
 
-    private fun apply(actionId: String, picked: UserPolicy, tier: ActionTier) {
+    private fun applyPolicy(actionId: String, picked: UserPolicy, tier: ActionTier) {
         val live = store ?: return
         if (picked == UserPolicy.ASK) {
             live.clearPolicy(actionId)
