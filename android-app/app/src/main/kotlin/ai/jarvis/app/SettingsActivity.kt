@@ -235,6 +235,35 @@ class SettingsActivity : Activity() {
         sttStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(sttStatus)
 
+        // --- whose voice ------------------------------------------------------
+        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.label(ctx, "Whose voice"))
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Jarvis can be told to answer only you. Enrolling teaches it what you " +
+                    "sound like; whether it refuses anyone else is a setting on the server, " +
+                    "so that turning on the thing which can refuse you is never a switch " +
+                    "you hit by accident here."
+            )
+        )
+        col.addView(
+            JarvisUi.ghost(ctx, "TEACH JARVIS MY VOICE") {
+                startActivity(Intent(this, VoiceIdentityActivity::class.java))
+            },
+            matchWidth()
+        )
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Transcribing on this phone and \"only my voice\" do not yet work " +
+                    "together: the check runs on the server, on the audio, and a turn " +
+                    "this phone transcribes locally sends words rather than sound. " +
+                    "Leave the switch above off while the gate is enforcing, or the " +
+                    "server has nothing to check."
+            )
+        )
+
         // --- when to listen ---------------------------------------------------
         //
         // Kept together and labelled for what they are. `WakeWordGate` needs to

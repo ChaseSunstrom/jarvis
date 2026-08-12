@@ -297,6 +297,16 @@
           Crash logs, readable on the device. crash/JarvisCrashHandler writes
           them; this shows them. No cable, no laptop, no logcat.
         -->
+        <!--
+          Enrolling a voice. Not exported: the microphone opens here and the
+          bearer token goes out of it, and neither belongs to another app.
+        -->
+        <activity
+            android:name=".VoiceIdentityActivity"
+            android:exported="false"
+            android:label="@string/activity_voice_identity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
         <activity
             android:name=".ui.CrashLogActivity"
             android:exported="false"
