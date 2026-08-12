@@ -248,7 +248,9 @@ def test_every_outcome_is_carried_out() -> None:
     body = src.split("MediaButtonGate.decide(", 1)[1]
     for action, evidence, why in (
         ("IGNORE", "-> true", "swallowed presses must be consumed, not forwarded"),
-        ("PASS_TO_MEDIA", "-> false", "a press that is not ours must be routed onward"),
+        ("PASS_TO_MEDIA", "super.onMediaButtonEvent(intent)",
+         "a press that is not ours must go to the default handler — the framework "
+         "discards this method's return value, so `false` swallowed it"),
         ("START_TURN", "startTurn()", "nothing opens the assist surface"),
         ("END_TURN", "endTurnFromButton()", "nothing ends the turn"),
     ):

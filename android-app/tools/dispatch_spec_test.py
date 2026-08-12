@@ -105,6 +105,9 @@ class Trace:
     remembered: bool = False
     #: Which permission dialogs were raised: "resolve", "execute", or neither.
     dialogs: list[str] = field(default_factory=list)
+    #: True when a permission the action MIGHT need was still missing at the
+    #: moment execute was called. Not a refusal — see step 7.
+    permission_missing: bool = False
     events: list[str] = field(default_factory=list)
 
 
@@ -191,13 +194,19 @@ def dispatch(
     # 7. the Android permission, AFTER the human. Asking first would put an OS
     #    dialog in front of somebody about to refuse the command, and would hand
     #    a server that sends nonsense a dialog-spam primitive.
+    #
+    #    It ASKS and does not GATE. Which of an action's declared permissions a
+    #    given call actually needs is the action's question — `get_location`
+    #    declares both location grants and answers a coarse question from the
+    #    coarse one alone — so refusing here on anything still missing turned
+    #    "Approximate" into a permanent failure of a command that worked.
+    #    execute() runs either way and refuses for itself.
     if action.needs_permission:
         waited = True
         t.dialogs.append("execute")
         if not grant_permission:
-            t.status, t.audited = "error", 1
-            t.events.append("permission-refused")
-            return t
+            t.permission_missing = True
+            t.events.append("permission-still-missing")
 
     # 8. re-read the store: the kill switch outlives an approval AND a
     #    permission dialog. Either can sit on screen for a minute.
@@ -364,7 +373,7 @@ def test_every_path_writes_exactly_one_audit_line():
         "executed",
         "denied-by-standing-ban",
         "denied-by-human",
-        "permission-refused",
+        "permission-still-missing",
         "prompted",
     ):
         assert path in seen, f"the state space never reached {path}"
@@ -407,10 +416,21 @@ def test_tier2_remembers_only_after_a_human_said_always():
 # --- the Android permission step --------------------------------------------
 
 
-def test_a_refused_permission_executes_nothing():
-    """The honest failure. `permission … not granted` is an error, not a denial:
-    nothing was refused by policy and nothing was refused by the user's standing
-    answer — the OS grant simply is not there."""
+def test_a_refused_permission_does_not_stop_the_action():
+    """The invariant that replaced its own opposite.
+
+    This file used to assert that a still-missing permission stopped the
+    dispatch. That was wrong, and it cost a working feature: `get_location`
+    declares COARSE and FINE, serves a coarse request from COARSE alone, and
+    was therefore refused forever by anyone who answered the system dialog with
+    "Approximate" — with `PermissionBridge`'s don't-ask-again memo making it
+    instant and silent from the second time on.
+
+    Only the action knows what THIS call needs. It re-checks in `execute` and
+    returns the honest `permission … not granted` when it really cannot
+    proceed, which it did all along. The dispatcher asks, records, and gets out
+    of the way.
+    """
     for tier, pol in product(TIERS, POLICIES):
         t = dispatch(
             Action(tier=tier, needs_permission=True),
@@ -421,8 +441,22 @@ def test_a_refused_permission_executes_nothing():
         )
         if "denied-by-standing-ban" in t.events:
             continue
-        assert not t.executed, f"executed with the permission refused: {tier} {pol}"
-        assert t.status == "error"
+        assert t.executed, (
+            f"the dispatcher refused for the action: {tier} {pol}. Only execute() "
+            "knows which of the declared permissions this call needed."
+        )
+        assert t.permission_missing, "the outstanding grant was not recorded"
+
+
+def test_the_dispatcher_never_answers_missing_permission_itself():
+    """Structural, because the model above cannot see a `return` that is not
+    there. `ActionResult.missingPermission` belongs to the actions; a dispatcher
+    that can produce one has taken the decision back."""
+    src = re.sub(r"\s+", " ", REGISTRY.read_text())
+    assert "ActionResult.missingPermission" not in src, (
+        "ActionRegistry is deciding a permission outcome again — that is the "
+        "all-or-nothing gate that broke get_location"
+    )
 
 
 def test_no_dialog_is_raised_for_a_dispatch_the_standing_bans_deny():
@@ -515,7 +549,7 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
         # before anything is resolved or any dialog is raised
         "if (PolicyEngine.decide(standing) == Decision.DENY)",
         # the resolver's own grant, which has to come before the resolver
-        "val forResolve = action.resolvePermissions",
+        "val forResolve = safeResolvePermissionsFor(action, live)",
         # fuzzy parameters become concrete BEFORE a human is shown them, so the
         # prompt cannot say "Mum" while the message goes to a number nobody saw
         "when (val resolution = safeResolve(action, live))",

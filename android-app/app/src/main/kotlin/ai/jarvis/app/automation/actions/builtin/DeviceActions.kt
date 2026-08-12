@@ -427,6 +427,32 @@ object GetLocation : JarvisAction {
     override fun tierFor(params: JSONObject): ActionTier =
         if (params.str("accuracy")?.lowercase() == "fine") ActionTier.NOTIFY else ActionTier.AUTO
 
+    /**
+     * A coarse question needs the coarse grant and nothing else.
+     *
+     * [execute] below has always known this — it refuses only on COARSE unless
+     * `accuracy=fine` — but the dispatcher briefly treated [requiredPermissions]
+     * as all-or-nothing, so a user who answered the system dialog with
+     * **Approximate** made every later "where am I" fail permanently. The
+     * declared list is what this action can ever need; this is what the call in
+     * hand needs.
+     *
+     * Fine is asked for WITH coarse, never alone: from Android 12 the platform
+     * ignores a request for `ACCESS_FINE_LOCATION` that does not carry
+     * `ACCESS_COARSE_LOCATION` with it, and an ignored request shows no dialog
+     * at all — so on a phone that already held coarse, the precise upgrade
+     * would have been unreachable.
+     */
+    override fun permissionsFor(params: JSONObject): List<String> =
+        if (params.str("accuracy")?.lowercase() == "fine") {
+            listOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        } else {
+            listOf(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+
     override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
         val wantFine = params.str("accuracy")?.lowercase() == "fine"
         if (!ctx.granted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
@@ -526,6 +552,30 @@ object GetSensors : JarvisAction {
     )
     override val capability = "sensors"
     override val timeoutMs = 12_000L
+
+    /**
+     * Declared so the device manifest and SYSTEM CHECK know this action can
+     * need it. [execute] has always checked for it — and for the whole life of
+     * the app that check could only fail, because the permission was not even
+     * in the manifest. It is now; and declaring it here is what makes the
+     * dispatcher ask for it, which was the other half nobody had.
+     */
+    override val requiredPermissions = listOf("android.permission.ACTIVITY_RECOGNITION")
+
+    /**
+     * …but only for the step counter.
+     *
+     * Every other sensor here needs nothing, and raising "Allow Jarvis to
+     * access your physical activity?" to answer "how warm is it" would be a
+     * dialog nobody could explain — which is the fastest way to teach somebody
+     * to tap Deny on everything.
+     */
+    override fun permissionsFor(params: JSONObject): List<String> =
+        if (TYPES[params.str("type")?.lowercase()] == Sensor.TYPE_STEP_COUNTER) {
+            requiredPermissions
+        } else {
+            emptyList()
+        }
 
     private val TYPES = mapOf(
         "light" to Sensor.TYPE_LIGHT,

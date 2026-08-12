@@ -301,7 +301,7 @@ def test_the_standing_bans_are_checked_before_any_dialog():
     """
     src = re.sub(r"\s+", " ", code_only(read(REGISTRY)))
     standing = src.index("if (PolicyEngine.decide(standing) == Decision.DENY)")
-    resolve_ask = src.index("val forResolve = action.resolvePermissions")
+    resolve_ask = src.index("val forResolve = safeResolvePermissionsFor(action, live)")
     resolve = src.index("when (val resolution = safeResolve(action, live))")
     assert standing < resolve_ask < resolve, (
         "the standing bans (panic / master switch / NEVER) must be decided "
@@ -319,7 +319,7 @@ def test_a_resolver_that_needs_a_permission_gets_it_first():
     prompt has to show the number rather than the name. Asking afterwards would
     be asking after the resolver has already refused."""
     src = re.sub(r"\s+", " ", code_only(read(REGISTRY)))
-    assert "val forResolve = action.resolvePermissions" in src
+    assert "val forResolve = safeResolvePermissionsFor(action, live)" in src
     comms = code_only(read(KOTLIN / "automation/actions/builtin/CommsActions.kt"))
     for action in ("SendSms", "PlaceCall"):
         body = comms.split(f"object {action} : JarvisAction", 1)
@@ -328,6 +328,69 @@ def test_a_resolver_that_needs_a_permission_gets_it_first():
             f"{action} resolves a contact name and does not declare "
             "resolvePermissions, so the lookup fails before anything asks"
         )
+
+
+def test_only_the_action_decides_what_this_call_actually_needed():
+    """The declared list is what an action can EVER need; what a given call
+    needs is a different question, and only the action can answer it.
+
+    `get_location` declares both location grants and serves a coarse request
+    from the coarse one alone. A dispatcher that refused whenever anything in
+    the declared list was missing turned "Approximate" into a permanent
+    failure — so the step asks, records what is still outstanding on the audit
+    line, and lets `execute` refuse for itself.
+    """
+    src = code_only(read(REGISTRY))
+    assert "safePermissionsFor(action, live)" in src, (
+        "the dispatcher asks for the declared list rather than the one this "
+        "call needs"
+    )
+    assert "ActionResult.missingPermission" not in src, (
+        "the dispatcher decides a permission outcome again"
+    )
+    device = code_only(read(KOTLIN / "automation/actions/builtin/DeviceActions.kt"))
+    assert "override fun permissionsFor(params: JSONObject)" in device, (
+        "no action narrows its permissions per call, so either get_location or "
+        "get_sensors is asking for something it does not need"
+    )
+
+
+def test_fine_location_is_never_asked_for_on_its_own():
+    """Android 12+ IGNORES a request for ACCESS_FINE_LOCATION that does not
+    carry ACCESS_COARSE_LOCATION with it — no dialog, no result, no grant. On a
+    phone that already holds coarse, asking for the difference is asking for
+    exactly the thing the platform drops."""
+    device = code_only(read(KOTLIN / "automation/actions/builtin/DeviceActions.kt"))
+    body = device.split("override fun permissionsFor(params: JSONObject)", 1)
+    assert len(body) == 2, "GetLocation no longer narrows its permissions"
+    fine = body[1][:700]
+    assert "ACCESS_COARSE_LOCATION" in fine and "ACCESS_FINE_LOCATION" in fine, (
+        "the fine branch does not name both grants"
+    )
+    coarse_at = fine.index("ACCESS_COARSE_LOCATION")
+    fine_at = fine.index("ACCESS_FINE_LOCATION")
+    assert coarse_at < fine_at, (
+        "coarse must be in the same request as fine, and first, or Android 12+ "
+        "drops the request entirely"
+    )
+
+
+def test_a_literal_number_raises_no_contacts_dialog():
+    """The resolver's grant is asked for BEFORE the Tier-3 gate — it has to be,
+    so the prompt can show a real number — which makes it the one permission a
+    server can ask for without any human approving anything. It must therefore
+    be bounded to the calls that genuinely need the address book."""
+    comms = code_only(read(KOTLIN / "automation/actions/builtin/CommsActions.kt"))
+    assert "fun lookupPermissions(params: JSONObject)" in comms, (
+        "nothing decides whether a lookup is needed before asking for contacts"
+    )
+    body = comms.split("fun lookupPermissions(params: JSONObject)", 1)[1][:600]
+    assert "PhoneNumbers.isPlausible(wanted)" in body and "emptyList()" in body, (
+        "a target that is already a number still raises a contacts dialog"
+    )
+    for action in ("SendSms", "PlaceCall"):
+        arm = comms.split(f"object {action} : JarvisAction", 1)[1][:1500]
+        assert "resolvePermissionsFor" in arm, f"{action} asks unconditionally"
 
 
 def test_the_permission_step_fails_open_and_the_request_fails_closed():

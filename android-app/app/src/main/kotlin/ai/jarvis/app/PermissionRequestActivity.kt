@@ -61,12 +61,26 @@ class PermissionRequestActivity : Activity() {
         // notification for the user to tap once they are back in.
         if (isLocked()) {
             Log.i(TAG, "not asking for $outstanding while the phone is locked")
-            settle(outstanding, emptyList()); finish(); return
+            // `keepNotification`: the sentence above is only true if the
+            // notification survives. Without it the bridge's `finally` cancels
+            // the one thing this branch exists to leave behind, and the user
+            // unlocks the phone to find nothing at all.
+            settle(outstanding, emptyList(), keepNotification = true); finish(); return
         }
 
-        // A recreated instance is one whose dialog is already on screen; asking
-        // again would stack two dialogs for the same request.
-        if (savedInstanceState != null) return
+        // A recreated instance has nothing to do and must not sit there.
+        //
+        // `configChanges` in the manifest absorbs rotation, so the only way to
+        // arrive here with a bundle is a process death and restore — and the
+        // instance that died already settled the request from its own
+        // `onDestroy`. There is no deferred left to answer and no dialog left
+        // to wait for. Returning without finishing (which this used to do, on
+        // the false premise that the dialog was still up) left an invisible
+        // activity alive in its own recents-excluded task, for good.
+        if (savedInstanceState != null) {
+            Log.i(TAG, "recreated after process death; the request is already settled")
+            finish(); return
+        }
 
         try {
             requestPermissions(outstanding.toTypedArray(), REQ_PERMISSIONS)
@@ -110,10 +124,14 @@ class PermissionRequestActivity : Activity() {
         requestId?.let { PermissionBridge.abandon(it, wanted) }
     }
 
-    private fun settle(stillMissing: List<String>, permanent: List<String>) {
+    private fun settle(
+        stillMissing: List<String>,
+        permanent: List<String>,
+        keepNotification: Boolean = false,
+    ) {
         if (settled) return
         settled = true
-        requestId?.let { PermissionBridge.deliver(it, stillMissing, permanent) }
+        requestId?.let { PermissionBridge.deliver(it, stillMissing, permanent, keepNotification) }
     }
 
     private fun isLocked(): Boolean = try {

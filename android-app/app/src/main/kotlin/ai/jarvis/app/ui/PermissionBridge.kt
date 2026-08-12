@@ -139,8 +139,18 @@ object PermissionBridge {
      *   for. Remembered so the next command does not flash an invisible
      *   Activity to be refused instantly again.
      */
-    fun deliver(requestId: String, stillMissing: List<String>, permanent: List<String>) {
+    fun deliver(
+        requestId: String,
+        stillMissing: List<String>,
+        permanent: List<String>,
+        keepNotification: Boolean = false,
+    ) {
         permanentlyDenied.addAll(permanent)
+        // The locked-phone path settles at once so the dispatch is not stalled
+        // for a minute behind a keyguard — but it settles by REFUSING, and the
+        // notification is the whole of what it leaves the user. Cancelling it
+        // on the way out of [ensure] would take that away milliseconds later.
+        if (keepNotification) notificationIds.remove(requestId)
         settle(requestId, stillMissing)
     }
 
@@ -222,7 +232,15 @@ object PermissionBridge {
             .setCategory(Notification.CATEGORY_STATUS)
             .setContentIntent(pi)
             .setAutoCancel(true)
-            .setTimeoutAfter(TIMEOUT_MS)
+            // No `setTimeoutAfter`. The consent prompt's notification expires
+            // with its request because an approval that outlived its command
+            // would be answering a question nobody is still asking; a
+            // permission is not like that. This one is an offer to grant
+            // something, it stays true after the dispatch that prompted it has
+            // given up, and the locked-phone path deliberately leaves it for
+            // whenever the user next picks up the phone. Tapping a stale one
+            // settles nothing (the request is long gone) and still walks them
+            // through the grant, which is the useful outcome.
             .build()
         return try {
             nm.notify(code, notification)

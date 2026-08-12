@@ -127,13 +127,30 @@ class HeadsetButtonSession(context: Context) {
             if (MediaButtonGate.resetsDebounce(action)) lastAcceptedAt = now
 
             return when (action) {
-                // Consumed and dropped. Returning true is the point: false
-                // would hand the press onward, and rule 1 says a press during a
-                // consent prompt reaches nothing at all.
+                // Consumed and dropped. Nothing else sees this press.
                 MediaButtonGate.Action.IGNORE -> true
 
-                // Not ours. false lets the framework route it as it would have.
-                MediaButtonGate.Action.PASS_TO_MEDIA -> false
+                // Not ours — so hand it to the default handler, which is what
+                // `super` is: it turns the key event into the transport
+                // callbacks (onPlay/onPause/…) a media app would have got.
+                //
+                // Returning `false` here was wrong, and wrong in a way worth
+                // writing down: the framework's `MediaSession.CallbackStub`
+                // does not read the boolean this method returns. There is no
+                // "decline and let it flow onward" — once a session is the
+                // media-button receiver, the press has arrived and the only
+                // question is what THIS callback does with it. False was
+                // behaviourally identical to IGNORE, so "a tap while music is
+                // playing pauses the music" — rule 2, the one that keeps Jarvis
+                // from being the reason a podcast will not stop — swallowed the
+                // press instead.
+                //
+                // The honest limit, which `docs/earpiece.md` now states: Jarvis
+                // has no way to give the button back to another app. What saves
+                // rule 2 in practice is that an app which is genuinely playing
+                // is usually the media-button session itself, so the press
+                // never reaches here at all.
+                MediaButtonGate.Action.PASS_TO_MEDIA -> super.onMediaButtonEvent(intent)
 
                 MediaButtonGate.Action.START_TURN -> { startTurn(); true }
 

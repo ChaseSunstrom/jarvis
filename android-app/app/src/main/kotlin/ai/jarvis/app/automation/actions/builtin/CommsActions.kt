@@ -63,6 +63,26 @@ internal object ContactResolver {
         TARGET_KEYS.firstNotNullOfOrNull { key -> params.str(key) }
 
     /**
+     * Whether resolving THESE parameters will touch the address book.
+     *
+     * A literal number needs no lookup, so it must not raise "Allow Jarvis to
+     * access your Contacts?". That matters more than a saved tap: the resolver
+     * runs BEFORE the Tier-3 consent gate — it has to, so the prompt can show
+     * the real number — which means a permission it asks for is one a server
+     * can ask for without any human approving anything. Bounding it to the
+     * calls that genuinely need contacts is what keeps that from being a way to
+     * pester somebody into granting them.
+     *
+     * Nothing here reads the address book; it is the same string test
+     * [resolveTarget] uses to decide the same question a moment later.
+     */
+    fun lookupPermissions(params: JSONObject): List<String> {
+        val wanted = target(params) ?: return emptyList()
+        if (PhoneNumbers.isPlausible(wanted)) return emptyList()
+        return listOf(Manifest.permission.READ_CONTACTS)
+    }
+
+    /**
      * Look [query] up in contacts.
      *
      * Distinct *numbers* are what count as candidates, not distinct rows: one
@@ -204,6 +224,9 @@ object SendSms : JarvisAction {
     override fun isAvailable(ctx: Context): Boolean =
         ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
 
+    override fun resolvePermissionsFor(params: JSONObject): List<String> =
+        ContactResolver.lookupPermissions(params)
+
     /** "Text Mum" becomes a number here, before the consent prompt is drawn. */
     override suspend fun resolve(ctx: Context, params: JSONObject): ResolveResult =
         withContext(Dispatchers.IO) { ContactResolver.resolveTarget(ctx, params, "text") }
@@ -266,6 +289,9 @@ object PlaceCall : JarvisAction {
 
     /** Same as [SendSms]: the lookup runs ahead of the prompt, so its grant does too. */
     override val resolvePermissions = listOf(Manifest.permission.READ_CONTACTS)
+
+    override fun resolvePermissionsFor(params: JSONObject): List<String> =
+        ContactResolver.lookupPermissions(params)
 
     override fun isAvailable(ctx: Context): Boolean =
         ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)

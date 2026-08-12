@@ -122,12 +122,18 @@ class ActionRegistry(
             if (action.requiredPermissions.isNotEmpty()) {
                 entry.put("android_permissions", action.requiredPermissions.toJsonArray())
                 // What is NOT held yet, so the server can tell the model this
-                // one will put a dialog in front of the user before it runs.
+                // one may put a dialog in front of the user before it runs.
                 // Not the same as `available: false` — the dispatcher asks for
                 // these now, so an ungranted action is one prompt away from
                 // working, not one that cannot run at all. Reporting it as
                 // unavailable would teach the model never to try, and the grant
                 // would then never be requested.
+                //
+                // And not the same as "this action will fail", either: which of
+                // its declared permissions a given call needs depends on the
+                // parameters (see JarvisAction.permissionsFor), so this is the
+                // widest possible list and `get_location` can be perfectly able
+                // to answer a coarse question while it names the fine grant.
                 val absent = safeMissingPermissions(action.requiredPermissions)
                 if (absent.isNotEmpty()) entry.put("missing_permissions", absent.toJsonArray())
             }
@@ -298,7 +304,11 @@ class ActionRegistry(
         // it. Asking here is safe: the standing bans above have already run,
         // and this is a read-only lookup whose whole purpose is to make the
         // consent prompt truthful.
-        val forResolve = action.resolvePermissions
+        // ...and only the ones THIS call needs. `send_sms` handed a literal
+        // number has nothing to look up, and since this step runs ahead of the
+        // Tier-3 gate, asking anyway would be a contacts dialog a server could
+        // raise repeatedly for work that is never going to happen.
+        val forResolve = safeResolvePermissionsFor(action, live)
         if (forResolve.isNotEmpty()) {
             val absent = safeMissingPermissions(forResolve)
             if (absent.isNotEmpty()) {
@@ -404,19 +414,27 @@ class ActionRegistry(
         // one for a command the user is about to refuse, or that panic mode has
         // already killed. It is also the only ordering that cannot be used as a
         // dialog-spam primitive by a server that sends nonsense.
-        val needed = action.requiredPermissions
+        //
+        // It ASKS. It does not GATE, and that distinction cost a working
+        // feature to learn: `get_location` declares both location grants and
+        // serves a coarse request from the coarse one alone, so refusing here
+        // when anything was still missing meant that tapping **Approximate** on
+        // the system dialog turned "where am I" into a permanent failure — and
+        // `PermissionBridge`'s don't-ask-again memo then made it a silent and
+        // instant one. Which permissions THIS call truly needs is a question
+        // only the action can answer, it answers it in `execute` with its own
+        // `checkSelfPermission`, and that answer was always the authority.
+        // What is missing after the ask is recorded on the audit line and
+        // nothing else.
+        var permissionNote: String? = null
+        val needed = safePermissionsFor(action, live)
         if (needed.isNotEmpty()) {
             val absent = safeMissingPermissions(needed)
             if (absent.isNotEmpty()) {
                 waited = true
                 val stillMissing = safeRequestPermissions(actionId, absent)
                 if (stillMissing.isNotEmpty()) {
-                    return finish(
-                        ActionResult.missingPermission(stillMissing.first()),
-                        effective,
-                        decision,
-                        "$explanation, not granted: ${stillMissing.joinToString(", ")}"
-                    )
+                    permissionNote = "not granted: ${stillMissing.joinToString(", ")}"
                 }
             }
         }
@@ -453,7 +471,12 @@ class ActionRegistry(
             ActionResult.error("${t.javaClass.simpleName}: ${t.message ?: "action failed"}")
         }
 
-        return finish(result, effective, decision, explanation)
+        return finish(
+            result,
+            effective,
+            decision,
+            listOfNotNull(explanation, permissionNote).joinToString(", ")
+        )
     }
 
     private suspend fun askHuman(request: ApprovalRequest): ApprovalVerdict {
@@ -488,6 +511,31 @@ class ActionRegistry(
                 "could not work out what ${action.id} was aimed at: " +
                     (t.message ?: t.javaClass.simpleName)
             )
+        }
+
+    /**
+     * What this invocation needs, failing **closed onto the declared list**.
+     *
+     * A throwing `permissionsFor` must not silently reduce what gets asked for
+     * — that would be a dialog quietly skipped — so the declared list is the
+     * fallback. Asking for too much is a worse dialog; asking for too little is
+     * a feature that does not work.
+     */
+    private fun safePermissionsFor(action: JarvisAction, params: JSONObject): List<String> =
+        try {
+            action.permissionsFor(params)
+        } catch (t: Throwable) {
+            Log.w(TAG, "permissionsFor threw for ${action.id}; using the declared list", t)
+            action.requiredPermissions
+        }
+
+    /** Same, for the resolver's own grants. */
+    private fun safeResolvePermissionsFor(action: JarvisAction, params: JSONObject): List<String> =
+        try {
+            action.resolvePermissionsFor(params)
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolvePermissionsFor threw for ${action.id}; using the declared list", t)
+            action.resolvePermissions
         }
 
     /**

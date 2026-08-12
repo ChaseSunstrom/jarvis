@@ -51,6 +51,26 @@ interface JarvisAction {
     val requiredPermissions: List<String> get() = emptyList()
 
     /**
+     * The permissions [execute] needs **for these parameters**, which is not
+     * always all of [requiredPermissions].
+     *
+     * The distinction is load-bearing and was learned the hard way. `get_location`
+     * declares both location grants and its `execute` serves a coarse request
+     * from `ACCESS_COARSE_LOCATION` alone — so a dispatcher that treated the
+     * declared list as all-or-nothing turned a working command into a permanent
+     * failure the moment somebody tapped **Approximate** on the system dialog.
+     * `get_sensors` is the mirror image: it needs `ACTIVITY_RECOGNITION` only
+     * when asked for the step counter, and asking for it on a temperature read
+     * would be a dialog nobody could explain.
+     *
+     * Declared list = what this action can ever need, for the device manifest
+     * and the settings screen. This = what THIS call needs, for the dialog.
+     * Returning more than the declared list is allowed but pointless; returning
+     * fewer is the normal case.
+     */
+    fun permissionsFor(params: JSONObject): List<String> = requiredPermissions
+
+    /**
      * Permissions [resolve] itself needs, as opposed to [execute].
      *
      * Split out because the two are asked for at different moments. Resolution
@@ -68,6 +88,17 @@ interface JarvisAction {
      * no lookup at all.
      */
     val resolvePermissions: List<String> get() = emptyList()
+
+    /**
+     * As [permissionsFor], for [resolve].
+     *
+     * The case that needs it: `send_sms` given a literal number has nothing to
+     * look up, so raising "Allow Jarvis to access your Contacts?" before the
+     * consent prompt would be a dialog for work that is not going to happen —
+     * and, because this one runs ahead of the Tier-3 gate, one a server could
+     * ask for over and over.
+     */
+    fun resolvePermissionsFor(params: JSONObject): List<String> = resolvePermissions
 
     /** Hard cap on execution. The dispatcher enforces it with `withTimeout`. */
     val timeoutMs: Long get() = 15_000L
