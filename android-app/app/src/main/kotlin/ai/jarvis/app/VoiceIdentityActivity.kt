@@ -329,6 +329,10 @@ class VoiceIdentityActivity : Activity() {
 
     private fun render(fresh: VoiceIdentityClient.Status) {
         status = fresh
+        // Cache what the server is doing, so a turn starting later does not
+        // need a round trip to find out whether on-device transcription would
+        // bypass the gate. See JarvisConfig.speakerGateEnforcing.
+        config.speakerGateEnforcing = fresh.mode == "enforce" && fresh.enrolled
         val prompts = fresh.prompts
         promptView.text = when {
             prompts.isEmpty() -> "Say a sentence in your ordinary voice."

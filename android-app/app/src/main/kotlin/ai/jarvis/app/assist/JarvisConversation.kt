@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import ai.jarvis.app.audio.CaptureProfile
 import ai.jarvis.app.audio.HeadsetMonitor
 import ai.jarvis.app.config.JarvisConfig
@@ -276,6 +277,29 @@ class JarvisConversation(
      */
     private fun startLocalTurn(): Boolean {
         if (!config.sttOnDevice) return false
+        // Suspended while the server is refusing voices it does not recognise.
+        //
+        // This path sends WORDS. The speaker check runs on the server, on
+        // SOUND. With both switched on, every turn walked straight past the
+        // gate — and neither setting looks dangerous on its own, which is what
+        // made the combination worth catching here rather than in a warning
+        // nobody reads.
+        //
+        // Verifying on the phone instead is not on the table: Android's
+        // on-device recogniser owns the microphone and hands this app partial
+        // text and an RMS level, never samples. There is no audio here to
+        // embed. So the streaming path takes the turn, the server hears the
+        // voice, and the feature the user switched on last is the one that
+        // wins — which is the right one, because it is the one that can refuse
+        // a stranger.
+        //
+        // The server refuses this text anyway if we get it wrong (see
+        // PipelineRun.audio_derived); this is the half that keeps Jarvis
+        // WORKING rather than merely safe.
+        if (config.speakerGateEnforcing) {
+            Log.i(TAG, "on-device transcription suspended: the speaker gate is enforcing")
+            return false
+        }
         if (!LocalTranscriber.isAvailable(context)) return false
 
         ui.onMode(JarvisOrbView.Mode.LISTENING, "LISTENING")
@@ -628,6 +652,8 @@ class JarvisConversation(
          * of 0.02, is high enough for that and low enough for a raised voice at
          * arm's length.
          */
+        private const val TAG = "JarvisConversation"
+
         private const val BARGE_RATIO = 8f
         private const val BARGE_MIN = 0.02f
 

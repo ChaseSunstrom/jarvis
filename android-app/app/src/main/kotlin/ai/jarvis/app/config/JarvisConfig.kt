@@ -180,6 +180,34 @@ class JarvisConfig(context: Context) {
         get() = prefs.getBoolean(KEY_STT_ON_DEVICE, true)
         set(v) = prefs.edit().putBoolean(KEY_STT_ON_DEVICE, v).apply()
 
+    /**
+     * Whether the SERVER is currently refusing voices it does not recognise.
+     *
+     * Cached, because it changes rarely and the answer is needed at the moment
+     * a turn starts — when there is no time for a round trip. Refreshed
+     * whenever a surface asks the server about the voiceprint (the enrolment
+     * screen, and the settings screen when it opens).
+     *
+     * It exists to keep two settings from silently cancelling each other.
+     * Transcribing on this phone sends WORDS; the speaker check runs on the
+     * server, on SOUND. With both switched on, every turn walked past the gate
+     * — and neither setting looks dangerous on its own, which is exactly why
+     * the combination is worth a flag.
+     *
+     * Verifying on the phone instead is not available: Android's on-device
+     * recogniser owns the microphone and hands this app partial text and an
+     * RMS level, never samples. There is no audio here to check. So while the
+     * gate enforces, on-device transcription is SUSPENDED rather than
+     * bypassing it, and the settings screen says which and why.
+     *
+     * Defaults false: a phone that has never asked must not lose on-device
+     * transcription because of a server state it has not heard about. The
+     * server refuses the turn in that case, which is the fail-closed half.
+     */
+    var speakerGateEnforcing: Boolean
+        get() = prefs.getBoolean(KEY_SPEAKER_GATE, false)
+        set(v) = prefs.edit().putBoolean(KEY_SPEAKER_GATE, v).apply()
+
     /** BCP-47 tag the on-device recogniser is asked for. */
     var sttLanguage: String
         get() = prefs.getString(KEY_STT_LANGUAGE, null)?.takeIf { it.isNotBlank() }
@@ -279,6 +307,7 @@ class JarvisConfig(context: Context) {
         private const val KEY_SETUP_SHOWN = "setup_checklist_shown"
         private const val KEY_WAKE_ON_DEVICE = "wake_on_device"
         private const val KEY_STT_ON_DEVICE = "stt_on_device"
+        private const val KEY_SPEAKER_GATE = "speaker_gate_enforcing"
         private const val KEY_STT_LANGUAGE = "stt_language"
         private const val KEY_WAKE_ENABLED = "wake_enabled"
         private const val KEY_MIC_MUTED = "mic_muted"

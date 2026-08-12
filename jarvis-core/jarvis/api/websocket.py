@@ -158,6 +158,12 @@ def _run_kwargs(msg: dict[str, Any]) -> dict[str, Any]:
         kwargs["sample_rate"] = int(payload["sample_rate"])
     if msg.get("timeout") is not None:
         kwargs["timeout"] = float(msg["timeout"])
+    # "This text came out of a microphone." Set by a client that transcribed on
+    # its own device and is sending words instead of sound. See
+    # PipelineRun.audio_derived — it is what stops on-device transcription from
+    # walking straight past the speaker gate.
+    if payload.get("audio_derived") is not None:
+        kwargs["audio_derived"] = bool(payload["audio_derived"])
     return kwargs
 
 

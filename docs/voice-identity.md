@@ -152,13 +152,20 @@ threshold of 9.0 on timbre alone. It was getting in.
 a stranger", and treating a bug as a refusal would lock you out of your own
 house on a traceback. It is logged loudly and the turn proceeds.
 
-**Transcribing on the phone and this feature do not compose yet.** The check
-runs on the server, on the audio. A turn the phone transcribes locally sends
-words rather than sound, so there is nothing to check and the turn is not
-verified. Leave **Settings → Speech to text → Transcribe on this phone** off
-while the gate is enforcing. Closing this properly means porting the embedding
-to Kotlin so the phone can verify locally; it is listed as an open gap in
-[`verification.md`](verification.md) rather than papered over.
+**Transcribing on the phone suspends itself while this is enforcing**, and you
+do not have to remember to do anything. A turn the phone transcribes locally
+sends words rather than sound, so there is nothing to check — with both switched
+on, every turn used to walk past the gate. Neither setting looks dangerous on
+its own, which is why this is handled in code rather than in a warning:
+
+* the phone stops using the local path while the gate enforces, streams instead,
+  and the settings screen's status line reads SUSPENDED with the reason;
+* the server refuses a transcript that admits it came from a microphone it never
+  heard, so the guarantee holds even if the phone is old or misconfigured.
+
+It cannot simply move to the phone. Android's on-device recogniser *owns the
+microphone*: the app gets partial text and a level, never samples, so there is no
+audio there to check. See [`../DEVIATIONS.md`](../DEVIATIONS.md) §10.
 
 **The console's text chat is not gated.** Typing is authenticated by the bearer
 token, which is a stronger credential than a voice. This gate is about who is

@@ -208,6 +208,7 @@ class PipelineRun:
         sample_rate: int = DEFAULT_RATE,
         sample_width: int = DEFAULT_WIDTH,
         channels: int = DEFAULT_CHANNELS,
+        audio_derived: bool = False,
         vad_enabled: bool = True,
         vad_threshold: float = DEFAULT_VAD_THRESHOLD,
         vad_silence_ms: int = DEFAULT_VAD_SILENCE_MS,
@@ -238,6 +239,9 @@ class PipelineRun:
         self.sample_rate = int(sample_rate)
         self.sample_width = int(sample_width)
         self.channels = int(channels)
+        #: True when this run's TEXT came out of a microphone on the client
+        #: rather than off a keyboard. See :meth:`_settle_speaker`.
+        self.audio_derived = bool(audio_derived)
         self.vad_enabled = bool(vad_enabled)
         self.vad_threshold = float(vad_threshold)
         self.vad_silence_ms = int(vad_silence_ms)
@@ -503,6 +507,64 @@ class PipelineRun:
         """
         task, self._verify_task = self._verify_task, None
         if task is None:
+            # Nothing was verified. Usually that is right — no gate configured,
+            # or a text run somebody typed — but there is one case where it is
+            # a hole, and it is the one an owner is most likely to open by
+            # accident.
+            #
+            # A client that transcribes on its own device sends WORDS, not
+            # sound. `start_stage: "intent"`, no audio, nothing for the gate to
+            # look at — so with `mode: enforce` and on-device transcription
+            # both switched on, every turn walked past the check. Neither
+            # setting looks dangerous; the combination silently disabled the
+            # feature.
+            #
+            # It cannot be fixed by verifying on the phone, either. Android's
+            # on-device recogniser OWNS the microphone — the app is handed
+            # partial text and an RMS level, never samples — so there is no
+            # audio on that device to embed. That is a platform fact, not a
+            # gap in this codebase.
+            #
+            # So a run that admits its text came from a microphone is refused
+            # when the gate is enforcing. Typed input is untouched: a person at
+            # a keyboard holding the bearer token is authenticated by the
+            # token, and this gate is about who is speaking in a room where the
+            # microphone is open to whoever is standing there.
+            #
+            # A hostile client could simply not set the flag — but a hostile
+            # client holding the token can already send any transcript it
+            # likes. This closes the ACCIDENT, not the attack, and the docs say
+            # so in those words.
+            if self.audio_derived and self._gate_active():
+                gate = self.speaker
+                if getattr(gate, "mode", None) == "enforce":
+                    _LOGGER.warning(
+                        "Refusing a transcript from %s: it came from a microphone this "
+                        "server never heard, and the speaker gate is enforcing",
+                        "an on-device recogniser",
+                    )
+                    await self._emit(
+                        EVENT_SPEAKER_END,
+                        {
+                            "speaker_output": {
+                                "accepted": False,
+                                "reason": "unverifiable-transcript",
+                                "mode": gate.mode,
+                                "enforced": True,
+                            }
+                        },
+                    )
+                    await self._fail(
+                        PipelineError(
+                            ERROR_NOT_RECOGNISED,
+                            "this text was transcribed on a device, so there is no audio "
+                            "to check it against; turn off on-device transcription while "
+                            "the speaker gate is enforcing",
+                        )
+                    )
+                    if getattr(gate, "on_reject", "speak") != "speak":
+                        return ""
+                    return str(getattr(gate, "refusal", "") or "")
             return None
         try:
             verdict = await task

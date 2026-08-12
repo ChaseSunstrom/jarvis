@@ -522,7 +522,25 @@ class AssistPipelineClient(
             .put(
                 "input",
                 if (startStage == StartStage.INTENT) {
-                    JSONObject().put("text", inputText.orEmpty())
+                    // `audio_derived` is the honest label on this frame: every
+                    // INTENT-start run this app makes carries text that came
+                    // out of a microphone on this phone, never off a keyboard.
+                    //
+                    // It matters because the speaker gate runs on the server,
+                    // on SOUND. Words alone cannot be checked, so a server that
+                    // is enforcing refuses this rather than letting on-device
+                    // transcription walk past the gate. The console's typed
+                    // chat does not set it and is unaffected — a person at a
+                    // keyboard is authenticated by the token they typed it
+                    // with.
+                    //
+                    // A client could lie by omitting it, and one holding the
+                    // token can already send any transcript it likes; this
+                    // closes the accident of two settings cancelling each
+                    // other, not an attack.
+                    JSONObject()
+                        .put("text", inputText.orEmpty())
+                        .put("audio_derived", true)
                 } else {
                     JSONObject().put("sample_rate", 16000)
                 },

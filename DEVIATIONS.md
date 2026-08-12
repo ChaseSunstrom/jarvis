@@ -138,18 +138,45 @@ Two consequences, both stated in `docs/voice-identity.md` and both real:
   television and a stranger at the window. It is not a second factor, and the
   tier system still stands in front of every dangerous verb.
 
-## 10. On-device transcription and voice identity do not compose
+## 10. On-device transcription suspends itself while voice identity enforces
 
 The speaker check runs on the server, on the turn's audio. A turn the phone
-transcribes locally sends words rather than sound, so there is nothing to check
-and that turn is simply not verified.
+transcribes locally sends words rather than sound, so there is nothing to check.
+With `mode: enforce` and on-device transcription both switched on, every turn
+walked straight past the gate — and neither setting looks dangerous on its own,
+which is what made the combination worth engineering against rather than warning
+about.
 
-Rather than silently disable one of them, both stay available and the settings
-screen says plainly to leave on-device transcription off while the gate is
-enforcing. Closing it properly means porting `voice/dsp.py` and the embedding to
-Kotlin so the phone can verify locally, with a shared test fixture pinning
-numeric parity between the two implementations. That work has not been done, and
-`docs/verification.md` carries the row.
+**Verifying on the phone instead is not available, and this is a platform fact
+rather than unfinished work.** `LocalTranscriber` uses
+`SpeechRecognizer.createOnDeviceSpeechRecognizer`, and the platform recogniser
+*owns the microphone*: the app is handed partial text and an RMS level through
+`onRmsChanged`, and never a single audio sample. There is no PCM on that device
+to embed. An earlier version of this file proposed porting `voice/dsp.py` to
+Kotlin so the phone could verify locally; that would have produced a correct
+embedding implementation with nothing to feed it — precisely the "seam with no
+caller" this codebase has been bitten by three times. It is not being written.
+
+Owning the microphone instead would mean replacing the platform recogniser with
+a bundled speech model, which is a different feature with a different cost.
+
+So the two are made mutually exclusive, in code, on both sides:
+
+* **The phone** suspends the on-device path while the gate enforces
+  (`JarvisConversation.startLocalTurn`), streams instead, and the settings
+  screen's status line says SUSPENDED and why. This is the half that keeps
+  Jarvis *working*.
+* **The server** refuses a transcript that admits it came from a microphone it
+  never heard (`PipelineRun.audio_derived`). This is the half that keeps it
+  *safe*, and it holds even if the phone is old, misconfigured, or wrong.
+
+Typed input is untouched: a person at a keyboard is authenticated by the bearer
+token they typed it with, and this gate is about who is speaking in a room where
+the microphone is open to whoever is standing there.
+
+A hostile client could omit the flag — but a client holding the token can
+already send any transcript it likes. This closes the **accident**, not the
+attack, and that distinction is stated at the point of use rather than implied.
 
 ## Licensing notes
 

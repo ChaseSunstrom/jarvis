@@ -256,11 +256,13 @@ class SettingsActivity : Activity() {
         col.addView(
             JarvisUi.hint(
                 ctx,
-                "Transcribing on this phone and \"only my voice\" do not yet work " +
-                    "together: the check runs on the server, on the audio, and a turn " +
-                    "this phone transcribes locally sends words rather than sound. " +
-                    "Leave the switch above off while the gate is enforcing, or the " +
-                    "server has nothing to check."
+                "Transcribing on this phone and \"only my voice\" cannot both be in " +
+                    "force: the check runs on your server, on the sound, and a turn this " +
+                    "phone transcribes sends words instead. Nothing is left to you — " +
+                    "while the gate is enforcing, on-device transcription suspends itself " +
+                    "and the line above says so. It cannot simply move here either: " +
+                    "Android's offline recogniser owns the microphone and hands this app " +
+                    "partial text and a level, never the audio."
             )
         )
 
@@ -773,7 +775,19 @@ class SettingsActivity : Activity() {
     private fun refreshSttStatus() {
         val possible = LocalTranscriber.isAvailable(this)
         val wanted = sttOnDevice.isChecked
+        // Suspension first, because it OVERRIDES both of the others: with the
+        // gate enforcing this path does not run whatever the switch says or
+        // whatever the phone can do, and a line claiming "the recording never
+        // leaves this phone" while every turn is being streamed would be the
+        // one wrong thing this screen could say.
+        val suspended = wanted && config.speakerGateEnforcing
         sttStatus.text = when {
+            suspended ->
+                "SUSPENDED while Jarvis is set to answer only your voice. That check runs " +
+                    "on your server, on the sound; a turn transcribed here sends words, " +
+                    "which cannot be checked — so audio is being streamed instead. " +
+                    "Android's offline recogniser owns the microphone and never hands this " +
+                    "app the audio, so the check cannot move here."
             wanted && possible ->
                 "Speech is turned into text on this phone. The recording never leaves it — " +
                     "only the words do."
@@ -783,7 +797,9 @@ class SettingsActivity : Activity() {
                     "and the language pack installed."
             else -> "Audio is streamed to your server, which transcribes it."
         }
-        sttStatus.setTextColor(if (wanted && possible) JarvisUi.DIM else JarvisUi.GOLD)
+        sttStatus.setTextColor(
+            if (wanted && possible && !suspended) JarvisUi.DIM else JarvisUi.GOLD
+        )
     }
 
     private fun downloadModels() {

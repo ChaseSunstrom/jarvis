@@ -46,6 +46,7 @@ HANDLER = JARVIS / "companion" / "CompanionMessageHandler.kt"
 SEAM = JARVIS / "companion" / "CompanionSpeaker.kt"
 HOST = JARVIS / "companion" / "ConversationAskHost.kt"
 CONVERSATION = JARVIS / "assist" / "JarvisConversation.kt"
+PIPELINE_CLIENT = JARVIS / "assist" / "AssistPipelineClient.kt"
 
 #: Every surface that owns a conversation, and therefore has somewhere to put
 #: a question. If a fourth appears, it belongs on this list.
@@ -214,6 +215,59 @@ def test_every_failure_still_hands_the_microphone_back():
     assert len(stop) == 2 and "isHeldForQuestion" in stop[1][:400], (
         "tearing the host down while a question is in flight leaves the "
         "conversation muted forever"
+    )
+
+
+# --- on-device transcription vs the speaker gate ----------------------------
+def test_the_local_path_suspends_while_the_gate_enforces():
+    """Two settings that silently cancelled each other.
+
+    Transcribing on this phone sends WORDS. The speaker check runs on the
+    server, on SOUND. With `mode: enforce` and on-device transcription both on,
+    every turn walked straight past the gate — and neither setting looks
+    dangerous on its own.
+
+    It cannot be fixed by verifying here instead: `createOnDeviceSpeechRecognizer`
+    owns the microphone and hands this app partial text and an RMS level, never
+    samples, so there is no audio on the device to embed. See DEVIATIONS §10.
+    """
+    source = code_only(CONVERSATION.read_text(encoding="utf-8"))
+    body = source.split("private fun startLocalTurn()", 1)
+    assert len(body) == 2, "startLocalTurn is gone"
+    body = body[1][:900]
+    assert "config.speakerGateEnforcing" in body, (
+        "startLocalTurn no longer checks whether the server is enforcing, so "
+        "on-device transcription can bypass the speaker gate again"
+    )
+    # And it must bail BEFORE doing anything else with the recogniser.
+    assert body.index("config.speakerGateEnforcing") < body.index(
+        "LocalTranscriber.isAvailable"
+    ), "the enforcement check must come before the local path is chosen"
+
+
+def test_the_client_admits_its_text_came_from_a_microphone():
+    """The server's half. The phone check keeps Jarvis working; this is what
+    keeps it safe when the phone is old, misconfigured, or wrong."""
+    source = code_only(PIPELINE_CLIENT.read_text(encoding="utf-8"))
+    body = source.split("start_stage", 1)[1]
+    assert '"audio_derived", true' in body.replace("'", '"'), (
+        "an INTENT-start run no longer declares that its text came from a "
+        "microphone, so the server cannot tell it apart from somebody typing"
+    )
+
+
+def test_only_the_transcript_path_claims_to_be_audio_derived():
+    """Typed input must not be flagged: a person at a keyboard is authenticated
+    by the bearer token they typed it with, and flagging it would break the
+    console's chat the moment the gate turns on."""
+    source = code_only(PIPELINE_CLIENT.read_text(encoding="utf-8"))
+    run = source.split("assist_pipeline/run", 1)[1][:1600]
+    flag_at = run.find("audio_derived")
+    intent_at = run.find("StartStage.INTENT")
+    assert flag_at != -1 and intent_at != -1
+    assert intent_at < flag_at, (
+        "audio_derived is set outside the INTENT branch, so it would be "
+        "attached to microphone runs and typed runs alike"
     )
 
 

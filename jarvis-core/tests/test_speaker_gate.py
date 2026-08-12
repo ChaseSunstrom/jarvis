@@ -216,6 +216,75 @@ async def test_unverifiable_can_be_refused_when_you_want_it_to_be(profile):
     assert run.error.code == ERROR_NOT_RECOGNISED
 
 
+# --- the on-device-transcription hole ---------------------------------------
+async def test_a_transcript_from_a_microphone_is_refused_while_enforcing(profile):
+    """The hole an owner opens by accident.
+
+    A phone that transcribes locally sends WORDS: `start_stage: "intent"`, no
+    audio, nothing for the gate to look at. With `mode: enforce` and on-device
+    transcription both on, every turn used to walk straight past the check —
+    and neither setting looks dangerous on its own.
+    """
+    speaker = gate(profile, mode=MODE_ENFORCE)
+    agent = Recorder()
+    run = PipelineRun(stt=FakeStt(), tts=FakeTts(), speaker=speaker, converse=agent,
+                      start_stage="intent", end_stage="tts", audio_derived=True,
+                      tts_cache={})
+    await run.execute(None, text="unlock the front door")
+    assert agent.calls == []
+    assert run.error is not None
+    assert run.error.code == ERROR_NOT_RECOGNISED
+
+
+async def test_typed_text_is_not_touched_by_the_gate(profile):
+    """The console's chat is authenticated by the bearer token somebody typed
+    it with. This gate is about who is speaking in a room where the microphone
+    is open to whoever is standing there — not about keyboards."""
+    speaker = gate(profile, mode=MODE_ENFORCE)
+    agent = Recorder()
+    run = PipelineRun(stt=FakeStt(), tts=FakeTts(), speaker=speaker, converse=agent,
+                      start_stage="intent", end_stage="intent", tts_cache={})
+    await run.execute(None, text="what is on my calendar")
+    assert agent.calls == ["what is on my calendar"]
+    assert run.error is None
+
+
+async def test_an_audio_derived_transcript_is_fine_when_not_enforcing(profile):
+    """`observe` still observes and still lets it through — it has nothing to
+    score, but it must not start refusing turns that `off` would allow."""
+    for mode in (MODE_OFF, MODE_OBSERVE):
+        speaker = gate(profile, mode=mode)
+        agent = Recorder()
+        run = PipelineRun(stt=FakeStt(), tts=FakeTts(), speaker=speaker, converse=agent,
+                          start_stage="intent", end_stage="intent", audio_derived=True,
+                          tts_cache={})
+        await run.execute(None, text="turn the kitchen light on")
+        assert agent.calls == ["turn the kitchen light on"], mode
+        assert run.error is None, mode
+
+
+async def test_an_audio_derived_flag_does_nothing_when_nobody_is_enrolled():
+    """A flag on a frame must not be able to refuse turns on a server that has
+    no voiceprint — that would make an app update break an unconfigured
+    install."""
+    speaker = SpeakerGate(profile=None, mode=MODE_ENFORCE)
+    agent = Recorder()
+    run = PipelineRun(stt=FakeStt(), tts=FakeTts(), speaker=speaker, converse=agent,
+                      start_stage="intent", end_stage="intent", audio_derived=True,
+                      tts_cache={})
+    await run.execute(None, text="hello")
+    assert agent.calls == ["hello"]
+
+
+async def test_a_normal_audio_turn_still_verifies_normally(profile):
+    """The flag must not short-circuit the real check: a streamed turn carries
+    audio AND could carry the flag, and the audio is what decides."""
+    speaker = gate(profile, mode=MODE_ENFORCE)
+    run, agent, _ = await run_turn(speaker, OWNER.utterance(seconds=2.5, seed=414))
+    assert agent.calls == ["unlock the front door"]
+    assert run.error is None
+
+
 # --- failing open, deliberately ---------------------------------------------
 async def test_a_verifier_that_crashes_does_not_lock_the_owner_out(profile):
     """A bug is not a stranger. Treating a traceback as a refusal would lock
