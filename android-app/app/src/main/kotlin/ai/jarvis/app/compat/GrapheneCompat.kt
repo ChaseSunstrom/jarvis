@@ -348,6 +348,19 @@ object GrapheneCompat {
     const val ID_FULL_SCREEN = "full_screen"
     const val ID_EXACT_ALARMS = "exact_alarms"
 
+    /**
+     * The action permissions, re-exported from [RuntimePermissions], which is
+     * where the decision about which grants share a row is made. Every
+     * dangerous permission in that table belongs to exactly one of these — the
+     * invariant `tools/runtime_permissions_test.py` enforces, and the reason
+     * "Everything is granted" can be believed.
+     */
+    const val ID_PEOPLE = RuntimePermissions.ID_PEOPLE
+    const val ID_CALENDAR = RuntimePermissions.ID_CALENDAR
+    const val ID_LOCATION = RuntimePermissions.ID_LOCATION
+    const val ID_MEDIA = RuntimePermissions.ID_MEDIA
+    const val ID_SENSORS = RuntimePermissions.ID_SENSORS
+
     /** Everything [evaluate] needs, so the verdicts can be tested without a device. */
     data class Status(
         val network: Boolean,
@@ -361,6 +374,19 @@ object GrapheneCompat {
         val postNotifications: Boolean,
         val fullScreenIntents: Boolean,
         val exactAlarms: Boolean,
+        /**
+         * The action permissions, one flag per [RuntimePermissions] group.
+         *
+         * Defaulted to true so that a caller constructing a [Status] by hand —
+         * a test of the network or on-screen logic, say — does not have to know
+         * about grants it is not testing. The real probe in [status] never uses
+         * the defaults.
+         */
+        val people: Boolean = true,
+        val calendar: Boolean = true,
+        val location: Boolean = true,
+        val media: Boolean = true,
+        val sensors: Boolean = true,
     )
 
     /**
@@ -498,6 +524,70 @@ object GrapheneCompat {
             settingsAction = ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
             needsPackageUri = true,
         ),
+
+        // --- what Jarvis may DO, as opposed to whether it runs at all -------
+        //
+        // These are the runtime permissions the actions need. They were all
+        // declared in the manifest and none of them was ever requested, so
+        // every one of them was denied on every device — and this screen said
+        // "Everything is granted", because it did not list them.
+        //
+        // None is essential: Jarvis works perfectly well on a phone where you
+        // never want it touching your messages. Each is now requested at the
+        // moment an action needs it (see RuntimePermissions), so these rows are
+        // the answer to "why did it say permission not granted", not the only
+        // way to grant them.
+        Requirement(
+            id = ID_PEOPLE,
+            label = "Contacts, messages & calls",
+            why = "Texting or calling somebody by name. Without contacts, \"text " +
+                "Sam\" cannot become a number; without SMS and phone, the send " +
+                "and the call fail after you have already approved them.",
+            satisfied = status.people,
+            essential = false,
+            settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
+        Requirement(
+            id = ID_CALENDAR,
+            label = "Calendar",
+            why = "Reading what is on today and putting something in the diary.",
+            satisfied = status.calendar,
+            essential = false,
+            settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
+        Requirement(
+            id = ID_LOCATION,
+            label = "Location",
+            why = "\"Where am I\", navigation, and anything that depends on where " +
+                "you are. Location triggers while Jarvis is off screen need the " +
+                "background grant too, which Android only offers in Settings.",
+            satisfied = status.location,
+            essential = false,
+            settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
+        Requirement(
+            id = ID_MEDIA,
+            label = "Camera & media",
+            why = "\"What am I looking at\", and reading a photo or a recording you " +
+                "point Jarvis at.",
+            satisfied = status.media,
+            essential = false,
+            settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
+        Requirement(
+            id = ID_SENSORS,
+            label = "Activity & nearby devices",
+            why = "Step count, and knowing which car or headset you are connected " +
+                "to — which is what the wake-word gate keys off.",
+            satisfied = status.sensors,
+            essential = false,
+            settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            needsPackageUri = true,
+        ),
     )
 
     /** Probe the device. Every probe is individually exception-safe. */
@@ -514,6 +604,11 @@ object GrapheneCompat {
         postNotifications = canPostNotifications(context),
         fullScreenIntents = canUseFullScreenIntent(context),
         exactAlarms = canScheduleExactAlarms(context),
+        people = RuntimePermissions.groupHeld(context, ID_PEOPLE),
+        calendar = RuntimePermissions.groupHeld(context, ID_CALENDAR),
+        location = RuntimePermissions.groupHeld(context, ID_LOCATION),
+        media = RuntimePermissions.groupHeld(context, ID_MEDIA),
+        sensors = RuntimePermissions.groupHeld(context, ID_SENSORS),
     )
 
     /**

@@ -114,6 +114,13 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- ===================== body & nearby ===================== -->
+    <!-- Tier 1. Step count, via Sensor.TYPE_STEP_COUNTER. Dangerous since
+         Android 10, which is this app's floor, so it is always a runtime
+         request. `get_sensors` checked for it and it was never declared, so the
+         check could only ever fail. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
     <!-- ===================== camera & media ===================== -->
     <!-- Tier 2. "What am I looking at" — an explicit, user-visible capture. -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -272,6 +279,27 @@
             android:excludeFromRecents="true"
             android:taskAffinity="ai.jarvis.app.listen"
             android:noHistory="true" />
+
+        <!--
+          The other trampoline: one frame of Activity so that ASKING for a
+          dangerous permission is possible at all. `requestPermissions` is a
+          method on Activity and every command arrives in a Service, which is
+          why SMS, calls, contacts, calendar and location were declared here and
+          never once requested. See ai.jarvis.app.ui.PermissionBridge.
+
+          Deliberately NOT `noHistory`: the system's permission dialog is a
+          separate activity, so a noHistory host would be finished the moment it
+          lost the foreground and the result would land on a dead window. And
+          NOT `showWhenLocked`: a permission dialog on a locked phone is
+          answered by whoever is holding it.
+        -->
+        <activity
+            android:name=".PermissionRequestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.JarvisInvisible"
+            android:excludeFromRecents="true"
+            android:taskAffinity="ai.jarvis.app.permission"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 
         <!-- Server URL, token, pipeline, device name, wake-word gating. -->
         <activity

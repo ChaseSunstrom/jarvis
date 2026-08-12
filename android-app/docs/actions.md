@@ -72,6 +72,32 @@ Permissions are runtime unless noted. Every action re-checks its own
 permissions and returns `permission <name> not granted` rather than throwing —
 a denied permission is an answer, not a crash.
 
+**Who asks for them.** The dispatcher, at the moment the action is dispatched:
+after the consent gate and before `execute`, so the OS is never asked about a
+command the user is about to refuse. The table of what can be requested is
+`compat/RuntimePermissions.kt`; the mechanism is `ui/PermissionBridge`, which
+raises a one-frame Activity because `requestPermissions` is a method on
+`Activity` and every command arrives inside a Service. Two exceptions, both
+deliberate:
+
+* **The contacts grant for `send_sms` / `place_call` comes first.** Those two
+  turn "Sam" into a number *before* the consent prompt, so that the prompt
+  shows the number the message is actually going to. A grant the resolver needs
+  therefore has to be asked for before the prompt — see `resolvePermissions`.
+  Refusing it is not fatal: the resolver's own answer is "grant Contacts, or
+  give me the number".
+* **Special access is never requested this way.** `WRITE_SETTINGS`,
+  `SCHEDULE_EXACT_ALARM`, `SYSTEM_ALERT_WINDOW` and background location cannot
+  be granted from a dialog; they are a Settings trip, reached from the rows on
+  SYSTEM CHECK. A `requestPermissions` call naming one is refused instantly and
+  permanently, and background location bundled with foreground location makes
+  the platform silently drop the whole request.
+
+An action whose permission is missing is still advertised as `available: true`,
+with a `missing_permissions` list beside it. Marking it unavailable would teach
+the model never to call it, so the grant would never be requested, so it would
+never work.
+
 ### Device and system
 
 | id | tier | params | permission | notes |

@@ -27,7 +27,8 @@ import org.json.JSONObject
  * inside [dispatch] is the security property:
  *
  *   look up -> local tier -> raise by requested tier -> user policy ->
- *   PolicyEngine -> (maybe) human -> execute under a timeout -> audit
+ *   PolicyEngine -> (maybe) human -> (maybe) Android permission ->
+ *   re-check the kill switch -> execute under a timeout -> audit
  *
  * The server's `tier` field is advisory and can only make things stricter; the
  * local table in `builtin/` is the authority.
@@ -36,7 +37,16 @@ class ActionRegistry(
     context: Context,
     private val policy: PolicyProvider,
     private val audit: AuditLog,
-    private val approvals: ApprovalGateway
+    private val approvals: ApprovalGateway,
+    /**
+     * How a dangerous Android permission gets asked for. No default: every
+     * construction site has to decide, because the version of this class that
+     * had no such collaborator shipped for the app's whole life and answered
+     * `permission … not granted` to every SMS, call, contact lookup, calendar
+     * read and location fix without ever showing a dialog. See
+     * [PermissionGateway].
+     */
+    private val permissions: PermissionGateway
 ) {
 
     private val appContext: Context = context.applicationContext
@@ -111,6 +121,15 @@ class ActionRegistry(
                 .put("untrusted_output", action.untrustedOutput)
             if (action.requiredPermissions.isNotEmpty()) {
                 entry.put("android_permissions", action.requiredPermissions.toJsonArray())
+                // What is NOT held yet, so the server can tell the model this
+                // one will put a dialog in front of the user before it runs.
+                // Not the same as `available: false` — the dispatcher asks for
+                // these now, so an ungranted action is one prompt away from
+                // working, not one that cannot run at all. Reporting it as
+                // unavailable would teach the model never to try, and the grant
+                // would then never be requested.
+                val absent = safeMissingPermissions(action.requiredPermissions)
+                if (absent.isNotEmpty()) entry.put("missing_permissions", absent.toJsonArray())
             }
             if (unsupported) {
                 entry.put("unsupported", true)
@@ -178,6 +197,12 @@ class ActionRegistry(
         var live = params
         var resolveNote: String? = null
 
+        // True once this dispatch has been parked in front of a human — for a
+        // consent prompt, an Android permission dialog, or both. It is what
+        // decides whether the kill switch has to be re-read before executing:
+        // anything that took human time could have been revoked while it did.
+        var waited = false
+
         suspend fun finish(
             result: ActionResult,
             tier: ActionTier,
@@ -232,6 +257,58 @@ class ActionRegistry(
                 Decision.DENY,
                 "action reported unavailable"
             )
+        }
+
+        // The standing bans, checked before anything is resolved or asked for.
+        //
+        // Panic, the master switch and a standing NEVER do not depend on the
+        // tier, so they can be decided without the resolved parameters — and
+        // they have to be, now that a resolver can raise an Android permission
+        // dialog. Nothing arriving from a server should be able to put a
+        // dialog on the screen of a phone whose owner has hit panic.
+        //
+        // Expressed through the engine rather than as three `if`s of its own:
+        // at CONFIRM/CONFIRM the truth table returns DENY for exactly the
+        // standing bans and never for a tier reason, so this asks the engine
+        // "is anything switched off?" without keeping a second copy of the
+        // rules. See PolicyEngine.decide.
+        val standing = PolicyRequest(
+            actionId = actionId,
+            localTier = ActionTier.CONFIRM,
+            requestedTier = ActionTier.CONFIRM,
+            userPolicy = policy.policyFor(actionId),
+            automationEnabled = policy.automationEnabled,
+            panic = policy.panic,
+            trust = trust
+        )
+        if (PolicyEngine.decide(standing) == Decision.DENY) {
+            return finish(
+                ActionResult.denied(denyMessage(standing)),
+                action.tier,
+                Decision.DENY,
+                "denied by a standing ban before resolution"
+            )
+        }
+
+        // Resolution has permissions of its own, and it runs before the gate,
+        // so its grant has to be asked for before the gate too. "Text Sam"
+        // needs READ_CONTACTS to become a number at all, and without it the
+        // resolver refuses — which is the reported symptom, a text that was
+        // never sent, one layer further down than the planner bug that shared
+        // it. Asking here is safe: the standing bans above have already run,
+        // and this is a read-only lookup whose whole purpose is to make the
+        // consent prompt truthful.
+        val forResolve = action.resolvePermissions
+        if (forResolve.isNotEmpty()) {
+            val absent = safeMissingPermissions(forResolve)
+            if (absent.isNotEmpty()) {
+                waited = true
+                // The outcome is deliberately not checked. A refusal is not an
+                // error here: the resolver has its own honest answer for a name
+                // it cannot look up ("grant Contacts, or give me the number"),
+                // and a number that needed no lookup must still go through.
+                safeRequestPermissions(actionId, absent)
+            }
         }
 
         // Make fuzzy parameters concrete BEFORE anyone is asked to approve
@@ -313,28 +390,56 @@ class ActionRegistry(
                     runCatching { policy.remember(actionId, UserPolicy.ALLOW_ALWAYS, effective) }
                         .onFailure { Log.w(TAG, "could not persist allow-always for $actionId", it) }
                 }
-
-                // A consent prompt can sit on screen for a minute, and the user
-                // may spend that minute hitting panic, killing the master
-                // switch, or blocking this action outright. Re-read the store
-                // and refuse if anything now says no — an approval is consent
-                // to run, not a licence that outlives the kill switch.
-                val fresh = request.copy(
-                    userPolicy = policy.policyFor(actionId),
-                    automationEnabled = policy.automationEnabled,
-                    panic = policy.panic
-                )
-                if (PolicyEngine.decide(fresh) == Decision.DENY) {
-                    return finish(
-                        ActionResult.denied(denyMessage(fresh)),
-                        effective,
-                        Decision.DENY,
-                        "$explanation, revoked while the prompt was up"
-                    )
-                }
+                waited = true
             }
 
             Decision.ALLOW -> Unit
+        }
+
+        // The Android permission, asked for at the moment it is needed — which
+        // is what the manifest has always claimed and nothing ever did.
+        //
+        // AFTER the consent gate, deliberately. Jarvis's own question is "may I
+        // do this at all", and there is no reason to make the OS ask a second
+        // one for a command the user is about to refuse, or that panic mode has
+        // already killed. It is also the only ordering that cannot be used as a
+        // dialog-spam primitive by a server that sends nonsense.
+        val needed = action.requiredPermissions
+        if (needed.isNotEmpty()) {
+            val absent = safeMissingPermissions(needed)
+            if (absent.isNotEmpty()) {
+                waited = true
+                val stillMissing = safeRequestPermissions(actionId, absent)
+                if (stillMissing.isNotEmpty()) {
+                    return finish(
+                        ActionResult.missingPermission(stillMissing.first()),
+                        effective,
+                        decision,
+                        "$explanation, not granted: ${stillMissing.joinToString(", ")}"
+                    )
+                }
+            }
+        }
+
+        // A consent prompt can sit on screen for a minute, and a permission
+        // dialog for another, and the user may spend that time hitting panic,
+        // killing the master switch, or blocking this action outright. Re-read
+        // the store and refuse if anything now says no — an approval is consent
+        // to run, not a licence that outlives the kill switch.
+        if (waited) {
+            val fresh = request.copy(
+                userPolicy = policy.policyFor(actionId),
+                automationEnabled = policy.automationEnabled,
+                panic = policy.panic
+            )
+            if (PolicyEngine.decide(fresh) == Decision.DENY) {
+                return finish(
+                    ActionResult.denied(denyMessage(fresh)),
+                    effective,
+                    Decision.DENY,
+                    "$explanation, revoked while the prompt was up"
+                )
+            }
         }
 
         val result = try {
@@ -383,6 +488,41 @@ class ActionRegistry(
                 "could not work out what ${action.id} was aimed at: " +
                     (t.message ?: t.javaClass.simpleName)
             )
+        }
+
+    /**
+     * Which of [wanted] this device does not hold, failing **open**.
+     *
+     * The one place in this file where a throw does not mean "refuse", and the
+     * reason is that this step is not a gate. Policy has already decided; this
+     * only chooses whether to raise an OS dialog first. A gateway that cannot
+     * answer must not turn an approved action into a denied one — the action's
+     * own `checkSelfPermission` is still there and still authoritative, so the
+     * worst case is the honest `permission … not granted` we had before.
+     */
+    private fun safeMissingPermissions(wanted: List<String>): List<String> =
+        try {
+            permissions.missing(wanted)
+        } catch (t: Throwable) {
+            Log.w(TAG, "permission check threw; letting the action decide", t)
+            emptyList()
+        }
+
+    /**
+     * Ask for [wanted], failing **closed**: a gateway that throws has not
+     * granted anything, so everything it was asked for is still missing.
+     */
+    private suspend fun safeRequestPermissions(
+        actionId: String,
+        wanted: List<String>
+    ): List<String> =
+        try {
+            permissions.request(actionId, wanted)
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            Log.w(TAG, "permission request threw for $actionId", t)
+            wanted
         }
 
     /** A misbehaving action must not be able to lower its own tier by throwing. */

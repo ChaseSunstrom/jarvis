@@ -355,6 +355,21 @@ REQUIREMENT_TABLE = [
     ("full_screen", False, "ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT", True),
     ("overlay", False, "ACTION_MANAGE_OVERLAY_PERMISSION", True),
     ("exact_alarms", False, "ACTION_REQUEST_SCHEDULE_EXACT_ALARM", True),
+    # What Jarvis may DO, as opposed to whether it runs at all. Every one of
+    # these was declared in the manifest, never requested, and therefore denied
+    # on every device — while this checklist said "Everything is granted",
+    # because it did not list them. See tools/runtime_permissions_test.py.
+    #
+    # All optional: a phone where Jarvis never touches your messages is a
+    # working phone. The Settings action is the app details page for all five,
+    # because that is where Android puts per-app permissions — but the tap on
+    # the row asks for them directly and only falls through to Settings when
+    # there is nothing left to ask.
+    ("people", False, "ACTION_APPLICATION_DETAILS_SETTINGS", True),
+    ("calendar", False, "ACTION_APPLICATION_DETAILS_SETTINGS", True),
+    ("location", False, "ACTION_APPLICATION_DETAILS_SETTINGS", True),
+    ("media", False, "ACTION_APPLICATION_DETAILS_SETTINGS", True),
+    ("sensors", False, "ACTION_APPLICATION_DETAILS_SETTINGS", True),
 ]
 
 # The actual intent action strings, so "maps to a deep link" is checked against
@@ -382,6 +397,13 @@ STATUS_FIELDS = [
     "postNotifications",
     "fullScreenIntents",
     "exactAlarms",
+    # One flag per RuntimePermissions group: true when every dangerous
+    # permission in that group is held.
+    "people",
+    "calendar",
+    "location",
+    "media",
+    "sensors",
 ]
 
 
@@ -412,6 +434,14 @@ def evaluate(status: dict):
         # conversation waits in the shade for a tap.
         "full_screen": status["fullScreenIntents"],
         "exact_alarms": status["exactAlarms"],
+        # Straight through: each is the AND of its group's grants, computed by
+        # RuntimePermissions.groupHeld before evaluate() is ever called, so the
+        # pure part has nothing to decide.
+        "people": status["people"],
+        "calendar": status["calendar"],
+        "location": status["location"],
+        "media": status["media"],
+        "sensors": status["sensors"],
     }
     out = []
     for rid, essential, action_const, needs_uri in REQUIREMENT_TABLE:
@@ -921,8 +951,17 @@ def test_the_checklist_covers_exactly_the_documented_surface():
         "full_screen",
         "overlay",
         "exact_alarms",
+        "people",
+        "calendar",
+        "location",
+        "media",
+        "sensors",
     ], ids
     assert ids[0] == "network", "network is the most common GrapheneOS surprise; it goes first"
+    # The action permissions come last on purpose: they decide what Jarvis may
+    # DO, and there is no point granting any of them on a phone that has not
+    # got past "does it run at all".
+    assert ids[-5:] == ["people", "calendar", "location", "media", "sensors"]
 
 
 def test_verdicts_follow_the_status_for_every_combination():
@@ -1305,6 +1344,18 @@ def test_kotlin_compat_requirements_match_this_table():
         f"GrapheneCompat has {len(entries)} requirements, this spec has {len(REQUIREMENT_TABLE)}"
     )
     id_consts = dict(re.findall(r'const val (ID_[A-Z_]+) = "([a-z_]+)"', src))
+    # The permission-group ids are OWNED by RuntimePermissions — that is the
+    # file that decides which grants share a checklist row — and re-exported
+    # here rather than copied. Follow the alias, so the row and the permissions
+    # behind it cannot drift apart without one of them failing.
+    runtime = KOTLIN_COMPAT.parent / "RuntimePermissions.kt"
+    assert runtime.is_file(), f"missing {runtime}"
+    owned = dict(re.findall(r'const val (ID_[A-Z_]+) = "([a-z_]+)"', runtime.read_text()))
+    for name, target in re.findall(
+        r"const val (ID_[A-Z_]+) = RuntimePermissions\.(ID_[A-Z_]+)", src
+    ):
+        assert target in owned, f"GrapheneCompat.{name} aliases a missing {target}"
+        id_consts[name] = owned[target]
     for (id_const, essential, action, needs_uri), (
         exp_id,
         exp_essential,

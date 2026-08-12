@@ -49,16 +49,42 @@ def service_calls(actions: Any) -> list[str]:
 
 
 def _walk(node: Any, found: list[str]) -> None:
-    if isinstance(node, list):
+    if isinstance(node, (list, tuple)):
         for item in node:
             _walk(item, found)
         return
+
+    # A BARE STRING IS A CALL. `ScriptRunner._async_run_step` rewrites
+    # `- light.turn_on` as `{"service": "light.turn_on"}` before dispatching
+    # it, so a step written that way runs exactly like the dict form.
+    #
+    # This walker used to fall straight through it, and the consequence was
+    # not cosmetic: `needs_approval` is the only gate on `automation_control`,
+    # on `create_automation`, and on the console's "touches nothing that needs
+    # approval" label. An automation whose action list was
+    # `["script.open_up"]` was labelled safe, ran at tier 1 from a model turn,
+    # and unlocked a door — while the identical automation written
+    # `[{"service": "script.open_up"}]` was correctly held for a human. Four
+    # characters of YAML inverted the repo's own tested contract.
+    if isinstance(node, str):
+        found.append(_name_of(node))
+        return
+
     if not isinstance(node, dict):
         return
 
     raw = node.get("service") or node.get("action")
     if raw is not None:
         found.append(_name_of(raw))
+
+    # `- scene: scene.evening` dispatches scene.turn_on, and `- event: x` can
+    # fire an event that triggers another automation. Both are the "different
+    # object with its own lifetime" case this module exists to escalate, and
+    # `scene` is already in INDIRECT_DOMAINS so naming it yields "?" rather
+    # than a false sense of having read it.
+    for shorthand in ("scene", "event"):
+        if shorthand in node:
+            found.append("?")
 
     # `choose` is a list of {conditions, sequence}; the others hold steps
     # directly. Both shapes are just more nodes to walk.

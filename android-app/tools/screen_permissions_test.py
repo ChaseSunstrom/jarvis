@@ -57,25 +57,41 @@ def check_declared(android: Path) -> int:
     return failures
 
 
-def check_the_runtime_one_is_actually_requested(android: Path) -> int:
-    """Declaring is not asking, and this is the bug that produced the report."""
+def find_askers(android: Path, symbol: str) -> list[Path]:
+    """Every file that names [symbol] inside a literal `requestPermissions` call.
+
+    Deliberately literal: a file that mentions the permission in a comment, or
+    checks for it and gives up, is not a file that asks for it. That distinction
+    is the whole bug — nine permissions were declared, checked for, reported on,
+    and never once requested.
+    """
     root = android / "app/src/main/kotlin/ai/jarvis/app"
     askers = []
     for path in sorted(root.rglob("*.kt")):
         src = path.read_text(encoding="utf-8")
-        if "POST_NOTIFICATIONS" not in src:
+        if symbol not in src:
             continue
-        if re.search(r"requestPermissions\(\s*arrayOf\([^)]*POST_NOTIFICATIONS", src, re.S):
+        if re.search(rf"requestPermissions\(\s*arrayOf\([^)]*{re.escape(symbol)}", src, re.S):
             askers.append(path)
+    return askers
+
+
+def check_a_runtime_permission_is_actually_requested(
+    android: Path, symbol: str, consequence: str, guard: tuple[str, ...]
+) -> int:
+    """Declaring is not asking, and this is the bug that produced the report.
+
+    Generalised from a hardcoded `POST_NOTIFICATIONS` check, because the same
+    shape turned out to apply to nine more permissions. The exhaustive sweep —
+    "every dangerous permission in the manifest has a requester" — lives in
+    `runtime_permissions_test.py`, which owns the whole table; this stays here
+    for the three screen routes that produced the original reports.
+    """
+    askers = find_askers(android, symbol)
     failures = 0
     if not askers:
-        print(
-            "FAIL  nothing in the app requests POST_NOTIFICATIONS at runtime. On "
-            "Android 13+ that means no listening notification, no wake-word "
-            "alert, and Tier-3 approvals that time out undelivered."
-        )
-        failures += 1
-        return failures
+        print(f"FAIL  nothing in the app requests {symbol} at runtime. {consequence}")
+        return 1
     for path in askers:
         src = path.read_text(encoding="utf-8")
         is_activity = re.search(r"class\s+\w+\s*(\([^)]*\))?\s*:\s*[^\n{]*Activity", src)
@@ -83,10 +99,20 @@ def check_the_runtime_one_is_actually_requested(android: Path) -> int:
             print(f"FAIL  {path.name} requests a permission but is not an Activity")
             failures += 1
         # Asking on every resume forever is how people learn to hit Deny.
-        if "askedForNotifications" not in src and "REQ_NOTIFICATIONS" not in src:
-            print(f"FAIL  {path.name} has no guard against re-prompting")
+        if not any(g in src for g in guard):
+            print(f"FAIL  {path.name} has no guard against re-prompting for {symbol}")
             failures += 1
     return failures
+
+
+def check_the_runtime_one_is_actually_requested(android: Path) -> int:
+    return check_a_runtime_permission_is_actually_requested(
+        android,
+        "POST_NOTIFICATIONS",
+        "On Android 13+ that means no listening notification, no wake-word "
+        "alert, and Tier-3 approvals that time out undelivered.",
+        guard=("askedForNotifications", "REQ_NOTIFICATIONS"),
+    )
 
 
 def check_each_route_is_probed_not_assumed(android: Path) -> int:

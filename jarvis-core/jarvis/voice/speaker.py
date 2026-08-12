@@ -307,15 +307,40 @@ class Verdict:
     blocks: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
+        """JSON-safe, which for this type means non-finite floats become null.
+
+        `verify(None)` returns `score=inf` for anything under
+        :data:`MIN_SPEECH_MS` — "stop", "yes", a cough — and this dict goes
+        onto the pipeline event bus and out of the websocket as a
+        `speaker-end` frame. `json.dumps` writes `Infinity` for that, which is
+        not JSON: strict parsers reject the whole frame, and this API
+        deliberately mimics `assist_pipeline/run`, so a third-party client
+        with a strict parser is a legitimate client rather than a hypothetical
+        one.
+
+        The same invariant is already enforced on the way IN — the websocket
+        layer refuses inbound frames containing the bare constants — so a
+        server that emits them outbound was contradicting its own rule.
+        """
         return {
             "accepted": self.accepted,
-            "score": round(self.score, 4),
-            "threshold": round(self.threshold, 4),
-            "similarity": round(self.similarity, 4),
-            "confidence": round(self.confidence, 4),
+            "score": _finite(self.score),
+            "threshold": _finite(self.threshold),
+            "similarity": _finite(self.similarity),
+            "confidence": _finite(self.confidence),
             "reason": self.reason,
-            "blocks": {k: round(v, 4) for k, v in self.blocks.items()},
+            "blocks": {k: _finite(v) for k, v in self.blocks.items()},
         }
+
+
+def _finite(value: float) -> float | None:
+    """`round(value, 4)`, or None when the value is not a real number.
+
+    None rather than a sentinel like -1 or 1e308: a client drawing a score has
+    to be able to tell "there was no score" from "the score was enormous", and
+    every JSON parser in the world agrees on null.
+    """
+    return round(value, 4) if math.isfinite(value) else None
 
 
 # --- feature extraction -----------------------------------------------------

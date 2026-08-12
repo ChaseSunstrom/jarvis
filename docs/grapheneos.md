@@ -38,6 +38,24 @@ Google-oriented plumbing is the main source of instability.
 - **Every permission is requested at runtime and every failure is handled.**
   A denied permission degrades one action, never crashes the app. Actions
   return `permission X not granted` as a result, not an exception.
+
+  This line was a lie for the whole life of the app, and worth reading as a
+  warning about the shape rather than as a fixed bug. `requestPermissions` is a
+  method on `Activity`; every `device_command` arrives on a WebSocket inside a
+  Service; so nothing outside the two permissions an Activity happened to need
+  (`RECORD_AUDIO`, `POST_NOTIFICATIONS`) was ever requested. SMS, calls,
+  contacts, calendar, location, camera, media and step count were declared in
+  the manifest, checked for by the actions, reported on by nothing, and denied
+  on every device — while SYSTEM CHECK said "Everything is granted", because it
+  listed only the four grants it knew about. Every individual piece was
+  correct. Nobody owned the gap.
+
+  The fix is `ai.jarvis.app.compat.RuntimePermissions` (the table),
+  `ui.PermissionBridge` + `PermissionRequestActivity` (a one-frame Activity so
+  a Service can ask), and `automation.actions.PermissionGateway` (the seam the
+  dispatcher asks through, after the consent gate and before executing).
+  `tools/runtime_permissions_test.py` holds the manifest, the table and the
+  checklist against each other so the three cannot drift again.
 - **Uses `<queries>` rather than relying on `QUERY_ALL_PACKAGES`** where the
   app only needs specific intents.
 - **A global crash handler** writes the stack trace to app storage and shows it

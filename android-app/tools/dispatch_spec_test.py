@@ -87,6 +87,11 @@ class Action:
     unsupported: bool = False
     available: bool = True
     tier_for_throws: bool = False
+    #: requiredPermissions has something this device does not hold.
+    needs_permission: bool = False
+    #: resolvePermissions has something this device does not hold — contacts,
+    #: for the two actions that turn a name into a number before the prompt.
+    resolve_needs_permission: bool = False
 
 
 @dataclass
@@ -98,6 +103,8 @@ class Trace:
     audited: int = 0
     enforced_tier: str | None = None
     remembered: bool = False
+    #: Which permission dialogs were raised: "resolve", "execute", or neither.
+    dialogs: list[str] = field(default_factory=list)
     events: list[str] = field(default_factory=list)
 
 
@@ -111,9 +118,12 @@ def dispatch(
     panic_during_prompt: bool = False,
     never_during_prompt: bool = False,
     disable_during_prompt: bool = False,
+    panic_during_resolve: bool = False,
+    grant_permission: bool = True,
 ) -> Trace:
     """ActionRegistry.dispatch, step for step."""
     t = Trace()
+    waited = False
 
     # 1. look up
     if action is None:
@@ -127,13 +137,36 @@ def dispatch(
         t.events.append("unsupported")
         return t
 
-    # 3. local tier is the authority; tierFor may only raise; a throw = CONFIRM
+    # 3. the standing bans, before anything is resolved or asked for.
+    #
+    # Panic, the master switch and a standing NEVER do not depend on the tier,
+    # so they can be decided without the resolved parameters — and they have to
+    # be, because resolution can now raise an Android permission dialog and
+    # nothing arriving from a server should be able to do that on a phone whose
+    # owner has hit panic. In the Kotlin this asks PolicyEngine at
+    # CONFIRM/CONFIRM, which is DENY for exactly these three and nothing else.
+    if decide("CONFIRM", "CONFIRM", store.policy, store.enabled, store.panic, trust) == "DENY":
+        t.status, t.audited, t.enforced_tier = "denied", 1, action.tier
+        t.events.append("denied-by-standing-ban")
+        return t
+
+    # 4. the resolver's own permission, then resolve. "Text Sam" needs contacts
+    #    BEFORE the consent prompt, because the prompt has to show the number
+    #    rather than the name — so this one grant is asked for ahead of the gate.
+    if action.resolve_needs_permission:
+        waited = True
+        t.dialogs.append("resolve")
+    if panic_during_resolve:
+        store.panic = True
+
+    # 5. local tier is the authority; tierFor may only raise; a throw = CONFIRM
     per_call = "CONFIRM" if action.tier_for_throws else (action.per_call_tier or action.tier)
     local = _max_tier(action.tier, per_call)
     effective = _max_tier(local, requested_tier or "AUTO")
     t.enforced_tier = effective
 
-    # 4. decide
+    # 6. decide. Still reachable as DENY: the store is re-read here, and the
+    #    resolution between step 3 and now takes real time.
     decision = decide(local, requested_tier, store.policy, store.enabled, store.panic, trust)
 
     if decision == "DENY":
@@ -153,8 +186,22 @@ def dispatch(
         if verdict == "APPROVED_ALWAYS" and rememberable:
             store.remember(effective, "ALLOW_ALWAYS")
             t.remembered = True
+        waited = True
 
-        # 5. re-read the store: the kill switch outlives an approval
+    # 7. the Android permission, AFTER the human. Asking first would put an OS
+    #    dialog in front of somebody about to refuse the command, and would hand
+    #    a server that sends nonsense a dialog-spam primitive.
+    if action.needs_permission:
+        waited = True
+        t.dialogs.append("execute")
+        if not grant_permission:
+            t.status, t.audited = "error", 1
+            t.events.append("permission-refused")
+            return t
+
+    # 8. re-read the store: the kill switch outlives an approval AND a
+    #    permission dialog. Either can sit on screen for a minute.
+    if waited:
         if panic_during_prompt:
             store.panic = True
         if never_during_prompt:
@@ -169,7 +216,7 @@ def dispatch(
             t.events.append("revoked-while-prompt-was-up")
             return t
 
-    # 6. execute
+    # 9. execute
     t.executed = True
     t.status, t.audited = "ok", 1
     t.events.append("executed")
@@ -307,13 +354,34 @@ def test_an_unknown_action_is_refused_at_tier3_and_audited():
 def test_every_path_writes_exactly_one_audit_line():
     seen = set()
     for action, req, pol, trust, verdict in _space():
-        t = dispatch(action, req, Store(policy=pol), verdict, trust)
-        assert t.audited == 1, f"{t.events} wrote {t.audited} audit lines"
-        seen.update(t.events)
-    for path in ("executed", "denied-by-policy", "denied-by-human", "prompted"):
+        for needs, grant in ((False, True), (True, True), (True, False)):
+            action.needs_permission = needs
+            t = dispatch(action, req, Store(policy=pol), verdict, trust, grant_permission=grant)
+            assert t.audited == 1, f"{t.events} wrote {t.audited} audit lines"
+            seen.update(t.events)
+        action.needs_permission = False
+    for path in (
+        "executed",
+        "denied-by-standing-ban",
+        "denied-by-human",
+        "permission-refused",
+        "prompted",
+    ):
         assert path in seen, f"the state space never reached {path}"
     assert dispatch(None, None, Store()).audited == 1
     assert dispatch(Action(unsupported=True), None, Store()).audited == 1
+    # The two paths the ordinary space cannot reach, because they need the
+    # store to change mid-dispatch.
+    revoked = dispatch(
+        Action(tier="AUTO", resolve_needs_permission=True),
+        None,
+        Store(policy="ASK"),
+        panic_during_resolve=True,
+    )
+    assert revoked.audited == 1 and "denied-by-policy" in revoked.events
+    late = dispatch(Action(tier="NOTIFY"), None, Store(policy="ASK"), "APPROVED",
+                    panic_during_prompt=True)
+    assert late.audited == 1 and "revoked-while-prompt-was-up" in late.events
 
 
 def test_tier1_still_runs_without_asking():
@@ -336,6 +404,103 @@ def test_tier2_remembers_only_after_a_human_said_always():
     assert dispatch(Action(tier="NOTIFY"), None, store, "DENIED").executed
 
 
+# --- the Android permission step --------------------------------------------
+
+
+def test_a_refused_permission_executes_nothing():
+    """The honest failure. `permission … not granted` is an error, not a denial:
+    nothing was refused by policy and nothing was refused by the user's standing
+    answer — the OS grant simply is not there."""
+    for tier, pol in product(TIERS, POLICIES):
+        t = dispatch(
+            Action(tier=tier, needs_permission=True),
+            None,
+            Store(policy=pol),
+            "APPROVED",
+            grant_permission=False,
+        )
+        if "denied-by-standing-ban" in t.events:
+            continue
+        assert not t.executed, f"executed with the permission refused: {tier} {pol}"
+        assert t.status == "error"
+
+
+def test_no_dialog_is_raised_for_a_dispatch_the_standing_bans_deny():
+    """Panic must beat a permission dialog as thoroughly as it beats an action.
+
+    Without the pre-gate at step 3 a server could raise "Allow Jarvis to access
+    your contacts?" on a phone whose owner had switched automation off — the
+    resolver's grant is asked for before the tier is even known.
+    """
+    for panic, enabled, pol in product((True, False), (True, False), POLICIES):
+        if not panic and enabled and pol != "NEVER":
+            continue  # not a standing ban
+        t = dispatch(
+            Action(tier="CONFIRM", needs_permission=True, resolve_needs_permission=True),
+            "CONFIRM",
+            Store(policy=pol, enabled=enabled, panic=panic),
+            "APPROVED",
+        )
+        assert t.dialogs == [], f"raised {t.dialogs} under panic={panic} enabled={enabled} {pol}"
+        assert not t.prompted and not t.executed
+
+
+def test_the_permission_dialog_comes_after_the_human():
+    """Asking the OS first would put "may Jarvis send SMS?" in front of somebody
+    who is about to say no to sending one, and would let a server that sends
+    nonsense spam dialogs at the cost of one message each."""
+    t = dispatch(
+        Action(tier="CONFIRM", needs_permission=True),
+        None,
+        Store(policy="ASK"),
+        "DENIED",
+    )
+    assert t.prompted and t.dialogs == [], "the OS was asked about a refused command"
+    t = dispatch(
+        Action(tier="CONFIRM", needs_permission=True),
+        None,
+        Store(policy="ASK"),
+        "APPROVED",
+    )
+    assert t.prompted and t.dialogs == ["execute"] and t.executed
+
+
+def test_the_resolvers_permission_is_asked_for_before_the_prompt():
+    """The one grant that has to come first, and why: the consent prompt shows
+    the resolved number, so the lookup that produces it runs ahead of the
+    prompt — and a lookup with no contacts permission just refuses."""
+    t = dispatch(
+        Action(tier="CONFIRM", resolve_needs_permission=True, needs_permission=True),
+        None,
+        Store(policy="ASK"),
+        "APPROVED",
+    )
+    assert t.dialogs == ["resolve", "execute"], t.dialogs
+
+
+def test_panic_during_the_permission_dialog_revokes_the_approval():
+    """The reason the re-check moved out of the ASK branch. A Tier-1 action
+    needing a grant waits on a dialog with no consent prompt anywhere, and the
+    old code only re-read the store after a prompt."""
+    for tier in TIERS:
+        store = Store(policy="ALLOW_ALWAYS")
+        t = dispatch(
+            Action(tier=tier, needs_permission=True),
+            None,
+            store,
+            "APPROVED",
+            panic_during_prompt=True,
+        )
+        assert not t.executed, f"{tier} executed after panic during the permission dialog"
+        assert "revoked-while-prompt-was-up" in t.events
+
+
+def test_an_action_needing_nothing_never_sees_a_dialog():
+    for action, req, pol, trust, verdict in _space():
+        t = dispatch(action, req, Store(policy=pol), verdict, trust)
+        assert t.dialogs == [], "a dialog for an action that declared no permissions"
+
+
 # --- drift check against the Kotlin ----------------------------------------
 
 
@@ -346,6 +511,11 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
         # unsupported / unavailable short-circuit BEFORE any policy work
         "if (safeUnsupported(action))",
         "if (!safeAvailable(action))",
+        # the standing bans — panic, the master switch, a standing NEVER —
+        # before anything is resolved or any dialog is raised
+        "if (PolicyEngine.decide(standing) == Decision.DENY)",
+        # the resolver's own grant, which has to come before the resolver
+        "val forResolve = action.resolvePermissions",
         # fuzzy parameters become concrete BEFORE a human is shown them, so the
         # prompt cannot say "Mum" while the message goes to a number nobody saw
         "when (val resolution = safeResolve(action, live))",
@@ -358,7 +528,10 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
         "val rememberable = PolicyEngine.canRemember(effective, trust)",
         "if (!verdict.allowsExecution)",
         "if (verdict == ApprovalVerdict.APPROVED_ALWAYS && rememberable)",
-        # re-validate after the answer
+        # the Android permission, after the human and before the re-validation,
+        # so a panic hit while the OS dialog is up still wins
+        "val stillMissing = safeRequestPermissions(actionId, absent)",
+        # re-validate after both waits
         "if (PolicyEngine.decide(fresh) == Decision.DENY)",
         # only then execute
         "withTimeout(action.timeoutMs) { action.execute(appContext, live) }",

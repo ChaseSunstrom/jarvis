@@ -34,8 +34,40 @@ interface JarvisAction {
     /** Coarse capability bucket advertised in `jarvis/device/register`. */
     val capability: String get() = "device"
 
-    /** Android permissions this action needs, for the settings screen. */
+    /**
+     * Android permissions this action needs.
+     *
+     * The dispatcher asks for the ones that are missing and can be granted from
+     * a dialog, at the moment this action is dispatched, after the consent gate
+     * and before [execute] — see
+     * [ai.jarvis.app.compat.RuntimePermissions]. They are also published in the
+     * device manifest so the server knows what a phone can do.
+     *
+     * This is NOT a substitute for checking inside [execute]. A grant can be
+     * revoked between the request and the call, the request may have been
+     * refused, and a permission that needs a Settings trip is never requested
+     * at all. Every action re-checks.
+     */
     val requiredPermissions: List<String> get() = emptyList()
+
+    /**
+     * Permissions [resolve] itself needs, as opposed to [execute].
+     *
+     * Split out because the two are asked for at different moments. Resolution
+     * runs *before* the consent prompt — that is what makes the prompt truthful
+     * — so a permission it needs has to be granted before the prompt too, and
+     * a permission `execute` needs must not be, or the OS would ask about
+     * sending an SMS before the user has said whether to send one.
+     *
+     * The one real case is contacts: `send_sms` and `place_call` turn "Sam"
+     * into a number here, and without `READ_CONTACTS` they refuse — which is a
+     * text that never gets sent, with nothing in the log about a permission.
+     *
+     * Refusing this one is not fatal. The resolver has an honest answer for a
+     * name it cannot look up, and a request that already carried a number needs
+     * no lookup at all.
+     */
+    val resolvePermissions: List<String> get() = emptyList()
 
     /** Hard cap on execution. The dispatcher enforces it with `withTimeout`. */
     val timeoutMs: Long get() = 15_000L
@@ -89,7 +121,19 @@ interface JarvisAction {
      */
     fun tierFor(params: JSONObject): ActionTier = tier
 
-    /** True when this action can run on this device/build at all. */
+    /**
+     * True when this action can run on this device/build **at all** — no
+     * telephony hardware, no camera, no accessibility service, no Shizuku.
+     *
+     * Deliberately NOT a permission check, even though the dispatcher
+     * short-circuits `unsupported` before anything else and it would be an easy
+     * place to hang one. An ungranted permission is one dialog away from
+     * working; reporting it as unavailable would put `available: false` in the
+     * device manifest, teach the model never to call the action, and so
+     * guarantee the grant is never requested — a permission that is missing
+     * *because* it is missing. The dispatcher asks for it instead; see
+     * [requiredPermissions].
+     */
     fun isAvailable(ctx: Context): Boolean = true
 
     /**

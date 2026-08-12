@@ -53,7 +53,21 @@ import kotlin.concurrent.thread
 class VoiceIdentityActivity : Activity() {
 
     private lateinit var config: JarvisConfig
-    private lateinit var client: VoiceIdentityClient
+
+    /**
+     * Nullable, not `lateinit`.
+     *
+     * It was `lateinit`, assigned after the unconfigured early return — and
+     * that return disabled the record button only, because the other two are
+     * built by `JarvisUi.ghost`, which does not touch `isEnabled`. So on a
+     * phone that had never been paired, FORGET MY VOICE was live, read an
+     * uninitialised property inside a worker thread, and killed the process.
+     *
+     * Both halves are fixed: every button is disabled below, and this is
+     * nullable so a button added to this screen later cannot bring the crash
+     * back — [offMainThread] short-circuits instead.
+     */
+    private var client: VoiceIdentityClient? = null
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -84,7 +98,10 @@ class VoiceIdentityActivity : Activity() {
 
         if (!config.isConfigured) {
             statusView.text = "Pair this phone with Jarvis first."
-            recordButton.isEnabled = false
+            // All three, via the shared helper. Disabling the record button
+            // alone left TEST and FORGET live on a screen that has no server
+            // to talk to.
+            setButtonsEnabled(false)
             return
         }
         client = VoiceIdentityClient(config.serverUrl, config.token)
@@ -259,21 +276,21 @@ class VoiceIdentityActivity : Activity() {
     }
 
     // --- server round trips -------------------------------------------------
-    private fun refresh() = offMainThread({ client.status() }) { render(it) }
+    private fun refresh() = offMainThread({ it.status() }) { render(it) }
 
     private fun submitEnrolment(pcm: ByteArray) =
-        offMainThread({ client.enrol(pcm) }) { fresh ->
+        offMainThread({ it.enrol(pcm) }) { fresh ->
             promptIndex += 1
             render(fresh)
         }
 
-    private fun forget() = offMainThread({ client.forget() }) { fresh ->
+    private fun forget() = offMainThread({ it.forget() }) { fresh ->
         promptIndex = 0
         toast("Voiceprint deleted.")
         render(fresh)
     }
 
-    private fun submitTest(pcm: ByteArray) = offMainThread({ client.verify(pcm) }) { result ->
+    private fun submitTest(pcm: ByteArray) = offMainThread({ it.verify(pcm) }) { result ->
         val verdict = result.optJSONObject("verdict")
         val accepted = verdict?.optBoolean("accepted") ?: false
         val score = verdict?.optDouble("score") ?: Double.NaN
@@ -299,14 +316,23 @@ class VoiceIdentityActivity : Activity() {
      * response would overwrite the first's view of how many samples exist.
      */
     private fun <T> offMainThread(
-        call: () -> VoiceIdentityClient.Result<T>,
+        call: (VoiceIdentityClient) -> VoiceIdentityClient.Result<T>,
         onOk: (T) -> Unit,
     ) {
         if (busy) return
+        // No client means this phone is not paired. Taking the lambda a client
+        // rather than closing over one is what makes that a message instead of
+        // an UninitializedPropertyAccessException on a worker thread.
+        val live = client
+        if (live == null) {
+            statusView.text = "Pair this phone with Jarvis first."
+            detailView.text = ""
+            return
+        }
         busy = true
         setButtonsEnabled(false)
         thread {
-            val result = call()
+            val result = call(live)
             main.post {
                 busy = false
                 setButtonsEnabled(true)

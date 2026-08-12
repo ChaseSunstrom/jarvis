@@ -80,10 +80,77 @@ def test_the_newer_action_key_is_read_too():
     assert service_calls([{"action": "lock.unlock"}]) == ["lock.unlock"]
 
 
-@pytest.mark.parametrize("actions", [None, [], {}, "nonsense", [None], [123]])
+@pytest.mark.parametrize("actions", [None, [], {}, [None], [123]])
 def test_nothing_to_run_reaches_nothing(actions):
     assert gated_reach(actions) == set()
     assert needs_approval(actions) is False
+
+
+@pytest.mark.parametrize("actions", ["nonsense", ["nonsense"], [{"service": "nonsense"}]])
+def test_a_step_that_is_not_a_service_name_escalates(actions):
+    """`"nonsense"` used to be filed under "nothing to run", and it is not.
+
+    `ScriptRunner.async_run` does `as_list(sequence)`, so a scalar `action:` is
+    genuinely run as one step, and a bare string step is rewritten to a service
+    call. A word with no dot in it is therefore a call this walker cannot read
+    — which is exactly what `"?"` means — rather than a no-op.
+    """
+    assert gated_reach(actions) == {"?"}
+    assert needs_approval(actions) is True
+
+
+# --- the shapes the runner executes and the walker could not see -------------
+#
+# `needs_approval` is the sole gate on `automation_control`, on
+# `create_automation`, and on the console's "touches nothing that needs
+# approval" label. Every case below was reported False before the fix, while
+# the dict-form spelling of the identical automation was correctly True.
+@pytest.mark.parametrize(
+    "actions,why",
+    [
+        (["lock.unlock"], "a bare-string step is rewritten to a service call"),
+        (["script.open_up"], "a script is opaque, so it escalates"),
+        ([{"choose": [{"conditions": [], "sequence": ["script.open_up"]}]}],
+         "nested in choose"),
+        ([{"repeat": {"sequence": ["lock.unlock"]}}], "nested in repeat"),
+        ([{"scene": "scene.come_home"}], "`- scene:` dispatches scene.turn_on"),
+        ([{"event": "custom"}], "an event can trigger another automation"),
+    ],
+)
+def test_the_step_shapes_the_runner_really_executes(actions, why):
+    assert needs_approval(actions) is True, why
+
+
+def test_the_two_walkers_do_not_disagree():
+    """The differential check that would have caught the original bug.
+
+    There are two analysers over the same action lists — this one, and
+    `actions.collect_domains`, which the script integration trusts. They are
+    kept separate on purpose (this one must answer "?" for indirection), but
+    whenever `collect_domains` sees something gated or unreadable, this one
+    must escalate. They drifted for exactly the two shapes above.
+    """
+    from jarvis.automation.actions import collect_domains
+    from jarvis.automation.reach import GATED_DOMAINS, INDIRECT_DOMAINS
+
+    corpus = [
+        ["lock.unlock"],
+        ["script.open_up"],
+        [{"scene": "scene.come_home"}],
+        [{"service": "lock.unlock"}],
+        [{"service": "light.turn_on"}],
+        [{"choose": [{"conditions": [], "sequence": ["lock.lock"]}]}],
+        [{"repeat": {"count": 2, "sequence": [{"service": "switch.turn_on"}]}}],
+    ]
+    for actions in corpus:
+        domains = set(collect_domains(actions) or [])
+        risky = domains & (set(GATED_DOMAINS) | set(INDIRECT_DOMAINS))
+        if risky:
+            assert needs_approval(actions) is True, (
+                f"collect_domains sees {sorted(risky)} in {actions!r} and the "
+                "reach analyser does not — the two walkers have drifted, which "
+                "is the shape of the bug this test exists for"
+            )
 
 
 def test_describe_says_why_a_human_was_asked():

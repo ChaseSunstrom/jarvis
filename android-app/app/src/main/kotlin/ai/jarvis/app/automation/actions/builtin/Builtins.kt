@@ -6,7 +6,10 @@ import ai.jarvis.app.automation.actions.ActionEnv
 import ai.jarvis.app.automation.actions.ActionRegistry
 import ai.jarvis.app.automation.actions.ApprovalGateway
 import ai.jarvis.app.automation.actions.JarvisAction
+import ai.jarvis.app.automation.actions.NoPermissionGateway
+import ai.jarvis.app.automation.actions.PermissionGateway
 import ai.jarvis.app.automation.actions.UiApprovalGateway
+import ai.jarvis.app.automation.actions.UiPermissionGateway
 import ai.jarvis.app.automation.actions.asBridgeDispatcher
 import ai.jarvis.app.automation.audit.AuditLog
 import ai.jarvis.app.automation.policy.ActionTier
@@ -97,13 +100,22 @@ object Builtins {
         all().associate { it.id to it.tier }
     }
 
-    /** Registry wired to explicit collaborators — the form tests use. */
+    /**
+     * Registry wired to explicit collaborators — the form tests use.
+     *
+     * [permissions] defaults to [NoPermissionGateway], which knows of nothing
+     * missing and can ask nobody: a unit test has no PackageManager worth
+     * consulting and no Activity to raise a dialog from, so the permission step
+     * stays out of the way. The app passes a real one — see [standard].
+     */
     fun registry(
         context: Context,
         policy: PolicyProvider,
         audit: AuditLog,
-        approvals: ApprovalGateway
-    ): ActionRegistry = ActionRegistry(context, policy, audit, approvals).registerAll(all())
+        approvals: ApprovalGateway,
+        permissions: PermissionGateway = NoPermissionGateway
+    ): ActionRegistry =
+        ActionRegistry(context, policy, audit, approvals, permissions).registerAll(all())
 
     /**
      * Registry wired the way the app runs it: SharedPreferences policy store,
@@ -122,6 +134,10 @@ object Builtins {
      *  3. [AutomationBridge.dispatcher] is filled in. `JarvisChannel` reads that
      *     slot for every `device_command`; with it empty every command from the
      *     server is answered `unsupported` and the phone does nothing at all.
+     *  4. [UiPermissionGateway] is filled in. Without it every action that needs
+     *     a dangerous Android permission answers `permission … not granted` and
+     *     no dialog is ever shown — which is exactly what shipped, for the whole
+     *     life of the app, for SMS, calls, contacts, calendar and location.
      */
     fun standard(context: Context, approvals: ApprovalGateway? = null): ActionRegistry {
         val appContext = context.applicationContext
@@ -130,7 +146,8 @@ object Builtins {
             appContext,
             PolicyStore(appContext, ::tierOf),
             AuditLog(appContext),
-            approvals ?: UiApprovalGateway(appContext)
+            approvals ?: UiApprovalGateway(appContext),
+            UiPermissionGateway(appContext)
         ).also { AutomationBridge.dispatcher = it.asBridgeDispatcher() }
     }
 }

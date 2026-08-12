@@ -1,10 +1,12 @@
 package ai.jarvis.app.ui
 
 import ai.jarvis.app.compat.GrapheneCompat
+import ai.jarvis.app.compat.RuntimePermissions
 import ai.jarvis.app.crash.JarvisCrashHandler
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -29,6 +31,9 @@ class SystemCheckActivity : Activity() {
     private lateinit var listColumn: LinearLayout
     private lateinit var summary: TextView
     private lateinit var bannerSlot: FrameLayout
+
+    /** What [askInPlace] last asked for, so the result can be judged. */
+    private var pendingGroup: List<String> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -156,7 +161,11 @@ class SystemCheckActivity : Activity() {
                         if (req.id == GrapheneCompat.ID_NETWORK) {
                             GrapheneCompat.resetNetworkObservations()
                         }
-                        GrapheneCompat.openSettingsFor(this, req)
+                        // A runtime permission is one tap here. Only rows with
+                        // nothing askable left fall through to Settings — this
+                        // screen exists because "go and find it in Settings"
+                        // is how the grants got missed in the first place.
+                        if (!askInPlace(req)) GrapheneCompat.openSettingsFor(this, req)
                     },
                 ),
                 LinearLayout.LayoutParams(
@@ -171,5 +180,56 @@ class SystemCheckActivity : Activity() {
                 JarvisUi.hint(this, "There are recorded crashes on this device — see Diagnostics.")
             )
         }
+    }
+
+    /**
+     * Ask for the runtime permissions behind [req], here, rather than opening
+     * a Settings page and hoping.
+     *
+     * Returns false when there is nothing this screen can ask for — a special
+     * access, a grant that is already held, or a group with no runtime
+     * permissions at all — and the caller then falls back to Settings.
+     *
+     * This is the other half of the fix for permissions that were declared and
+     * never requested. The dispatcher asks at the moment an action needs one;
+     * this is for the person who came here after reading `permission … not
+     * granted` in a transcript and wants to fix it before trying again.
+     */
+    private fun askInPlace(req: GrapheneCompat.Requirement): Boolean {
+        val wanted = RuntimePermissions.missing(this, RuntimePermissions.inGroup(req.id))
+        if (wanted.isEmpty()) return false
+        pendingGroup = wanted
+        return try {
+            requestPermissions(wanted.toTypedArray(), REQ_GROUP)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not request ${req.id} in place", t)
+            pendingGroup = emptyList()
+            false
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_GROUP) return
+        val outstanding = RuntimePermissions.missing(this, pendingGroup)
+        pendingGroup = emptyList()
+        // "Don't ask again" means the dialog will never appear from here again,
+        // and a row that does nothing when tapped is worse than one that sends
+        // you to Settings. So when the platform is done asking, we take over.
+        val exhausted = outstanding.isNotEmpty() && outstanding.none {
+            runCatching { shouldShowRequestPermissionRationale(it) }.getOrDefault(false)
+        }
+        if (exhausted) GrapheneCompat.openAppDetails(this)
+        refresh()
+    }
+
+    private companion object {
+        const val TAG = "JarvisSystemCheck"
+        const val REQ_GROUP = 5401
     }
 }

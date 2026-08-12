@@ -197,6 +197,10 @@ object SendSms : JarvisAction {
     override val capability = "sms"
     override val requiredPermissions = listOf(Manifest.permission.SEND_SMS)
 
+    /** The lookup below happens before the consent prompt, so this is asked
+     *  for before it. See [JarvisAction.resolvePermissions]. */
+    override val resolvePermissions = listOf(Manifest.permission.READ_CONTACTS)
+
     override fun isAvailable(ctx: Context): Boolean =
         ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
 
@@ -259,6 +263,9 @@ object PlaceCall : JarvisAction {
     )
     override val capability = "telephony"
     override val requiredPermissions = listOf(Manifest.permission.CALL_PHONE)
+
+    /** Same as [SendSms]: the lookup runs ahead of the prompt, so its grant does too. */
+    override val resolvePermissions = listOf(Manifest.permission.READ_CONTACTS)
 
     override fun isAvailable(ctx: Context): Boolean =
         ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
