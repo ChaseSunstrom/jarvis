@@ -957,6 +957,91 @@ class VoiceProfile:
         return profile
 
 
+# --- the policy -------------------------------------------------------------
+#: What a gate can be set to.
+#:
+#: `observe` is not a nicety, it is the only responsible way to turn a biometric
+#: gate on. The threshold that suits your voice, your microphone and your room
+#: is not knowable from here, and the failure mode of guessing it is that Jarvis
+#: stops answering you — which you will read as "the wake word broke" rather
+#: than "the threshold is 0.4 too low". So: enrol, run in `observe` for a few
+#: days, read the scores off the console, then enforce.
+MODE_OFF = "off"
+MODE_OBSERVE = "observe"
+MODE_ENFORCE = "enforce"
+MODES = (MODE_OFF, MODE_OBSERVE, MODE_ENFORCE)
+
+#: What a refused turn does. `speak` is the default and the choice is not
+#: obvious, so: an assistant that silently ignores you is indistinguishable
+#: from one that did not hear you, and a false reject is the failure this
+#: feature will actually produce. Saying so out loud is what makes it
+#: debuggable by the person it is locking out. `silent` exists for anyone who
+#: would rather a stranger learn nothing, and is a supported choice.
+ON_REJECT_SPEAK = "speak"
+ON_REJECT_SILENT = "silent"
+
+DEFAULT_REFUSAL = "I'm sorry, I don't recognise that voice."
+
+
+@dataclass
+class SpeakerGate:
+    """Profile plus policy: the thing the pipeline actually consults."""
+
+    profile: VoiceProfile | None = None
+    mode: str = MODE_OFF
+    on_reject: str = ON_REJECT_SPEAK
+    refusal: str = DEFAULT_REFUSAL
+    #: Below this, a turn is *unverifiable* rather than refused. Whether an
+    #: unverifiable turn runs is :attr:`allow_unverifiable`.
+    min_speech_ms: float = MIN_SPEECH_MS
+    #: What to do with a turn too short, too quiet or too breathy to judge.
+    #:
+    #: True by default, and this is the single most consequential default in
+    #: the file. "Stop", "yes", "louder", "no, the other one" are all under
+    #: half a second, and an assistant that refuses every short word is not
+    #: usable. The exposure it buys back is bounded: an attacker who can only
+    #: pass unverifiable audio can only say things too short to carry a
+    #: sentence, and everything dangerous is still behind the tier system's
+    #: human approval. Set it false if that trade is wrong for you.
+    allow_unverifiable: bool = True
+
+    @property
+    def enrolled(self) -> bool:
+        return self.profile is not None and self.profile.enrolled
+
+    @property
+    def active(self) -> bool:
+        """Whether this gate does anything at all this turn."""
+        return self.mode in (MODE_OBSERVE, MODE_ENFORCE) and self.enrolled
+
+    def check(self, pcm: bytes, rate: int = DEFAULT_RATE, width: int = DEFAULT_WIDTH) -> Verdict:
+        """Verify one utterance. Blocking — call it in a thread."""
+        if self.profile is None:
+            return Verdict(False, math.inf, 0.0, 0.0, 0.0, "not-enrolled")
+        return self.profile.verify(embed(pcm, rate, width))
+
+    def blocks(self, verdict: Verdict) -> bool:
+        """Whether this verdict stops the turn.
+
+        Only ``enforce`` ever blocks; ``observe`` produces the same verdict,
+        emits the same event and lets the turn through, which is what makes it
+        safe to leave on while you find your threshold.
+        """
+        if self.mode != MODE_ENFORCE:
+            return False
+        if verdict.accepted:
+            return False
+        if self.allow_unverifiable and verdict.reason in _UNVERIFIABLE:
+            return False
+        return True
+
+
+#: Reasons that mean "could not judge", as opposed to "judged and it was not
+#: you". Kept as one set because the difference decides whether a turn runs,
+#: and it must not be re-derived by eye at each call site.
+_UNVERIFIABLE = frozenset({"no-speech", "unverifiable-no-pitch"})
+
+
 # --- helpers ----------------------------------------------------------------
 def _vector_of(item: Embedding | tuple[float, ...] | list[float]) -> tuple[float, ...]:
     if isinstance(item, Embedding):

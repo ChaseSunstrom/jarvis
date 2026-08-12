@@ -68,6 +68,16 @@ EVENT_INTENT_END = "intent-end"
 EVENT_TTS_START = "tts-start"
 EVENT_TTS_END = "tts-end"
 EVENT_ERROR = "error"
+#: Emitted between `stt-end` and `intent-start` whenever a speaker gate is
+#: active — in `observe` as well as `enforce`, because a mode that produced no
+#: events would give you nothing to set a threshold from.
+EVENT_SPEAKER_END = "speaker-end"
+
+#: The turn was refused because the voice was not the enrolled owner's.
+#: Distinct from every stt code: "I heard you and you are not who this belongs
+#: to" is a different thing from "I could not make out what you said", and a
+#: client that shows them the same way is lying to whichever one it is.
+ERROR_NOT_RECOGNISED = "speaker-not-recognised"
 
 # Bus event mirroring every pipeline event (handy for the API/websocket layer).
 EVENT_VOICE_PIPELINE = "voice_pipeline_event"
@@ -95,6 +105,13 @@ MAX_TIMEOUT = 3600.0
 # event and never a lost word.
 DEFAULT_VAD_THRESHOLD = 80.0
 DEFAULT_VAD_SILENCE_MS = 900
+
+#: Ceiling on the audio held in memory for speaker verification: 20 s at 16 kHz
+#: mono 16-bit. The verifier stops improving long before this (it samples at
+#: most 6.4 s of voiced frames), so this is a memory bound rather than a
+#: quality one — a client that streams for an hour must not grow the process by
+#: an hour of PCM.
+MAX_VERIFY_BYTES = 16000 * 2 * 20
 
 _HANDLER_IDS = itertools.count(1)
 
@@ -177,6 +194,7 @@ class PipelineRun:
         stt: Any = None,
         tts: Any = None,
         wake: Any = None,
+        speaker: Any = None,
         converse: Callable[..., Any] | None = None,
         start_stage: str = "stt",
         end_stage: str = "tts",
@@ -207,6 +225,7 @@ class PipelineRun:
         self.stt = stt
         self.tts = tts
         self.wake = wake
+        self.speaker = speaker
         self.converse = converse
         self.start_stage = start_stage
         self.end_stage = end_stage
@@ -243,9 +262,20 @@ class PipelineRun:
         self.tts_url: str | None = None
         self.tts_token: str | None = None
         self.error: PipelineError | None = None
+        #: The speaker verdict, once there is one. `None` means no gate was
+        #: active — never "it failed".
+        self.speaker_verdict: Any = None
 
         self._event_cb: Callable[[str, dict[str, Any]], Any] | None = None
         self._audio_ms = 0.0
+        #: The turn's audio, kept only while a gate is active and only up to
+        #: :data:`MAX_VERIFY_BYTES`. Nothing is written to disk and it is
+        #: dropped the moment the verdict is in — a voice assistant that
+        #: accumulated recordings in order to check who was talking would have
+        #: given up more privacy than the check buys back.
+        self._verify_pcm: list[bytes] = []
+        self._verify_bytes = 0
+        self._verify_task: "asyncio.Task[Any] | None" = None
 
     # --- public API -------------------------------------------------------
     async def execute(
@@ -284,8 +314,20 @@ class PipelineRun:
             _LOGGER.exception("Unexpected error in pipeline run %s", self.run_id)
             await self._fail(PipelineError("unknown", str(err) or type(err).__name__))
         finally:
+            # A run that timed out or was cancelled may still have a verifier
+            # in a worker thread. Nobody is going to read its answer, and a
+            # thread holding a copy of somebody's audio after the turn it
+            # belonged to has ended is the one thing this feature must not do.
+            self._discard_verification()
             await self._emit(EVENT_RUN_END, {})
         return self
+
+    def _discard_verification(self) -> None:
+        task, self._verify_task = self._verify_task, None
+        if task is not None and not task.done():
+            task.cancel()
+        self._verify_pcm = []
+        self._verify_bytes = 0
 
     async def execute_text(
         self,
@@ -325,6 +367,26 @@ class PipelineRun:
 
         if not self.runs_stage("intent"):
             return
+
+        # Whose voice it was, before anything is done about what it said.
+        # Deliberately ahead of the empty-transcript check: "somebody who is not
+        # you said something I could not make out" and "you said something I
+        # could not make out" are different events, and the gate is the only
+        # thing that can tell them apart.
+        refusal = await self._settle_speaker()
+        if refusal is not None:
+            # Refused. The turn ends here — the transcript is never handed to
+            # the agent, so nothing a stranger said can reach a tool — but it
+            # ends OUT LOUD by default. An assistant that goes silent is
+            # indistinguishable from one that did not hear you, and a false
+            # reject is the failure this feature will actually produce; the
+            # person it locks out has to be told why. `on_reject: silent` is
+            # there for anyone who would rather a stranger learn nothing.
+            self.response_text = refusal
+            if refusal and self.runs_stage("tts"):
+                await self._run_tts(refusal)
+            return
+
         if not self.stt_text:
             raise PipelineError("stt-no-text-recognized", "no text recognised")
 
@@ -395,6 +457,87 @@ class PipelineRun:
         text = (text or "").strip()
         await self._emit(EVENT_STT_END, {"stt_output": {"text": text}})
         return text
+
+    # --- speaker ----------------------------------------------------------
+    def _gate_active(self) -> bool:
+        gate = self.speaker
+        if gate is None:
+            return False
+        try:
+            return bool(gate.active)
+        except Exception:  # pragma: no cover - a broken gate must not eat turns
+            _LOGGER.exception("Speaker gate could not report whether it is active")
+            return False
+
+    def _start_verification(self) -> None:
+        """Kick the verifier off the moment the audio ends.
+
+        Placed here rather than after `stt-end` on purpose. The recogniser's
+        work does not finish when the audio does — Whisper transcribes what it
+        has been given, which is most of the round trip — so starting
+        verification at end-of-audio hides it entirely behind a wait that was
+        already happening. Doing it afterwards would add its whole cost to
+        every turn instead.
+
+        In a worker thread because the embedding is CPU-bound pure Python and
+        would otherwise block the event loop for long enough to stall every
+        other client on this server.
+        """
+        if not self._verify_pcm or self._verify_task is not None:
+            return
+        pcm = b"".join(self._verify_pcm)
+        self._verify_pcm = []
+        gate = self.speaker
+        rate, width = self.sample_rate, self.sample_width
+        self._verify_task = asyncio.create_task(
+            asyncio.to_thread(gate.check, pcm, rate, width)
+        )
+
+    async def _settle_speaker(self) -> str | None:
+        """Wait for the verdict and decide what happens to the turn.
+
+        Returns the line to say when the turn is refused, `""` for a silent
+        refusal, and `None` when the turn may proceed — which includes every
+        case where no gate is configured, the gate is in `observe`, or the
+        audio was unverifiable and the policy allows those through.
+        """
+        task, self._verify_task = self._verify_task, None
+        if task is None:
+            return None
+        try:
+            verdict = await task
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A verifier that crashed has not said "this is a stranger", and
+            # treating a bug as a refusal would lock the owner out of their own
+            # house on a traceback. It is reported and the turn proceeds; the
+            # tier system still stands in front of anything dangerous.
+            _LOGGER.exception("Speaker verification failed; letting the turn through")
+            return None
+
+        self.speaker_verdict = verdict
+        payload = verdict.as_dict() if hasattr(verdict, "as_dict") else {"verdict": str(verdict)}
+        gate = self.speaker
+        payload["mode"] = getattr(gate, "mode", "unknown")
+        payload["enforced"] = bool(gate.blocks(verdict))
+        await self._emit(EVENT_SPEAKER_END, {"speaker_output": payload})
+
+        if not gate.blocks(verdict):
+            return None
+
+        _LOGGER.info(
+            "Refusing a turn: speaker score %.2f against threshold %.2f (%s)",
+            getattr(verdict, "score", float("nan")),
+            getattr(verdict, "threshold", float("nan")),
+            getattr(verdict, "reason", "?"),
+        )
+        await self._fail(
+            PipelineError(ERROR_NOT_RECOGNISED, "that voice is not the enrolled owner's")
+        )
+        if getattr(gate, "on_reject", "speak") != "speak":
+            return ""
+        return str(getattr(gate, "refusal", "") or "")
 
     async def _run_intent(self, text: str) -> str:
         await self._emit(
@@ -491,6 +634,9 @@ class PipelineRun:
         bytes_per_second = max(self.sample_rate * self.sample_width * self.channels, 1)
         speaking = False
         silence_ms = 0.0
+        # Only the stt leg is kept: `vad=False` is the wake stage, which is the
+        # room before anybody addressed us and is not this turn's speaker.
+        keeping = vad and self._gate_active()
         while True:
             chunk = await audio_queue.get()
             if chunk is None:
@@ -498,6 +644,9 @@ class PipelineRun:
             chunk = bytes(chunk)
             if not chunk:
                 continue
+            if keeping and self._verify_bytes < MAX_VERIFY_BYTES:
+                self._verify_pcm.append(chunk)
+                self._verify_bytes += len(chunk)
             chunk_ms = len(chunk) * 1000 / bytes_per_second
             self._audio_ms += chunk_ms
             if vad and self.vad_enabled:
@@ -520,6 +669,10 @@ class PipelineRun:
             yield chunk
         if speaking:
             await self._emit(EVENT_STT_VAD_END, {"timestamp": int(self._audio_ms)})
+        if keeping:
+            # End of audio, and the recogniser has not answered yet: this is
+            # the window the verification is meant to hide inside.
+            self._start_verification()
 
     # --- conversation -----------------------------------------------------
     async def _converse_deltas(self, text: str) -> AsyncIterator[str]:

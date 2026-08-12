@@ -41,6 +41,15 @@ from ...voice.pipeline import (
     store_tts_audio,
 )
 from ...voice.pipelines import DEFAULT_WAKE_WORD, Pipeline, PipelineStore
+from ...voice.speaker import (
+    DEFAULT_REFUSAL,
+    MODE_OFF,
+    MODES,
+    ON_REJECT_SILENT,
+    ON_REJECT_SPEAK,
+    SpeakerGate,
+    VoiceProfile,
+)
 from ...voice.wyoming import (
     WyomingError,
     WyomingSttClient,
@@ -63,6 +72,11 @@ DATA_STT_CLIENT = "voice_stt_client"
 DATA_TTS_CLIENT = "voice_tts_client"
 DATA_WAKE_CLIENT = "voice_wake_client"
 DATA_CONVERSATION_AGENT = "conversation_agent"
+
+#: Where the enrolled voiceprint lives: `<config>/.storage/voice_profile.json`,
+#: chmod 600 like every other Store. It is biometric data about one person and
+#: it never leaves this box — no API returns the vectors, only a summary.
+STORE_SPEAKER = "voice_profile"
 
 SERVICE_SAY = "say"
 SERVICE_GET_PIPELINES = "get_pipelines"
@@ -97,6 +111,9 @@ class VoiceData:
     stt: Any = None
     tts: Any = None
     wake: Any = None
+    #: Whose voice this Jarvis answers. Always present; inert until somebody is
+    #: enrolled AND the mode is not `off`, which is the shipped default.
+    speaker: SpeakerGate = field(default_factory=SpeakerGate)
     config: dict[str, Any] = field(default_factory=dict)
     language: str = DEFAULT_LANGUAGE
     tts_voice: str | None = None
@@ -132,6 +149,7 @@ class VoiceData:
             stt=self.stt,
             tts=self.tts,
             wake=self.wake,
+            speaker=self.speaker,
             converse=converse or resolve_conversation_agent(self.jarvis),
             start_stage=start_stage,
             end_stage=end_stage,
@@ -452,6 +470,74 @@ def _register_services(jarvis: "Jarvis", data: VoiceData) -> None:
     )
 
 
+def _speaker_gate(config: dict[str, Any]) -> SpeakerGate:
+    """Read the `voice: speaker:` block into a gate.
+
+    ```yaml
+    voice:
+      speaker:
+        mode: observe        # off (default) | observe | enforce
+        threshold: 8.8       # from enrolment's suggestion; see the console
+        on_reject: speak     # speak (default) | silent
+        refusal: "I'm sorry, I don't recognise that voice."
+        allow_unverifiable: true
+    ```
+
+    An unknown `mode` falls back to `off` with a loud log line rather than to
+    `enforce`. A typo in a config file must not be able to lock somebody out of
+    their own house, and it must not silently disable a gate they meant to
+    turn on either — hence the warning.
+    """
+    section = _section(config, "speaker") or {}
+    mode = str(section.get("mode") or MODE_OFF).strip().lower()
+    if mode not in MODES:
+        _LOGGER.error(
+            "voice: speaker: mode: %r is not one of %s; leaving the gate off",
+            section.get("mode"),
+            ", ".join(MODES),
+        )
+        mode = MODE_OFF
+
+    on_reject = str(section.get("on_reject") or ON_REJECT_SPEAK).strip().lower()
+    if on_reject not in (ON_REJECT_SPEAK, ON_REJECT_SILENT):
+        _LOGGER.warning(
+            "voice: speaker: on_reject: %r is not speak/silent; using speak",
+            section.get("on_reject"),
+        )
+        on_reject = ON_REJECT_SPEAK
+
+    gate = SpeakerGate(mode=mode, on_reject=on_reject)
+    refusal = section.get("refusal")
+    if isinstance(refusal, str) and refusal.strip():
+        gate.refusal = refusal.strip()
+    else:
+        gate.refusal = DEFAULT_REFUSAL
+    if "allow_unverifiable" in section:
+        gate.allow_unverifiable = bool(section.get("allow_unverifiable"))
+    return gate
+
+
+async def async_load_profile(jarvis: "Jarvis", data: VoiceData) -> None:
+    """Read the enrolled voiceprint off disk into [data.speaker]."""
+    from ...store import Store
+
+    store = Store(jarvis.config_dir, STORE_SPEAKER)
+    payload = await store.load()
+    # The profile carries the threshold enrolment worked out for it, and that
+    # is the one in force unless `voice: speaker: threshold:` overrides it —
+    # an explicit number a person typed beats one a computer suggested. See
+    # async_setup, which applies the override after this.
+    data.speaker.profile = VoiceProfile.from_dict(payload) if payload else None
+
+
+async def async_save_profile(jarvis: "Jarvis", profile: VoiceProfile | None) -> None:
+    """Persist (or clear) the enrolled voiceprint."""
+    from ...store import Store
+
+    store = Store(jarvis.config_dir, STORE_SPEAKER)
+    await store.save(profile.as_dict() if profile is not None else {})
+
+
 async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
     if config is None:
         config = {}
@@ -484,6 +570,7 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         stt=stt,
         tts=tts,
         wake=wake,
+        speaker=_speaker_gate(config),
         config=config,
         language=language,
         tts_voice=tts_voice,
@@ -491,6 +578,20 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
     )
     jarvis.data[DATA_VOICE] = data
     jarvis.data.setdefault(DATA_TTS_CACHE, {})
+
+    await async_load_profile(jarvis, data)
+    speaker_section = _section(config, "speaker") or {}
+    if "threshold" in speaker_section and data.speaker.profile is not None:
+        data.speaker.profile.threshold = float(speaker_section["threshold"])
+    if data.speaker.mode != MODE_OFF and not data.speaker.enrolled:
+        # Asked for, and impossible to honour. Saying so is the difference
+        # between "voice identity is on" and "voice identity is on and doing
+        # nothing", which otherwise look identical from the outside.
+        _LOGGER.warning(
+            "voice: speaker: mode is %r but nobody is enrolled; the gate is inert. "
+            "Enrol at POST /api/voice/speaker/enrol",
+            data.speaker.mode,
+        )
 
     _register_services(jarvis, data)
 

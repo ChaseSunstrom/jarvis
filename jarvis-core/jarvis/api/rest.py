@@ -524,6 +524,70 @@ async def models_get(request: Request, name: str) -> Response:
     )
 
 
+# --- whose voice this Jarvis answers ----------------------------------------
+@api_router.get("/voice/speaker")
+async def speaker_status(request: Request) -> dict[str, Any]:
+    from . import speaker as speaker_api
+
+    try:
+        return speaker_api.status(get_jarvis(request))
+    except speaker_api.EnrolError as err:
+        raise HTTPException(status_code=err.status, detail=str(err)) from err
+
+
+@api_router.post("/voice/speaker/enrol")
+async def speaker_enrol(request: Request) -> dict[str, Any]:
+    """Add one enrolment sample. Body is a WAV, or raw 16 kHz mono PCM.
+
+    Raw PCM is accepted because the phone already has the samples in that shape
+    and wrapping them in a container to send them back would be ceremony. The
+    rate and width can be named in the query string for anything else.
+    """
+    from . import speaker as speaker_api
+
+    try:
+        return await speaker_api.async_enrol(
+            get_jarvis(request),
+            await request.body(),
+            request.headers.get("content-type", ""),
+            int(request.query_params.get("rate") or 16000),
+            int(request.query_params.get("width") or 2),
+        )
+    except speaker_api.EnrolError as err:
+        raise HTTPException(status_code=err.status, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=f"bad rate/width: {err}") from err
+
+
+@api_router.post("/voice/speaker/verify")
+async def speaker_verify(request: Request) -> dict[str, Any]:
+    """Score a sample without enrolling it — how you find your threshold."""
+    from . import speaker as speaker_api
+
+    try:
+        return await speaker_api.async_verify(
+            get_jarvis(request),
+            await request.body(),
+            request.headers.get("content-type", ""),
+            int(request.query_params.get("rate") or 16000),
+            int(request.query_params.get("width") or 2),
+        )
+    except speaker_api.EnrolError as err:
+        raise HTTPException(status_code=err.status, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=f"bad rate/width: {err}") from err
+
+
+@api_router.delete("/voice/speaker")
+async def speaker_forget(request: Request) -> dict[str, Any]:
+    from . import speaker as speaker_api
+
+    try:
+        return await speaker_api.async_forget(get_jarvis(request))
+    except speaker_api.EnrolError as err:
+        raise HTTPException(status_code=err.status, detail=str(err)) from err
+
+
 @api_router.get("/config/settings/list")
 async def settings_list(request: Request) -> dict[str, Any]:
     jarvis = get_jarvis(request)

@@ -26,6 +26,11 @@ from dataclasses import dataclass, field
 
 RATE = 16000
 
+#: Rendered utterances, keyed by everything that determines them. See
+#: `SynthSpeaker.utterance`. Never evicted: a test session asks for a few dozen
+#: distinct utterances of a few seconds each, which is a handful of megabytes.
+_UTTERANCES: dict[tuple, bytes] = {}
+
 
 @dataclass(frozen=True)
 class SynthSpeaker:
@@ -58,7 +63,18 @@ class SynthSpeaker:
         `seed` changes the "words": which vowels, in what order, with what
         pauses. `f0_scale` moves the whole utterance's pitch, standing in for
         the difference between asking a question and giving an order.
+
+        Memoised. Synthesis is a per-sample Python loop through three
+        resonators and it is the dominant cost of the speaker suites — the same
+        (speaker, seed, length, gain, pitch) recurs across fixtures and across
+        files, and generating it again produces the same bytes by construction.
+        Caching a deterministic function cannot change a result; it took the
+        two suites from about six minutes to under two.
         """
+        key = (self.name, seconds, seed, gain, f0_scale)
+        cached = _UTTERANCES.get(key)
+        if cached is not None:
+            return cached
         rng = random.Random(seed * 7919 + int(self.f0))
         total = int(seconds * RATE)
         out = array("h", bytes(2 * total))
@@ -101,7 +117,9 @@ class SynthSpeaker:
                 value *= gain
                 out[sample_index] = _clip(value)
             position += length
-        return out.tobytes()
+        rendered = out.tobytes()
+        _UTTERANCES[key] = rendered
+        return rendered
 
 
 class _Resonator:
