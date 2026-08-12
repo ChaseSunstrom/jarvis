@@ -93,10 +93,64 @@ interface JarvisAction {
     fun isAvailable(ctx: Context): Boolean = true
 
     /**
+     * Turn fuzzy parameters into concrete ones, BEFORE a human is asked.
+     *
+     * The project's rule is that *what was approved is what runs*: a consent
+     * prompt reading `to: "Mum"` and an SMS going to a number nobody was shown
+     * is a prompt that lied. So anything that resolves a name to a thing —
+     * contact to number, app label to package — happens here, and the
+     * dispatcher uses the result for the prompt, the audit entry and
+     * [execute] alike.
+     *
+     * It also exists because the alternative does not work in practice. Making
+     * the model call `read_contacts`, read a number out of it, and pass that
+     * to `send_sms` is two device round trips with two consent surfaces
+     * between the request and the message, and an 8B planner drops it: the
+     * reported symptom was "I asked it to text someone and it never did".
+     * Resolving on the device makes the one call the model actually emits the
+     * one that works.
+     *
+     * Constraints, all load-bearing:
+     *
+     *  * **Read-only.** This runs before any policy decision, so a resolver
+     *    that changed something would be an un-gated side effect. Look things
+     *    up; change nothing.
+     *  * **It cannot lower a tier.** The dispatcher recomputes
+     *    `tierFor(resolved)` and takes the max with the declared tier, so a
+     *    resolver may make an action stricter and never laxer.
+     *  * **Failure is an honest error, not a prompt.** A name that matches
+     *    nothing, or matches three people, returns
+     *    [ResolveResult.Failed] and the human is never asked to approve
+     *    something ambiguous. The message is written for the model to act on —
+     *    it can come back through `ask_user`.
+     *  * **Permissions are re-checked.** Resolving may need one (contacts),
+     *    and it must return [ResolveResult.Failed] rather than throw.
+     */
+    suspend fun resolve(ctx: Context, params: JSONObject): ResolveResult =
+        ResolveResult.Unchanged
+
+    /**
      * Do the thing. Called on a background dispatcher inside a timeout.
      * Must not throw for expected failures — return an error result instead.
      */
     suspend fun execute(ctx: Context, params: JSONObject): ActionResult
+}
+
+/** What [JarvisAction.resolve] can say. */
+sealed class ResolveResult {
+
+    /** Nothing to resolve; the parameters go through as they arrived. */
+    object Unchanged : ResolveResult()
+
+    /**
+     * Use [params] from here on — for the consent prompt, the audit entry and
+     * execution. [note] is a short human sentence about what was resolved,
+     * recorded in the audit log so "who was "Mum"?" is answerable later.
+     */
+    data class Resolved(val params: JSONObject, val note: String? = null) : ResolveResult()
+
+    /** Could not be made concrete. [message] is shown to the model, not to a human. */
+    data class Failed(val message: String) : ResolveResult()
 }
 
 /**

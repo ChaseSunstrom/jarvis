@@ -346,8 +346,12 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
         # unsupported / unavailable short-circuit BEFORE any policy work
         "if (safeUnsupported(action))",
         "if (!safeAvailable(action))",
-        # local table is the authority, tierFor folded in with max()
-        "val localTier = ActionTier.max(action.tier, safeTierFor(action, params))",
+        # fuzzy parameters become concrete BEFORE a human is shown them, so the
+        # prompt cannot say "Mum" while the message goes to a number nobody saw
+        "when (val resolution = safeResolve(action, live))",
+        # local table is the authority, tierFor folded in with max() — and it
+        # reads the RESOLVED params, so a resolver can only ever raise a tier
+        "val localTier = ActionTier.max(action.tier, safeTierFor(action, live))",
         "val effective = PolicyEngine.effectiveTier(localTier, requestedTier)",
         "val decision = PolicyEngine.decide(request)",
         # the human
@@ -357,7 +361,7 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
         # re-validate after the answer
         "if (PolicyEngine.decide(fresh) == Decision.DENY)",
         # only then execute
-        "withTimeout(action.timeoutMs) { action.execute(appContext, params) }",
+        "withTimeout(action.timeoutMs) { action.execute(appContext, live) }",
     ]
     positions = []
     for needle in ordered:
@@ -371,8 +375,31 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
 
 def test_the_dispatcher_passes_the_verbatim_params_to_the_prompt():
     src = REGISTRY.read_text()
-    assert "params = params, // VERBATIM" in src, (
+    assert "params = live, // VERBATIM" in src, (
         "the consent prompt must be shown the exact params that will execute"
+    )
+
+
+def test_resolution_happens_before_the_prompt_and_fails_closed():
+    """`resolve` runs ahead of every gate, so a throw cannot mean "never mind".
+
+    If a resolver could fail soft, the human would be shown the name it could
+    not resolve and `execute` would then decide for itself what that name
+    meant — which is the one thing the verbatim-params rule exists to stop.
+    """
+    src = re.sub(r"\s+", " ", REGISTRY.read_text())
+    assert "ResolveResult.Failed -> return finish(" in src, (
+        "a failed resolution must return, not fall through to the prompt"
+    )
+    assert "Log.w(TAG, \"resolve threw for ${action.id}; refusing\", t)" in src, (
+        "safeResolve no longer refuses when a resolver throws"
+    )
+    # ...and a cancellation is still a cancellation, not a refusal.
+    resolve_body = src.split("private suspend fun safeResolve(", 1)
+    assert len(resolve_body) == 2, "safeResolve is gone"
+    assert "catch (t: CancellationException) { throw t }" in resolve_body[1][:600], (
+        "safeResolve must let cancellation propagate; abandoning a turn is not "
+        "the same as a resolver saying no"
     )
 
 

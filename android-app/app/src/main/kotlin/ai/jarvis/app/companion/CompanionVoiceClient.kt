@@ -81,6 +81,17 @@ class CompanionVoiceClient(
     private val nextId = AtomicInteger(1)
     private val finished = AtomicBoolean(false)
 
+    /**
+     * Which server kinds to try, in order.
+     *
+     * A one-shot client cannot run the channel's discovery loop, but it can
+     * afford a second dial. Trying only the first candidate meant that with the
+     * kind not yet discovered, a wrong first guess was indistinguishable from a
+     * dead server: one 404 and the spoken question became a notification.
+     */
+    private val candidates: List<ServerKind> = ServerEndpoint.candidates(serverKind)
+    private var attempt = 0
+
     private var ws: WebSocket? = null
     private var mic: MicStreamer? = null
 
@@ -143,22 +154,42 @@ class CompanionVoiceClient(
         ws = null
     }
 
+    /** The kind this attempt is dialling. */
+    private fun currentKind(): ServerKind = candidates.getOrElse(attempt) { candidates.first() }
+
     private fun connect() {
         val base = ServerUrl.normalize(serverUrl)
         if (base.isEmpty() || token.isEmpty()) {
             deliver(null)
             return
         }
-        val url = ServerEndpoint.websocketUrl(
-            base,
-            serverKind ?: ServerEndpoint.candidates(null).first(),
-        )
+        val url = ServerEndpoint.websocketUrl(base, currentKind())
         if (url == null) {
             deliver(null)
             return
         }
         ws = try {
-            http.newWebSocket(Request.Builder().url(url).build(), this)
+            http.newWebSocket(
+                Request.Builder()
+                    .url(url)
+                    // Presented on the upgrade, exactly as JarvisChannel and
+                    // AssistPipelineClient do. This was the one WebSocket in the
+                    // app that did not, and against the console — which is the
+                    // URL a person types, and the first candidate — the relay
+                    // answered the handshake with 401 before a single frame was
+                    // exchanged. The in-band `auth_required` reply below never
+                    // got the chance to run, so the token this class does hold
+                    // was never presented anywhere.
+                    //
+                    // The symptom was not an error. Every proactive line and
+                    // every spoken answer fell back to a notification, which is
+                    // the designed behaviour for "no surface can speak" — so
+                    // the failure looked like a policy decision and only showed
+                    // up as a retry loop in logcat.
+                    .header("Authorization", "Bearer $token")
+                    .build(),
+                this,
+            )
         } catch (t: Throwable) {
             Log.w(TAG, "could not open the companion voice socket", t)
             deliver(null)
@@ -192,7 +223,22 @@ class CompanionVoiceClient(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        Log.w(TAG, "companion voice socket failed", t)
+        val code = response?.code
+        // A 4xx on the *upgrade* is the endpoint saying it did not want this
+        // handshake — wrong path, or a relay that will not take our token — and
+        // the useful response is to try the other server kind rather than to
+        // report "no voice". Anything else (no route to host, TLS, a timeout)
+        // is about the network and dialling the same box again would only
+        // repeat it.
+        if (code != null && code in 400..499 && attempt + 1 < candidates.size && !finished.get()) {
+            val next = candidates[attempt + 1]
+            Log.i(TAG, "companion voice: HTTP $code as ${currentKind()}, retrying as $next")
+            attempt += 1
+            ws = null
+            connect()
+            return
+        }
+        Log.w(TAG, "companion voice socket failed (HTTP ${code ?: "-"})", t)
         deliver(null)
     }
 
@@ -245,8 +291,14 @@ class CompanionVoiceClient(
             "tts-end" -> {
                 val url = data?.optJSONObject("tts_output")?.optString("url").orEmpty()
                 // The token rides in a header on the fetch, so the URL has to
-                // be on the configured origin or the credential leaks.
-                deliver(ServerUrl.resolveOnServer(serverUrl, url))
+                // be on the configured origin or the credential leaks — and it
+                // has to go through the relay's media proxy when the relay is
+                // what we are talking to. jarvis-core answers with one of its
+                // own paths (`/api/tts_proxy/…`), which the console does not
+                // serve; fetching it there is a 404, and a 404 on the audio of
+                // a spoken reply is silence. ServerEndpoint.mediaUrl knows both
+                // shapes, and it re-checks the origin either way.
+                deliver(ServerEndpoint.mediaUrl(serverUrl, currentKind(), url))
             }
             "error" -> {
                 Log.w(TAG, "pipeline error: ${data?.optString("message").orEmpty()}")

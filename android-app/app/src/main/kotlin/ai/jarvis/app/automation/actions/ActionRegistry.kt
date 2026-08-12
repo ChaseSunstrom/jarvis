@@ -170,6 +170,14 @@ class ActionRegistry(
         val startedAt = SystemClock.elapsedRealtime()
         val wallClock = System.currentTimeMillis()
 
+        // Set by the resolve step below, and used from there on for the consent
+        // prompt, the audit entry and execution alike — see JarvisAction.resolve.
+        // Deliberately NOT named `params`: `var params = params` shadows the
+        // parameter, and this file has already been bitten once by a local
+        // whose initializer mentions its own name.
+        var live = params
+        var resolveNote: String? = null
+
         suspend fun finish(
             result: ActionResult,
             tier: ActionTier,
@@ -180,7 +188,7 @@ class ActionRegistry(
                 AuditEntry(
                     timestamp = wallClock,
                     actionId = actionId,
-                    params = params,
+                    params = live,
                     tier = tier,
                     decision = decision,
                     status = result.status.wire,
@@ -189,7 +197,9 @@ class ActionRegistry(
                     source = source,
                     commandId = commandId,
                     durationMs = SystemClock.elapsedRealtime() - startedAt,
-                    note = note
+                    // The resolution is prepended, so the log answers "who was
+                    // 'Mum'?" next to the number the message actually went to.
+                    note = listOfNotNull(resolveNote, note).joinToString("; ").ifEmpty { null }
                 )
             )
             return result
@@ -224,8 +234,35 @@ class ActionRegistry(
             )
         }
 
-        // LOCAL tier is the authority; tierFor() may only raise it further.
-        val localTier = ActionTier.max(action.tier, safeTierFor(action, params))
+        // Make fuzzy parameters concrete BEFORE anyone is asked to approve
+        // them. A prompt showing `to: "Mum"` while the message goes to a number
+        // nobody saw is a prompt that lied, so this runs ahead of the policy
+        // engine and everything downstream — prompt, audit, execution — uses
+        // what comes out of it. See JarvisAction.resolve.
+        //
+        // A resolver that blows up is treated as a resolver that refused. It
+        // runs before any gate, so "it threw, carry on with the original
+        // parameters" would mean approving a name and sending to whatever
+        // execute() later made of it.
+        when (val resolution = safeResolve(action, live)) {
+            is ResolveResult.Unchanged -> Unit
+            is ResolveResult.Resolved -> {
+                live = resolution.params
+                resolveNote = resolution.note
+            }
+            is ResolveResult.Failed -> return finish(
+                ActionResult.error(resolution.message),
+                action.tier,
+                Decision.DENY,
+                "parameters could not be resolved"
+            )
+        }
+
+        // LOCAL tier is the authority; tierFor() may only raise it further, and
+        // it is computed on the RESOLVED parameters — a resolver may make an
+        // action stricter (a number that turns out to be premium-rate) and can
+        // never make it laxer.
+        val localTier = ActionTier.max(action.tier, safeTierFor(action, live))
         val effective = PolicyEngine.effectiveTier(localTier, requestedTier)
         val userPolicy = policy.policyFor(actionId)
         val request = PolicyRequest(
@@ -254,7 +291,7 @@ class ActionRegistry(
                     ApprovalRequest(
                         actionId = actionId,
                         description = action.description,
-                        params = params, // VERBATIM — the prompt must show the truth
+                        params = live, // VERBATIM — the prompt must show the truth
                         tier = effective,
                         reason = reason,
                         commandId = commandId,
@@ -301,7 +338,7 @@ class ActionRegistry(
         }
 
         val result = try {
-            withTimeout(action.timeoutMs) { action.execute(appContext, params) }
+            withTimeout(action.timeoutMs) { action.execute(appContext, live) }
         } catch (t: TimeoutCancellationException) {
             ActionResult.error("$actionId timed out after ${action.timeoutMs} ms")
         } catch (t: CancellationException) {
@@ -326,6 +363,27 @@ class ActionRegistry(
         // No answer, a hung UI, or a crashed gateway all fail closed.
         return verdict ?: ApprovalVerdict.TIMEOUT
     }
+
+    /**
+     * Resolve, failing closed.
+     *
+     * A resolver runs before every gate, so a throw cannot mean "never mind,
+     * use the original parameters": that would put a name in front of the human
+     * and let `execute` decide for itself what the name meant. A cancellation
+     * still propagates — abandoning the turn is not a refusal to answer.
+     */
+    private suspend fun safeResolve(action: JarvisAction, params: JSONObject): ResolveResult =
+        try {
+            action.resolve(appContext, params)
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolve threw for ${action.id}; refusing", t)
+            ResolveResult.Failed(
+                "could not work out what ${action.id} was aimed at: " +
+                    (t.message ?: t.javaClass.simpleName)
+            )
+        }
 
     /** A misbehaving action must not be able to lower its own tier by throwing. */
     private fun safeTierFor(action: JarvisAction, params: JSONObject): ActionTier =
