@@ -226,6 +226,51 @@ def test_kotlin_tier_enum_order_matches():
         assert re.search(rf"\b{name}\b", src.split("enum class Decision {", 1)[1]), name
 
 
+def test_the_kill_switch_can_be_set_and_cleared():
+    """The rule above says panic denies everything. Nothing could set it.
+
+    `PolicyStore.panic` was READ by the dispatcher, by the UI automator, by the
+    boot receiver and by the automation service; it was rendered by the
+    automations screen as "PANIC — everything is stopped"; `docs/security.md`
+    described it as the kill switch. No code path anywhere wrote it. The truth
+    table above was exhaustively correct about a state the phone could not
+    enter — and, since the automations screen hides its only other control
+    while panic is on, could not have left either.
+    """
+    root = Path(__file__).resolve().parents[1] / "app/src/main/kotlin/ai/jarvis/app"
+    service = (root / "automation/JarvisAutomationService.kt").read_text()
+    assert "policy.panic = true" in service, "nothing can set panic"
+    assert "policy.panic = false" in service, "nothing can clear it"
+    assert "fun panic(context: Context, on: Boolean)" in service, (
+        "there is no way to reach the kill switch without a reference to the "
+        "service, which is what every caller that needs it lacks"
+    )
+    screen = (root / "automation/ui/AutomationsActivity.kt").read_text()
+    assert "JarvisAutomationService.panic(this," in screen, (
+        "the automations screen still has no PANIC button"
+    )
+    assert '"CLEAR PANIC"' in screen, (
+        "there is no way out of panic; the screen hides the pause control while "
+        "it is on, so a one-way switch would strand the phone"
+    )
+
+
+def test_panic_stops_the_watching_and_not_only_the_running():
+    """"Nothing will run" is not the same claim as "nothing is watching", and
+    the notification makes the second one. Setting the flag has to go through
+    the service so the triggers come down with it."""
+    root = Path(__file__).resolve().parents[1] / "app/src/main/kotlin/ai/jarvis/app"
+    service = (root / "automation/JarvisAutomationService.kt").read_text()
+    kill = service.split("private fun applyKillSwitches()", 1)
+    assert len(kill) == 2, "applyKillSwitches is gone"
+    body = kill[1][:900]
+    assert "policy.automationEnabled && !policy.panic" in body
+    assert "teardownTriggers()" in body, (
+        "panic no longer unregisters the trigger layer, so the phone keeps "
+        "observing while claiming to be stopped"
+    )
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failures = 0

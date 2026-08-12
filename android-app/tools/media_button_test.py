@@ -30,10 +30,11 @@ import sys
 from itertools import product
 from pathlib import Path
 
-SRC = (
-    Path(__file__).resolve().parent.parent
-    / "app/src/main/kotlin/ai/jarvis/app/audio/MediaButtonGate.kt"
-)
+KOTLIN = Path(__file__).resolve().parent.parent / "app/src/main/kotlin/ai/jarvis/app"
+SRC = KOTLIN / "audio/MediaButtonGate.kt"
+SESSION = KOTLIN / "audio/HeadsetButtonSession.kt"
+SERVICE = KOTLIN / "automation/JarvisAutomationService.kt"
+SETTINGS = KOTLIN / "SettingsActivity.kt"
 
 IGNORE = "IGNORE"
 PASS_TO_MEDIA = "PASS_TO_MEDIA"
@@ -207,6 +208,104 @@ def test_kotlin_constants_match() -> None:
         m = re.search(rf"const val {name} = (\d+)L", src)
         assert m, f"{name} missing"
         assert int(m.group(1)) == value, f"{name} is {m.group(1)}, spec says {value}"
+
+
+# --- the gate has a caller --------------------------------------------------
+#
+# Everything above this line tested a pure function that nothing called.
+#
+# There was no MediaSession anywhere in the app, so no media button event ever
+# reached this process, so all 400 combinations above — including the security
+# rule that a press may never answer a consent prompt — described a feature that
+# did not exist. `docs/earpiece.md` documented it as shipped. An exhaustively
+# tested pure function is exactly the shape that hides this: the tests pass,
+# the logic is right, and the feature is not there.
+
+
+def test_something_actually_receives_a_media_button() -> None:
+    assert SESSION.is_file(), (
+        "there is no MediaSession in the app, so no media button ever reaches "
+        "MediaButtonGate and every test above describes an unreachable feature"
+    )
+    src = SESSION.read_text()
+    assert "MediaSession(" in src, "HeadsetButtonSession creates no session"
+    assert "onMediaButtonEvent" in src, "nothing handles the button event"
+    assert "MediaButtonGate.decide(" in src, "the session does not consult the gate"
+
+
+def test_the_session_is_owned_by_something_long_lived() -> None:
+    """A session that exists only while an Activity is up would never be the
+    session the framework routes a button to."""
+    src = SERVICE.read_text()
+    assert "HeadsetButtonSession(applicationContext)" in src, (
+        "nothing constructs the session, so it is a class with no instances"
+    )
+    assert "headsetButton?.stop()" in src, "the session is never released"
+
+
+def test_every_outcome_is_carried_out() -> None:
+    src = SESSION.read_text()
+    body = src.split("MediaButtonGate.decide(", 1)[1]
+    for action, evidence, why in (
+        ("IGNORE", "-> true", "swallowed presses must be consumed, not forwarded"),
+        ("PASS_TO_MEDIA", "-> false", "a press that is not ours must be routed onward"),
+        ("START_TURN", "startTurn()", "nothing opens the assist surface"),
+        ("END_TURN", "endTurnFromButton()", "nothing ends the turn"),
+    ):
+        arm = body.split(f"MediaButtonGate.Action.{action}", 1)
+        assert len(arm) == 2, f"the {action} outcome is not handled at all"
+        assert evidence in arm[1][:400], f"{action}: {why}"
+
+
+def test_the_debounce_clock_is_kept() -> None:
+    src = SESSION.read_text()
+    assert "MediaButtonGate.resetsDebounce(action)" in src, (
+        "the caller decides for itself which presses reset the clock, so the "
+        "rule that a press handed to a media app does not reset it can drift"
+    )
+
+
+def test_the_decision_is_made_on_release() -> None:
+    """Hold duration is the whole difference between summoning Jarvis and
+    pausing a podcast, and it is not known until the key comes up."""
+    src = SESSION.read_text()
+    assert "KeyEvent.ACTION_UP" in src
+    assert "event.eventTime - event.downTime" in src, (
+        "the hold duration is not measured from the key event, so every press "
+        "looks like the same length"
+    )
+
+
+def test_the_consent_check_has_something_to_read() -> None:
+    """Rule 1 needs a live answer to "is a prompt up?". The bridge tracked
+    prompts per request id and had no way to answer that question at all."""
+    src = SESSION.read_text()
+    assert "ApprovalBridge.anyPending" in src, (
+        "consentPending is passed something other than the live prompt state"
+    )
+    bridge = (KOTLIN / "ui/ApprovalBridge.kt").read_text()
+    assert "val anyPending" in bridge, "ApprovalBridge cannot answer it"
+
+
+def test_the_user_can_turn_it_on() -> None:
+    """headsetMode, headsetButton and warmLink had getters, defaults and a page
+    of documentation, and nothing in the app ever wrote one of them."""
+    src = SETTINGS.read_text()
+    for setting in ("config.headsetMode =", "config.headsetButton =", "config.warmLink ="):
+        assert setting in src, (
+            f"nothing writes {setting.split()[0]}, so the earpiece feature is "
+            "reachable only by editing SharedPreferences by hand"
+        )
+
+
+def test_warm_link_is_read_by_the_conversation() -> None:
+    """A setting with a writer and no reader is the same bug wearing a switch."""
+    src = (KOTLIN / "assist/JarvisConversation.kt").read_text()
+    assert "config.warmLink && route.warmLinkEligible" in src, (
+        "warmLink is stored and never consulted, or is consulted without the "
+        "route's veto — an open mic with no echo canceller hears the tail of "
+        "Jarvis's own reply and starts a turn against itself"
+    )
 
 
 def main() -> int:

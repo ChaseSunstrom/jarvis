@@ -143,10 +143,14 @@ The full model is [`docs/security.md`](docs/security.md).
   front of the dangerous verbs. Enrol on the phone, leave it in `observe` until
   you have read your own scores, and only then enforce.
   [`docs/voice-identity.md`](docs/voice-identity.md).
-- **An earpiece is the good hands-free story, and it works today.** Capture
-  moves to the headset, the reply is echo-cancelled so Jarvis does not hear
-  itself, and the headset button starts a turn. See
-  [`docs/earpiece.md`](docs/earpiece.md).
+- **An earpiece is the good hands-free story, and it is switched off until you
+  switch it on.** Capture moves to the headset, the reply is echo-cancelled so
+  Jarvis does not hear itself, and the headset button starts a turn — after
+  **Settings → Headset**, which is where the three switches live. Two limits
+  worth knowing before you rely on it: the button only reaches Jarvis when
+  Jarvis holds the media session, so an app that is genuinely playing usually
+  gets the press instead; and none of it has been tried on real Bluetooth
+  hardware. See [`docs/earpiece.md`](docs/earpiece.md).
 - **Multi-agent delegation and coding jobs are aspirational at 8B.** They
   work; whether the decomposition is any good depends on your model.
   `make eval-decomp` is the ship/no-ship gate, and failing it is a reason to

@@ -14,6 +14,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import ai.jarvis.app.JarvisApp
+import ai.jarvis.app.audio.HeadsetButtonSession
 import ai.jarvis.app.automation.actions.ActionRegistry
 import ai.jarvis.app.automation.actions.builtin.Builtins
 import ai.jarvis.app.automation.audit.AuditLog
@@ -103,6 +104,9 @@ class JarvisAutomationService : Service() {
     @Volatile
     private var live = false
 
+    /** The MediaSession that gives [ai.jarvis.app.audio.MediaButtonGate] a caller. */
+    private var headsetButton: HeadsetButtonSession? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -120,6 +124,14 @@ class JarvisAutomationService : Service() {
         // transport for jarvis-core to ask on. The phone was not answering
         // "unsupported"; it was not being asked.
         DeviceChannelHost.start(applicationContext)
+
+        // The headset button. Owned here because this is the only long-lived
+        // component in the process, and a MediaSession that exists only while
+        // an Activity is up would never be the session the framework routes a
+        // button to. `MediaButtonGate` had no caller at all until this line —
+        // 400 tested input combinations describing a feature nothing could
+        // reach. See ai.jarvis.app.audio.HeadsetButtonSession.
+        headsetButton = HeadsetButtonSession(applicationContext).also { it.refresh() }
 
         startForegroundNotification()
         watchPolicy()
@@ -143,6 +155,22 @@ class JarvisAutomationService : Service() {
                 policy.automationEnabled = true
                 Log.i(TAG, "automation resumed from the notification")
             }
+
+            // The kill switch, which until now nothing could set. `panic` was
+            // read by the dispatcher, by the UI automator, by the boot receiver
+            // and by this service, and written by nobody: an unreachable safety
+            // feature that every one of those places deferred to. It outranks
+            // the master switch, so it gets its own action rather than being
+            // folded into pause.
+            ACTION_PANIC -> {
+                policy.panic = true
+                Log.w(TAG, "PANIC set from $reason")
+            }
+
+            ACTION_CLEAR_PANIC -> {
+                policy.panic = false
+                Log.i(TAG, "panic cleared from $reason")
+            }
         }
 
         startForegroundNotification()
@@ -152,6 +180,8 @@ class JarvisAutomationService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "onDestroy: releasing everything")
+        headsetButton?.stop()
+        headsetButton = null
         teardownTriggers()
         unregisterDynamicReceiver()
         // Closing the socket cancels every in-flight command, and cancelling a
@@ -184,6 +214,11 @@ class JarvisAutomationService : Service() {
      * "Pause automations" that left the phone still watching would be a lie.
      */
     private fun applyKillSwitches() {
+        // Not a kill switch, but the same moment: the settings screen has just
+        // been saved, or the service has just restarted, and either can have
+        // changed whether Jarvis holds the headset button.
+        headsetButton?.refresh()
+
         val shouldRun = policy.automationEnabled && !policy.panic
         AutomationRuntime.engine?.let { engine ->
             engine.accepting = shouldRun
@@ -416,6 +451,43 @@ class JarvisAutomationService : Service() {
 
         const val ACTION_PAUSE = "ai.jarvis.app.automation.PAUSE"
         const val ACTION_RESUME = "ai.jarvis.app.automation.RESUME"
+
+        /**
+         * The kill switch. Outranks the master switch and every remembered
+         * "always allow": `PolicyEngine.decide` returns DENY on it before it
+         * looks at anything else.
+         *
+         * It had no writer. Four components read `policy.panic` and deferred to
+         * it, `docs/security.md` described it, the automations screen rendered a
+         * "PANIC — everything is stopped" state, and no code path anywhere could
+         * put the phone into that state.
+         */
+        const val ACTION_PANIC = "ai.jarvis.app.automation.PANIC"
+        const val ACTION_CLEAR_PANIC = "ai.jarvis.app.automation.CLEAR_PANIC"
+
+        /**
+         * Set panic from anywhere, without a reference to the service.
+         *
+         * Goes through the service rather than writing [PolicyStore] directly
+         * so that the trigger layer is torn down in the same breath: panic that
+         * stopped actions but left the phone watching, listening and geofencing
+         * would be a panic button that does not do what its name says.
+         */
+        fun panic(context: Context, on: Boolean) {
+            val action = if (on) ACTION_PANIC else ACTION_CLEAR_PANIC
+            runCatching {
+                context.startService(
+                    Intent(context, JarvisAutomationService::class.java).setAction(action)
+                )
+            }.onFailure {
+                // A background start refused. Write it anyway: the flag is what
+                // the dispatcher consults, and a panic button that fails
+                // because the service was asleep is worse than one that leaves
+                // the triggers running until the service next wakes.
+                Log.w(TAG, "could not reach the service for $action; writing the flag directly", it)
+                PolicyStore(context.applicationContext).panic = on
+            }
+        }
 
         /** Start (or nudge) the service. Safe to call repeatedly. */
         fun ensureRunning(context: Context, reason: String = "app") {

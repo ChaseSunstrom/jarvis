@@ -5,7 +5,16 @@ a hearing aid than to headphones — so that talking to Jarvis costs nothing mor
 than talking. This page is what that actually does, and what it does not.
 
 Everything here is **off by default**. Plugging in a headset never silently
-moves the microphone; you turn on **Settings → Headset mode** once.
+moves the microphone; you turn it on once, in **Settings → Headset**.
+
+> **Until August 2026 there was no such switch.** `headsetMode`, `headsetButton`
+> and `warmLink` had getters, defaults and this page, and nothing in the app
+> ever wrote any of them; `MediaButtonGate` had no caller and there was no
+> `MediaSession` anywhere, so no media button event reached the process at all.
+> Every rule below was true of code that could not run. The three switches, the
+> session and the warm link exist now — see
+> `tools/media_button_test.py`, whose last eight checks are "does anything call
+> this".
 
 ## Why an earpiece is a different problem
 
@@ -95,10 +104,19 @@ rather than orphaning it.
 
 ## What this does not give you
 
-- **It is not a wake word.** There is no hotword detection in the app at all
-  (see the honest-limits section of the [README](../README.md)). With an
-  earpiece you press the button; you do not say "Hey Jarvis" and have it
-  answer.
+- **The button is not the only way in, but it is the reliable one.** There IS
+  hotword detection now — `OnDeviceWakeWord` runs openWakeWord's model chain on
+  the phone — but it needs an open microphone and the battery that costs. With
+  an earpiece, a press is deterministic and free.
+- **The button only arrives when Jarvis owns the media session.** Android routes
+  a media button to one session: broadly, the most recently active one. While
+  another app is genuinely playing, that app usually gets the press and Jarvis
+  never sees it — which is why the "music playing → pause the music" row is
+  mostly belt-and-braces. The case it really covers is a paused player that
+  still holds the session.
+- **Warm link ends eventually.** It survives five silent windows — about forty
+  seconds — and then the conversation closes. An earpiece put down on a desk
+  must not hold the microphone open indefinitely.
 - **On Android 11 and older** the only routing lever is the legacy SCO pair,
   and Jarvis holds the link only for the duration of a turn. If a conversation
   is killed abnormally the link is released on teardown; if you ever find music

@@ -9,6 +9,7 @@ import ai.jarvis.app.audio.CaptureProfile
 import ai.jarvis.app.audio.HeadsetMonitor
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
+import java.lang.ref.WeakReference
 
 /**
  * The Jarvis conversation engine, shared by the activation popup
@@ -108,6 +109,27 @@ class JarvisConversation(
     /** True while [HeadsetMonitor.clearCommunicationRoute] is owed. */
     private var routeApplied = false
 
+    /**
+     * Warm link: this conversation stays open through silence because the user
+     * is wearing an earpiece with a working echo canceller.
+     *
+     * Resolved once per conversation in [start], from the user's opt-in AND
+     * `AudioRoute.warmLinkEligible` — which is the authority, and which is
+     * gated on an echo loop rather than on a headset merely being connected.
+     * Without cancellation an open mic hears the tail of Jarvis's own reply and
+     * starts a turn against itself, so a warm link on the phone's speaker is a
+     * feedback loop rather than a feature. The setting can only ever narrow
+     * what the route allows.
+     *
+     * Until this existed, `JarvisConfig.warmLink` had a getter, a default, a
+     * paragraph in `docs/earpiece.md` and no reader anywhere: a documented
+     * feature made entirely of a preference key.
+     */
+    private var warmLink = false
+
+    /** How many silent windows warm link has already re-armed through. */
+    private var warmLinkIdles = 0
+
     private var state = AssistPipelineClient.State.IDLE
     private var running = false
 
@@ -144,7 +166,14 @@ class JarvisConversation(
     // and it is a compile error, not a warning.
     private val inactivity: Runnable = Runnable {
         if (!isListening()) return@Runnable
-        if (continuous) {
+        // Warm link re-arms like the home screen does, but not forever: an
+        // earpiece left on a desk would otherwise hold the microphone open and
+        // the server's pipeline with it until the battery decided otherwise.
+        // The home screen has no such cap because it is on screen — somebody is
+        // looking at it.
+        val warmStillOpen = warmLink && warmLinkIdles < WARM_LINK_MAX_IDLES
+        if (warmStillOpen) warmLinkIdles++
+        if (continuous || warmStillOpen) {
             // The screen is meant to be listening, so "nobody said anything"
             // is not a fault and must not close anything or say a word. The one
             // thing worth interrupting for is a microphone that is not merely
@@ -212,6 +241,7 @@ class JarvisConversation(
     fun start() {
         if (running) return
         running = true
+        liveRef = WeakReference(this)
         responseBuffer = StringBuilder()
 
         if (startLocalTurn()) return
@@ -224,6 +254,8 @@ class JarvisConversation(
         val route = headsets.route
         val profile = CaptureProfile.forRoute(route)
         routeApplied = headsets.applyCommunicationRoute(profile)
+        warmLink = config.warmLink && route.warmLinkEligible
+        warmLinkIdles = 0
 
         tts = TtsPlayer(context, config.token, config.serverUrl).also {
             // Capture source and playback usage are one decision: an AEC with
@@ -373,6 +405,25 @@ class JarvisConversation(
     fun stop() = stopWith(idle = false)
 
     /**
+     * "I have finished talking" — the headset button, mid-turn.
+     *
+     * Ends the AUDIO, not the conversation: the server already has the speech,
+     * so let it transcribe and answer. The same thing the VAD's end-of-speech
+     * and the turn cap do, reached by a physical button instead of by silence.
+     *
+     * Refuses while a question is being answered elsewhere ([holdForQuestion]):
+     * that microphone belongs to the asking surface, and cutting it off here
+     * would settle a question the user is mid-way through answering.
+     *
+     * @return false when there was no live turn to end.
+     */
+    fun endTurnFromButton(): Boolean {
+        if (!running || held || !isListening()) return false
+        endTurnAudio()
+        return true
+    }
+
+    /**
      * Hand the microphone to something else without ending the conversation.
      *
      * This exists for one caller: Jarvis asking *you* a question. `ask_user`
@@ -456,6 +507,7 @@ class JarvisConversation(
     private fun stopWith(idle: Boolean) {
         if (!running && !idle) return
         running = false
+        if (liveRef?.get() === this) liveRef = null
         vad.reset()
         reachedListening = false
         reportedDeafness = false
@@ -656,6 +708,40 @@ class JarvisConversation(
 
         private const val BARGE_RATIO = 8f
         private const val BARGE_MIN = 0.02f
+
+        /**
+         * How many silent inactivity windows a warm link survives before the
+         * conversation ends anyway — roughly forty seconds at the default
+         * eight-second window.
+         *
+         * Long enough to think of the follow-up question that warm link exists
+         * for, short enough that an earpiece put down on a desk stops holding
+         * the microphone open.
+         */
+        private const val WARM_LINK_MAX_IDLES = 5
+
+        /**
+         * The conversation that is running right now, if there is one.
+         *
+         * Set in [start] and cleared in [stopWith], inside the class that owns
+         * that lifecycle — not registered by each surface. Three surfaces own a
+         * conversation and every one of them would have to remember; the
+         * `CompanionSpeechHost` seam is what that costs when one of them does
+         * not (see `tools/speech_host_test.py`).
+         *
+         * Weak, because an Activity's conversation must not be kept alive by a
+         * static field. A stale reference answers null through [live] anyway,
+         * since a stopped conversation clears the slot.
+         *
+         * The one consumer is [ai.jarvis.app.audio.HeadsetButtonSession]: a
+         * button press has to know whether Jarvis is mid-turn, and the button
+         * arrives in a Service with no view of any Activity.
+         */
+        @Volatile
+        private var liveRef: WeakReference<JarvisConversation>? = null
+
+        /** The running conversation, or null. See [liveRef]. */
+        val live: JarvisConversation? get() = liveRef?.get()?.takeIf { it.running }
 
 
 

@@ -380,6 +380,13 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         /** Set when the popup was opened by the wake word rather than by a tap. */
         const val EXTRA_FROM_WAKE_WORD = "ai.jarvis.app.FROM_WAKE_WORD"
 
+        /**
+         * Set when a headset button opened it. Carried for the audit trail and
+         * for the transcript's own "how did this start" — the popup behaves the
+         * same either way, because the button is a tap by another name.
+         */
+        const val EXTRA_FROM_HEADSET_BUTTON = "ai.jarvis.app.FROM_HEADSET_BUTTON"
+
         /** Side of the orb's slot in the card. The reactor sizes itself to it. */
         private const val ORB_DP = 200
 

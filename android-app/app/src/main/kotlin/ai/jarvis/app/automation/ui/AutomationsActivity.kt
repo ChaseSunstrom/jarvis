@@ -226,6 +226,33 @@ class AutomationsActivity : Activity() {
             )
         }
 
+        // The kill switch, which nothing could set.
+        //
+        // `panic` outranks the master switch and every remembered "always
+        // allow": PolicyEngine returns DENY on it before it looks at anything
+        // else, the boot receiver refuses to restart triggers under it, and
+        // this very screen already knew how to render "PANIC — everything is
+        // stopped". Four readers, no writer. The state was unreachable, and so
+        // was the way out of it — which is why CLEAR is on the same button
+        // rather than somewhere else.
+        if (store != null) {
+            col.addView(
+                JarvisUi.ghost(this, if (store.panic) "CLEAR PANIC" else "PANIC") {
+                    val turningOn = !store.panic
+                    JarvisAutomationService.panic(this, turningOn)
+                    notice = if (turningOn) {
+                        "Panic is on. Nothing runs — no command from the server, no " +
+                            "trigger, no task — until you clear it. Triggers are " +
+                            "unregistered too, so the phone is not watching either."
+                    } else {
+                        "Panic cleared."
+                    }
+                    refresh()
+                },
+                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+            )
+        }
+
         if (tasks.isEmpty()) {
             col.addView(JarvisUi.spacer(this, 24))
             col.addView(

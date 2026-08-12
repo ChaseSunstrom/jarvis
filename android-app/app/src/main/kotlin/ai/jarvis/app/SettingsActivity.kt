@@ -65,6 +65,9 @@ class SettingsActivity : Activity() {
     private lateinit var wakeEnabled: Switch
     private lateinit var wakeInCar: Switch
     private lateinit var wakeAtHome: Switch
+    private lateinit var headsetMode: Switch
+    private lateinit var headsetWarmLink: Switch
+    private lateinit var headsetButton: Switch
     /** How many required grants are missing, refreshed on resume. */
     private lateinit var permissionStatus: TextView
 
@@ -322,6 +325,37 @@ class SettingsActivity : Activity() {
             )
         )
 
+        // --- headset / earpiece -----------------------------------------------
+        //
+        // These three settings had getters, defaults, a whole page of
+        // documentation in docs/earpiece.md, pure routing logic checked over
+        // every combination — and no way to turn any of them on. `headsetMode`
+        // defaults to false and nothing in the app wrote it, so the earpiece
+        // feature was unreachable in exactly the way `MediaButtonGate` was.
+        //
+        // Off by default is deliberate and stays: plugging in a headset must
+        // never silently move the microphone off the phone.
+
+        col.addView(JarvisUi.spacer(ctx, 16))
+        col.addView(JarvisUi.label(ctx, "Headset"))
+        headsetMode = switchRow(ctx, "Capture through a connected headset", config.headsetMode)
+        col.addView(headsetMode, matchWidth())
+        headsetButton = switchRow(ctx, "Let its button summon Jarvis", config.headsetButton)
+        col.addView(headsetButton, matchWidth())
+        headsetWarmLink = switchRow(ctx, "Keep listening after a reply", config.warmLink)
+        col.addView(headsetWarmLink, matchWidth())
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Only when the headset has a microphone of its own. Jarvis then captures " +
+                    "through the phone's call path, where the hardware echo canceller stops " +
+                    "it hearing its own reply two centimetres away — at some cost to " +
+                    "transcription accuracy, which is why it is not the default. Keeping " +
+                    "the mic open after a reply needs that canceller, so it does nothing on " +
+                    "a route without one. The button never answers a confirmation prompt."
+            )
+        )
+
         // --- permissions ------------------------------------------------------
         //
         // One button, not a grid of ten. This screen used to carry its own row
@@ -548,6 +582,13 @@ class SettingsActivity : Activity() {
         config.wakeAtHome = wakeAtHome.isChecked
         config.wakingHourStart = wakingStart
         config.wakingHourEnd = wakingEnd
+
+        // Order matters by one line: `warmLink` and `headsetButton` read
+        // `headsetMode` in their own getters, so writing the mode first is what
+        // makes the two below mean what the screen showed.
+        config.headsetMode = headsetMode.isChecked
+        config.headsetButton = headsetButton.isChecked
+        config.warmLink = headsetWarmLink.isChecked
 
         // Both of these run once at startup and then never again, so without
         // this the app keeps the values it read before the user typed anything:

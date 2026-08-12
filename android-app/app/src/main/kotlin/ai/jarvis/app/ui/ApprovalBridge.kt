@@ -239,6 +239,16 @@ object ApprovalBridge {
     /** True while a prompt for this id is still waiting for an answer. */
     fun isPending(requestId: String): Boolean = pending.containsKey(requestId)
 
+    /**
+     * True while ANY consent prompt is waiting for an answer.
+     *
+     * Rule 1 of [ai.jarvis.app.audio.MediaButtonGate] needs this: a headset
+     * button press must be swallowed while a Tier-3 prompt is up, and the
+     * button has no request id to ask about. Reading the map rather than
+     * keeping a counter, so the two cannot disagree.
+     */
+    val anyPending: Boolean get() = pending.isNotEmpty()
+
     /** Callers may shorten the prompt but never lengthen it. */
     fun clampTimeout(requested: Long): Long = when {
         requested <= 0L -> TIMEOUT_MS

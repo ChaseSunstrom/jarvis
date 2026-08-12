@@ -330,9 +330,11 @@ def check_kotlin_still_says_so() -> list[str]:
         ),
         (
             "assist/JarvisConversation.kt",
-            "if (continuous) {",
+            "if (continuous || warmStillOpen) {",
             "a continuous conversation treating silence as normal rather than as the "
-            "failed turn it is for a tapped one",
+            "failed turn it is for a tapped one — and the warm link, which buys a "
+            "wake-word conversation the same treatment for a bounded stretch while "
+            "an echo-cancelled earpiece is worn",
         ),
     ]
     failures = []
