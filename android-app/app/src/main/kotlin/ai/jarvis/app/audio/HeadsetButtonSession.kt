@@ -174,7 +174,7 @@ class HeadsetButtonSession(context: Context) {
             null
         } else {
             @Suppress("DEPRECATION")
-            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT) as KeyEvent?
+            intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
         }
     } catch (t: Throwable) {
         Log.w(TAG, "unreadable media button intent", t)
