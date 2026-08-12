@@ -11,7 +11,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.MotionEvent
+import android.os.SystemClock
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -101,10 +101,11 @@ class VoiceIdentityActivity : Activity() {
             // All three, via the shared helper. Disabling the record button
             // alone left TEST and FORGET live on a screen that has no server
             // to talk to.
-            setButtonsEnabled(false)
+            syncButtons()
             return
         }
         client = VoiceIdentityClient(config.serverUrl, config.token)
+        syncButtons()
         refresh()
     }
 
@@ -128,12 +129,36 @@ class VoiceIdentityActivity : Activity() {
             )
         )
 
-        orb = JarvisOrbView(this).apply { setMode(JarvisOrbView.Mode.IDLE) }
+        // `startEntrance()` IS WHAT MAKES THIS VISIBLE, and it was missing.
+        //
+        // JarvisOrbView draws everything through a master alpha that is its
+        // `entranceProgress`, and starts that at 0. The three methods that move
+        // it off 0 — startEntrance, beginBoot, endBoot — are also the only three
+        // that start the view's frame clock, and the clock is what integrates
+        // the breathing, the ring rotation and the mic amplitude and issues the
+        // one `invalidate` per frame. So a JarvisOrbView nobody starts is not a
+        // still orb: it is a 160dp hole. It laid out, it reserved its space, it
+        // received every `setMode`/`setAmplitude`/`setStateLabel` call this
+        // screen makes, and it painted nothing at all, ever.
+        //
+        // Reported as *"in the enrolment on the phone, there's no animation or
+        // ANY indicator if Jarvis is listening"*. Every other host of this view
+        // (MainActivity, JarvisAssistActivity, CompanionAskActivity) starts it
+        // in the same breath as constructing it; `orb_is_started_test.py` now
+        // fails the build for one that does not.
+        orb = JarvisOrbView(this).apply {
+            // The card supplies its own ground, so the full-view vignette would
+            // just be a dark rectangle across the middle of a settings screen.
+            scrimEnabled = false
+            setMode(JarvisOrbView.Mode.IDLE)
+            setStateLabel("")
+            startEntrance()
+        }
         column.addView(
             orb,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                JarvisUi.dp(this, 160)
+                JarvisUi.dp(this, 200)
             )
         )
 
@@ -143,26 +168,17 @@ class VoiceIdentityActivity : Activity() {
         column.addView(promptView)
 
         column.addView(JarvisUi.spacer(this, 12))
-        recordButton = JarvisUi.pill(this, "HOLD TO RECORD") { }
-        recordButton.setOnTouchListener { view, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    // Push-to-talk rather than a VAD. The phrase is known, the
-                    // user is reading it, and a silence detector that cuts the
-                    // last word off an enrolment sample poisons the profile
-                    // rather than merely annoying somebody.
-                    if (!busy) startCapture(Mode.ENROL)
-                    true
-                }
-                MotionEvent.ACTION_UP,
-                MotionEvent.ACTION_CANCEL -> {
-                    view.performClick()
-                    finishCapture()
-                    true
-                }
-                else -> false
-            }
-        }
+        // TAP, not hold.
+        //
+        // It was push-to-talk, on the reasoning that a VAD which clips the last
+        // word poisons a profile. That reasoning is about *automatic* ending and
+        // it survives intact — nothing here listens for silence. What does not
+        // survive is making the user hold a button through a whole spoken
+        // sentence while watching an orb that was not drawing: hold-to-talk
+        // gives no feedback of its own, so the one broken indicator was the
+        // entire interface. Tap to start, tap to stop, and the countdown below
+        // is a backstop rather than the normal way a capture ends.
+        recordButton = JarvisUi.pill(this, RECORD_START) { toggleRecording() }
         column.addView(recordButton, matchWidth())
 
         statusView = JarvisUi.mono(this, "")
@@ -205,8 +221,45 @@ class VoiceIdentityActivity : Activity() {
     )
 
     // --- capture ------------------------------------------------------------
+
+    /** True between [startCapture] and [stopCapture]. The mic is the state. */
+    private val recording: Boolean get() = mic != null
+
+    /** The record button's one job, whichever half of it is showing. */
+    private fun toggleRecording() {
+        if (recording) finishCapture() else startCapture(Mode.ENROL)
+    }
+
+    /**
+     * Ends a capture that the user did not.
+     *
+     * Not a silence detector — see the record button. This is for the phone put
+     * down mid-phrase, and it fires far enough out that a person reading a line
+     * aloud will never meet it.
+     */
+    private val autoStop = Runnable { finishCapture() }
+
+    /**
+     * The one moving thing that says how much time is left.
+     *
+     * Posted on the same handler as [autoStop] and cancelled by the same call,
+     * so a capture that ends early cannot leave a countdown ticking against a
+     * dead microphone.
+     */
+    private val countdown = object : Runnable {
+        override fun run() {
+            if (!recording) return
+            val left = captureEndsAt - SystemClock.uptimeMillis()
+            val seconds = ((left + 999L) / 1000L).coerceAtLeast(0L)
+            orb.setStateLabel("LISTENING · ${seconds}s")
+            main.postDelayed(this, 200L)
+        }
+    }
+
+    private var captureEndsAt = 0L
+
     private fun startTest() {
-        if (busy) return
+        if (busy || recording) return
         val current = status
         if (current == null || !current.usable) {
             toast("Enrol at least ${current?.minSamples ?: 3} phrases first.")
@@ -214,28 +267,27 @@ class VoiceIdentityActivity : Activity() {
         }
         promptView.text = "Say anything at all, in your ordinary voice."
         startCapture(Mode.TEST)
-        // No hold-to-talk for the test: the point is an ordinary utterance, so
-        // it is a fixed window the user talks into.
-        main.postDelayed({ finishCapture() }, TEST_WINDOW_MS)
     }
 
     private fun startCapture(which: Mode) {
+        if (busy || recording) return
+        // Recorded BEFORE the permission check, because the grant callback
+        // resumes this call and has only `mode` to tell it which capture the
+        // user asked for. Set it after, and TEST-then-grant silently enrolled
+        // an "say anything at all" utterance as a training sample.
+        mode = which
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
             return
         }
-        if (mic != null) return
-        mode = which
         capture = ByteArrayOutputStream()
-        orb.setMode(JarvisOrbView.Mode.LISTENING)
-        orb.setStateLabel("LISTENING")
-        mic = MicStreamer(
+        val streamer = MicStreamer(
             onPcm = { buffer, length ->
                 val sink = capture ?: return@MicStreamer
-                // Bounded: a button held down by a pocket must not grow the
-                // heap until the process dies.
+                // Bounded: a capture left running by a phone in a pocket must
+                // not grow the heap until the process dies.
                 if (sink.size() < MAX_SAMPLE_BYTES) sink.write(buffer, 0, length)
             },
             onLevel = { level -> orb.setAmplitude(level) },
@@ -243,36 +295,71 @@ class VoiceIdentityActivity : Activity() {
                 main.post {
                     stopCapture()
                     statusView.text = reason
+                    detailView.text = ""
                 }
             },
-        ).also {
-            try {
-                it.start()
-            } catch (t: Throwable) {
-                stopCapture()
-                statusView.text = "Could not open the microphone."
-            }
+        )
+        // Assigned BEFORE start, so the failure path below has something to
+        // release. Started inside `also` and assigned after, a throw left the
+        // half-opened AudioRecord with no reference anywhere: `stopCapture`
+        // stopped the `mic` field, which was still null.
+        mic = streamer
+        try {
+            streamer.start()
+        } catch (t: Throwable) {
+            stopCapture()
+            statusView.text = "Could not open the microphone."
+            return
         }
+
+        // Only once the mic is genuinely open. Showing LISTENING beside a
+        // microphone that failed to start is the same lie the dead orb told.
+        val window = if (which == Mode.TEST) TEST_WINDOW_MS else ENROL_WINDOW_MS
+        captureEndsAt = SystemClock.uptimeMillis() + window
+        orb.setMode(JarvisOrbView.Mode.LISTENING)
+        statusView.text = if (which == Mode.TEST) {
+            "Listening — say anything, then tap again."
+        } else {
+            "Listening — say the line, then tap again."
+        }
+        detailView.text = ""
+        main.postDelayed(autoStop, window)
+        main.post(countdown)
+        syncButtons()
     }
 
     private fun finishCapture() {
         val pcm = capture?.toByteArray()
+        val which = mode
         stopCapture()
         if (pcm == null || pcm.size < MIN_SAMPLE_BYTES) {
-            statusView.text = "That was too short — hold the button while you say the line."
+            statusView.text = "That was too short — tap, say the whole line, then tap again."
             return
         }
-        if (mode == Mode.TEST) submitTest(pcm) else submitEnrolment(pcm)
+        // The orb keeps moving across the round trip. A screen that goes still
+        // the moment you stop talking reads as a screen that has stopped
+        // working, which is most of what the original bug felt like.
+        orb.setMode(JarvisOrbView.Mode.THINKING)
+        orb.setStateLabel(if (which == Mode.TEST) "CHECKING" else "LEARNING")
+        if (which == Mode.TEST) submitTest(pcm) else submitEnrolment(pcm)
     }
 
     private fun stopCapture() {
-        main.removeCallbacksAndMessages(null)
+        // Named callbacks, not `removeCallbacksAndMessages(null)`. That cleared
+        // EVERY message on the main handler, including the `main.post` a worker
+        // thread uses to hand a server response back — and that post is what
+        // clears `busy` and re-enables the buttons. Losing one left the screen
+        // permanently inert with no error anywhere.
+        main.removeCallbacks(autoStop)
+        main.removeCallbacks(countdown)
+        captureEndsAt = 0L
         mic?.stop()
         mic = null
         capture = null
         orb.setAmplitude(0f)
         orb.setMode(JarvisOrbView.Mode.IDLE)
         orb.setStateLabel("")
+        syncButtons()
     }
 
     // --- server round trips -------------------------------------------------
@@ -330,12 +417,17 @@ class VoiceIdentityActivity : Activity() {
             return
         }
         busy = true
-        setButtonsEnabled(false)
+        syncButtons()
         thread {
             val result = call(live)
             main.post {
                 busy = false
-                setButtonsEnabled(true)
+                // Whatever the answer, the orb stops pretending to think.
+                if (!recording) {
+                    orb.setMode(JarvisOrbView.Mode.IDLE)
+                    orb.setStateLabel("")
+                }
+                syncButtons()
                 when (result) {
                     is VoiceIdentityClient.Result.Ok -> onOk(result.value)
                     is VoiceIdentityClient.Result.Failed -> {
@@ -346,16 +438,32 @@ class VoiceIdentityActivity : Activity() {
                         // version. See VoiceIdentityClient.failureFor.
                         statusView.text = result.headline
                         detailView.text = result.message
+                        if (!recording) {
+                            orb.setMode(JarvisOrbView.Mode.ERROR)
+                            orb.setStateLabel("FAILED")
+                        }
                     }
                 }
             }
         }
     }
 
-    private fun setButtonsEnabled(enabled: Boolean) {
-        recordButton.isEnabled = enabled
-        testButton.isEnabled = enabled
-        forgetButton.isEnabled = enabled
+    /**
+     * One place that decides what may be pressed, called from every transition.
+     *
+     * It replaces a boolean `setButtonsEnabled`, which could not express the
+     * state this screen now has: while a capture is live the record button must
+     * stay pressable — it is the only way to stop — and the other two must not,
+     * because TEST mid-enrolment used to rewrite the prompt and then bail out
+     * of `startCapture`, leaving the screen recording an enrolment sample under
+     * a caption asking for a test one.
+     */
+    private fun syncButtons() {
+        val paired = client != null
+        recordButton.isEnabled = paired && (recording || !busy)
+        recordButton.text = if (recording) RECORD_STOP else RECORD_START
+        testButton.isEnabled = paired && !busy && !recording
+        forgetButton.isEnabled = paired && !busy && !recording && (status?.enrolled == true)
     }
 
     private fun render(fresh: VoiceIdentityClient.Status) {
@@ -386,7 +494,7 @@ class VoiceIdentityActivity : Activity() {
             )
             else -> ""
         }
-        forgetButton.isEnabled = fresh.enrolled
+        syncButtons()
     }
 
     override fun onRequestPermissionsResult(
@@ -395,9 +503,15 @@ class VoiceIdentityActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_MIC && grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
+        if (requestCode != REQ_MIC) return
+        if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
             statusView.text = "Jarvis cannot learn a voice it is not allowed to hear."
+            return
         }
+        // The tap that raised the dialog was a tap meaning "listen now".
+        // Answering it and then finding the screen exactly as it was — no orb,
+        // no countdown, no recording — reads as a grant that did not take.
+        startCapture(mode)
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
@@ -411,6 +525,21 @@ class VoiceIdentityActivity : Activity() {
         /** 25 s, comfortably under the server's own limit. */
         const val MAX_SAMPLE_BYTES = 16000 * 2 * 25
 
-        const val TEST_WINDOW_MS = 4_000L
+        /**
+         * How long a test capture runs before ending itself.
+         *
+         * Both windows are backstops now rather than the mechanism: the user
+         * taps to stop. They are still generous, because a window that expires
+         * mid-sentence truncates the sample, and a truncated ENROLMENT sample
+         * is written into the profile and skews it — the same reason nothing
+         * here listens for silence.
+         */
+        const val TEST_WINDOW_MS = 15_000L
+
+        /** Under [MAX_SAMPLE_BYTES] (25 s), so the cap is never what ends one. */
+        const val ENROL_WINDOW_MS = 20_000L
+
+        const val RECORD_START = "TAP TO SPEAK"
+        const val RECORD_STOP = "TAP TO STOP"
     }
 }

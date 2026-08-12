@@ -18,7 +18,7 @@ import json
 import re
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 import pytest
@@ -2011,3 +2011,131 @@ def test_the_always_on_integrations_need_no_configuration():
             or "Any" in str(config_param.annotation)
             or "None" in str(config_param.annotation)
         ), f"{name}.async_setup cannot be called with no configuration"
+
+
+# ===========================================================================
+# The console's own credentials
+#
+# The console holds two things jarvis-core does not: a password, and the
+# pairing secret that password releases. Both are read from ITS environment,
+# in its own container, and neither was being delivered there — so on a machine
+# whose `.env` set both, the pairing panel reported no secret held, the
+# password panel offered to choose a new one, and GENERATE A QR CODE refused
+# with "this console holds no pairing secret".
+#
+# That is the same failure this file already guards jarvis-core against
+# ("a variable that never enters this container is an empty setting no matter
+# what .env says"), one container to the left.
+# ===========================================================================
+PARENT_ENV_EXAMPLE = ROOT.parent / ".env.example"
+CONSOLE_AUTH = ROOT.parent / "jarvis-web" / "src" / "lib" / "server" / "consoleAuth.ts"
+WEB_DOCKERFILE = ROOT.parent / "jarvis-web" / "Dockerfile"
+
+
+def _console_env_vars() -> set[str]:
+    """Every environment variable `consoleAuth.ts` reads, from its own source.
+
+    Read out of the module rather than listed here, so a variable added there
+    is one this test already knows about — the list cannot go stale in the
+    direction that matters.
+    """
+    text = CONSOLE_AUTH.read_text(encoding="utf-8")
+    found = set(re.findall(r"export const ENV_\w+ = '([A-Z0-9_]+)'", text))
+    assert found, f"no ENV_* constants found in {CONSOLE_AUTH}"
+    return found
+
+
+def _service_env(service: dict[str, Any]) -> dict[str, str]:
+    """`environment:` as a mapping, accepting either compose spelling."""
+    raw = service.get("environment") or []
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    out: dict[str, str] = {}
+    for item in raw:
+        name, _, value = str(item).partition("=")
+        out[name] = value
+    return out
+
+
+def test_the_console_receives_every_variable_it_reads(
+    parent_compose: dict[str, Any],
+) -> None:
+    """The console cannot be configured by a variable it never receives.
+
+    `JARVIS_PAIRING_SECRET` in `.env` reached jarvis-core and stopped there.
+    The console reads the same name — it holds the secret now, rather than
+    having it typed in on every use — and its container was started with five
+    variables, none of them this one. The panel is not lying when it says no
+    secret is held; nothing ever handed it one.
+    """
+    web = parent_compose["services"]["jarvis-web"]
+    delivered = set(_service_env(web))
+    missing = sorted(_console_env_vars() - delivered)
+    assert not missing, (
+        "jarvis-web reads these and the compose file does not pass them, so they "
+        f"are unset in the container whatever .env says: {missing}"
+    )
+
+
+def test_the_pairing_secret_reaches_both_halves_of_the_pair(
+    compose: dict[str, Any], parent_compose: dict[str, Any]
+) -> None:
+    """One secret, two containers, and it is useless in only one of them.
+
+    jarvis-core validates it; the console presents it. Set it in one place and
+    the halves disagree — either jarvis-core refuses a mint the console just
+    made, or the console cannot mint at all. Both failures land on the one
+    screen somebody is looking at while setting Jarvis up for the first time.
+    """
+    core = _service_env(compose["services"]["jarvis-core"])
+    web = _service_env(parent_compose["services"]["jarvis-web"])
+    assert "JARVIS_PAIRING_SECRET" in core
+    assert "JARVIS_PAIRING_SECRET" in web
+    # And from the same `.env` key, not two different ones with the same shape.
+    assert "JARVIS_PAIRING_SECRET" in core["JARVIS_PAIRING_SECRET"]
+    assert "JARVIS_PAIRING_SECRET" in web["JARVIS_PAIRING_SECRET"]
+
+
+def test_a_password_chosen_in_the_browser_survives_a_restart(
+    parent_compose: dict[str, Any],
+) -> None:
+    """The choose-a-password path writes a file, and the file has to outlive
+    the container.
+
+    A console with neither password variable set offers the first visitor the
+    choice, hashes it and writes `.storage/console-password` relative to its
+    working directory. In this image that is `/app` — the container's writable
+    layer, which `docker compose up -d` discards on any recreate. The operator
+    set a password, the console said it was set, and the next `up` offered the
+    form again on a console they believed was locked.
+
+    So the directory holding it is a mount, and this checks the mount lands
+    where the code actually writes rather than somewhere that merely looks
+    right.
+    """
+    source = CONSOLE_AUTH.read_text(encoding="utf-8")
+    default = re.search(r"DEFAULT_PASSWORD_FILE = '([^']+)'", source)
+    assert default, "consoleAuth.ts no longer names a default password file"
+    directory = PurePosixPath(default.group(1)).parent
+
+    workdir = re.findall(r"^WORKDIR\s+(\S+)", WEB_DOCKERFILE.read_text(encoding="utf-8"), re.M)
+    assert workdir, "the console image sets no WORKDIR, so the path is unknowable"
+    expected = str(PurePosixPath(workdir[-1]) / directory)
+
+    volumes = parent_compose["services"]["jarvis-web"].get("volumes") or []
+    targets = {str(v).split(":")[1] for v in volumes if ":" in str(v)}
+    assert expected in targets, (
+        f"the console writes its password hash to {expected} and nothing mounts "
+        f"that path, so it is lost the next time the container is recreated "
+        f"(mounted: {sorted(targets)})"
+    )
+
+
+def test_the_companion_env_example_documents_what_the_console_reads() -> None:
+    """`.env.example` is the file people copy. A variable the stack forwards
+    and the example never mentions is one nobody knows to set — which is how
+    both of these came to be set for jarvis-core and not for the console."""
+    text = PARENT_ENV_EXAMPLE.read_text(encoding="utf-8")
+    declared = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", text, re.M))
+    missing = sorted(_console_env_vars() - declared)
+    assert not missing, f".env.example does not mention: {missing}"

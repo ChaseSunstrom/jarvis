@@ -90,6 +90,40 @@ services:
       - PORT=8199
       - JARVIS_PIPELINE=${JARVIS_PIPELINE:-Jarvis}
       - JARVIS_TTS_VOICE=${JARVIS_TTS_VOICE:-en_GB-alan-medium}
+      # --- the console's own two credentials --------------------------------
+      # THE CONSOLE READS THESE. It did not receive them, and that is not a
+      # missing nicety — it is why the pairing panel said no secret was held on
+      # a machine whose `.env` set one, and why GENERATE A QR CODE refused.
+      #
+      # jarvis-core's compose forwards JARVIS_PAIRING_SECRET to jarvis-core, and
+      # for a long time that was the whole story: the operator typed the secret
+      # into the panel on every use and the console never held it. It holds it
+      # now (`$lib/server/consoleAuth`), so the console needs its own copy of
+      # the same value — same variable, two containers, deliberately, exactly as
+      # ORCHESTRATOR_TOKEN is shared across the two services that speak it.
+      - JARVIS_PAIRING_SECRET=${JARVIS_PAIRING_SECRET:-}
+      # The password that releases it. Set EITHER of these, or neither and
+      # choose one in the browser on first load — see the volume below for what
+      # makes that choice survive.
+      - JARVIS_CONSOLE_PASSWORD=${JARVIS_CONSOLE_PASSWORD:-}
+      - JARVIS_CONSOLE_PASSWORD_HASH=${JARVIS_CONSOLE_PASSWORD_HASH:-}
+      - JARVIS_CONSOLE_PASSWORD_FILE=${JARVIS_CONSOLE_PASSWORD_FILE:-}
+    volumes:
+      # A password chosen in the browser is written to `.storage/console-password`
+      # relative to the process's working directory, which in this image is
+      # `/app` — the container's own writable layer. That layer is discarded
+      # every time the container is recreated, which `docker compose up -d`
+      # does on any rebuild or config change. So the console accepted a
+      # password, said it was set, and had forgotten it by the next `up`: the
+      # operator was offered the choose-a-password form again on a console they
+      # had already locked.
+      #
+      # Same directory name and same reason as jarvis-core's `.storage`: it
+      # holds a credential (an scrypt hash, 0600). Under a top-level `.storage`
+      # rather than inside ./jarvis-web, which is the image's build context —
+      # a secret parked there would be copied into the image by `COPY . .` —
+      # and `.gitignore` already excludes `.storage/` everywhere in this repo.
+      - ./.storage/jarvis-web:/app/.storage
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8199/healthz"]
       interval: 30s
