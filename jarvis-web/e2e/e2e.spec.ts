@@ -1636,6 +1636,70 @@ test("the microphone opens with the page, with nothing clicked", async ({
 // Driven by the User-Agent ManagementActivity actually sends, so this and the
 // Kotlin cannot drift apart quietly — console_parity_test.py pins the same pair
 // from the other side.
+test("the console shows whose voice Jarvis answers, without the voiceprint reaching the browser", async ({
+  page,
+}) => {
+  // The panel's whole security claim: "is somebody enrolled" must not also
+  // answer "what do they sound like".
+  //
+  // Asserted on the RESPONSE rather than on the rendered HTML. The first
+  // version of this checked that the page did not contain the word "vector"
+  // and failed on the favicon comment two hundred lines above, which explains
+  // why browsers prefer an SVG — a page-text search is the wrong instrument
+  // for a payload claim.
+  const payload = page.waitForResponse(
+    (r) => r.url().includes("/api/voice/speaker") && r.request().method() === "GET",
+  );
+  await page.goto("/settings");
+  const body = await (await payload).json();
+  expect(body.enrolled).toBe(true);
+  for (const key of ["vector", "vectors", "samples_data", "mean", "profile"]) {
+    expect(body, `the voiceprint reached the browser as ${key}`).not.toHaveProperty(key);
+  }
+  // `samples` is a COUNT here, not the data. If it ever becomes an array, the
+  // vectors have started travelling.
+  expect(typeof body.samples).toBe("number");
+
+  const panel = page.getByTestId("voice-identity");
+  await expect(panel).toBeVisible();
+  await expect(page.getByTestId("speaker-mode")).toHaveText(/observe/);
+  await expect(page.getByTestId("speaker-samples")).toContainText("5 of 20");
+  // The owner's own worst sample, next to the threshold. Without it nobody can
+  // tell whether enforcing would lock them out, which is the whole failure
+  // this feature produces in practice.
+  await expect(page.getByTestId("speaker-threshold")).toContainText("7.065");
+});
+
+/**
+ * Deliberately does NOT unlock the console first.
+ *
+ * Two reasons, and the second one cost a full-suite run to find. Deleting a
+ * voiceprint disables the gate that refuses strangers, and this relay attaches
+ * the admin token to whatever asks it — so the refusal IS the feature, and
+ * asserting it is worth more than asserting the happy path.
+ *
+ * And the happy path cannot be asserted here reliably anyway: the console
+ * password test above deliberately exhausts the unlock rate limiter, which is
+ * server-side and shared, so a later `unlockConsole` is refused with the
+ * correct password. Passing in isolation and failing in the suite is exactly
+ * how that presented. Ordering this test earlier would work today and break the
+ * next time somebody moves a test, so it does not depend on order at all.
+ *
+ * The delete succeeding is covered where it can be checked deterministically:
+ * `src/lib/server/routes.test.ts` proves the route consults `sessionValid`,
+ * and `jarvis-core/tests/test_speaker_gate.py` proves the backend's DELETE
+ * really clears the profile.
+ */
+test("forgetting a voiceprint is refused without the console password", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+  await page.getByTestId("speaker-forget").click();
+  await expect(page.getByTestId("speaker-error")).toContainText(/unlock the console/i);
+  // Still enrolled: the refusal was real rather than cosmetic.
+  await expect(page.getByTestId("speaker-samples")).toContainText("5 of 20");
+});
+
 test("the console drops its own nav when the Android app is framing it", async ({
   browser,
 }) => {

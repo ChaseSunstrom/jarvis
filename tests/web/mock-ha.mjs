@@ -382,6 +382,9 @@ export function makeWorld() {
 		// Pairing: a counter for readable code names and the live set, so the
 		// single-use rule is exercised rather than assumed.
 		pairingCodes: 0, livePairingCodes: new Set(),
+		// Flipped by DELETE /api/voice/speaker, so the panel's "FORGET" can be
+		// asserted on its effect rather than on the request having been sent.
+		voiceprintDeleted: false,
 		// One connected and one not: "connected now" is the fact the panel
 		// exists to show before somebody revokes the wrong row.
 		tokens: [
@@ -589,6 +592,51 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			res.end(JSON.stringify({ secret: 'admin-only-payload' }));
 			return;
 		}
+		// Whose voice Jarvis answers.
+		//
+		// The shape here is deliberately the REAL one, including what it leaves
+		// out: the payload carries counts, scores and timestamps and never the
+		// voiceprint vectors, because that is the claim the console panel's
+		// e2e case asserts. A mock that helpfully included them would make the
+		// test pass on a lie.
+		if (url.pathname === '/api/voice/speaker') {
+			if (req.headers.authorization !== `Bearer ${token}`) {
+				res.writeHead(401);
+				res.end('unauthorized');
+				return;
+			}
+			if (req.method === 'DELETE') {
+				world.voiceprintDeleted = true;
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ enrolled: false, samples: 0, mode: 'observe', active: false }));
+				return;
+			}
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(
+				JSON.stringify(
+					world.voiceprintDeleted
+						? { enrolled: false, samples: 0, mode: 'observe', active: false,
+							min_samples: 3, max_samples: 20 }
+						: {
+								enrolled: true,
+								samples: 5,
+								min_samples: 3,
+								max_samples: 20,
+								mode: 'observe',
+								active: true,
+								threshold: 8.831,
+								self_score: 2.527,
+								worst_self_score: 7.065,
+								suggested_threshold: 8.831,
+								label: 'owner',
+								embedder: 'jarvis-mfcc-v1',
+								prompts: ['Good evening, Jarvis.', 'What is on my calendar tomorrow?']
+							}
+				)
+			);
+			return;
+		}
+
 		// Pairing. `/api/pair/new` is authenticated because inviting a device
 		// onto the house is something only somebody already inside may do;
 		// `/api/pair/claim` is not, because the phone has no credential yet.
