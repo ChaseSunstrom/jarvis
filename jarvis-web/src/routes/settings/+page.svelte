@@ -58,6 +58,59 @@
 	let fieldError = $state<Record<string, string>>({});
 	let restartNeeded = $state<string[]>([]);
 
+	/**
+	 * Whose voice Jarvis answers, as the server reports it.
+	 *
+	 * Read-only here plus a delete, deliberately. Enrolment needs a microphone
+	 * and five spoken phrases, and the phone is where the person and the
+	 * microphone already are; a second enrolment surface would be a second
+	 * place for the prompt list to drift out of step. See
+	 * `docs/voice-identity.md`.
+	 *
+	 * The payload never contains the voiceprint — counts, scores and timestamps
+	 * only — so "is somebody enrolled" cannot also answer "what do they sound
+	 * like". That is enforced on the server, not here.
+	 */
+	let speaker = $state<Record<string, any> | null>(null);
+	let speakerBusy = $state(false);
+	let speakerError = $state('');
+
+	async function loadSpeaker(): Promise<void> {
+		const res = await fetch('/api/voice/speaker').catch(() => null);
+		if (!res || !res.ok) {
+			speaker = null;
+			return;
+		}
+		speaker = await res.json().catch(() => null);
+	}
+
+	async function forgetVoice(): Promise<void> {
+		if (speakerBusy) return;
+		speakerBusy = true;
+		speakerError = '';
+		try {
+			const res = await fetch('/api/voice/speaker', { method: 'DELETE' });
+			if (!res.ok) {
+				// 401 is the console lock, and it is the likely one — say what to
+				// do rather than showing a status code.
+				speakerError =
+					res.status === 401
+						? 'Unlock the console with its password first (the pairing panel above).'
+						: await failureText(res);
+				return;
+			}
+			toasts.push({ kind: 'ok', text: 'Voiceprint deleted. Jarvis answers any voice again.' });
+			await loadSpeaker();
+		} finally {
+			speakerBusy = false;
+		}
+	}
+
+	async function failureText(res: Response): Promise<string> {
+		const body = await res.json().catch(() => null);
+		return (body && (body.message || body.detail)) || `the server answered ${res.status}`;
+	}
+
 	let groups = $derived.by(() => {
 		const byGroup = new Map<string, SettingRow[]>();
 		for (const row of settings) {
@@ -186,6 +239,7 @@
 
 	onMount(() => {
 		let disposed = false;
+		loadSpeaker();
 		fetch('/api/config')
 			.then((r) => (r.ok ? r.json() : Promise.reject(new Error(`/api/config → ${r.status}`))))
 			.then((c) => (config = c))
@@ -338,6 +392,79 @@
 {/if}
 
 <Pairing />
+
+<!--
+  Whose voice Jarvis answers.
+
+  Shown here because this is where an operator finds out what the house is
+  doing; enrolled FROM THE PHONE, because that is where the microphone is. The
+  numbers are on screen for the same reason the phone shows them: a biometric
+  gate whose threshold was guessed is a gate that locks the owner out, and the
+  only defence is being able to see the owner's own scores before enforcing.
+-->
+{#if speaker?.supported}
+	<section class="panel" data-testid="voice-identity">
+		<div class="panel-head">
+			<span>Whose voice</span>
+			<span class="pill" class:on={speaker.active} data-testid="speaker-mode">
+				{speaker.mode ?? 'off'}
+			</span>
+		</div>
+
+		<div class="row">
+			<span class="name"><b>Enrolled</b><span class="eid">voice_profile</span></span>
+			<span class="muted" data-testid="speaker-samples">
+				{#if speaker.enrolled}
+					{speaker.samples} of {speaker.max_samples} samples
+				{:else}
+					nobody — the gate is inert until somebody enrols
+				{/if}
+			</span>
+		</div>
+
+		{#if speaker.enrolled}
+			<div class="row">
+				<span class="name">
+					<b>Threshold</b><span class="eid">mean squared z · lower is stricter</span>
+				</span>
+				<span class="muted" data-testid="speaker-threshold">
+					{speaker.threshold}
+					{#if speaker.worst_self_score != null}
+						<span class="eid">
+							· their own worst sample scores {speaker.worst_self_score}, enrolment
+							suggests {speaker.suggested_threshold}
+						</span>
+					{/if}
+				</span>
+			</div>
+		{/if}
+
+		<div class="row">
+			<span class="name"><b>Forget this voice</b><span class="eid">deletes the voiceprint</span></span>
+			<button
+				class="btn danger"
+				data-testid="speaker-forget"
+				disabled={!speaker.enrolled || speakerBusy}
+				onclick={forgetVoice}
+			>
+				{speakerBusy ? 'deleting…' : 'FORGET'}
+			</button>
+		</div>
+		{#if speakerError}
+			<p class="err" data-testid="speaker-error" role="alert">{speakerError}</p>
+		{/if}
+
+		<p class="muted">
+			Enrol from the phone — <b>Settings → Whose voice</b> — because that is where the
+			microphone is. Whether Jarvis <i>refuses</i> other voices is
+			<code>voice: speaker: mode</code> in <code>configuration.yaml</code>, and the honest
+			order is enrol, leave it in <code>observe</code> for a few days, read the scores, then
+			<code>enforce</code>. It stops a guest, a television and a stranger at the window; it
+			does not stop a recording, and it is not a second factor — the tier system still asks a
+			human before anything irreversible.
+		</p>
+	</section>
+{/if}
 
 <!--
   This console's OWN environment, as opposed to the house settings above.

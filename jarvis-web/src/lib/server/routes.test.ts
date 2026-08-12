@@ -34,8 +34,22 @@ const MAY_ATTACH_THE_TOKEN: Record<string, string> = {
 	'api/tts/+server.ts':
 		'allow-listed to media paths by mediaProxyTarget, which re-tests the NORMALISED url',
 	'api/pair/+server.ts':
-		'needs a console-password session proved server-side, and the pairing secret that session releases'
+		'needs a console-password session proved server-side, and the pairing secret that session releases',
+	'api/voice/speaker/+server.ts':
+		'the upstream path is a constant — nothing from the caller reaches the URL — and the ' +
+		'payload it relays carries counts and scores, never the voiceprint. DELETE additionally ' +
+		'needs a console-password session, because it disables the gate that refuses strangers'
 };
+
+/**
+ * Entries whose justification claims the console password guards them.
+ *
+ * The allow-list above is prose, and prose is exactly the kind of guard that
+ * stops being true without anybody noticing. For the claim this file can check
+ * mechanically — "a console-password session" — check it: the route must
+ * actually consult `sessionValid`.
+ */
+const CLAIMS_THE_PASSWORD = /console-password session/;
 
 function serverRoutes(dir: string, prefix = ''): string[] {
 	const found: string[] = [];
@@ -70,6 +84,29 @@ describe('the admin token never reaches the browser', () => {
 				'here what stops it being a way to reach the backend with it, the way ' +
 				'/api/tts is allow-listed and /api/pair needs a second secret.'
 		).toEqual([]);
+	});
+
+	it('a route claiming the console password actually checks it', () => {
+		const claiming = Object.entries(MAY_ATTACH_THE_TOKEN)
+			.filter(([, why]) => CLAIMS_THE_PASSWORD.test(why))
+			.map(([route]) => route);
+		// Vacuous-pass guard: if nothing claims it, this test is testing nothing.
+		expect(claiming.length).toBeGreaterThan(0);
+		for (const route of claiming) {
+			// Imports stripped first. The obvious check — does the file contain
+			// "sessionValid" — passes on the `import { sessionValid }` line
+			// alone, so deleting the guard and keeping the import sails
+			// straight through it. Verified by doing exactly that.
+			const body = readFileSync(join(ROUTES, route), 'utf8')
+				.split('\n')
+				.filter((line) => !/^\s*(import|})/.test(line) && !/from '\$lib/.test(line))
+				.join('\n');
+			expect(
+				/sessionValid\s*\(/.test(body),
+				`${route} is allow-listed on the grounds that a console-password session ` +
+					'guards it, and its body never calls sessionValid()'
+			).toBe(true);
+		}
 	});
 
 	it('every named route still exists', () => {
