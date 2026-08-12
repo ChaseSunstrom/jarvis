@@ -183,6 +183,9 @@ fi
 # Internal-storage fallback: screenshotDir() lands there on a device with no
 # external volume.
 if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
+  # 2>/dev/null on the run-as, deliberately: its stderr is binary-adjacent and
+  # goes down the same pipe as the tar stream. The listing below is what says
+  # whether it had anything to send.
   adb exec-out run-as ai.jarvis.app tar -cf - files/screenshots 2>/dev/null \
     | tar -xf - -C artifacts 2>/dev/null || true
   if [ -d artifacts/files/screenshots ]; then
@@ -194,6 +197,25 @@ if [ -z "$(ls -A artifacts/screenshots 2>/dev/null || true)" ]; then
 fi
 shots="$(ls -1 artifacts/screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')"
 echo "pulled ${shots} screenshot(s)"
+
+# Zero is not a result, it is the absence of one — and every branch above hides
+# its own errors, so "pulled 0" used to be the entire explanation. Run
+# 31610213287 lost the screenshot for a genuine failure this way and the window
+# dump in the assertion came back empty at the same time, which left nothing at
+# all to diagnose from. So when the count is zero, say where the app was told to
+# write and what is actually there.
+if [ "${shots}" = "0" ]; then
+  echo "----- no screenshots came off the device; where were they written? -----"
+  # The app logs its chosen directory once per run. If this line is absent, the
+  # suite never even tried to capture one.
+  adb logcat -d -s JarvisScreenshots:* JarvisTestHooks:* 2>/dev/null | tail -n 40 || true
+  echo "----- app-private files (run-as) -----"
+  adb exec-out run-as ai.jarvis.app ls -la files 2>&1 | head -n 30 || true
+  adb exec-out run-as ai.jarvis.app ls -la files/screenshots 2>&1 | head -n 30 || true
+  echo "----- external files dir -----"
+  adb shell ls -la "/sdcard/Android/data/ai.jarvis.app/files" 2>&1 | head -n 20 || true
+  echo "-----------------------------------------------------------------------"
+fi
 
 # --- logs -------------------------------------------------------------------
 adb logcat -d -v time > artifacts/logcat.txt 2>&1 || true

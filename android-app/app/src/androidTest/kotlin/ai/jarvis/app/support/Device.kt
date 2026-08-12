@@ -179,13 +179,35 @@ object Device {
     /** True while this app owns the foreground window. */
     fun isJarvisForeground(): Boolean = foregroundPackage() == packageName
 
-    /** Best-effort dump of the current window hierarchy, for a failure message. */
-    fun windowDump(): String = try {
-        val out = ByteArrayOutputStream()
-        ui.dumpWindowHierarchy(out)
-        out.toString(Charsets.UTF_8.name())
-    } catch (t: Throwable) {
-        "(window hierarchy unavailable: ${t.javaClass.simpleName}: ${t.message})"
+    /**
+     * Best-effort dump of the current window hierarchy, for a failure message.
+     *
+     * An EMPTY dump is reported as empty rather than as nothing. Run
+     * 31610213287 is the worked example: `ConsentGateTest` failed with
+     * "ApprovalActivity did not start within 45000ms", printed
+     * "Foreground window dump:" and then a blank line, and the one piece of
+     * context the assertion carries said nothing at all — while the screenshot
+     * that was supposed to cover for it also came back empty. Two diagnostics,
+     * both silent, is how a failure becomes a guess.
+     *
+     * So a blank dump now says so, and says what little is knowable without it:
+     * which package owns the foreground window, which is usually enough to tell
+     * "the prompt never started" from "the whole UI was wedged".
+     */
+    fun windowDump(): String {
+        val dumped = try {
+            val out = ByteArrayOutputStream()
+            ui.dumpWindowHierarchy(out)
+            out.toString(Charsets.UTF_8.name())
+        } catch (t: Throwable) {
+            return "(window hierarchy unavailable: ${t.javaClass.simpleName}: ${t.message})"
+        }
+        if (dumped.isNotBlank()) return dumped
+        val front = runCatching { ui.currentPackageName }.getOrNull()
+        return "(window hierarchy came back EMPTY — uiautomator could not read the " +
+            "screen. Foreground package: ${front ?: "unknown"}. An empty dump " +
+            "usually means the system UI was busy or the device was not showing " +
+            "anything this instrumentation could see.)"
     }
 
     private const val IDLE_MS = 3_000L

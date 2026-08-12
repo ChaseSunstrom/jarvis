@@ -330,14 +330,32 @@ object TestHooks {
      *
      * Falls back to internal storage on a device with no external volume, so a
      * screenshot never becomes the reason a test fails.
+     *
+     * **The chosen path is logged once**, and that is not decoration. The two
+     * locations are pulled by CI in completely different ways — `adb pull` for
+     * the external one, `run-as … tar` for the internal — and when a run ends
+     * with "pulled 0 screenshot(s)" the first thing anybody needs to know is
+     * which of the two the app was even trying to write to, and whether
+     * `mkdirs` worked. Run 31610213287 had a real failure, no screenshot and an
+     * empty window dump, and nothing anywhere recorded this.
      */
     fun screenshotDir(context: Context): File {
         val app = context.applicationContext
-        val dir = app.getExternalFilesDir(SCREENSHOT_DIR_NAME)
-            ?: File(app.filesDir, SCREENSHOT_DIR_NAME)
-        if (!dir.exists()) dir.mkdirs()
+        val external = app.getExternalFilesDir(SCREENSHOT_DIR_NAME)
+        val dir = external ?: File(app.filesDir, SCREENSHOT_DIR_NAME)
+        val made = if (dir.exists()) true else dir.mkdirs()
+        if (loggedScreenshotDir.compareAndSet(false, true)) {
+            Log.i(
+                TAG,
+                "screenshots -> ${dir.absolutePath} " +
+                    "(external=${external != null}, exists=${dir.exists()}, mkdirs=$made)"
+            )
+        }
         return dir
     }
+
+    /** So the line above is one line per process, not one per screenshot. */
+    private val loggedScreenshotDir = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * A PNG path inside [screenshotDir] for [name].
