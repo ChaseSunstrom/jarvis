@@ -36,6 +36,68 @@ _NESTED_KEYS = ("sequence", "then", "else", "default", "actions", "parallel")
 #: not follow into. See the module docstring.
 INDIRECT_DOMAINS = frozenset({"script", "scene", "automation"})
 
+#: The parts of an automation, and the plural spelling the engine also accepts.
+#:
+#: `Automation.__init__` reads `action` and falls back to `actions`, and the
+#: same for triggers and conditions. Every reader outside the engine used to
+#: take the singular key alone.
+_PLURALS = {"action": "actions", "trigger": "triggers", "condition": "conditions"}
+
+
+def part_of(config: Any, part: str) -> Any:
+    """One part of an automation config, read the way the ENGINE reads it.
+
+    ## Why this exists
+
+    An approval gate that cannot see an automation's actions does not fail
+    closed — it decides there is nothing to approve. `needs_approval(None)` is
+    `False`, so an automation the gate reads as empty runs at tier 1 whatever it
+    touches.
+
+    And the gate read the wrong key. `Automation.__init__` accepts either
+    spelling::
+
+        self.actions = as_list(
+            self.config.get("action")
+            if self.config.get("action") is not None
+            else self.config.get("actions")
+        )
+
+    while `llm/tools.py` asked for `config["action"]` and nothing else. So an
+    automation written with the plural — the newer spelling, which the engine
+    deliberately supports and which the docs use — was analysed as having no
+    actions at all::
+
+        automations:
+          - alias: Front door
+            triggers: [{platform: time, at: "21:00:00"}]
+            actions: [{service: lock.unlock, target: {entity_id: lock.front}}]
+
+    The engine parses that, `async_trigger` really calls `lock.unlock`, and the
+    gate said "touches nothing that needs approval". A model turn calling
+    `automation_control {action: "run", name: "Front door"}` unlocked the front
+    door with no human in the loop. The console's automation list showed
+    `action: []` beside it, for the same reason.
+
+    This is the caller-side twin of the walker bug fixed alongside it: no step
+    SHAPE escapes `_walk` any more, and the whole LIST could still arrive as
+    `None`. Both are the same lesson — the analysis is only as good as what it
+    is handed — which is why the precedence now lives in one function that the
+    engine uses too.
+    """
+    if not isinstance(config, dict):
+        return None
+    singular = config.get(part)
+    if singular is not None:
+        return singular
+    plural = _PLURALS.get(part)
+    return config.get(plural) if plural else None
+
+
+def actions_of(config: Any) -> Any:
+    """The action list of an automation config. See [part_of]."""
+    return part_of(config, "action")
+
 
 def service_calls(actions: Any) -> list[str]:
     """Every `domain.service` an action list would call, as flat strings.

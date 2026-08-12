@@ -452,7 +452,7 @@ def test_the_dispatcher_never_answers_missing_permission_itself():
     """Structural, because the model above cannot see a `return` that is not
     there. `ActionResult.missingPermission` belongs to the actions; a dispatcher
     that can produce one has taken the decision back."""
-    src = re.sub(r"\s+", " ", REGISTRY.read_text())
+    src = _registry_code()
     assert "ActionResult.missingPermission" not in src, (
         "ActionRegistry is deciding a permission outcome again — that is the "
         "all-or-nothing gate that broke get_location"
@@ -538,9 +538,31 @@ def test_an_action_needing_nothing_never_sees_a_dialog():
 # --- drift check against the Kotlin ----------------------------------------
 
 
+def _registry_code() -> str:
+    """ActionRegistry.kt with its comments gone, flattened to one line.
+
+    Comments stripped, and not for tidiness. Each step below is anchored with
+    `str.index`, which finds the FIRST occurrence — so a comment quoting one of
+    these needles moves the anchor, and the ordering assertion then holds
+    between a comment and a line of code rather than between two lines of code.
+    An audit demonstrated it: moving the standing-ban pre-gate to AFTER the
+    resolver's permission ask, and leaving behind the sort of pointer comment a
+    refactor leaves ("the standing bans used to be decided here, with
+    if (PolicyEngine.decide(standing) == Decision.DENY)"), kept this file at
+    23/23 while the shipped behaviour became "a server command can raise a
+    contacts dialog on a phone whose owner has hit panic".
+
+    This file's own docstring calls that ordering "the property that matters".
+    """
+    src = REGISTRY.read_text()
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", " ", src)
+    return re.sub(r"\s+", " ", src)
+
+
 def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
     assert REGISTRY.is_file(), f"missing {REGISTRY}"
-    src = re.sub(r"\s+", " ", REGISTRY.read_text())
+    src = _registry_code()
     ordered = [
         # unsupported / unavailable short-circuit BEFORE any policy work
         "if (safeUnsupported(action))",
@@ -581,7 +603,7 @@ def test_the_kotlin_dispatcher_still_does_these_steps_in_this_order():
 
 
 def test_the_dispatcher_passes_the_verbatim_params_to_the_prompt():
-    src = REGISTRY.read_text()
+    src = REGISTRY.read_text()  # the marker comment IS the assertion here
     assert "params = live, // VERBATIM" in src, (
         "the consent prompt must be shown the exact params that will execute"
     )
@@ -594,7 +616,7 @@ def test_resolution_happens_before_the_prompt_and_fails_closed():
     not resolve and `execute` would then decide for itself what that name
     meant — which is the one thing the verbatim-params rule exists to stop.
     """
-    src = re.sub(r"\s+", " ", REGISTRY.read_text())
+    src = _registry_code()
     assert "ResolveResult.Failed -> return finish(" in src, (
         "a failed resolution must return, not fall through to the prompt"
     )
@@ -611,7 +633,7 @@ def test_resolution_happens_before_the_prompt_and_fails_closed():
 
 
 def test_a_failing_approval_gateway_fails_closed():
-    src = re.sub(r"\s+", " ", REGISTRY.read_text())
+    src = _registry_code()
     assert "return verdict ?: ApprovalVerdict.TIMEOUT" in src
     assert "ApprovalVerdict.TIMEOUT" in src
     gateway = REGISTRY.parent / "ApprovalGateway.kt"

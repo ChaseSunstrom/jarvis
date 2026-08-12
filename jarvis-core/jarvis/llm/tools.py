@@ -1684,7 +1684,7 @@ def register_builtin_tools(
         return configs_by_entity(jarvis).get(entity_id, {})
 
     def _automation_run_is_gated(args: dict[str, Any]) -> bool:
-        from ..automation.reach import needs_approval
+        from ..automation.reach import actions_of, needs_approval
 
         action = str(args.get("action") or "run").strip().lower()
         if action in ("enable", "on", "turn_on", "disable", "off", "turn_off"):
@@ -1697,7 +1697,7 @@ def register_builtin_tools(
             # Nothing resolved: refuse to promise it is safe.
             return True
         return any(
-            needs_approval(_automation_config(entity_id).get("action"))
+            needs_approval(actions_of(_automation_config(entity_id)))
             for entity_id in resolution.entity_ids
         )
 

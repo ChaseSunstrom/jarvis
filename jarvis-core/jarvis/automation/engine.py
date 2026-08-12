@@ -20,6 +20,7 @@ from ..state import slugify
 from .actions import ScriptRunner
 from .conditions import async_check_all
 from .triggers import async_attach_triggers
+from .reach import part_of
 from .util import as_list, result_as_boolean
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -240,21 +241,15 @@ class Automation:
         self.enabled = result_as_boolean(self.config.get("initial_state", True))
         self.last_triggered: str | None = None
 
-        self.triggers = as_list(
-            self.config.get("trigger")
-            if self.config.get("trigger") is not None
-            else self.config.get("triggers")
-        )
-        self.conditions = as_list(
-            self.config.get("condition")
-            if self.config.get("condition") is not None
-            else self.config.get("conditions")
-        )
-        self.actions = as_list(
-            self.config.get("action")
-            if self.config.get("action") is not None
-            else self.config.get("actions")
-        )
+        # Through `part_of` rather than inline, so that this precedence has
+        # exactly ONE definition. It used to live here alone, and every reader
+        # outside the engine — the approval gate, the console's automation list
+        # — took the singular key by itself. An automation written with the
+        # plural was therefore parsed and run by the engine while the gate
+        # decided it had no actions to approve. See reach.part_of.
+        self.triggers = as_list(part_of(self.config, "trigger"))
+        self.conditions = as_list(part_of(self.config, "condition"))
+        self.actions = as_list(part_of(self.config, "action"))
         self.base_variables = self.config.get("variables") or {}
 
         self.entity: AutomationEntity = AutomationEntity(self)

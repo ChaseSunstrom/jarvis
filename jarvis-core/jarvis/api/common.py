@@ -782,7 +782,7 @@ def automation_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
     obvious conclusion — "it lost them" — would be wrong.
     """
     from ..automation.authored import get_authored
-    from ..automation.reach import describe_reach, needs_approval
+    from ..automation.reach import actions_of, describe_reach, needs_approval
 
     manager = jarvis.data.get("automation")
     if manager is None:  # `automation:` not set up — no automations, not an error
@@ -803,13 +803,13 @@ def automation_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
                 # rather than what the store believes it saved.
                 "trigger": automation.config.get("trigger") or [],
                 "condition": automation.config.get("condition") or [],
-                "action": automation.config.get("action") or [],
+                "action": actions_of(automation.config) or [],
                 "editable": entry is not None,
                 # Whether RUNNING this one has to go past a human, and why.
                 # Shown in the console because "this automation can unlock the
                 # front door" is worth knowing before you press the button, and
                 # because it explains the approval prompt when it appears.
-                "needs_approval": needs_approval(automation.config.get("action")),
+                "needs_approval": needs_approval(actions_of(automation.config)),
                 "reach": describe_reach(automation.config.get("action")),
                 "created_at": (entry or {}).get("created_at"),
                 "updated_at": (entry or {}).get("updated_at"),

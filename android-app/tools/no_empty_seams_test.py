@@ -69,7 +69,31 @@ def code_only(source: str) -> str:
 SOURCES: dict[Path, str] = {
     p: code_only(p.read_text(encoding="utf-8")) for p in sorted(KOTLIN.rglob("*.kt"))
 }
-MANIFEST_TEXT = MANIFEST.read_text(encoding="utf-8")
+#: The manifest with its comments stripped, and the component names it really
+#: declares.
+#:
+#: Both matter, and an audit proved why by mutation. The "an Android component
+#: is called by the manifest" exemption used to test `name in MANIFEST_TEXT`
+#: against the raw XML — so a class merely MENTIONED in a manifest comment was
+#: exempted from the caller check. Six spec-named files took that exemption from
+#: comment text alone, `ui/PermissionBridge.kt` among them: deleting its only
+#: two callers, which reintroduces the whole of W2 and means no dangerous
+#: permission is ever requested again, still passed 7/7.
+#:
+#: Which is this file's own docstring — "a name that appears in a comment is not
+#: a caller, which is why every check strips comments first" — being false about
+#: the one input it did not strip.
+_MANIFEST_RAW = MANIFEST.read_text(encoding="utf-8")
+MANIFEST_TEXT = re.sub(r"<!--.*?-->", " ", _MANIFEST_RAW, flags=re.S)
+
+#: Every class the manifest actually declares, from the attribute rather than
+#: from a substring: `android:name=".ui.SystemCheckActivity"` -> the last
+#: dotted segment. A bare substring search also counts an unused `import` line
+#: as a caller, and this build sets no `allWarningsAsErrors`.
+MANIFEST_COMPONENTS = {
+    value.rsplit(".", 1)[-1]
+    for value in re.findall(r'android:name="([^"]+)"', MANIFEST_TEXT)
+}
 
 
 def elsewhere(pattern: str, but_not: Path) -> list[str]:
@@ -126,7 +150,7 @@ def test_every_global_slot_has_something_that_fills_it():
         # `NotificationBus` lives in `JarvisNotificationListener.kt` and the
         # listener sets `connected` from its own lifecycle callbacks. The
         # manifest is what "calls" that class, so the write is reachable.
-        component = [n for n in top_level_names(SOURCES[path]) if n in MANIFEST_TEXT]
+        component = [n for n in top_level_names(SOURCES[path]) if n in MANIFEST_COMPONENTS]
         if component and re.search(rf"\b{obj}\.{name}\s*=[^=]|^\s+{name}\s*=[^=]",
                                    SOURCES[path], re.M):
             continue
@@ -166,7 +190,27 @@ SETTING_EXCEPTIONS: dict[str, str] = {
     # which reads the SharedPreferences file directly rather than through
     # JarvisConfig — see channel/ChannelConfig.kt.
     "deviceId": "generated on first read; nothing should ever write it",
+    # The screen labels these four "saved, not yet in effect" out loud: nothing
+    # on this device produces a home-presence signal, so WakeWordGate cannot be
+    # given one. Stored deliberately, consumed by nothing, and SAID so.
+    "wakeInCar": "stored and not applied; no home-presence signal exists — the screen says so",
+    "wakeAtHome": "stored and not applied; same",
+    "wakingHourStart": "stored and not applied; same",
+    "wakingHourEnd": "stored and not applied; same",
+    # Consumed inside the settings screen itself, and legitimately: the switch
+    # is read straight into UpdateChecker.check(installed, allowPrerelease),
+    # which is the screen's own action rather than a round trip to nowhere.
+    "allowPrereleaseUpdates": "read by checkForUpdates() and passed to UpdateChecker.check",
 }
+
+#: Screens that show settings.
+#:
+#: A setting one of these reads to seed a switch and writes back on save is NOT
+#: thereby consumed. That round trip is the exact shape of the
+#: headsetMode/warmLink bug this file exists for, and the first version of the
+#: rule accepted it — an audit demonstrated it by adding a `headsetBoost` switch
+#: that no audio code reads and watching the suite stay green.
+SETTINGS_SCREENS = ("SettingsActivity.kt", "VoiceIdentityActivity.kt")
 
 
 def declared_settings(path: Path) -> list[str]:
@@ -198,18 +242,31 @@ def test_every_setting_can_be_changed():
 
 
 def test_every_setting_is_consulted():
-    """And the mirror: a switch that changes nothing. `warmLink` had a writer
-    added before it had a reader, which would have been a second lie on the
-    same screen."""
+    """And the mirror: a switch that changes nothing.
+
+    The reader must be somewhere OTHER than the screen that writes it. A
+    settings screen reads a value to seed its switch and writes it back on
+    save; that round trip is not a consumer, and counting it as one is exactly
+    how `headsetMode` and `warmLink` would have passed — which is the bug this
+    file was written for. Anything genuinely screen-only belongs in
+    [SETTING_EXCEPTIONS] with the reason, where somebody has to defend it.
+    """
     ignored = []
     for path in (CONFIG, POLICY):
         for name in declared_settings(path):
-            if elsewhere(rf"\.{name}\b(?!\s*=[^=])", path):
+            if name in SETTING_EXCEPTIONS:
+                continue
+            readers = [
+                where
+                for where in elsewhere(rf"\.{name}\b(?!\s*=[^=])", path)
+                if not where.endswith(SETTINGS_SCREENS)
+            ]
+            if readers:
                 continue
             ignored.append(f"{name} ({path.relative_to(KOTLIN)})")
     assert not ignored, (
-        "these are stored and never read, so setting them does nothing: "
-        + ", ".join(ignored)
+        "these are stored and read back only by the screen that stores them, so "
+        "setting them does nothing: " + ", ".join(ignored)
     )
 
 
@@ -254,8 +311,9 @@ def test_every_module_with_a_spec_has_a_caller():
             names = top_level_names(SOURCES[path])
             if not names:
                 continue
-            # An Android component is "called" by the manifest.
-            if any(name in MANIFEST_TEXT for name in names):
+            # An Android component is "called" by the manifest — by its
+            # `android:name` attribute, never by a mention in a comment.
+            if any(name in MANIFEST_COMPONENTS for name in names):
                 continue
             if any(elsewhere(rf"\b{name}\b", path) for name in names):
                 continue
@@ -317,10 +375,20 @@ _DECL = re.compile(r"\b(?:class|object|interface)\s+\w+")
 
 
 def test_the_seams_that_have_already_been_found_empty_are_still_filled():
-    bodies = [_DECL.sub("KOTLIN_DECLARATION", src) for src in SOURCES.values()]
+    # Excluding the file that DECLARES the seam's target, so a seam cannot
+    # certify itself from an uncalled factory of its own — which is what
+    # "pinned individually" has to mean to be worth anything.
     empty = []
     for name, pattern, consequence in KNOWN_SEAMS:
-        if not any(re.search(pattern, src) for src in bodies):
+        target = name.split(".")[0]
+        filled = False
+        for path, src in SOURCES.items():
+            if target in top_level_names(src):
+                continue
+            if re.search(pattern, _DECL.sub("KOTLIN_DECLARATION", src)):
+                filled = True
+                break
+        if not filled:
             empty.append(f"{name} — {consequence}")
     assert not empty, "these seams are empty again: " + "; ".join(empty)
 
