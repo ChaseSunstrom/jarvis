@@ -621,6 +621,13 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 								enrolled: true,
 								samples: 5,
 								min_samples: 3,
+								// What it takes to MEASURE a threshold rather than
+								// inherit one: scoring a sample means rebuilding the
+								// profile from the others, and that rebuilt profile
+								// needs min_samples itself. So five samples is
+								// measurable and three is not — and the console draws
+								// two different sentences for the two cases.
+								measure_samples: 4,
 								max_samples: 20,
 								mode: 'observe',
 								active: true,
@@ -628,6 +635,7 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 								self_score: 2.527,
 								worst_self_score: 7.065,
 								suggested_threshold: 8.831,
+								threshold_measured: true,
 								label: 'owner',
 								embedder: 'jarvis-mfcc-v1',
 								prompts: ['Good evening, Jarvis.', 'What is on my calendar tomorrow?']
