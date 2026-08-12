@@ -109,6 +109,42 @@ describe('the admin token never reaches the browser', () => {
 		}
 	});
 
+	it('the voice-identity WRITES forward the caller and never the admin token', () => {
+		// The console's other proxies attach the server-held admin token and are
+		// allow-listed above. These two must not: enrolling changes WHOSE VOICE
+		// Jarvis answers, and doing that on the strength of "you could reach
+		// this port" would be the opposite of the feature. They forward the
+		// phone's own credential, exactly as server/ws-proxy.js already does for
+		// the phone's socket, and jarvis-core stays the single authority.
+		const writes = ['api/voice/speaker/enrol/+server.ts', 'api/voice/speaker/verify/+server.ts'];
+		for (const route of writes) {
+			expect(routes, `${route} is missing — a phone paired to the console cannot enrol`).toContain(
+				route
+			);
+			const body = readFileSync(join(ROUTES, route), 'utf8');
+			expect(
+				body.includes('backend.token'),
+				`${route} attaches the admin token; enrolment must carry the caller's own`
+			).toBe(false);
+		}
+		const relay = readFileSync(
+			new URL('./speakerRelay.ts', import.meta.url).pathname,
+			'utf8'
+		);
+		expect(
+			relay.includes('backend.token'),
+			'the shared relay attaches the admin token, which is the same hole one level down'
+		).toBe(false);
+		expect(
+			/request\.headers\.get\('authorization'\)/.test(relay),
+			'the relay does not read the caller\'s Authorization header'
+		).toBe(true);
+		expect(
+			relay.includes("redirect: 'error'"),
+			'a 30x could move the caller\'s token to another host'
+		).toBe(true);
+	});
+
 	it('every named route still exists', () => {
 		// A stale entry is worse than a missing one: it reads as a considered
 		// exemption for a guard nobody has looked at since the file was deleted.

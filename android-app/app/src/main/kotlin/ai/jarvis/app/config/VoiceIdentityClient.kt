@@ -93,10 +93,41 @@ class VoiceIdentityClient(
     /** Either an answer or a sentence to show the user. Never both, never neither. */
     sealed class Result<out T> {
         data class Ok<T>(val value: T) : Result<T>()
-        data class Failed(val message: String) : Result<Nothing>()
+
+        /**
+         * @param headline what to put in front of the user. NOT always "could
+         *   not reach Jarvis" — see [Companion.of]. A server that answered 404
+         *   was reached perfectly well, and telling somebody their network is
+         *   broken when their server is merely out of date sends them to fix
+         *   the wrong thing.
+         * @param message the detail underneath it.
+         */
+        data class Failed(val headline: String, val message: String) : Result<Nothing>()
     }
 
-    fun status(): Result<Status> = get("/api/voice/speaker").map(Status::from)
+    fun status(): Result<Status> {
+        return when (val answer = get("/api/voice/speaker")) {
+            is Result.Failed -> answer
+            is Result.Ok -> {
+                // The console's relay answers this one even when the backend
+                // behind it has no voice identity at all — it turns the 404
+                // into `{"supported": false}` so its own page can say which,
+                // rather than showing a generic failure. Without this the phone
+                // would read that as a perfectly good "nobody is enrolled" and
+                // offer to record five phrases into a server that has nowhere
+                // to put them.
+                if (answer.value.has("supported") && !answer.value.optBoolean("supported")) {
+                    Result.Failed(
+                        "This Jarvis has no voice identity",
+                        "The console reached your server and it has no " +
+                            "/api/voice/speaker. Update jarvis-core.",
+                    )
+                } else {
+                    Result.Ok(Status.from(answer.value))
+                }
+            }
+        }
+    }
 
     /**
      * Add one enrolment sample.
@@ -147,14 +178,51 @@ class VoiceIdentityClient(
                     // The server's `detail` is written for a person to act on
                     // ("that sample has no measurable pitch — it is too quiet")
                     // so it is shown rather than replaced with a status code.
-                    return Result.Failed(detailOf(text) ?: "server said ${response.code}")
+                    return failureFor(response.code, detailOf(text))
                 }
                 Result.Ok(JSONObject(text))
             }
         } catch (t: Throwable) {
+            // The ONLY case that is really "could not reach Jarvis": no HTTP
+            // response at all. DNS, refused connection, a timeout, TLS.
             Log.w(TAG, "voice identity request failed", t)
-            Result.Failed(t.message ?: t.javaClass.simpleName)
+            Result.Failed(
+                "Could not reach Jarvis",
+                t.message ?: t.javaClass.simpleName,
+            )
         }
+    }
+
+    /**
+     * Turn a status code into something worth reading.
+     *
+     * Reported as *"with the teach voice thing, it says 'Could not reach
+     * Jarvis'"* — which the screen said for every failure, including the ones
+     * where Jarvis answered immediately and said no. The remedies could hardly
+     * be further apart: a 404 means the server is older than the app or is the
+     * wrong one of the two, a 401 means this phone's token was refused, and
+     * only an exception means the network. One sentence covered all three and
+     * pointed at the network every time.
+     */
+    private fun failureFor(code: Int, detail: String?): Result<Nothing> = when (code) {
+        404 -> Result.Failed(
+            "This Jarvis has no voice identity",
+            detail ?: "The server answered, but it has no /api/voice/speaker. " +
+                "Update jarvis-core — voice identity is newer than the server " +
+                "this phone is pointed at.",
+        )
+
+        401, 403 -> Result.Failed(
+            "Jarvis refused this phone",
+            detail ?: "The access token in Settings was rejected. Re-pair the phone.",
+        )
+
+        // The server is there and something went wrong inside it. Its own words
+        // are the useful part; the code alone is not.
+        else -> Result.Failed(
+            "Jarvis answered $code",
+            detail ?: "No detail was given.",
+        )
     }
 
     private fun detailOf(body: String): String? = try {

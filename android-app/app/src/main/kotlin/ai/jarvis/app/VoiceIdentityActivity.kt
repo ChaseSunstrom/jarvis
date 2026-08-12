@@ -339,7 +339,12 @@ class VoiceIdentityActivity : Activity() {
                 when (result) {
                     is VoiceIdentityClient.Result.Ok -> onOk(result.value)
                     is VoiceIdentityClient.Result.Failed -> {
-                        statusView.text = "Could not reach Jarvis"
+                        // The headline is the client's, not a constant. "Could
+                        // not reach Jarvis" was shown for a 404 from a server
+                        // that answered in 20 ms, which sent people to look at
+                        // their network instead of at their jarvis-core
+                        // version. See VoiceIdentityClient.failureFor.
+                        statusView.text = result.headline
                         detailView.text = result.message
                     }
                 }
