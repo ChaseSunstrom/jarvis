@@ -311,6 +311,54 @@ def check_the_console_hides_the_nav_the_frame_already_draws() -> list[str]:
     return failures
 
 
+def check_the_phones_own_half_is_reachable() -> list[str]:
+    """PHONE must be somewhere a thumb can actually reach it.
+
+    Reported twice, the second time after a release that had "fixed" it: the
+    phone's own settings were not there. They were — as the sixth of six
+    monospace labels inside a `HorizontalScrollView` with no scrollbar, on a
+    handset too narrow for six. Present in the view hierarchy, absent from the
+    screen. Nothing that inspects the code for "is PHONE in the strip" could
+    have caught it, which is why this checks WHERE it is rather than whether it
+    exists.
+
+    Two independent routes, on purpose. One is the home screen, which is where
+    somebody looks first; the other is the tab strip, pinned outside the part
+    that scrolls.
+    """
+    failures = []
+    frame = FRAME.read_text(encoding="utf-8")
+
+    # 1. Not inside the scroller.
+    if "HorizontalScrollView" not in frame:
+        failures.append("ConsoleFrame no longer scrolls its tabs; this check is stale")
+    else:
+        # The PHONE button must be added to the OUTER row, not to `strip` (the
+        # thing inside the scroller).
+        if "strip.addView(phone)" in frame:
+            failures.append(
+                "ConsoleFrame puts PHONE inside the horizontal scroller again. Six "
+                "monospace labels do not fit a phone's width, so the one entry that "
+                "is about this handset ends up off the right-hand edge — which is "
+                "how it came to be reported missing twice."
+            )
+        # PHONE has to be added somewhere other than `strip`, and the outer row
+        # is the only other container in this function.
+        if "addView(\n                phone," not in frame:
+            failures.append("ConsoleFrame no longer adds a PHONE button to the outer row")
+
+    # 2. On the home screen, one tap from opening the app.
+    main = MAIN.read_text(encoding="utf-8")
+    if "ConsoleTab.PHONE_LABEL" not in main or "openSettings()" not in main:
+        failures.append(
+            "MainActivity no longer offers PHONE on the home screen. The five console "
+            "sections were removed from it because they duplicated the console's own "
+            "nav; PHONE is not a duplicate — it is the half of the app a web page "
+            "cannot be — and it is what people open the app to change."
+        )
+    return failures
+
+
 def check_the_webview_is_not_handed_a_url() -> list[str]:
     """The token rides on this navigation. The path must not come from a caller.
 
@@ -452,6 +500,7 @@ def main() -> int:
         + check_the_phones_own_screens_do_not_borrow_the_consoles_words()
         + check_the_console_names_the_phones_screens_correctly()
         + check_the_webview_is_not_handed_a_url()
+        + check_the_phones_own_half_is_reachable()
         + check_the_console_hides_the_nav_the_frame_already_draws()
         + check_the_console_screen_can_reach_every_section()
     )

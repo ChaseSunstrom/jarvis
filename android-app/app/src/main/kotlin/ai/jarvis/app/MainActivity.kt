@@ -473,6 +473,26 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, JarvisUi.dp(this@MainActivity, 14), 0, 0)
             addView(JarvisUi.ghost(this@MainActivity, "MANAGE") { openConsole(ConsoleTab.DEFAULT) })
+            addView(
+                android.view.View(this@MainActivity),
+                LinearLayout.LayoutParams(JarvisUi.dp(this@MainActivity, 10), 1)
+            )
+            // PHONE, back on the home screen — and not as a walking-back of the
+            // dedup that removed the other five.
+            //
+            // Those five were a second copy of the console's nav. This one is
+            // not: it is the half of the app a web page CANNOT be — the
+            // microphone, the permissions, the wake word, which server this
+            // handset talks to. It went into the console's tab strip, where it
+            // was the sixth of six monospace labels on a strip too narrow for
+            // six, and it has now been reported missing twice by somebody
+            // holding the phone.
+            //
+            // Two buttons is not a grid, and the thing people open the app to
+            // change should not be two taps and a horizontal scroll away.
+            addView(
+                JarvisUi.ghost(this@MainActivity, ConsoleTab.PHONE_LABEL) { openSettings() }
+            )
         }
 
         col.addView(

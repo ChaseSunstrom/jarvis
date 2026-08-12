@@ -18,11 +18,44 @@ happens to play through the car's speakers.
    There is no assistant category; an app cannot render a conversational
    surface or grab the mic on the head unit.
 3. **The most any app gets is tap-to-control.** The Car App Library's IoT
-   template renders a list of entities you tap while parked, or within the
-   driving-allowed subset. That is the ceiling for a head-unit UI, and it
-   has no voice component. Jarvis does not currently ship a car-app module;
-   if it ever does, this is the shape it would take.
-4. **Head-unit mic is Google's.** While AA is connected, the car mic is
+   template renders a described template the host draws — a list, a pane, an
+   image — while parked or within the driving-allowed subset. That is the
+   ceiling for a head-unit UI and it has no voice component. Jarvis **does**
+   ship a car-app module now (`android-app/.../car/`): a `CarAppService`
+   declaring `androidx.car.app.category.IOT`, a `PaneTemplate` with the
+   transcript and the reply, and the same arc-reactor orb rendered into a
+   bitmap by `CarOrbRenderer` so the head unit shows the actual object rather
+   than a flat icon of it.
+4. **A sideloaded car app does not appear in Android Auto at all.** This is
+   the one that surprises people, and it is why a freshly-installed Jarvis
+   APK shows nothing in the car. Android Auto's developer option for running
+   apps from untrusted sources — the "Unknown sources" toggle everyone finds
+   first — explicitly does not cover this kind of app. Google's own words, in
+   [Test Android apps for cars](https://developer.android.com/training/cars/testing):
+
+   > Android Auto has a developer option that lets you run apps that aren't
+   > installed from a trusted source. This setting applies to media, messaging
+   > notifications, and parked apps but **doesn't apply to apps built using
+   > the Android for Cars App Library**.
+
+   So there is no toggle, no adb command and no manifest change that makes a
+   sideloaded build appear. There are exactly two routes, and both are about
+   *distribution* rather than code:
+
+   * **Google Play, any track** — an internal-testing track with one tester
+     (you) is enough, and installing from Play makes the app a trusted source.
+     It means the APK gets an account, a listing and Play signing, which for a
+     private house assistant is a real cost and is why this is not the default
+     recommendation.
+   * **The Desktop Head Unit** — `scripts/`-free, no Play account, and the
+     supported way to see the car surface during development. It runs on the
+     machine, the phone connects to it over USB, and sideloaded Car App
+     Library apps DO appear. The procedure is in *Acceptance gate* below.
+
+   Nothing in this repository can change that, and the app says so on its
+   settings screen rather than leaving you to conclude the car module is
+   broken.
+5. **Head-unit mic is Google's.** While AA is connected, the car mic is
    routed to the AA stack for Gemini. Third-party phone apps do not receive
    car-mic audio.
 

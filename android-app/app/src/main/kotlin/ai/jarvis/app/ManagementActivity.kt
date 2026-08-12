@@ -288,9 +288,39 @@ class ManagementActivity : Activity() {
         // Deliberately absent: view.addJavascriptInterface(...). Do not add one.
     }
 
+    /**
+     * Tell the page it is inside this app, from this side of the WebView.
+     *
+     * The console hides its own nav when `<html data-embed="android">` is set,
+     * because a link tapped inside a WebView is a page-initiated navigation and
+     * WebView does not attach `additionalHeaders` to those — so the page's copy
+     * of the nav is a row of tabs that looks right and silently cannot carry
+     * the bearer token. The native strip is the only nav in this app that works.
+     *
+     * That attribute is set server-side, by sniffing this activity's
+     * User-Agent in `jarvis-web/src/hooks.server.ts`. It is the right place for
+     * it — it lands before the first paint, so there is no flash of a nav that
+     * is about to vanish — and it has exactly one failure mode: it is the
+     * SERVER's job, so a console that has not been updated alongside the app,
+     * or a reverse proxy that normalises the User-Agent, silently leaves the
+     * duplicate row on screen. Reported twice as "still the duplicate tabs".
+     *
+     * So the app asserts it too. Setting an attribute is not a style and not an
+     * inline script — it makes the page's OWN stylesheet rule match, which is
+     * already loaded and already allowed by its `style-src 'self'`. Belt and
+     * braces, and the braces cost one evaluateJavascript per page.
+     */
+    private fun markEmbedded(view: WebView) {
+        view.evaluateJavascript(
+            "document.documentElement.setAttribute('data-embed','android')",
+            null,
+        )
+    }
+
     private fun originLockedClient() = object : WebViewClient() {
 
         override fun onPageFinished(view: WebView, url: String) {
+            markEmbedded(view)
             if (!resettingHistory) return
             resettingHistory = false
             // A tab switch must not leave a back-forward entry.

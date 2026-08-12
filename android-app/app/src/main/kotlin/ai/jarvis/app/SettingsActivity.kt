@@ -235,6 +235,35 @@ class SettingsActivity : Activity() {
         sttStatus = TextView(ctx).apply { textSize = 12f }
         col.addView(sttStatus)
 
+        // --- in the car -------------------------------------------------------
+        //
+        // Reported as "why is Jarvis not showing up in Android Auto". The car
+        // module is real and correct; the reason it is invisible is that the
+        // build is sideloaded, and Android Auto's unknown-sources developer
+        // option explicitly does not cover Car App Library apps. Nothing in
+        // this app can change that, so the only useful thing it can do is stop
+        // the user concluding the feature is broken.
+        col.addView(JarvisUi.spacer(ctx, 12))
+        col.addView(JarvisUi.label(ctx, "In the car"))
+        col.addView(
+            JarvisUi.hint(
+                ctx,
+                "Jarvis has an Android Auto screen — the orb, what you said and the " +
+                    "reply — but a SIDELOADED build never appears in the car. Android " +
+                    "Auto's \"unknown sources\" developer setting covers media, messaging " +
+                    "and parked apps, and Google documents that it does not cover apps " +
+                    "built with the Android for Cars App Library. This one is.\n\n" +
+                    "Two ways to see it: install from Google Play (an internal-testing " +
+                    "track with one tester is enough — installing from Play is what makes " +
+                    "the app a trusted source), or run the Desktop Head Unit on a computer " +
+                    "and connect this phone to it, which is the supported way to develop " +
+                    "against it. docs/android-auto.md has both.\n\n" +
+                    "Voice in the car is separate and is not affected: \"Hey Jarvis\" runs " +
+                    "on this phone while Android Auto is connected, and the reply plays " +
+                    "through the car's speakers over Bluetooth."
+            )
+        )
+
         // --- whose voice ------------------------------------------------------
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "Whose voice"))

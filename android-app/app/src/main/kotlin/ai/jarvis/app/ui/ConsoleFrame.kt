@@ -78,8 +78,22 @@ object ConsoleFrame {
             strip.addView(button)
             strip.addView(gap(activity))
         }
-        // Last, because it is the one entry that is this phone rather than the
-        // house — and the order the console's own nav has no opinion about.
+
+        // The console's five scroll. PHONE does NOT.
+        //
+        // It used to be the sixth button inside this scroller, and six
+        // monospace labels do not fit a phone's width — so the one entry that
+        // is about THIS HANDSET sat off the right-hand edge, behind a
+        // horizontal scroll with no scrollbar, on a strip whose other five
+        // items are all reachable. Reported, twice, as the phone's settings
+        // simply not being there; and the second report came after a release
+        // that had "fixed" it, because what was fixed was the duplicate nav
+        // and not the fact that you cannot tap what you cannot see.
+        //
+        // So it is pinned outside the scroller, always on screen, at the end
+        // where a settings affordance belongs. The five that scroll are the
+        // console's, which is also the honest visual grouping: they are one
+        // thing and this is another.
         val phone = JarvisUi.ghost(activity, PHONE_LABEL) {
             if (!onPhone) {
                 activity.startActivity(
@@ -88,16 +102,13 @@ object ConsoleFrame {
             }
         }
         buttons += phone to onPhone
-        strip.addView(phone)
 
         for ((button, here) in buttons) {
             button.setTextColor(if (here) JarvisUi.ACCENT else JarvisUi.DIM)
             button.alpha = if (here) 1f else 0.75f
         }
 
-        // Scrolls, because six monospace labels do not fit a phone's width and
-        // the alternative is a nav that wraps into two ragged lines.
-        return HorizontalScrollView(activity).apply {
+        val scroller = HorizontalScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false
             // Fills the width when the tabs fit and scrolls when they do not.
             isFillViewport = true
@@ -108,6 +119,25 @@ object ConsoleFrame {
             addView(
                 strip,
                 FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val pad = JarvisUi.dp(activity, 12)
+            setPadding(0, 0, pad, JarvisUi.dp(activity, 10))
+            // Weight 0 on the width so the scroller takes what is left rather
+            // than pushing PHONE off the edge it was just rescued from.
+            addView(
+                scroller,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            )
+            addView(
+                phone,
+                LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
