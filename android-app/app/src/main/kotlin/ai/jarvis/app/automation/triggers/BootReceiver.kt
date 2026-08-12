@@ -58,6 +58,15 @@ class BootReceiver : BroadcastReceiver() {
         // notification that starts it in one tap instead of a log line.
         WakeWordService.ensureRunning(app)
 
+        // Reminders next, and also NOT behind the automation checks. An
+        // AlarmManager alarm does not survive a reboot, so without this
+        // "remind me tomorrow morning" is silently cancelled by a phone that
+        // restarted overnight — the failure a user notices least and forgives
+        // least. It is the user's own reminder, not an automation they may
+        // have switched off, so only panic suppresses it.
+        runCatching { ReminderReceiver.rearmAll(app) }
+            .onFailure { Log.w(TAG, "could not re-arm reminders after $action", it) }
+
         if (!policy.automationEnabled) {
             Log.i(TAG, "not starting after $action: automation is switched off")
             return

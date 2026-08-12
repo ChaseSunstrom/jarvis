@@ -503,6 +503,20 @@
 
         <!-- Trigger sources: power, connectivity, headset, airplane mode.
              All protected system broadcasts. -->
+        <!--
+          Reminders. NOT exported: the only thing that ever sends this action is
+          an AlarmManager PendingIntent this app created. Exporting it would let
+          any app on the phone fabricate a reminder notification in Jarvis's
+          name, which is a phishing surface for the price of a broadcast.
+        -->
+        <receiver
+            android:name="ai.jarvis.app.automation.triggers.ReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ai.jarvis.app.automation.REMINDER_FIRE" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name="ai.jarvis.app.automation.triggers.SystemEventReceiver"
             android:exported="true">

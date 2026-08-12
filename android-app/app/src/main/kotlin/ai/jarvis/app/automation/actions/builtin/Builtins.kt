@@ -61,6 +61,9 @@ object Builtins {
         add(CreateCalendarEvent)
         add(SetAlarm)
         add(SetTimer)
+        add(SetReminder)
+        add(ListReminders)
+        add(CancelReminder)
 
         // Files and clipboard
         add(ReadFile)

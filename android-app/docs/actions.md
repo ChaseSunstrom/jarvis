@@ -132,6 +132,41 @@ a denied permission is an answer, not a crash.
 `start` / `end` accept epoch millis, epoch seconds, ISO-8601 with or without an
 offset, a bare date, or a relative offset such as `+90m` (`actions/TimeParse.kt`).
 
+### Reminders
+
+| id | tier | params | permission | notes |
+|---|---|---|---|---|
+| `set_reminder` | 2 | `text`, `when` | `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM` | one notification, at one time, carrying the user's own words |
+| `list_reminders` | 2 | — | — | pending only; fired ones are gone |
+| `cancel_reminder` | 2 | `id`, or `all` | — | |
+
+A reminder is deliberately none of the three things it resembles:
+
+* not an **alarm** — `set_alarm` hands the clock app an `AlarmClock` intent, and
+  the result rings until dismissed, in a list of mostly-recurring alarms, with a
+  label rather than a sentence. "Remind me to take the bins out" should not ring.
+* not a **calendar event** — that goes to the calendar provider, so it is shared
+  with everything that syncs that calendar and appears as an appointment. A
+  reminder is not an appointment and is nobody else's business.
+* not a **timer** — a timer measures a duration you are waiting on. A reminder
+  interrupts you later about something else.
+
+`when` takes the same forms as `start` above: `+15m`, `18:00`, an ISO timestamp.
+Nothing under five seconds away (it would fire as you finished asking) and
+nothing over a year (`AlarmManager` is the wrong tool by then).
+
+`AlarmManager` alarms do not survive a reboot, so each reminder is persisted to
+`SharedPreferences` and `BootReceiver` re-arms the still-future ones — that runs
+ahead of the automation master switch, because a reminder is the user's own and
+not an automation they may have turned off. Only panic suppresses it.
+Reminders whose moment passed while the phone was off are dropped rather than
+fired late: a reminder to leave for an appointment, delivered after it, is worse
+than none.
+
+Without `SCHEDULE_EXACT_ALARM` the alarm is set inexactly and the system may
+delay it by minutes. `set_reminder` returns `exact: false` in that case rather
+than letting it quietly drift.
+
 ### Files and clipboard
 
 Every file action is confined to `filesDir/jarvis_files`. There is no absolute
