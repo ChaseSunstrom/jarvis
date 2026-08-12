@@ -40,7 +40,7 @@ class CrashLogActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         root = FrameLayout(this).apply { setBackgroundColor(JarvisUi.BG) }
-        setContentView(root)
+        setContentView(root.also { JarvisUi.fitSystemBars(it) })
         showList()
     }
 

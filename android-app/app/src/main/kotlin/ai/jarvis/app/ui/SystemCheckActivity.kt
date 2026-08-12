@@ -37,7 +37,7 @@ class SystemCheckActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildUi())
+        setContentView(buildUi().also { JarvisUi.fitSystemBars(it) })
     }
 
     override fun onResume() {

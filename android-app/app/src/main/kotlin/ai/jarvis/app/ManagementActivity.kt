@@ -127,7 +127,7 @@ class ManagementActivity : Activity() {
         val view = WebView(this)
         webView = view
         configure(view)
-        setContentView(buildUi(view))
+        setContentView(buildUi(view).also { JarvisUi.fitSystemBars(it) })
         load(tab)
     }
 

@@ -120,7 +120,7 @@ class ApprovalActivity : Activity() {
         rawParams = intent?.getStringExtra(ApprovalBridge.EXTRA_PARAMS).orEmpty()
         prettyParams = prettyPrint(rawParams)
 
-        setContentView(buildUi(actionId, description, reason, commandId, tierLabel))
+        setContentView(buildUi(actionId, description, reason, commandId, tierLabel).also { JarvisUi.fitSystemBars(it) })
         refreshGate()
         startCountdown()
     }

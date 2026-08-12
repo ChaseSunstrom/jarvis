@@ -86,7 +86,7 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = JarvisConfig(this)
-        setContentView(buildUi())
+        setContentView(buildUi().also { JarvisUi.fitSystemBars(it) })
     }
 
     private fun buildUi(): ViewGroup {

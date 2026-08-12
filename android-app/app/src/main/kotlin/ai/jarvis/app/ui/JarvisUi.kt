@@ -73,6 +73,60 @@ object JarvisUi {
         (v * context.resources.displayMetrics.density).toInt()
 
     /**
+     * Inset a screen's root so its content is not under the status bar or the
+     * navigation bar.
+     *
+     * ## Why every ordinary screen needs this now
+     *
+     * Reported as *"the tabs on the settings for the android app are too high
+     * up, and I can't click on them"*, which is exactly what it looks like:
+     * the nav strip is the first thing in the layout, so it was drawn beneath
+     * the status bar, and a tap up there goes to the system rather than to the
+     * button under it.
+     *
+     * The cause is `targetSdk = 35`. **Android 15 enforces edge-to-edge for
+     * apps that target it**: the window is laid out behind the system bars
+     * whether or not the app asked, and `android:statusBarColor` /
+     * `android:navigationBarColor` — which `Theme.JarvisBase` sets, and which
+     * used to reserve that space — are deprecated and ignored. Nothing warns.
+     * The screens that hide the bars outright ([immersive]) were unaffected and
+     * still are, which is why this only ever showed up on Settings, Manage,
+     * SYSTEM CHECK, the crash log and the two automation screens.
+     *
+     * Padding rather than `setDecorFitsSystemWindows(true)`: the latter is
+     * deprecated on the same release, and this keeps the window background
+     * drawn edge to edge — so the bars still sit over Jarvis's own black rather
+     * than over a strip of grey.
+     *
+     * `displayCutout` is folded in because a punch-hole or notch in landscape
+     * eats the left or right edge in exactly the same way.
+     */
+    fun fitSystemBars(root: android.view.View) {
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bars = insets.getInsets(
+                    android.view.WindowInsets.Type.systemBars() or
+                        android.view.WindowInsets.Type.displayCutout()
+                )
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                // minSdk is 29, where `getInsets(int)` does not exist yet.
+                @Suppress("DEPRECATION")
+                view.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom,
+                )
+            }
+            insets
+        }
+        // A view that is already attached has had its insets dispatched, and
+        // the listener above has just missed them.
+        if (root.isAttachedToWindow) root.requestApplyInsets()
+    }
+
+    /**
      * Edge-to-edge, system bars hidden (swipe to reveal).
      *
      * Every caller runs this from `onCreate`, **before** `setContentView` — so

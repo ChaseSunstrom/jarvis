@@ -66,6 +66,12 @@ class VoiceActivity(
      * after the name and hearing nothing at all.
      */
     private val speechAlreadyUnderway: Boolean = false,
+    /**
+     * How long a wake-word turn may go unseeded before the room is inferred
+     * from what has been heard rather than waited for. See the seeding branch
+     * in [onLevel].
+     */
+    private val seedWindowMs: Long = SEED_WINDOW_MS,
 ) {
 
     /** The quietest the room has recently been, on MicStreamer's 0..1 scale. */
@@ -93,16 +99,28 @@ class VoiceActivity(
      * While unseeded the edges are the absolute minimums, which is what lets
      * speech in the very first buffer latch at all, and the floor creeps up
      * from zero — INCLUDING while speech is latched, unlike the ordinary case.
-     * That asymmetry is deliberate and is what keeps the trade safe: nothing can
-     * separate a room humming at 0.012 from a voice at 0.012 by level alone, so
-     * a wake-word turn in a loud room may well latch on the room, and the thing
-     * it must not do is stay latched. The climbing floor drags the end edge up
-     * until the room falls under it — about four seconds — instead of running to
-     * `MAX_TURN_MS` and handing the recogniser twelve seconds of noise. A real
-     * sentence ends long before the climb reaches its level.
+     * That asymmetry is deliberate: nothing can separate a room humming at
+     * 0.012 from a voice at 0.012 by level alone, so a wake-word turn in a loud
+     * room may well latch on the room, and the thing it must not do is stay
+     * latched.
      *
-     * Seeding happens on the first buffer at or below [MIN_START], i.e. the
-     * first one quiet enough to be a room, after which everything is normal.
+     * ## How seeding ends
+     *
+     * Two ways, and the second was added because the first was almost never
+     * reached:
+     *
+     *  1. **A buffer at or below [MIN_START]** — 0.004, a genuinely silent
+     *     room. That IS the room, so take it and carry on normally.
+     *  2. **[SEED_WINDOW_MS] elapses** — infer the room from the quietest
+     *     buffer heard, capped at [SEED_PEAK_FRACTION] of the loudest.
+     *
+     * Rule 1 alone meant that in any room above 0.004 — which is most rooms —
+     * a wake-word turn never seeded, and the end edge could only arrive by the
+     * slow climb: 1.9 s in a quiet room, 3.8 s in a normal one, 6.4 s in a
+     * kitchen, and then the 900 ms hangover on top. Reported as *"I say
+     * something, and it takes a while for it to stop listening"*. The climb was
+     * meant to be the safe fallback for a turn latched on noise; it had quietly
+     * become the ordinary path for every wake-word turn.
      */
     private var seeded = !speechAlreadyUnderway
 
@@ -119,6 +137,12 @@ class VoiceActivity(
 
     /** The loudest level within the current above-edge run. See [SUSTAIN_RATIO]. */
     private var candidatePeak = 0f
+
+    /** The quietest buffer seen while unseeded — the best estimate of the room. */
+    private var quietest = Float.MAX_VALUE
+
+    /** When the first unseeded buffer arrived, so the seed window can elapse. */
+    private var firstUnseededAt = 0L
 
     /** When speech was last genuinely present. Drives the hangover. */
     private var lastVoiceAt = 0L
@@ -160,16 +184,64 @@ class VoiceActivity(
             // Speech was already under way when the microphone opened, so no
             // buffer yet seen can be trusted as the room. See [seeded].
             !seeded -> {
+                if (firstUnseededAt == 0L || nowMs < firstUnseededAt) firstUnseededAt = nowMs
+                if (level < quietest) quietest = level
+
                 if (level <= minStart) {
+                    // A genuinely silent buffer. Nothing to infer — that IS the
+                    // room, and the ordinary rules can start at once.
                     floor = level
+                    seeded = true
+                } else if (nowMs - firstUnseededAt >= seedWindowMs) {
+                    // Reported as: *"I say something, and it takes a while for
+                    // it to stop listening and hear what I said."*
+                    //
+                    // The branch above is the only way a wake-word turn used to
+                    // become seeded, and it needs a buffer at or below
+                    // MIN_START — 0.004, which is a recording studio. An
+                    // ordinary room sits above that, so a wake-word turn stayed
+                    // unseeded and the end edge could only arrive by the slow
+                    // climb below: 1.9 s of climbing in a quiet room, 3.8 s in a
+                    // normal one, 6.4 s in a kitchen — and THEN the 900 ms
+                    // hangover. The climb was designed as the safe fallback for
+                    // a turn latched on a noisy room; it had become the ordinary
+                    // path.
+                    //
+                    // So measure the room instead of waiting to be given it.
+                    // After a second the quietest buffer seen is either the room
+                    // or a gap between two words, and both are far below speech.
+                    //
+                    // The QUIETEST buffer, and nothing cleverer. A first
+                    // attempt capped this at a fraction of the loudest, to be
+                    // safe against a window made entirely of speech — and the
+                    // spec's noisy-room case rejected it immediately, because
+                    // that cap fires just as hard on a window made entirely of
+                    // ROOM: it seeded the floor below the room, left the end
+                    // edge under it, and the turn ran to the cap with twelve
+                    // seconds of noise. Which is the failure the slow climb was
+                    // put there to prevent in the first place.
+                    //
+                    // Level alone cannot separate 1.5 s of steady room from
+                    // 1.5 s of steady speech, and no threshold on it will. What
+                    // separates them is that speech is not steady: over a
+                    // second and a half it has syllable boundaries, and the
+                    // quietest of them sits near the room. Room noise is
+                    // stationary, so its quietest IS the room. Taking the
+                    // minimum is therefore right in both cases at once.
+                    //
+                    // The case it does not solve is a microphone that opened
+                    // mid-syllable into 1.5 s of unbroken speech. That seeds
+                    // high and ends the turn early — the user repeats, and the
+                    // audio already captured still goes to the recogniser.
+                    // Bounded, self-correcting, and rare, where the bug being
+                    // fixed was several seconds on every single turn.
+                    floor = quietest
                     seeded = true
                 } else {
                     // Note this runs while speech is latched too, which the
-                    // branch below deliberately does not. It is what lets a turn
-                    // latched on a noisy room end by itself: the end edge climbs
-                    // until the room falls under it, in about four seconds from
-                    // silence. A real sentence is over long before the climb
-                    // reaches its level.
+                    // branch below deliberately does not. It is the backstop
+                    // for the first second, before there is enough of a sample
+                    // to seed from.
                     floor = minOf(floor + floorRise, level)
                 }
             }
@@ -276,6 +348,11 @@ class VoiceActivity(
         floor = 0f
         peak = 0f
         seeded = !speechUnderway
+        // The seed evidence belongs to the session that gathered it. Carrying
+        // a previous room measurement into a fresh unseeded turn would seed it
+        // instantly from a room that may no longer be there.
+        quietest = Float.MAX_VALUE
+        firstUnseededAt = 0L
     }
 
     companion object {
@@ -342,6 +419,18 @@ class VoiceActivity(
 
         /** Trailing silence that ends a turn. */
         const val END_SILENCE_MS = 900L
+
+        /**
+         * How long a wake-word turn waits before inferring the room.
+         *
+         * A second and a half is long enough to hold "Hey Jarvis, turn the
+         * kitchen lights off" — so the quietest buffer in it is either the room
+         * or a gap between two words — and short enough that the seeding
+         * happens while the sentence is still going, rather than seconds after
+         * it ends.
+         */
+        const val SEED_WINDOW_MS = 1_500L
+
 
         /**
          * A peak at or below this is digital silence, not a quiet room.

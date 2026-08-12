@@ -48,6 +48,7 @@ START_DEBOUNCE_MS = 200
 MIN_SPEECH_MS = 300
 END_SILENCE_MS = 900
 SUSTAIN_RATIO = 0.40
+SEED_WINDOW_MS = 1500
 
 #: MicStreamer emits one buffer every 64 ms.
 CHUNK_MS = 64
@@ -69,6 +70,8 @@ class VoiceActivity:
         self.candidate_peak = 0.0
         self.last_voice_at = 0
         self.started_at = 0
+        self.quietest = float("inf")
+        self.first_unseeded_at = 0
 
     @property
     def start_edge(self) -> float:
@@ -87,15 +90,37 @@ class VoiceActivity:
             # Waiting for a buffer that could plausibly BE the room. Until one
             # arrives the edges sit at their absolute minimums, which is what
             # lets a command already in progress latch at all.
-            #
-            # The floor still creeps up throughout, INCLUDING while speech is
-            # latched. That is what lets a turn latched on a noisy room end by
-            # itself: the end edge climbs until the room falls under it. A real
-            # sentence is over long before the climb reaches its level.
+            if self.first_unseeded_at == 0 or now_ms < self.first_unseeded_at:
+                self.first_unseeded_at = now_ms
+            if level < self.quietest:
+                self.quietest = level
+
             if level <= MIN_START:
+                # A genuinely silent buffer. That IS the room.
                 self.floor = level
                 self.seeded = True
+            elif now_ms - self.first_unseeded_at >= SEED_WINDOW_MS:
+                # Rule 1 needs a room at or below 0.004, which is a recording
+                # studio. Above it — which is most rooms — a wake-word turn used
+                # to stay unseeded forever and the end edge could only arrive by
+                # the slow climb below: seconds, before the 900 ms hangover even
+                # started. So infer the room from the QUIETEST buffer heard.
+                #
+                # Not capped at a fraction of the loudest, which was the first
+                # attempt: that cap fires just as hard on a window made entirely
+                # of room as on one made entirely of speech, seeding the floor
+                # BELOW the room and leaving the end edge under it — the
+                # never-ends failure this file's noisy-room checks exist for.
+                # Level cannot separate steady room from steady speech; the fact
+                # that speech is not steady can. Its quietest buffer is a
+                # syllable boundary, near the room. A room's quietest IS the
+                # room.
+                self.floor = self.quietest
+                self.seeded = True
             else:
+                # The backstop for the first second and a half, before there is
+                # enough of a sample to seed from. Runs while speech is latched
+                # too, unlike the ordinary case.
                 self.floor = min(self.floor + FLOOR_RISE_PER_CHUNK, level)
         elif self.floor <= 0.0:
             self.floor = level
@@ -241,6 +266,56 @@ def check_a_wake_word_turn_still_ends() -> int:
         elif ENDED not in verdicts:
             print(f"FAIL  a wake-word turn at {speech} never ended when the talking did")
             failures += 1
+    return failures
+
+
+def check_a_wake_word_turn_ends_promptly_after_the_talking() -> int:
+    """The user-facing complaint, as a number.
+
+    Reported as *"I say something, and it takes a while for it to stop
+    listening and hear what I said."* Ending eventually is not enough — the
+    whole turn is dead air to the person waiting for an answer, and the
+    recogniser gets seconds of room tacked onto the command.
+
+    Before the seed window, a wake-word turn in an ordinary room could only get
+    its end edge from the slow floor climb — 1.9 s at 0.006, 3.8 s at 0.012,
+    6.4 s at 0.02 — and the 900 ms hangover began only after that. Now the room
+    is inferred at SEED_WINDOW_MS and the hangover runs from the moment the
+    talking stops.
+
+    The budget below is the hangover plus the seed window plus a little slack,
+    which is the honest floor: a turn cannot end sooner than it takes to be
+    sure the silence is silence.
+    """
+    budget_ms = SEED_WINDOW_MS + END_SILENCE_MS + 400
+    failures = 0
+    for room in (0.006, 0.012, 0.02):
+        for speech in (0.05, 0.12):
+            vad = VoiceActivity(speech_already_underway=True)
+            # Mid-sentence when the mic opens, then the room, as it really goes.
+            talking = ramp(1.2, speech)
+            after = steady(6, room)
+            levels = talking + after
+            stopped_at = len(talking) * CHUNK_MS
+            ended_at = None
+            for i, lvl in enumerate(levels):
+                if vad.on_level(i * CHUNK_MS, lvl) == ENDED:
+                    ended_at = i * CHUNK_MS
+                    break
+            if ended_at is None:
+                print(
+                    f"FAIL  room {room}, speech {speech}: the turn never ended "
+                    "after the talking stopped"
+                )
+                failures += 1
+                continue
+            waited = ended_at - stopped_at
+            if waited > budget_ms:
+                print(
+                    f"FAIL  room {room}, speech {speech}: {waited} ms of dead air "
+                    f"after the user stopped talking, budget {budget_ms} ms"
+                )
+                failures += 1
     return failures
 
 
@@ -511,6 +586,7 @@ def main() -> int:
         check_a_quiet_room_hears_ordinary_speech()
         + check_a_wake_word_turn_hears_speech_already_in_progress()
         + check_a_wake_word_turn_still_ends()
+        + check_a_wake_word_turn_ends_promptly_after_the_talking()
         + check_a_wake_word_turn_in_a_noisy_room_does_not_run_forever()
         + check_a_tap_to_speak_turn_still_measures_the_room_first()
         + check_a_noisy_room_still_ends_the_turn()
@@ -529,8 +605,9 @@ def main() -> int:
         print(f"\n{failures} failure(s)")
         return 1
     print(
-        "voice activity: ordinary speech is heard in a quiet room, the turn still "
-        "ends over a fan, and the room alone never starts one"
+        "voice activity: ordinary speech is heard in a quiet room, a wake-word "
+        "turn ends within a second of the talking, the turn still ends over a "
+        "fan, and the room alone never starts one"
     )
     return 0
 

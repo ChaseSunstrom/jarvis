@@ -77,7 +77,7 @@ class AutomationsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         root = FrameLayout(this).apply { setBackgroundColor(JarvisUi.BG) }
-        setContentView(root)
+        setContentView(root.also { JarvisUi.fitSystemBars(it) })
 
         // Building the runtime is what fills AutomationBridge.dispatcher and
         // ActionEnv; it is safe to call from anywhere and idempotent. Wrapped

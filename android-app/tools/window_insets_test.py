@@ -167,6 +167,57 @@ def test_setDecorFitsSystemWindows_still_precedes_the_controller():
     )
 
 
+def test_every_ordinary_screen_reserves_the_system_bars():
+    """`targetSdk = 35` means Android 15 lays the window out BEHIND the bars.
+
+    Reported as *"the tabs on the settings for the android app are too high up,
+    and I can't click on them"*. The nav strip is the first thing in the layout,
+    so it was drawn under the status bar — and a tap up there belongs to the
+    system, not to the button beneath it.
+
+    `android:statusBarColor` and `android:navigationBarColor`, which
+    `Theme.JarvisBase` sets and which used to reserve that space, are deprecated
+    and ignored from API 35. Nothing warns; the screen just moves up.
+
+    So every Activity either hides the bars ([immersive]) or pads for them
+    ([fitSystemBars]). Doing neither is the bug, and it is invisible on any
+    device below Android 15 and in every screenshot taken on one.
+    """
+    bare = []
+    for path in kotlin_files():
+        src = path.read_text(encoding="utf-8")
+        if "setContentView(" not in src or path.name == "JarvisUi.kt":
+            continue
+        if "JarvisUi.immersive(" in src or "JarvisUi.fitSystemBars(" in src:
+            continue
+        bare.append(path.name)
+    assert not bare, (
+        "these call setContentView and neither hide the system bars nor pad for "
+        "them, so on Android 15 their top row is under the status bar and cannot "
+        "be tapped: " + ", ".join(sorted(bare))
+    )
+
+
+def test_the_inset_helper_covers_the_cutout_and_the_old_api():
+    """Two ways to get this subtly wrong, both silent."""
+    src = JARVIS_UI.read_text(encoding="utf-8")
+    body = src.split("fun fitSystemBars(", 1)
+    assert len(body) == 2, "JarvisUi.fitSystemBars is gone"
+    body = body[1][:1600]
+    assert "displayCutout()" in body, (
+        "fitSystemBars ignores the display cutout, so a punch-hole in landscape "
+        "eats the edge exactly as the status bar did"
+    )
+    assert "systemWindowInsetTop" in body, (
+        "fitSystemBars has no pre-API-30 branch; getInsets(int) does not exist "
+        "on API 29, which is this app's minSdk"
+    )
+    assert "requestApplyInsets" in body, (
+        "a root that is already attached has had its insets dispatched and the "
+        "new listener has just missed them"
+    )
+
+
 def main() -> int:
     tests = [
         (n, f) for n, f in sorted(globals().items())
