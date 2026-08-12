@@ -477,8 +477,26 @@ class JarvisChannel(
         // own, because the capability list already has consumers all the way
         // through — the server stores it, presence ranks on it, the model sees
         // it — and a new wire field would be one more thing nothing reads.
-        val capabilities =
-            if (uiAutomationReady()) declared + CAPABILITY_UI_AUTOMATION else declared
+        //
+        // REMOVED BEFORE IT IS ADDED, and both halves matter.
+        //
+        // `UiDelegatedActions` declares `capability = "ui_automation"`, so
+        // `dispatcher.capabilities()` already contains it whenever those
+        // actions report themselves available. Appending was therefore a
+        // DUPLICATE: the register frame carried "ui_automation" twice,
+        // `devices.py` does not de-duplicate, and the console drew the chip
+        // twice on the devices page.
+        //
+        // Removing first also makes this the stricter answer rather than an
+        // additional one. The two availability questions are genuinely
+        // different — an action asks whether the accessibility service is
+        // enabled, `uiAutomationReady` asks whether it is enabled AND
+        // connected, which it is not for a beat after a boot — and the
+        // capability list is a promise to the server. Taking the narrower of
+        // the two is the only direction that keeps it honest.
+        val capabilities = (declared - CAPABILITY_UI_AUTOMATION).let {
+            if (uiAutomationReady()) it + CAPABILITY_UI_AUTOMATION else it
+        }
 
         // The channel's own tier table, from OUR manifest, never from the server.
         tierTable = ChannelFrames.tierTable(manifest)

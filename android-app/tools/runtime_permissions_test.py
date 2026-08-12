@@ -79,6 +79,9 @@ DANGEROUS = {
     "android.permission.BLUETOOTH_CONNECT",
     "android.permission.BLUETOOTH_SCAN",
     "android.permission.BODY_SENSORS",
+    # Android 13. Separate from BODY_SENSORS and, like background location,
+    # must be requested on its own after the foreground one is held.
+    "android.permission.BODY_SENSORS_BACKGROUND",
     "android.permission.CALL_PHONE",
     "android.permission.CAMERA",
     "android.permission.GET_ACCOUNTS",
@@ -92,6 +95,9 @@ DANGEROUS = {
     "android.permission.READ_MEDIA_AUDIO",
     "android.permission.READ_MEDIA_IMAGES",
     "android.permission.READ_MEDIA_VIDEO",
+    # Android 14. Granted by "Select photos" in the media picker, and it is a
+    # dangerous permission like the rest of READ_MEDIA_*.
+    "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
     "android.permission.READ_PHONE_NUMBERS",
     "android.permission.READ_PHONE_STATE",
     "android.permission.READ_SMS",
@@ -106,6 +112,52 @@ DANGEROUS = {
     "android.permission.WRITE_CALL_LOG",
     "android.permission.WRITE_CONTACTS",
     "android.permission.WRITE_EXTERNAL_STORAGE",
+}
+
+#: Dangerous permissions defined by another APP rather than by the platform.
+#:
+#: Shizuku publishes `API_V23` with `protectionLevel="dangerous"`, so it is a
+#: runtime grant — but not one Android's `requestPermissions` can satisfy. It is
+#: granted through Shizuku's own flow (`Shizuku.requestPermission`) and read back
+#: through `Shizuku.checkSelfPermission`, which is why `ShellActions` consults
+#: that and not `Context.checkSelfPermission`.
+#:
+#: Being outside `RuntimePermissions.ALL` is therefore correct and not an
+#: oversight — but it has to be SAID, because the exemption below is otherwise
+#: indistinguishable from the bug this whole file exists about.
+THIRD_PARTY_DANGEROUS = {
+    "moe.shizuku.manager.permission.API_V23",
+}
+
+#: Everything else this app declares: normal permissions granted at install,
+#: and special access granted from a Settings screen. Written out for the same
+#: reason DANGEROUS is — so that a permission which is in NEITHER list fails the
+#: build instead of being quietly exempt.
+NOT_DANGEROUS = {
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.ACCESS_NOTIFICATION_POLICY",
+    "android.permission.ACCESS_WIFI_STATE",
+    "android.permission.FLASHLIGHT",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+    "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.INTERNET",
+    "android.permission.MODIFY_AUDIO_SETTINGS",
+    "android.permission.QUERY_ALL_PACKAGES",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.REQUEST_DELETE_PACKAGES",
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.SCHEDULE_EXACT_ALARM",
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.USE_EXACT_ALARM",
+    "android.permission.USE_FULL_SCREEN_INTENT",
+    "android.permission.VIBRATE",
+    "android.permission.WAKE_LOCK",
+    "android.permission.WRITE_SETTINGS",
+    # Shizuku's service, not a permission the app is granted.
+    "moe.shizuku.privileged.api",
 }
 
 #: Permissions that look grantable and are not. Each is a Settings trip, and a
@@ -170,6 +222,66 @@ def table_entries() -> list[dict[str, str]]:
 
 
 # --- the two lists agree ----------------------------------------------------
+def test_no_declared_permission_is_silently_exempt():
+    """THE HOLE UNDER THE CHECK BELOW.
+
+    That check filters the manifest through `p in DANGEROUS`, so a permission
+    this file has never heard of is not compared against anything — it is
+    exempt, silently, with 25 green checks printed underneath it. Two AOSP
+    dangerous permissions really were missing from the set
+    (`READ_MEDIA_VISUAL_USER_SELECTED`, `BODY_SENSORS_BACKGROUND`), and a third
+    could not be expressed in it at all, so adding any of them to the manifest
+    would have reproduced the nine-permission bug this file was written about —
+    one permission at a time, which is worse, because the file would have gone
+    on saying everything was fine.
+
+    Writing the sets out by hand is what makes this an INDEPENDENT statement of
+    what the platform requires (a spec that read the same table the code reads
+    could not catch a permission missing from that table), and this is the price
+    of that: every declared permission has to be classified here, deliberately,
+    by a person. An unknown one is a failure, not an exemption.
+    """
+    declared = set(manifest_permissions())
+    known = DANGEROUS | NOT_DANGEROUS | THIRD_PARTY_DANGEROUS
+    unclassified = sorted(declared - known)
+    assert not unclassified, (
+        "the manifest declares permissions this spec cannot classify, so they "
+        "are exempt from every check in this file. Add each to DANGEROUS, "
+        "NOT_DANGEROUS or THIRD_PARTY_DANGEROUS after deciding which it is: "
+        f"{unclassified}"
+    )
+    # And nothing may be in two buckets, which would make the classification
+    # meaningless in whichever direction the reader happened to look first.
+    for a, b, names in (
+        (DANGEROUS, NOT_DANGEROUS, "DANGEROUS/NOT_DANGEROUS"),
+        (DANGEROUS, THIRD_PARTY_DANGEROUS, "DANGEROUS/THIRD_PARTY_DANGEROUS"),
+        (NOT_DANGEROUS, THIRD_PARTY_DANGEROUS, "NOT_DANGEROUS/THIRD_PARTY_DANGEROUS"),
+    ):
+        assert not (a & b), f"{names} overlap: {sorted(a & b)}"
+
+
+def test_a_third_party_dangerous_permission_is_granted_by_its_own_app():
+    """Shizuku's `API_V23` is `protectionLevel="dangerous"`, so it is a runtime
+    grant — and `requestPermissions` cannot satisfy it. Shizuku grants it
+    through its own flow, which is why `ShellActions` reads it back through
+    Shizuku's `checkSelfPermission` and not the platform's.
+
+    Being outside `RuntimePermissions.ALL` is therefore right. This says so out
+    loud, so the exemption stays a decision rather than becoming an oversight
+    the moment somebody reads the manifest and wonders.
+    """
+    tabled = {e["permission"] for e in table_entries()}
+    for permission in THIRD_PARTY_DANGEROUS:
+        assert permission not in tabled, (
+            f"{permission} is in RuntimePermissions.ALL, which would put it in "
+            "an Android permission dialog that refuses it instantly"
+        )
+    shell = code_only(read(KOTLIN / "automation/actions/builtin/ShellActions.kt"))
+    assert "checkSelfPermission" in shell, (
+        "run_shell no longer checks whether Shizuku has granted it anything"
+    )
+
+
 def test_every_dangerous_permission_in_the_manifest_is_in_the_table():
     """The check that did not exist. Nine permissions were on one side only."""
     declared = manifest_permissions()

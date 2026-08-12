@@ -221,7 +221,19 @@ class SystemCheckActivity : Activity() {
         // "Don't ask again" means the dialog will never appear from here again,
         // and a row that does nothing when tapped is worse than one that sends
         // you to Settings. So when the platform is done asking, we take over.
-        val exhausted = outstanding.isNotEmpty() && outstanding.none {
+        //
+        // AN EMPTY `grantResults` IS NOT AN ANSWER. It means the request was
+        // cancelled — the user pressed Back on the dialog, or something else
+        // took the foreground — and nothing was decided. The platform reports
+        // "no rationale needed" for a permission that has never been answered
+        // just as it does for one refused with don't-ask-again, so without this
+        // the two are indistinguishable and the FIRST Back on the first
+        // Calendar tap threw the user out to the App info screen.
+        //
+        // `PermissionRequestActivity` guards exactly this, in the same words,
+        // for the same reason. This one did not.
+        val decided = grantResults.isNotEmpty()
+        val exhausted = decided && outstanding.isNotEmpty() && outstanding.none {
             runCatching { shouldShowRequestPermissionRationale(it) }.getOrDefault(false)
         }
         if (exhausted) GrapheneCompat.openAppDetails(this)
