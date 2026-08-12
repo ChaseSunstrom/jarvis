@@ -3,6 +3,8 @@ package ai.jarvis.app.assist
 import ai.jarvis.app.JarvisAssistActivity
 import ai.jarvis.app.ListenTrampolineActivity
 import ai.jarvis.app.R
+import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.companion.ConversationAskHost
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
@@ -114,6 +116,16 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
     /** The conversation the overlay is showing, if any. */
     private var convo: JarvisConversation? = null
+
+    /**
+     * Lets Jarvis put a question to the user *in the orb that is already up*.
+     *
+     * Registered for exactly as long as the overlay conversation lives. Without
+     * it, `ask_user` starts CompanionAskActivity over the top with NEW_TASK,
+     * which takes the orb down — and takes itself down when answered, so the
+     * conversation the user was having simply ends twice.
+     */
+    private var askHost: ConversationAskHost? = null
 
     private val reconnect = Runnable { if (running) openLink() }
 
@@ -518,6 +530,12 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         val surface = AssistOverlay(this) { endOverlayConversation(giveMicBack = true) }
         if (!surface.attach()) return false
         overlay = surface
+        askHost = ConversationAskHost(
+            context = this,
+            config = config,
+            conversation = { convo },
+            surface = overlayAskSurface,
+        ).also { CompanionMessageHandler.speechHost = it }
         convo = JarvisConversation(
             this, config, overlayUi, inactivityMs = 8000L,
             // The name and the command are one breath, so capture opens inside
@@ -532,10 +550,48 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     /** Take the orb down. [giveMicBack] re-opens the wake link afterwards. */
     private fun endOverlayConversation(giveMicBack: Boolean) {
         val hadOne = overlay != null
+        // The host first, and by identity: another surface may have registered
+        // since, and clearing the slot unconditionally would leave a live
+        // screen unable to be asked anything.
+        askHost?.let {
+            CompanionMessageHandler.clearSpeechHost(it)
+            it.stop()
+        }
+        askHost = null
         convo?.stop(); convo = null
         overlay?.detach(); overlay = null
         releaseScreen()
         if (hadOne && giveMicBack) resume()
+    }
+
+    /** The orb's view of a question, for [ConversationAskHost]. */
+    private val overlayAskSurface = object : ConversationAskHost.Surface {
+        override val isShowing: Boolean get() = overlay != null
+
+        override fun onMode(mode: JarvisOrbView.Mode, label: String) {
+            overlay?.setMode(mode, label)
+        }
+
+        override fun onAmplitude(level: Float) {
+            overlay?.setAmplitude(level)
+        }
+
+        // A question is Jarvis talking, so it goes where the reply goes; the
+        // answer goes where the user's own words go. Putting them the other way
+        // round reads as the orb asking itself something.
+        override fun onQuestion(text: String) {
+            overlay?.setResponse(text)
+            overlay?.setTranscript("")
+        }
+
+        override fun onAnswerTranscript(text: String) {
+            overlay?.setTranscript(text)
+        }
+
+        // The orb has no talk button on it, so a state word is right here.
+        override fun onResting() {
+            overlay?.setMode(JarvisOrbView.Mode.IDLE, "LISTENING")
+        }
     }
 
     /**

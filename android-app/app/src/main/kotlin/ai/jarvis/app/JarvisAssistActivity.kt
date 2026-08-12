@@ -1,6 +1,8 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.companion.ConversationAskHost
 import ai.jarvis.app.assist.ToolActivityView
 import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeWordService
@@ -46,6 +48,12 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     private lateinit var toolActivityView: ToolActivityView
     private lateinit var config: JarvisConfig
     private var convo: JarvisConversation? = null
+
+    /**
+     * Lets Jarvis ask a question on THIS card instead of starting another
+     * activity over the top of it. See [ConversationAskHost].
+     */
+    private var askHost: ConversationAskHost? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -261,6 +269,12 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
                         // already talking here too.
                         speechAlreadyUnderway = true,
                     ).also { it.start() }
+                    askHost = ConversationAskHost(
+                        context = this@JarvisAssistActivity,
+                        config = config,
+                        conversation = { convo },
+                        surface = askSurface,
+                    ).also { CompanionMessageHandler.speechHost = it }
                     return true
                 }
             }
@@ -318,7 +332,35 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
 
+    /** This card's view of a question, for [ConversationAskHost]. */
+    private val askSurface = object : ConversationAskHost.Surface {
+        override val isShowing: Boolean get() = !isFinishing && !isDestroyed
+
+        override fun onMode(mode: JarvisOrbView.Mode, label: String) {
+            orbView.setMode(mode)
+            captionView.text = label
+        }
+
+        override fun onAmplitude(level: Float) = orbView.setAmplitude(level)
+
+        override fun onQuestion(text: String) {
+            responseView.text = text
+            transcriptView.text = ""
+        }
+
+        override fun onAnswerTranscript(text: String) {
+            transcriptView.text = text
+        }
+
+        override fun onResting() {
+            orbView.setMode(JarvisOrbView.Mode.IDLE)
+            captionView.text = "LISTENING"
+        }
+    }
+
     override fun onDestroy() {
+        askHost?.let { CompanionMessageHandler.clearSpeechHost(it); it.stop() }
+        askHost = null
         convo?.stop(); convo = null
         // Give the microphone back. Unconditional and after the stop, so the
         // listener never re-opens it while this one is still closing — and a

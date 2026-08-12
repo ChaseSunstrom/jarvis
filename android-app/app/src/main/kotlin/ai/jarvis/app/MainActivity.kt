@@ -1,6 +1,8 @@
 package ai.jarvis.app
 
 import ai.jarvis.app.assist.JarvisConversation
+import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.companion.ConversationAskHost
 import ai.jarvis.app.assist.ToolActivityView
 import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeStartPolicy
@@ -74,6 +76,12 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private lateinit var bannerSlot: FrameLayout
 
     private var convo: JarvisConversation? = null
+
+    /**
+     * Lets Jarvis ask a question on this screen instead of starting another
+     * activity over the top of it. See [ConversationAskHost].
+     */
+    private var askHost: ConversationAskHost? = null
     private var boot: JarvisBootAnimation? = null
 
     /** True between [onResume] and [onPause]: whether this screen may hold the mic. */
@@ -187,7 +195,39 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             inactivityMs = DEAF_CHECK_MS,
             continuous = true,
         ).also { it.start() }
+        askHost = ConversationAskHost(
+            context = this,
+            config = config,
+            conversation = { convo },
+            surface = askSurface,
+        ).also { CompanionMessageHandler.speechHost = it }
         refreshMuteButton()
+    }
+
+    /** This screen's view of a question, for [ConversationAskHost]. */
+    private val askSurface = object : ConversationAskHost.Surface {
+        override val isShowing: Boolean get() = inForeground && !isFinishing
+
+        override fun onMode(mode: JarvisOrbView.Mode, label: String) {
+            orbView.setMode(mode)
+            orbView.setStateLabel(label)
+        }
+
+        override fun onAmplitude(level: Float) = orbView.setAmplitude(level)
+
+        override fun onQuestion(text: String) {
+            responseView.text = text
+            transcriptView.text = ""
+        }
+
+        override fun onAnswerTranscript(text: String) {
+            transcriptView.text = text
+        }
+
+        // This screen has a talk button on it, so showIdle() owns the wording —
+        // an instruction from here would sit next to the button that already
+        // says it.
+        override fun onResting() = showIdle()
     }
 
     /**
@@ -196,6 +236,8 @@ class MainActivity : Activity(), JarvisConversation.Ui {
      */
     private fun releaseTheMic() {
         handler.removeCallbacks(restart)
+        askHost?.let { CompanionMessageHandler.clearSpeechHost(it); it.stop() }
+        askHost = null
         convo?.stop()
         convo = null
         // Only if it is supposed to be running at all; resuming a listener the

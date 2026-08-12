@@ -201,6 +201,41 @@ object CompanionMessageHandler {
     // --- the three modes ----------------------------------------------------
 
     private fun ask(app: Context, message: CompanionProtocol.Message) {
+        // Ask on the surface the user is already looking at, if there is one.
+        //
+        // The alternative below starts a full-screen activity with NEW_TASK,
+        // which takes down whatever conversation was on screen — and takes
+        // itself down when answered, leaving nothing. Reported as: the
+        // wake-word orb closes when Jarvis asks something, and closes again
+        // when you answer.
+        //
+        // Only for a plain spoken question. A question with options is a list
+        // to choose from and a voice answer cannot be matched to one of them
+        // without the model in the loop, which is exactly what this path exists
+        // to keep out; those still go to the screen that can draw buttons.
+        val host = speechHost
+        if (host != null && message.options.isEmpty() && host.isForeground) {
+            val taken = try {
+                host.ask(message.text) { answer ->
+                    settle(
+                        app,
+                        message.messageId,
+                        if (answer.isNullOrBlank()) CompanionProtocol.STATUS_DISMISSED
+                        else CompanionProtocol.STATUS_ANSWERED,
+                        answer,
+                    )
+                }
+            } catch (t: Throwable) {
+                // A surface that blows up must not swallow the question.
+                Log.w(TAG, "the on-screen surface could not take the question", t)
+                false
+            }
+            if (taken) {
+                armWatchdog(app, message)
+                return
+            }
+        }
+
         val intent = askIntent(app, message)
 
         // Notification first. If the direct start is refused by background

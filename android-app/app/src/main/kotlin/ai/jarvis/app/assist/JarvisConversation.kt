@@ -110,6 +110,9 @@ class JarvisConversation(
     private var state = AssistPipelineClient.State.IDLE
     private var running = false
 
+    /** True while an out-of-band question owns the mic. See [holdForQuestion]. */
+    private var held = false
+
     /**
      * When speech starts and stops, measured against THIS room rather than
      * against a number chosen in another one. See [VoiceActivity].
@@ -346,6 +349,75 @@ class JarvisConversation(
     fun stop() = stopWith(idle = false)
 
     /**
+     * Hand the microphone to something else without ending the conversation.
+     *
+     * This exists for one caller: Jarvis asking *you* a question. `ask_user`
+     * arrives out of band, on the companion channel, while a conversation is
+     * already on screen. Before this, the only way to put it to the user was
+     * `CompanionAskActivity` — a separate full-screen surface — and starting it
+     * tore down whatever was up. The reported behaviour was exactly that: the
+     * wake-word orb vanished when Jarvis asked something, and vanished again
+     * when the answer was given, instead of the conversation carrying on.
+     *
+     * The answer also must not be dispatched as a command. "No, delete them" is
+     * a reply to a question, not an instruction, and this conversation's next
+     * turn would run it through the agent. So the turn loop stops here and the
+     * asking surface takes the microphone with its own `end_stage: "stt"` run.
+     *
+     * [running] stays true throughout, deliberately — the conversation has not
+     * ended, it is waiting — so an inactivity timer or an `onIdle` cannot pull
+     * the surface out from under the question.
+     *
+     * @return false when there was nothing to hold.
+     */
+    fun holdForQuestion(): Boolean {
+        if (!running || held) return false
+        held = true
+        turnActive = false
+        main.removeCallbacks(inactivity)
+        main.removeCallbacks(turnCap)
+        main.removeCallbacks(handshake)
+        // Give the microphone up completely rather than muting it. Two owners
+        // of one AudioRecord is the coin toss this whole area exists to avoid,
+        // and the asking surface is about to open its own.
+        stopLocalStt()
+        mic?.stop(); mic = null
+        tts?.stop()
+        return true
+    }
+
+    /**
+     * Take the microphone back and carry on from where the question interrupted.
+     *
+     * Called whether the question was answered, declined or timed out: the
+     * conversation is owed its microphone back in all three cases, and a
+     * surface that stays mute after a question nobody answered is the same
+     * dead end by a longer road.
+     */
+    fun resumeAfterQuestion() {
+        if (!running || !held) return
+        held = false
+        val profile = CaptureProfile.forRoute(headsets.route)
+        mic = MicStreamer(
+            onPcm = { buf, len -> client?.sendAudio(buf, len) },
+            onLevel = ::onMicLevel,
+            captureProfile = { profile },
+            onUnavailable = { reason ->
+                ui.onError(reason)
+                main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
+            },
+        ).also { it.start() }
+        // The room has had a whole question and answer spoken into it, so the
+        // measured floor is stale in the direction that matters — it was taken
+        // during a quiet moment and the surface has been talking since.
+        vad.reset()
+        beginNextTurn()
+    }
+
+    /** True while a question owns the microphone. See [holdForQuestion]. */
+    val isHeldForQuestion: Boolean get() = held
+
+    /**
      * Cancel a transcription in flight.
      *
      * Called from [stopWith]. A recogniser left running holds the microphone,
@@ -386,7 +458,11 @@ class JarvisConversation(
     }
 
     private fun beginNextTurn() {
-        if (!running) return
+        // `held` as well as `running`: a question owns the microphone, and a
+        // late TTS completion or run-end arriving from the turn that was in
+        // flight when the question landed would otherwise re-open it underneath
+        // the question and put two recorders on one AudioRecord.
+        if (!running || held) return
         responseBuffer = StringBuilder()
         sawSpeech = false
         // The room did not change between turns, so the floor is kept.
