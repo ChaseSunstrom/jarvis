@@ -4,6 +4,7 @@ import ai.jarvis.app.assist.TtsPlayer
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.ReadabilityScrim
 import android.Manifest
 import android.app.Activity
 import android.app.KeyguardManager
@@ -268,7 +269,21 @@ class CompanionAskActivity : Activity() {
             )
         )
 
-        val column = JarvisUi.column(ctx, padDp = 24)
+        val column = JarvisUi.column(ctx, padDp = 24).apply {
+            // The third orb surface, and the one that was left out when the
+            // other two got a ground. The orb is drawn FULL-BLEED behind this
+            // column, so every line of the question sits directly on top of its
+            // plates — brightest exactly where the text is largest. An opaque
+            // window background does not help with that: the competing thing is
+            // in front of it, not behind.
+            //
+            // Same gradient as AssistOverlay and JarvisAssistActivity, so the
+            // three surfaces a user meets interchangeably read as one thing.
+            // Not a card: this surface has never had one and the other two had
+            // theirs removed twice, because a frame becomes the first thing you
+            // see. See ReadabilityScrim.
+            background = ReadabilityScrim()
+        }
 
         column.addView(
             TextView(ctx).apply {

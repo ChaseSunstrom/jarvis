@@ -45,6 +45,15 @@ KOTLIN = ANDROID / "app/src/main/kotlin/ai/jarvis/app"
 SCRIM = KOTLIN / "ui/ReadabilityScrim.kt"
 OVERLAY = KOTLIN / "assist/AssistOverlay.kt"
 ACTIVITY = KOTLIN / "JarvisAssistActivity.kt"
+#: The third orb surface. It draws the orb FULL-BLEED behind the question, so
+#: every line sits on top of the plates — brightest exactly where the text is
+#: largest. Its opaque window background does not help: the competing thing is
+#: in front of it, not behind. It was left out when the other two got a ground,
+#: which is how three surfaces a user meets interchangeably come to disagree.
+ASK = KOTLIN / "companion/CompanionAskActivity.kt"
+
+#: Every surface that draws the orb with words over it. A fourth belongs here.
+ORB_SURFACES = (OVERLAY, ACTIVITY, ASK)
 JARVIS_UI = KOTLIN / "ui/JarvisUi.kt"
 
 #: WCAG AA for body text.
@@ -208,7 +217,7 @@ def check_the_scrim_has_no_edge() -> list[str]:
 def check_legibility_does_not_depend_on_the_platform() -> list[str]:
     """The scrim must be unconditional; only the blur may be version-gated."""
     failures = []
-    for path in (OVERLAY, ACTIVITY):
+    for path in ORB_SURFACES:
         src = source(path)
         if "ReadabilityScrim()" not in src:
             failures.append(
@@ -229,6 +238,12 @@ def check_legibility_does_not_depend_on_the_platform() -> list[str]:
                 "readable on everything else, and must not be gated with it."
             )
 
+        # The blur is only meaningful where something else is showing THROUGH
+        # the window. The question screen is opaque and full-screen by design —
+        # it lights up a locked phone — so there is nothing behind it to blur,
+        # and asking for one would be a no-op that reads as intent.
+        if path is ASK:
+            continue
         if "FLAG_BLUR_BEHIND" not in src:
             failures.append(f"{path.name} never asks for a blur behind the card")
         elif "Build.VERSION_CODES.S" not in src:
@@ -258,7 +273,7 @@ def check_the_two_surfaces_agree() -> list[str]:
 
 
 def main() -> int:
-    for path in (SCRIM, OVERLAY, ACTIVITY, JARVIS_UI):
+    for path in (SCRIM, JARVIS_UI, *ORB_SURFACES):
         if not path.is_file():
             print(f"FAIL  {path} is missing", file=sys.stderr)
             return 1
