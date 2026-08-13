@@ -31,7 +31,7 @@ test-services: ## orchestrator + sandbox
 	python3 -m pytest jarvis-orchestrator/tests jarvis-sandbox/tests -q
 
 .PHONY: test-python
-test-python: test-core test-desktop test-browser test-services eval-routing ## every python suite
+test-python: test-core test-desktop test-browser test-services eval-routing eval-resolution ## every python suite
 
 .PHONY: test-web
 test-web: ## build + unit + smoke + e2e for the HUD
@@ -50,6 +50,14 @@ test: test-python ## everything runnable without hardware or models
 .PHONY: eval-routing
 eval-routing: ## routing table + its two mirrors (offline)
 	cd evals && python3 -m pytest test_routing.py -q
+
+.PHONY: eval-resolution
+eval-resolution: ## does "the kitchen lamp" find the kitchen lamp (offline)
+	cd evals && python3 -m pytest test_resolution.py -q
+
+.PHONY: eval-resolution-report
+eval-resolution-report: ## the same, case by case, for tuning the matcher
+	cd evals && python3 test_resolution.py
 
 .PHONY: eval-persona
 eval-persona: ## persona eval (needs a model; BACKEND=ollama|jarvis)

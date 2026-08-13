@@ -1,0 +1,113 @@
+# What the model says, and which entity it must mean.
+#
+# `resolve_entities` is the layer between a sentence and a switch. It decides
+# what "the kitchen lamp" is, and it is a hand-tuned similarity blend with a
+# 0.46 threshold and a 0.03 tie window that returns EVERY candidate inside it.
+# Nothing measured it — `evals/` covered routing policy, persona tone and
+# orchestrator decomposition, and this is the layer where a wrong answer turns
+# a light on in the wrong room.
+#
+# Each case is a phrase the model would pass as `name`, and the entity ids it
+# must resolve to. `expect: []` means the phrase must NOT resolve — a failure
+# the model can see and correct is much better than a confident wrong device.
+#
+# `fans_out: true` marks a phrase that is genuinely ambiguous and where hitting
+# several entities is correct ("the lamps"). Everywhere else, resolving to more
+# than one entity is a defect: one utterance quietly actuating several devices
+# is the tie window's failure mode.
+
+house:
+  - entity_id: light.kitchen_lamp
+    name: Kitchen Lamp
+    area: Kitchen
+  - entity_id: light.kitchen_ceiling
+    name: Kitchen Ceiling
+    area: Kitchen
+  - entity_id: light.bedroom_lamp
+    name: Bedroom Lamp
+    area: Bedroom
+  - entity_id: light.living_room_standard_lamp
+    name: Standard Lamp
+    area: Living Room
+  - entity_id: switch.coffee_machine
+    name: Coffee Machine
+    area: Kitchen
+  - entity_id: lock.front_door
+    name: Front Door
+    area: Hall
+  - entity_id: climate.hall_thermostat
+    name: Hall Thermostat
+    area: Hall
+  - entity_id: media_player.living_room_tv
+    name: Living Room TV
+    area: Living Room
+  - entity_id: cover.garage_door
+    name: Garage Door
+    area: Garage
+  - entity_id: sensor.kitchen_temperature
+    name: Kitchen Temperature
+    area: Kitchen
+
+cases:
+  # --- exact and near-exact ------------------------------------------------
+  - say: kitchen lamp
+    expect: [light.kitchen_lamp]
+  - say: Kitchen Lamp
+    expect: [light.kitchen_lamp]
+  - say: the kitchen lamp
+    expect: [light.kitchen_lamp]
+  - say: bedroom lamp
+    expect: [light.bedroom_lamp]
+  - say: coffee machine
+    expect: [switch.coffee_machine]
+  - say: front door
+    expect: [lock.front_door]
+  - say: garage door
+    expect: [cover.garage_door]
+
+  # --- the entity id itself, which the model often writes -----------------
+  - say: light.kitchen_lamp
+    expect: [light.kitchen_lamp]
+  - say: switch.coffee_machine
+    expect: [switch.coffee_machine]
+
+  # --- how people actually talk -------------------------------------------
+  - say: the lamp in the kitchen
+    expect: [light.kitchen_lamp]
+  - say: kitchen ceiling light
+    expect: [light.kitchen_ceiling]
+  - say: the standard lamp
+    expect: [light.living_room_standard_lamp]
+  - say: living room tv
+    expect: [media_player.living_room_tv]
+  - say: the tv
+    expect: [media_player.living_room_tv]
+  - say: thermostat
+    expect: [climate.hall_thermostat]
+  - say: hall thermostat
+    expect: [climate.hall_thermostat]
+  - say: the coffee maker
+    expect: [switch.coffee_machine]
+
+  # --- a room, meaning everything in it ------------------------------------
+  - say: kitchen
+    expect: [light.kitchen_lamp, light.kitchen_ceiling]
+    domain: light
+    fans_out: true
+
+  # --- genuinely plural ----------------------------------------------------
+  - say: kitchen lights
+    expect: [light.kitchen_lamp, light.kitchen_ceiling]
+    fans_out: true
+
+  # --- must NOT resolve ----------------------------------------------------
+  # Nothing in this house is any of these. A "closest match" here is a
+  # confident wrong device, which is the one outcome worse than an error.
+  - say: the greenhouse mister
+    expect: []
+  - say: pool heater
+    expect: []
+  - say: bathroom extractor fan
+    expect: []
+  - say: the dishwasher
+    expect: []
