@@ -63,6 +63,7 @@ from ...llm.memory import (
     ConversationStore,
 )
 from ...llm.ollama import DEFAULT_MODEL, DEFAULT_TIMEOUT, DEFAULT_URL, OllamaClient
+from ...llm.openai_compat import OpenAICompatClient
 from ...llm.authored_tools import get_authored_tools
 from ...llm.tools import (
     DEFAULT_APPROVAL_TTL,
@@ -149,6 +150,77 @@ def create_http_client(jarvis: "Jarvis", timeout: float) -> httpx.AsyncClient:
     return client
 
 
+#: `llm: backend:` values, and what each is for.
+#:
+#: `ollama` is the native `/api/chat` wire — NDJSON, `keep_alive`, a separate
+#: `thinking` field, `/api/tags` for model management.
+#:
+#: `openai` is `/v1/chat/completions`, which **vLLM**, llama.cpp's server, LM
+#: Studio, TGI, SGLang and Ollama itself all serve. It is what makes the
+#: inference server a deployment decision instead of an architectural one, and
+#: it is the only one of the two that can do guided decoding or embeddings.
+BACKENDS = ("ollama", "openai")
+
+
+def _detect_backend(url: str) -> str:
+    """Which wire a url is asking for, when nobody said.
+
+    A url ending in `/v1` is unambiguous — Ollama's native API has no such
+    path, and every OpenAI-compatible server serves exactly that. Anything else
+    defaults to `ollama`, so an existing install that never heard of this
+    setting keeps the behaviour it had.
+    """
+    tail = str(url or "").rstrip("/").rsplit("/", 1)[-1]
+    return "openai" if tail in ("v1", "openai") else "ollama"
+
+
+def _build_model_client(
+    options: dict[str, Any],
+    url: str,
+    model: str,
+    timeout: float,
+    client: Any,
+) -> Any:
+    """The chat client, on whichever wire the deployment asked for.
+
+    Both classes present the same surface — `chat`, `list_models`,
+    `is_available`, `aclose` — so `ConversationAgent` never learns which it
+    got. That is the point: the agent's job is the conversation, not the
+    transport.
+    """
+    backend = str(options.get("backend") or "").strip().lower()
+    if not backend:
+        backend = _detect_backend(url)
+    elif backend not in BACKENDS:
+        _LOGGER.warning(
+            "Unknown llm backend %r; falling back to %r. Known: %s",
+            backend,
+            _detect_backend(url),
+            ", ".join(BACKENDS),
+        )
+        backend = _detect_backend(url)
+
+    if backend == "openai":
+        _LOGGER.info("LLM backend: OpenAI-compatible at %s", url)
+        return OpenAICompatClient(
+            url=url,
+            model=model,
+            timeout=timeout,
+            client=client,
+            api_key=options.get("api_key") or None,
+            label=str(options.get("backend_name") or "the model server"),
+        )
+
+    _LOGGER.info("LLM backend: Ollama at %s", url)
+    return OllamaClient(
+        url=url,
+        model=model,
+        timeout=timeout,
+        client=client,
+        keep_alive=options.get("keep_alive"),
+    )
+
+
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     options = _as_dict(config)
 
@@ -159,13 +231,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     approval_ttl = float(options.get("approval_ttl") or DEFAULT_APPROVAL_TTL)
 
     client = create_http_client(jarvis, timeout)
-    ollama = OllamaClient(
-        url=url,
-        model=model,
-        timeout=timeout,
-        client=client,
-        keep_alive=options.get("keep_alive"),
-    )
+    ollama = _build_model_client(options, url, model, timeout, client)
 
     exposure = Exposure.from_config(options.get("expose"))
     registry = ToolRegistry(jarvis, exposure=exposure, approval_ttl=approval_ttl)

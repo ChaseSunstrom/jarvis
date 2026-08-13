@@ -164,6 +164,26 @@ llm:
   # easy and unrewarding mistake to make. The console offers whatever Ollama
   # reports it has as a dropdown.
   model: !env_var OLLAMA_MODEL qwen3:8b
+
+  # Which wire to speak. Left unset it is inferred from the url, so an install
+  # that never heard of this setting keeps the behaviour it had.
+  #
+  #   ollama  Ollama's own /api/chat. NDJSON, keep_alive, a separate thinking
+  #           field, /api/tags for model management. The default.
+  #   openai  /v1/chat/completions — which **vLLM**, llama.cpp's server, LM
+  #           Studio, TGI, SGLang and Ollama itself all serve. Inferred
+  #           automatically when the url ends in /v1.
+  #
+  # `openai` is the one that can do guided decoding (so tool arguments conform
+  # to their schema rather than being hoped at) and embeddings. To run vLLM
+  # instead of Ollama, that is the whole change:
+  #
+  #   url: http://127.0.0.1:8000/v1
+  #   backend: openai
+  #   model: Qwen/Qwen3-8B
+  #   # api_key: !env_var VLLM_API_KEY      # only if you started it with one
+  #
+  # backend: openai
   persona_file: prompts/jarvis.txt
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.
