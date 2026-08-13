@@ -201,6 +201,55 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         description="Re-read automations from the configuration directory.",
     )
 
+    async def _handle_check(call: ServiceCall) -> Any:
+        """Review an automation without running a step of it.
+
+        Takes either a whole `config:` — so the console can check a draft
+        before it is saved — or an `entity_id` naming one that already exists.
+        The only way to test an automation used to be `automation.trigger`,
+        which actuates the house; asking "is this right?" should not require
+        finding out by unlocking a door.
+        """
+        from ...automation.check import check
+
+        config = call.data.get("config")
+        if config is None:
+            targets = manager.resolve(call.data.get("entity_id"))
+            if not targets:
+                return {
+                    "ok": False,
+                    "findings": [
+                        {
+                            "level": "error",
+                            "where": "config",
+                            "message": "Pass a `config:` to check, or an "
+                            "`entity_id:` naming an automation that exists.",
+                        }
+                    ],
+                    "reach": "",
+                }
+            return {
+                automation.entity_id: check(jarvis, automation.config)
+                for automation in targets
+            }
+        return check(jarvis, config)
+
+    jarvis.services.register(
+        DOMAIN,
+        "check",
+        _handle_check,
+        description=(
+            "Review an automation for mistakes without running it: services "
+            "that do not exist, entity ids that do not resolve, templates that "
+            "will not compile, and what it would be allowed to touch."
+        ),
+        fields={
+            "config": {"description": "A draft automation to review."},
+            "entity_id": {"description": "Or an existing automation to review."},
+        },
+        supports_response=True,
+    )
+
     async def _shutdown() -> None:
         await manager.async_remove_all()
 
