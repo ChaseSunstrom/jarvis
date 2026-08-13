@@ -1208,6 +1208,107 @@ async def test_memory_context_block_carries_the_data_not_instructions_guard(tmp_
     assert "the good coffee is in the left cupboard" in block
 
 
+async def test_memory_context_block_is_about_the_turn_not_merely_the_newest(tmp_path):
+    """The eight notes in the prompt are the eight RELEVANT ones.
+
+    `get_context_block` has always taken a `query` and nothing ever passed one,
+    so what the model carried was the eight most recently written notes. The
+    store had relevance ranking, a threshold and tests for all of it, and the
+    only path that mattered — the system prompt — used none of them. A user
+    with fifty notes got the last eight they happened to add, on every
+    unrelated turn.
+    """
+    jarvis = await setup_memory(tmp_path)
+    await call(jarvis, "memory", "add", text="the good coffee is in the left cupboard")
+    for index in range(12):
+        await call(jarvis, "memory", "add", text=f"unrelated note {index} about bicycles")
+
+    store = jarvis.data["memory"]
+
+    # Newest-first: the coffee note is long buried under the bicycles.
+    assert "coffee" not in store.get_context_block()
+    # Asked about coffee, it is there.
+    assert "coffee" in store.get_context_block(query="where is the good coffee")
+
+
+async def test_a_pinned_note_survives_a_query_it_does_not_match(tmp_path):
+    """A pin is the user saying "always", and a query must not overrule it.
+
+    Ranking pinned notes against one sentence and dropping the losers would
+    undo the pin silently — the note would be in the prompt for the turn it
+    matches and gone for every other, which is the opposite of what pinning
+    was asked to do.
+    """
+    jarvis = await setup_memory(tmp_path)
+    await call(jarvis, "memory", "add", text="I am allergic to penicillin", pinned=True)
+    for index in range(12):
+        await call(jarvis, "memory", "add", text=f"unrelated note {index} about bicycles")
+
+    store = jarvis.data["memory"]
+    block = store.get_context_block(query="what time does the hardware shop shut")
+
+    assert "penicillin" in block, "a pinned note was ranked away by an unrelated turn"
+
+
+async def test_a_query_matching_nothing_still_gets_the_old_block(tmp_path):
+    """Switching retrieval on must never show the model LESS than before.
+
+    Relevance fills what pins leave; recency fills what relevance leaves. A
+    turn about nothing in the store therefore degrades to exactly the
+    newest-first block every install had until now, rather than to silence.
+    """
+    jarvis = await setup_memory(tmp_path)
+    for index in range(3):
+        await call(jarvis, "memory", "add", text=f"note {index} about bicycles")
+
+    store = jarvis.data["memory"]
+    unrelated = store.get_context_block(query="xylophone quantum tarpaulin")
+
+    assert unrelated, "a non-matching turn was given no notes at all"
+    assert unrelated == store.get_context_block()
+
+
+async def test_the_agent_passes_the_turn_to_the_store(tmp_path):
+    """The wiring itself, from the side the bug was on.
+
+    Everything above tests the store. This tests that the agent actually hands
+    it the turn — which is the half that was missing, and the half no store
+    test could have caught.
+    """
+    jarvis = await setup_memory(tmp_path)
+    await call(jarvis, "memory", "add", text="the good coffee is in the left cupboard")
+    for index in range(12):
+        await call(jarvis, "memory", "add", text=f"unrelated note {index} about bicycles")
+
+    seen: list[str] = []
+    store = jarvis.data["memory"]
+    real = store.get_context_block
+
+    def spy(*args, **kwargs):
+        seen.append(str(kwargs.get("query", "")))
+        return real(*args, **kwargs)
+
+    store.get_context_block = spy  # type: ignore[method-assign]
+
+    from jarvis.llm.agent import ConversationAgent
+
+    agent = ConversationAgent(jarvis, client=None, tools=_ToolsStub())
+    prompt = agent.system_prompt("where is the good coffee")
+
+    assert seen == ["where is the good coffee"], (
+        "the agent built its prompt without telling memory what the turn was"
+    )
+    assert "coffee" in prompt
+
+
+class _ToolsStub:
+    """Just enough registry for `system_prompt` — it only reads `exposure`."""
+
+    from jarvis.llm.tools import Exposure as _Exposure
+
+    exposure = _Exposure()
+
+
 async def test_memory_registers_itself_where_the_agent_looks(tmp_path):
     """The documented hook: jarvis.data["memory"].get_context_block()."""
     jarvis = await setup_memory(tmp_path)

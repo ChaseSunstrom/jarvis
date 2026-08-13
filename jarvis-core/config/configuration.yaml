@@ -184,6 +184,7 @@ llm:
   # every time you buy a bulb is one that quietly stops matching your house.
   expose:
     domains:
+      # --- things it can change ------------------------------------------
       - light
       - switch
       - cover
@@ -198,6 +199,37 @@ llm:
       - input_number
       - input_select
       - input_text
+      # --- things it can only READ ---------------------------------------
+      #
+      # These were missing, and their absence was not a safety setting — it
+      # was the difference between an assistant that knows what is going on in
+      # the house and one that does not. `Exposure.is_exposed` is checked by
+      # every tool including `get_state` and `list_entities`, so an unexposed
+      # domain is not merely unactionable: it is invisible. Jarvis could not
+      # read a thermometer, could not say whether a door was open, could not
+      # tell you the weather, and could not answer "is anyone home?" — while
+      # `get_user_context` quietly fell back to guessing presence from the
+      # first `person.*` entity it could not see, and awake from the clock.
+      #
+      # None of them is a verb. There is no `sensor.turn_on`; exposing a
+      # sensor grants reading it and nothing else, which is why the code's own
+      # DEFAULT_EXPOSED_DOMAINS has always included them. This file was
+      # overriding that default with a narrower list and losing the sensing
+      # half of the house to do it.
+      - sensor
+      - binary_sensor
+      - weather
+      - person
+      - calendar
+      - todo
+      # Read-write, but the verb is the point: a button is a doorbell or a
+      # "start the dishwasher", and a vacuum is a vacuum. Both are in the
+      # code's defaults and were dropped by the same override.
+      - button
+      - number
+      - select
+      - text
+      - vacuum
     # Individual entities to add on top of those domains, and — more usefully —
     # individual entities to take away. Exclusion is checked inside the tool
     # registry, so it holds against every tool including the read-only ones.
@@ -233,6 +265,53 @@ llm:
   # Python, no restart of anything but Jarvis. The console writes here too, and
   # examples/house/example.tool.yaml is a worked one.
   tools_dir: tools
+
+# ---------------------------------------------------------------------------
+# Memory — the part of a conversation that outlives it.
+# ---------------------------------------------------------------------------
+# "Remember that the good coffee is in the left cupboard" should still be true
+# next week, in a different conversation, after a restart. `llm: conversation:`
+# above is the short-term half and expires; this is the half that does not.
+#
+# THIS WAS WRITTEN AND NOT SWITCHED ON. The integration is complete — durable
+# notes in `.storage/memory.json`, one line each, hand-editable, individually
+# forgettable — and `ConversationAgent.remembered_notes` has always read it.
+# But it is not a core integration, and without a key here it never loaded, so
+# `remember` / `recall` / `forget` were never registered and the notes block in
+# the system prompt was always the empty string. Every install shipped an
+# assistant that forgot everything fifteen minutes after you stopped talking.
+#
+# Privacy, in full: it is local, it is one plain JSON file you can read or
+# delete without going through Jarvis, every entry is listable and separately
+# forgettable, secrets are redacted on the way in, and text that arrived from a
+# web page, a camera, a notification or an MQTT payload is refused outright —
+# a page cannot write itself into Jarvis's long-term memory by asking nicely.
+memory:
+  max_entries: 500        # oldest non-pinned notes fall off the end
+  context_limit: 600      # characters of notes injected into the system prompt
+  context_entries: 8      # and at most this many of them
+
+# ---------------------------------------------------------------------------
+# Undo and trace — what it did, and taking it back.
+# ---------------------------------------------------------------------------
+# Both were written, documented, tested, and left out of this file.
+#
+# `trace` is the only thing in the product that can tell you WHY an automation
+# did what it did — per-run trigger, per-condition result, per-step status and
+# elapsed. Without it a rule that fails at 3am fails into a log file: the
+# engine catches the exception, logs it, and the automation's entity still
+# reads `on`. Turning it on is what makes `get_automation_trace` exist.
+#
+# `undo` reverses the last state-changing call, with a hard refusal list — it
+# will not "un-send" a message or un-unlock a door, because those cannot be
+# taken back and pretending otherwise is worse than saying no.
+trace:
+  # Runs kept per automation, automations tracked, and steps per run. All in
+  # memory and all bounded; nothing here reaches the disk.
+  max_runs: 10
+  max_traced: 100
+  max_steps: 200
+undo: {}
 
 # ---------------------------------------------------------------------------
 # Web — private search and gated browsing.

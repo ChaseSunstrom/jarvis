@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from ..const import GATED_DOMAINS
+from ..const import GATED_DOMAINS, GATED_SERVICES
 
 #: Keys whose values hold more action steps.
 _NESTED_KEYS = ("sequence", "then", "else", "default", "actions", "parallel")
@@ -198,14 +198,30 @@ def _name_of(raw: Any) -> str:
 
 
 def gated_reach(actions: Any) -> set[str]:
-    """The gated domains an action list can reach, or `{"?"}` if unknowable.
+    """The gated things an action list can reach, or `{"?"}` if unknowable.
 
-    An empty set means "statically proven to touch nothing gated".
+    Members are either a gated entity DOMAIN (`"lock"`), a gated
+    `domain.service` (`"orchestrator.execute"`), or `"?"` for a call this
+    cannot read. An empty set means "statically proven to touch nothing gated".
+
+    Both halves are needed, and they are not the same shape. A gated *domain*
+    covers every service on every entity in it, because every entity in it is a
+    door. A gated *service* names one dangerous verb in a domain whose other
+    verbs are harmless — `orchestrator.execute` runs a shell command while
+    `orchestrator.code_status` polls a job. Checking only the domain meant the
+    shell command reached nobody's approval, because `orchestrator` is not an
+    entity domain and matched nothing. See `const.GATED_SERVICES`.
     """
     reach: set[str] = set()
     for call in service_calls(actions):
         if call == "?":
             reach.add("?")
+            continue
+        # The full name first: a gated service is gated whatever its domain
+        # does, and naming the call rather than the domain is what lets
+        # `describe_reach` tell a human WHICH verb held this.
+        if call in GATED_SERVICES:
+            reach.add(call)
             continue
         domain = call.split(".", 1)[0]
         if domain in INDIRECT_DOMAINS:
@@ -221,14 +237,23 @@ def needs_approval(actions: Any) -> bool:
 
 
 def describe_reach(actions: Any) -> str:
-    """One sentence for the approval card, so the human knows why they were asked."""
+    """One sentence for the approval card, so the human knows why they were asked.
+
+    A gated DOMAIN and a gated SERVICE read differently to a person: "can lock"
+    names a kind of thing this automation touches, while
+    "calls orchestrator.execute" names one specific verb. Folding them into one
+    list produced "can lock and orchestrator.execute", which is neither.
+    """
     reach = gated_reach(actions)
     if not reach:
         return "touches nothing that needs approval"
-    known = sorted(d for d in reach if d != "?")
+    domains = sorted(d for d in reach if d != "?" and d not in GATED_SERVICES)
+    services = sorted(s for s in reach if s in GATED_SERVICES)
     parts: list[str] = []
-    if known:
-        parts.append("can " + " and ".join(known))
+    if domains:
+        parts.append("can " + " and ".join(domains))
+    if services:
+        parts.append("calls " + " and ".join(services))
     if "?" in reach:
         parts.append("calls something this cannot read ahead of time")
     return "; ".join(parts)

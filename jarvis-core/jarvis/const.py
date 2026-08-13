@@ -76,6 +76,60 @@ SAFE_CONTROL_DOMAINS = frozenset(
 # Domains that ALWAYS require explicit human approval (Tier 3).
 GATED_DOMAINS = frozenset({DOMAIN_LOCK, DOMAIN_NOTIFY})
 
+#: Individual `domain.service` calls that ALWAYS require explicit human
+#: approval, whichever route reaches them.
+#:
+#: ## Why this is separate from GATED_DOMAINS
+#:
+#: `GATED_DOMAINS` gates a whole ENTITY domain: every `lock.*` call is
+#: dangerous because every entity in it is a door. That is the wrong shape for
+#: an integration domain where one service is dangerous and its neighbours are
+#: not — `orchestrator.execute` runs a shell command, while
+#: `orchestrator.code_status` reads a job's progress. Gating the domain would
+#: hold a status poll for a human; gating nothing held a shell command for
+#: nobody.
+#:
+#: ## The hole this closes
+#:
+#: The tier system decides a TOOL's tier in code, and `execute_command`,
+#: `apply_code_task` and a writing `web_browse` batch are all Tier 3. But each
+#: of those verbs is ALSO registered as a service, so an automation can call it
+#: directly — and `reach.gated_reach` only ever compared a call's *domain*
+#: against `GATED_DOMAINS`. `orchestrator` is not an entity domain, so it
+#: matched nothing:
+#:
+#:     automations:
+#:       - alias: Tidy up
+#:         triggers: [{platform: time, at: "03:00:00"}]
+#:         actions: [{service: orchestrator.execute, data: {command: "..."}}]
+#:
+#: `create_automation` wrote that at Tier 1 and `automation_control` ran it at
+#: Tier 1, so the model could author a shell command and then run it with no
+#: human in the loop — while calling `execute_command` directly was correctly
+#: held. `async_execute` forwards the approval secret *because* "the human has
+#: already said yes", a guarantee that only ever held for the tool.
+#:
+#: This is the same lesson as the plural-key bug in `automation/reach.py`: the
+#: analysis is only as good as what it is handed, and two ways to say one thing
+#: means one of them gets forgotten. `tests/test_gated_services.py` pins every
+#: Tier-3 tool against its service twin so a new one cannot be added without
+#: confronting this.
+GATED_SERVICES = frozenset(
+    {
+        # Runs a command in the sandbox. Tool form: `execute_command` (Tier 3).
+        "orchestrator.execute",
+        # Applies a diff to a real repository. Tool form: `apply_code_task`.
+        "orchestrator.code_apply",
+        # Drives a real browser. The TOOL escalates only for a batch that
+        # clicks or types (`is_write_batch`); the service takes the same steps
+        # with no such check. Read-only batches are the minority and a
+        # confirmation is the cheap side of this module's rule, so the whole
+        # service is held rather than re-deriving "is this a write" here, where
+        # a wrong answer is silent.
+        "web.browse",
+    }
+)
+
 # --- common attributes -----------------------------------------------------
 ATTR_FRIENDLY_NAME = "friendly_name"
 ATTR_ENTITY_ID = "entity_id"

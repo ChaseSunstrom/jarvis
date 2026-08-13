@@ -96,6 +96,15 @@ TIER_APPROVAL = 3  # never runs without a human saying yes
 DEFAULT_APPROVAL_TTL = 300.0
 MAX_TOOL_RESULT_CHARS = 4000
 
+#: How many entities `list_entities` answers with, and the most it will.
+#:
+#: Generous enough that a normal house is never truncated, small enough that a
+#: large one cannot spend the whole context window on one tool result. The
+#: model is always told the real total, so a truncated list is visibly a
+#: truncated list rather than a short house.
+LIST_ENTITIES_DEFAULT = 100
+LIST_ENTITIES_MAX = 300
+
 #: Bounds on a question the model asks a human.
 #:
 #: Both are rendered verbatim on a consent surface, which is the one place in
@@ -199,6 +208,20 @@ def similarity(query: str, candidate: str) -> float:
         shorter, longer = sorted((len(q), len(c)))
         score = max(score, 0.72 + 0.22 * (shorter / max(longer, 1)))
     return min(score, 1.0)
+
+
+def _positive_int(value: Any, fallback: int) -> int:
+    """A count from the model, or the fallback. Never zero, never negative.
+
+    The model writes this argument, and no schema validates it — `0`, `"lots"`
+    and `-1` all arrive intact. Each would otherwise mean "show nothing", which
+    reads to the model as an empty house rather than a bad argument.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if number > 0 else fallback
 
 
 def truncate(text: str, limit: int = MAX_TOOL_RESULT_CHARS) -> str:
@@ -691,6 +714,33 @@ def schema_object(
     return payload
 
 
+def _weaker_than(new: Tool, old: Tool) -> str:
+    """Why `new` is a downgrade of `old`, or "" if it is not.
+
+    Each clause is a real mechanism, not a style rule:
+
+    * **tier** is the whole gate — Tier 3 is held for a human, Tier 1 is not.
+    * **gate** is the dynamic half of the same thing: `turn_on` is Tier 1 until
+      its resolved targets land in a gated domain, and a replacement without
+      one cannot make that check.
+    * **answerable** is what `_bridge_questions_to_the_phone` keys on. A tool
+      that loses it is no longer a question, so a held question stops being
+      delivered to whichever device the user is at — which is how the
+      provenance stamp went missing without anything failing.
+    * **domain** is what `requires_approval` compares against `GATED_DOMAINS`,
+      so dropping `domain="lock"` un-gates every lock in the house.
+    """
+    if new.tier < old.tier:
+        return f"tier {old.tier} -> {new.tier}"
+    if old.gate is not None and new.gate is None:
+        return "loses its gate"
+    if old.answerable and not new.answerable:
+        return f"loses answerable={old.answerable!r}, so the phone bridge drops it"
+    if old.domain and new.domain != old.domain:
+        return f"domain {old.domain!r} -> {new.domain!r}"
+    return ""
+
+
 class ToolRegistry:
     """Holds tools, renders their schema, calls them, and gates the dangerous ones."""
 
@@ -720,7 +770,45 @@ class ToolRegistry:
         gate: GateCheck | None = None,
         pin: TargetPin | None = None,
         answerable: str | None = None,
+        replaces: str | None = None,
     ) -> Tool:
+        """Add a tool. A re-registration may not quietly WEAKEN the one there.
+
+        ## What went wrong
+
+        This was `self._tools[tool.name] = tool`, and integrations load in
+        dependency order, so the last one to register a name won, silently.
+        That is fine until two of them mean different things by it.
+
+        `device_control` — a CORE integration, so this was every install —
+        registered its own `ask_user` at Tier 1. The built-in `ask_user` is
+        Tier 3 with `answerable="answer"`, and an entire mechanism is built on
+        that pair: `_bridge_questions_to_the_phone` puts held questions on
+        whichever device the user is at, and stamps `UNTRUSTED_PREFIX` on the
+        sentence when the turn has read a hostile page, because the phone
+        renders the model's words verbatim and has no other field for
+        provenance. Being registered second, the Tier-1 version replaced all of
+        it. A turn that had just read an attacker's page could put an unmarked
+        question on a lock screen — and the repo's own named contract,
+        `test_ask_user_is_tier_three_and_stays_there` ("a question that could
+        run without a human is not a question"), still passed, because it
+        builds the registry from the built-ins and never composes the
+        integration that overwrote it.
+
+        ## Why this refuses weakening rather than repetition
+
+        Registering a name twice is not itself wrong: an integration set up a
+        second time — a reload — re-registers its own tools, and refusing that
+        would break reloads to catch a bug that is not about counting. What was
+        wrong was the *direction*. So a second registration is accepted while
+        it is at least as strong as what it replaces, and refused when it
+        lowers the tier, drops a gate, drops the `answerable` the phone bridge
+        keys on, or changes the domain that `GATED_DOMAINS` escalates from.
+
+        An integration that genuinely means to supersede another's tool with a
+        weaker one says `replaces=` and names it, which is a sentence in a diff
+        rather than an ordering accident.
+        """
         if tool is None:
             if not name:
                 raise ValueError("register() needs a Tool or a name")
@@ -735,6 +823,17 @@ class ToolRegistry:
                 gate=gate,
                 pin=pin,
             )
+        existing = self._tools.get(tool.name)
+        if existing is not None and replaces != tool.name:
+            weaker = _weaker_than(tool, existing)
+            if weaker:
+                raise ValueError(
+                    f"tool {tool.name!r} is already registered and this "
+                    f"registration would weaken it ({weaker}). Pass "
+                    f"replaces={tool.name!r} if that is deliberate. This used "
+                    "to be silent, and a Tier-1 duplicate removed a Tier-3 "
+                    "gate for the life of the product."
+                )
         self._tools[tool.name] = tool
         return tool
 
@@ -1325,18 +1424,55 @@ def register_builtin_tools(
                 entry["area"] = candidate.area_name
             out.append(entry)
         out.sort(key=lambda e: (e.get("area") or "~", e["domain"], e["entity_id"]))
-        return {"status": "ok", "count": len(out), "entities": out}
+
+        # Bounded, because this is the most likely way to end a turn early.
+        # `TOOL_RULES` tells the model to call `list_entities` whenever a name
+        # fails to resolve, and this used to return EVERY exposed entity. A
+        # house with a few hundred — which is what exposing `sensor` and
+        # `binary_sensor` means — produced a single tool result larger than the
+        # 8192-token context the whole conversation lives in, so the turn that
+        # asked "which lamp did you mean?" was the turn that lost its history,
+        # its house summary and its persona.
+        #
+        # The cap is on the ANSWER, and the count above it is the truth: the
+        # model is told what it is not being shown and how to ask better,
+        # rather than being handed a silently short list it will reason about
+        # as if it were complete.
+        total = len(out)
+        limit = _positive_int(args.get("limit"), LIST_ENTITIES_DEFAULT)
+        limit = min(limit, LIST_ENTITIES_MAX)
+        payload: dict[str, Any] = {"status": "ok", "count": total}
+        if total > limit:
+            payload["entities"] = out[:limit]
+            payload["shown"] = limit
+            payload["truncated"] = True
+            payload["note"] = (
+                f"Showing {limit} of {total}. Narrow with domain= or area= "
+                "rather than asking for more; the rest are the same shape."
+            )
+        else:
+            payload["entities"] = out
+        return payload
 
     registry.register(
         name="list_entities",
         description=(
             "List the things you are allowed to see, optionally filtered by domain "
-            "and/or area. Use it when a name doesn't resolve."
+            "and/or area. Use it when a name doesn't resolve. Filter rather than "
+            "listing everything — a long answer costs you the rest of the turn."
         ),
         parameters=schema_object(
             {
                 "domain": {"type": "string", "description": "light, switch, cover, climate, ..."},
                 "area": {"type": "string", "description": "Restrict to one room/area."},
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        f"How many to return (default {LIST_ENTITIES_DEFAULT}, "
+                        f"max {LIST_ENTITIES_MAX}). The reply always says how "
+                        "many exist in total."
+                    ),
+                },
             }
         ),
         handler=_list_entities,
@@ -2147,7 +2283,12 @@ def register_builtin_tools(
         from ..api.common import ApiError, async_create_tool
 
         try:
-            result = await async_create_tool(jarvis, {"tool": args.get("tool") or args})
+            result = await async_create_tool(
+                jarvis,
+                {"tool": args.get("tool") or args},
+                # The model wrote this url. It may not name loopback.
+                allow_local_targets=False,
+            )
         except ApiError as exc:
             return {"status": "error", "error": exc.message}
         return {"status": "ok", "tool": result.get("tool", result)}
@@ -2155,22 +2296,93 @@ def register_builtin_tools(
     registry.register(
         name="create_tool",
         description=(
-            "Teach yourself a new capability by writing a tool manifest. Always "
-            "needs the user's explicit approval, and they see the whole manifest "
-            "first, because a tool can name an endpoint to call."
+            "Teach yourself a new capability by writing a tool manifest. A tool "
+            "is an HTTP call: you give it a name, say what it does, and name the "
+            "endpoint. Always needs the user's explicit approval, and they see "
+            "the whole manifest first, because a tool can name any endpoint. "
+            'Example: {"name": "bin_day", "description": "Which bin goes out '
+            'this week.", "service": {"method": "GET", "url": '
+            '"http://192.168.1.5/bins?street={{ street }}", "fields": '
+            '{"street": {"type": "string", "description": "The street name."}}}}'
         ),
+        # This schema is the validator's shape, field for field. It used to be a
+        # different shape entirely — `service` was declared a string
+        # ("domain.name") and there was a top-level `fields` object — while
+        # `authored_tools.validate` has always required `service` to be an
+        # OBJECT containing a `url`, and rejects any top-level key outside
+        # {name, description, tier, domain, service}. So every manifest the
+        # model wrote by following its own schema was refused twice over, and
+        # `create_tool` — the one capability that lets Jarvis extend itself —
+        # could not succeed even once. The console never hit it because
+        # `toolDraft.ts` builds the nested shape by hand.
+        #
+        # There is deliberately no leniency here for the old flat shape. Two
+        # accepted spellings is how the first one got forgotten; the validator's
+        # message comes back to the model verbatim, which is enough to correct
+        # a near miss on the next round.
         parameters=schema_object(
             {
-                "name": {"type": "string", "description": "snake_case, unique."},
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "snake_case, unique, 3-48 chars. Cannot shadow a tool "
+                        "you already have."
+                    ),
+                },
                 "description": {
                     "type": "string",
-                    "description": "What it does, as the model will read it.",
+                    "description": (
+                        "What it does, written for you to read later when "
+                        "deciding whether to call it."
+                    ),
                 },
-                "service": {"type": "string", "description": "The service to call, domain.name."},
-                "fields": {"type": "object", "description": "Parameters, by name."},
-                "tier": {"type": "integer", "description": "1, 2 or 3."},
+                "service": {
+                    "type": "object",
+                    "description": (
+                        "The HTTP call this tool makes. `url` is required and "
+                        "must start with http:// or https://. Use {{ field }} "
+                        "to put a field's value into the url, headers or body."
+                    ),
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "http:// or https://, may contain {{ field }}.",
+                        },
+                        "method": {
+                            "type": "string",
+                            "description": "GET, POST, PUT, PATCH, DELETE or HEAD. Default GET.",
+                        },
+                        "fields": {
+                            "type": "object",
+                            "description": (
+                                "The arguments you will pass when calling it, by "
+                                "name. Each is {type, description, required}."
+                            ),
+                        },
+                        "headers": {
+                            "type": "object",
+                            "description": "Request headers, by name.",
+                        },
+                        "payload": {
+                            "type": "object",
+                            "description": "JSON body for POST/PUT/PATCH.",
+                        },
+                        "timeout": {
+                            "type": "number",
+                            "description": "Seconds, 1 to 300. Default 30.",
+                        },
+                    },
+                    "required": ["url"],
+                },
+                "tier": {
+                    "type": "integer",
+                    "description": (
+                        "1 to run directly, 3 to need the user's approval every "
+                        "time it is called. Default 1."
+                    ),
+                },
             },
-            required=["name", "description"],
+            required=["name", "description", "service"],
         ),
         handler=_create_tool,
         # Unconditional, and not a `gate`: a gate can be argued with, a tier

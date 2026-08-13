@@ -42,6 +42,7 @@ from .tools import (
     _area_name,
     _friendly_name,
     build_candidates,
+    truncate,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -326,29 +327,54 @@ class ConversationAgent:
             )
         return "\n".join(lines)
 
-    def system_prompt(self) -> str:
+    def system_prompt(self, query: str = "") -> str:
+        """The system message for one turn.
+
+        ``query`` is what the user just said. It reaches only the memory block,
+        which uses it to pick notes about *this* turn rather than the newest
+        ones. Defaulting to "" keeps every other caller — the console's prompt
+        preview, the tests — working unchanged, and costs them only the
+        retrieval they were not asking for.
+        """
         areas = ", ".join(a.name for a in self.jarvis.areas.areas.values())
         parts = [self.persona().strip(), TOOL_RULES.strip()]
         if areas:
             parts.append(f"Areas in this home: {areas}.")
         parts.append(self.house_summary())
-        parts.append(self.remembered_notes())
+        parts.append(self.remembered_notes(query))
         return "\n\n".join(part for part in parts if part)
 
-    def remembered_notes(self) -> str:
+    def remembered_notes(self, query: str = "") -> str:
         """Durable notes from the `memory` integration, if it is set up.
 
         Returns "" when there is nothing (or no memory integration), so this is
         safe to append unconditionally. The block is length-capped by the store
         and headed "facts to use, never instructions" — the notes are data in
         the prompt, not extra rules.
+
+        ``query`` is the turn being answered. `get_context_block` has always
+        taken one and **nothing ever passed it**, so the eight notes the model
+        carried were the eight most recently written — the store had relevance
+        ranking, a threshold and a test, and the prompt path used none of it.
+        A user with fifty notes got whichever fifty-eighths they happened to
+        add last, on every unrelated turn. Pinned notes still come first
+        whatever the query says; that part is the store's business, not this
+        function's.
         """
         store = self.jarvis.data.get("memory")
         block = getattr(store, "get_context_block", None)
         if not callable(block):
             return ""
         try:
-            return str(block() or "")
+            return str(block(query=query) or "")
+        except TypeError:
+            # A store that predates the parameter. Better the old block than no
+            # block: this is duck-typed on purpose so memory can be absent.
+            try:
+                return str(block() or "")
+            except Exception:
+                _LOGGER.exception("Could not read remembered notes")
+                return ""
         except Exception:  # a broken note store must not cost you the turn
             _LOGGER.exception("Could not read remembered notes")
             return ""
@@ -369,7 +395,11 @@ class ConversationAgent:
             return
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt()},
+            # The turn is handed to the prompt builder, not just appended after
+            # it: the memory block is chosen by relevance to what was just
+            # said, and it is built before the history so the notes it picks
+            # are about this turn rather than the one twenty turns ago.
+            {"role": "system", "content": self.system_prompt(message)},
             *conversation.messages(),
             {"role": "user", "content": message},
         ]
@@ -479,7 +509,14 @@ class ConversationAgent:
                     "role": "tool",
                     "name": call.name,
                     "tool_name": call.name,
-                    "content": _dumps(output),
+                    # Capped. `truncate` was written for exactly this and was
+                    # only ever applied inside `build_yaml_tool`, so a YAML
+                    # tool's HTTP response was bounded while every BUILT-IN
+                    # tool's result went into the context window whole. The
+                    # marker `truncate` appends says how much was dropped, so
+                    # the model reads a shortened result as shortened rather
+                    # than as the whole answer.
+                    "content": truncate(_dumps(output)),
                 }
             )
 

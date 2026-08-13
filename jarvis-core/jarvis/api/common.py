@@ -562,13 +562,26 @@ def _register_authored(jarvis: "Jarvis", spec: dict[str, Any]) -> None:
     build_yaml_tools(registry, [spec], client_factory=factory)
 
 
-async def async_create_tool(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+async def async_create_tool(
+    jarvis: "Jarvis", payload: dict[str, Any], *, allow_local_targets: bool = True
+) -> dict[str, Any]:
+    """Store and register a new authored tool.
+
+    `allow_local_targets` is the console/model split. The console is the
+    OPERATOR naming a service on their own box — photon, SearXNG, anything on
+    loopback — which is the ordinary case and stays allowed. The `create_tool`
+    LLM tool passes False, because a url the MODEL chose pointing at
+    `127.0.0.1:8080` is jarvis-core's own API and reaches around every gate in
+    `llm/tools.py`. See `helpers/ssrf.py`.
+    """
     from ..llm.authored_tools import AuthoredToolError, get_authored_tools
 
     _tool_registry(jarvis)  # refuse early rather than storing an unusable tool
     try:
         entry = await get_authored_tools(jarvis).async_create(
-            _tool_spec(payload), _taken_names(jarvis)
+            _tool_spec(payload),
+            _taken_names(jarvis),
+            allow_local_targets=allow_local_targets,
         )
     except AuthoredToolError as err:
         raise ApiError("invalid_format", str(err), 400) from err

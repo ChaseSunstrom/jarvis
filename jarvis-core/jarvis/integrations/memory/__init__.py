@@ -89,6 +89,18 @@ DEFAULT_CONTEXT_LIMIT = 600
 DEFAULT_CONTEXT_ENTRIES = 8
 DEFAULT_SEARCH_LIMIT = 5
 
+#: Score at or above which a query is judged to be *about* a note, rather than
+#: merely ranking above the notes it is about even less.
+#:
+#: `_score` ranks everything it is given, so without a floor "the top 8" and
+#: "the 8 relevant ones" are the same list whenever fewer than 8 match. `forget`
+#: has always used this number, for the strongest possible reason — it decides
+#: what gets deleted — and `get_context_block` needs the same judgement for the
+#: opposite direction, deciding what is worth spending prompt budget on. One
+#: concept, so one constant: two literals that happen to agree today are two
+#: literals that drift.
+MATCH_FLOOR = 0.34
+
 #: A single note is a note, not an essay.
 MAX_TEXT_CHARS = 400
 MAX_TAGS = 8
@@ -485,7 +497,7 @@ class MemoryStore:
                 "reason": "say which memory to forget (an id, or what it was about)",
             }
 
-        matches = [entry for score, entry in self._score(text, None) if score >= 0.34]
+        matches = [entry for score, entry in self._score(text, None) if score >= MATCH_FLOOR]
         if not matches:
             return {"forgotten": [], "count": 0, "reason": f"nothing remembered about {text!r}"}
         if len(matches) > 1 and not forget_all:
@@ -568,6 +580,18 @@ class MemoryStore:
         Entries are added whole or not at all, so the model never sees half a
         sentence. Returns ``""`` when there is nothing to say — callers can
         append it unconditionally.
+
+        ``query`` is the turn the user just said. With one, the block becomes
+        the notes most likely to matter *now* rather than the newest ones; the
+        agent passes it, and until it did, this parameter had no caller and the
+        model's standing memory was whatever had been written most recently.
+
+        **Pinned notes survive a query.** They are the ones the user said to
+        keep in front of Jarvis, so ranking them against a single sentence and
+        dropping the losers would quietly undo the pin — the note would be
+        there for "where is the coffee" and gone for everything else. They take
+        their slots first; relevance fills what is left, and recency fills
+        after that so a turn matching nothing still gets the block it used to.
         """
         budget = self.context_limit if limit is None else max(0, int(limit))
         if budget <= 0:
@@ -576,7 +600,7 @@ class MemoryStore:
 
         self.purge_expired()
         if query:
-            candidates = [entry for _, entry in self._score(query, None)][:count]
+            candidates = self._pinned_then_relevant(query, count)
         else:
             candidates = sorted(
                 self.entries, key=lambda e: (not e.pinned, -e.created)
@@ -600,6 +624,41 @@ class MemoryStore:
         if not lines:
             return ""
         return "\n".join([header, *lines])
+
+    def _pinned_then_relevant(self, query: str, count: int) -> list[MemoryEntry]:
+        """Pinned notes, then the ones this turn is about, then the newest.
+
+        Three passes rather than one ranking, because the three answer
+        different questions. A pin is the user saying "always"; relevance is
+        this sentence; recency is the behaviour every install had before a
+        query was ever passed, kept as the floor so switching retrieval on
+        cannot show the model *less* than it used to see.
+        """
+        chosen: list[MemoryEntry] = []
+        seen: set[str] = set()
+
+        def take(entry: MemoryEntry) -> bool:
+            if entry.id in seen or len(chosen) >= count:
+                return False
+            seen.add(entry.id)
+            chosen.append(entry)
+            return True
+
+        for entry in sorted(self.entries, key=lambda e: -e.created):
+            if entry.pinned:
+                take(entry)
+
+        # `_score` ranks everything, so a floor is what separates "about this"
+        # from "merely sorted above the ones it is about even less".
+        for score, entry in self._score(query, None):
+            if score < MATCH_FLOOR:
+                break
+            take(entry)
+
+        for entry in sorted(self.entries, key=lambda e: -e.created):
+            take(entry)
+
+        return chosen
 
     # --- plumbing ---------------------------------------------------------
     def _fire(self, action: str, entry: MemoryEntry | None) -> None:

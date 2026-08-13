@@ -28,6 +28,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from ..helpers import ssrf
 from ..store import Store
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -60,7 +61,21 @@ class AuthoredToolError(Exception):
     """A proposed tool was refused. The message is shown to the user."""
 
 
-def validate(spec: Any, taken: set[str] | None = None) -> dict[str, Any]:
+def _host_is_templated(url: str) -> bool:
+    """True when the authority itself is a `{{ … }}`, so there is no host yet.
+
+    `http://{{ host }}/x` and `http://{{ base }}` cannot be judged before the
+    field is filled in. A template later in the path
+    (`http://nas.lan/{{ file }}`) leaves the host perfectly readable and is
+    checked normally.
+    """
+    authority = url.split("://", 1)[-1].split("/", 1)[0]
+    return "{{" in authority or "{%" in authority
+
+
+def validate(
+    spec: Any, taken: set[str] | None = None, *, allow_local_targets: bool = True
+) -> dict[str, Any]:
     """Check and normalise one tool manifest. Raises [AuthoredToolError].
 
     `taken` is the set of names already registered by something that is not
@@ -120,6 +135,38 @@ def validate(spec: Any, taken: set[str] | None = None) -> dict[str, Any]:
     scheme = urlsplit(url).scheme.lower()
     if scheme not in ("http", "https"):
         raise AuthoredToolError("The url must start with http:// or https://.")
+
+    # Where it points, not just how it is spelled — but only for a tool the
+    # MODEL wrote.
+    #
+    # The scheme check above was the whole of it, so a tool written by
+    # `create_tool` could name `http://127.0.0.1:8080/api/...` — jarvis-core's
+    # own API, reaching around every gate in `llm/tools.py` by asking the
+    # server to do it — or `http://169.254.169.254/` for the cloud metadata
+    # service and its credentials, or any of those spelled as an integer. A
+    # human approving a manifest reads a sentence; they do not resolve its
+    # host, and "does 2130706433 mean localhost" is not a question to put at an
+    # approval prompt.
+    #
+    # `allow_local_targets` defaults True because most callers are the
+    # OPERATOR: the console, and reloading what the console already stored.
+    # Loopback is where this whole stack lives — the shipped example tool in
+    # `config/examples/house/` points at photon on 127.0.0.1:2322, and SearXNG,
+    # jarvis-browser and Ollama are all neighbours of it. Refusing that would
+    # ban the documented case to stop the undocumented one. The model's path
+    # passes False, and that is the only difference between them.
+    #
+    # Checked only when the host is written literally. A url whose host is
+    # itself a template (`http://{{ host }}/x`) has no host to judge yet;
+    # what it resolves to is a call-time question.
+    if not allow_local_targets and not _host_is_templated(url):
+        verdict = ssrf.check(url)
+        if not verdict.allowed:
+            raise AuthoredToolError(
+                f"That url cannot be reached from a tool you wrote: "
+                f"{verdict.reason}. Ask the user to add it from the console if "
+                "they meant it."
+            )
 
     method = str(service.get("method") or "GET").strip().upper()
     if method not in ALLOWED_METHODS:
@@ -218,8 +265,14 @@ class AuthoredToolStore:
     async def _async_save(self) -> None:
         await self._store.save({"items": list(self.items.values())})
 
-    async def async_create(self, spec: Any, taken: set[str] | None = None) -> dict[str, Any]:
-        clean = validate(spec, taken)
+    async def async_create(
+        self,
+        spec: Any,
+        taken: set[str] | None = None,
+        *,
+        allow_local_targets: bool = True,
+    ) -> dict[str, Any]:
+        clean = validate(spec, taken, allow_local_targets=allow_local_targets)
         now = time.time()
         clean["created_at"] = now
         clean["updated_at"] = now
@@ -228,13 +281,20 @@ class AuthoredToolStore:
         return clean
 
     async def async_update(
-        self, name: str, spec: Any, taken: set[str] | None = None
+        self,
+        name: str,
+        spec: Any,
+        taken: set[str] | None = None,
+        *,
+        allow_local_targets: bool = True,
     ) -> dict[str, Any]:
         existing = self.items.get(name)
         if existing is None:
             raise AuthoredToolError(f"{name} is not a tool this console created.")
         # Its own name is not a collision with itself.
-        clean = validate(spec, (taken or set()) - {name})
+        clean = validate(
+            spec, (taken or set()) - {name}, allow_local_targets=allow_local_targets
+        )
         if clean["name"] != name:
             raise AuthoredToolError(
                 "A tool's name cannot be changed — the model calls it by that "

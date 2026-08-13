@@ -178,6 +178,43 @@ A hostile client could omit the flag — but a client holding the token can
 already send any transcript it likes. This closes the **accident**, not the
 attack, and that distinction is stated at the point of use rather than implied.
 
+## 11. The toolbox costs 59% of the context window, measured
+
+`llm: options: num_ctx: 8192` is the whole window a turn lives in.
+`ToolRegistry.as_openai_schema()` returns **every** registered tool — no
+filtering, no relevance selection, no budget — and it is posted on each of up
+to `max_tool_rounds` rounds.
+
+Measured by `jarvis-core/tests/test_prompt_budget.py` on a stock install:
+
+| | tokens | share of 8192 |
+|---|---|---|
+| tool schema | ~4,850 | 59% |
+| system prompt, **empty** house | ~720 | 9% |
+| together | ~5,570 | **68%** |
+
+That is what is spent before the house has a single entity in it, before any of
+the 20 turns of history, before the user's sentence and before the answer. On a
+real house `house_summary` adds up to 120 more entity lines on top of it.
+
+This is a **recorded position, not an accepted one**. The test is a ratchet: it
+pins where this actually is so it cannot quietly get worse, and every tool
+anyone adds is paid for by every turn — including the turns that could not
+possibly use it. The fix is per-turn tool selection, not a bigger `num_ctx` and
+not a bigger ceiling in the test; `SCHEMA_TARGET` in that file is what the work
+has to reach and is deliberately not asserted, because a test that fails until
+someone writes a feature is a test people learn to ignore.
+
+Two things already landed against it: tool results are capped before they reach
+the model (`truncate` was written for that and had only ever been applied inside
+`build_yaml_tool`, so every built-in tool's result went into the window whole),
+and `list_entities` — the tool `TOOL_RULES` tells the model to call whenever a
+name fails to resolve — is bounded and reports the true total beside the
+shortened list.
+
+The chars-per-token divisor is an estimate, deliberately pessimistic for JSON. A
+real tokeniser will report more, not less.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

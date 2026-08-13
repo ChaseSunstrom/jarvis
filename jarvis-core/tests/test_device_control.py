@@ -565,7 +565,30 @@ async def test_tell_user_goes_through_the_companion(jarvis):
     assert sent[0][1]["kind"] == "say"
 
 
-async def test_ask_user_returns_the_answer(jarvis):
+async def test_a_question_reaches_the_phone_through_the_gate_not_around_it(jarvis):
+    """The composed `ask_user` is the Tier-3 one, and it still reaches the phone.
+
+    This test used to drive a second `ask_user` that this integration
+    registered itself: Tier 1, blocking, answer returned in-turn. It read like
+    the better tool, and because `device_control` loads after the built-ins it
+    silently replaced the Tier-3 one — along with the provenance stamp that
+    `_bridge_questions_to_the_phone` puts in front of a question composed by a
+    turn that has read an untrusted page. Registering it was an ordering
+    accident; the test passing was the accident being confirmed.
+
+    So what is pinned now is the composition: the tool that survives setup is
+    the gated one, calling it holds rather than acts, and the question still
+    arrives on the device — by the bridge, which is the route that carries
+    provenance.
+    """
+    registry = jarvis.data["llm_tools"]
+    tool = registry.get("ask_user")
+    assert tool.tier == 3, "the Tier-1 duplicate is back"
+    assert tool.answerable == "answer", (
+        "the bridge keys on `answerable`; without it a question is an action "
+        "and never reaches the phone at all"
+    )
+
     presence = jarvis.data["presence"]
     presence.register(PHONE, "Pixel 8", "android", ["ask"])
     presence.touch_interaction(PHONE)
@@ -577,22 +600,41 @@ async def test_ask_user_returns_the_answer(jarvis):
 
     jarvis.data["companion"].set_transport(transport)
 
-    task = asyncio.create_task(
-        jarvis.data["llm_tools"].call(
-            "ask_user", {"question": "Upload the photos now?", "options": ["yes", "later"]}
-        )
+    held = await registry.call(
+        "ask_user", {"question": "Upload the photos now?", "choices": ["yes", "later"]}
     )
+    assert held["status"] == "approval_required", (
+        "a question that runs without a human is not a question"
+    )
+
     deadline = time.monotonic() + 2
     while not sent and time.monotonic() < deadline:
         await asyncio.sleep(0.005)
     assert sent, "the question never left the server"
     assert sent[0][1]["options"] == ["yes", "later"]
 
+    # Answering on the phone resolves the held request, and the pop-before-act
+    # in `approve_request` is what makes that race safe against the console.
     jarvis.data["companion"].on_device_answer(sent[0][1]["message_id"], "later")
-    result = await asyncio.wait_for(task, 2)
-    assert result["status"] == "answered"
-    assert result["answer"] == "later"
-    assert "authorises nothing" in result["note"]
+    deadline = time.monotonic() + 2
+    while registry.pending_requests() and time.monotonic() < deadline:
+        await asyncio.sleep(0.005)
+    assert not registry.pending_requests(), (
+        "answering on the phone left the request open"
+    )
+
+
+async def test_device_control_does_not_register_its_own_ask_user(jarvis):
+    """The duplicate cannot come back quietly.
+
+    `ToolRegistry.register` now refuses a name that is already taken, so a
+    re-added duplicate would raise during setup rather than win it. This
+    asserts the outcome that guard protects.
+    """
+    tool = jarvis.data["llm_tools"].get("ask_user")
+    assert "whichever device they are at and WAIT" not in tool.description, (
+        "device_control has re-registered its Tier-1 ask_user"
+    )
 
 
 async def test_the_model_drives_a_phone_that_registered_over_the_websocket(jarvis):
@@ -644,13 +686,21 @@ async def test_the_model_drives_a_phone_that_registered_over_the_websocket(jarvi
     await session.close()
 
 
-async def test_ask_user_says_so_when_nobody_answers(jarvis):
-    result = await jarvis.data["llm_tools"].call(
-        "ask_user", {"question": "Anyone there?", "timeout": 1}
-    )
-    # Nothing is connected at all, so it is queued rather than answered.
-    assert result["status"] == "queued"
-    assert "do not assume" in result["message"].lower()
+async def test_a_question_with_nobody_about_is_held_not_answered(jarvis):
+    """With no device connected the question waits for a human, it does not resolve.
+
+    The Tier-1 duplicate this replaces returned `queued` with "do not assume an
+    answer" — good guidance for a tool that had already decided to act. The
+    gated one never had to decide: it holds, and the console's copy stays live
+    until somebody answers it or it expires. What must never happen either way
+    is an empty answer entering the conversation as if the user had said it,
+    which is what `test_a_question_nobody_answered_says_so` pins on the handler.
+    """
+    registry = jarvis.data["llm_tools"]
+    result = await registry.call("ask_user", {"question": "Anyone there?"})
+
+    assert result["status"] == "approval_required"
+    assert registry.pending_requests(), "the question was dropped rather than held"
 
 
 # ---------------------------------------------------------------------------
