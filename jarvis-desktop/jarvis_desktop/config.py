@@ -151,6 +151,17 @@ class Config:
         return self.state_dir / "device.json"
 
     @property
+    def status_path(self) -> Path:
+        """Where a running agent publishes what it is doing, for ``status``.
+
+        In the state directory rather than ``/run`` or ``/tmp``: this directory
+        is already 0700 and already the one place the agent's own files live,
+        and a world-writable one would let anything on the box fake a running
+        agent to whoever reads it.
+        """
+        return self.state_dir / "status.json"
+
+    @property
     def workspace(self) -> Path:
         return self.file_roots[0] if self.file_roots else (self.state_dir / "workspace")
 

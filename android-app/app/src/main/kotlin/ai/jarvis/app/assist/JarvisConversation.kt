@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.audio.CaptureProfile
 import ai.jarvis.app.audio.HeadsetMonitor
+import ai.jarvis.app.audio.TurnFocus
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import java.lang.ref.WeakReference
@@ -108,6 +109,33 @@ class JarvisConversation(
 
     /** True while [HeadsetMonitor.clearCommunicationRoute] is owed. */
     private var routeApplied = false
+
+    /**
+     * The audio, for the length of this conversation.
+     *
+     * The app requested audio focus nowhere at all before this — no
+     * `requestAudioFocus`, no `AudioFocusRequest` anywhere in the Kotlin — with
+     * two visible consequences. Jarvis talked over whatever the user was
+     * playing, because nothing asked the music to stop. And a call arriving
+     * mid-turn was noticed only when the microphone failed, because a process
+     * holding no focus is a process the platform never tells.
+     *
+     * `GAIN_TRANSIENT_EXCLUSIVE`, held for the turn and given straight back: see
+     * [ai.jarvis.app.audio.TurnFocus], which is deliberately not used by the
+     * always-on listener — a wake word that paused your music in order to wait
+     * for its name would be worse than no wake word.
+     */
+    private val focus = TurnFocus(context) {
+        // Focus lost: something else — almost always a call — has the audio.
+        // Ending rather than pausing, because a turn cannot be resumed halfway
+        // through a sentence, and the surface saying so beats one that sits
+        // there apparently listening to a microphone it has lost.
+        main.post {
+            if (!running) return@post
+            ui.onError(FOCUS_LOST)
+            main.postDelayed({ if (running) stopWith(idle = true) }, ERROR_LINGER_MS)
+        }
+    }
 
     /**
      * Warm link: this conversation stays open through silence because the user
@@ -244,6 +272,14 @@ class JarvisConversation(
         liveRef = WeakReference(this)
         responseBuffer = StringBuilder()
 
+        // Before either path opens a microphone, and NOT enforced: a refusal
+        // means something has an exclusive claim on the audio, which the mic
+        // open below is about to run into anyway with a message the user can
+        // act on. Asking is what registers the loss callback, which is the part
+        // that matters — it is how a call arriving mid-turn stops this
+        // conversation instead of silently starving it.
+        focus.take()
+
         if (startLocalTurn()) return
 
         // Resolve the audio route once per conversation. A headset connected
@@ -268,6 +304,13 @@ class JarvisConversation(
             this,
             serverKind = config.serverKind,
             onKindResolved = { config.serverKind = it },
+            // The conversation this device is already in — see
+            // [ConversationRegistry]. Without these two lines each surface
+            // started a thread of its own, so moving between the wake orb and
+            // the assist card on ONE phone lost the context, and a question the
+            // server asked from another device was answered into nowhere.
+            conversationId = ConversationRegistry.current(context),
+            onConversationId = { ConversationRegistry.remember(context, it) },
         ).also {
             it.connect(config.pipeline)
         }
@@ -387,6 +430,17 @@ class JarvisConversation(
             inputText = text,
             serverKind = config.serverKind,
             onKindResolved = { config.serverKind = it },
+            // THE SECOND CLIENT, and the one that used to drop the thread.
+            //
+            // On-device transcription answers a turn through a brand new
+            // `AssistPipelineClient`, whose `conversationId` started at null and
+            // could not be given one. So a phone doing its own speech-to-text —
+            // which is the DEFAULT — forgot the conversation on every single
+            // turn: "what about tomorrow?" reached the model with nothing before
+            // it. Same registry as the streaming path above, so the two are one
+            // conversation and not two.
+            conversationId = ConversationRegistry.current(context),
+            onConversationId = { ConversationRegistry.remember(context, it) },
         ).also { it.connect(config.pipeline) }
     }
 
@@ -529,6 +583,13 @@ class JarvisConversation(
             routeApplied = false
         }
         headsets.stop()
+        // Given back on every exit, including the error paths: focus this
+        // process never abandons is music the user has to restart by hand.
+        focus.release()
+        // The thread outlives the conversation, so a turn that produced no new
+        // id still counts as the user being in it — otherwise a long exchange
+        // in which the server stops repeating the id would expire mid-way.
+        ConversationRegistry.touch(context)
         state = AssistPipelineClient.State.IDLE
         if (idle) main.post { ui.onIdle() }
     }
@@ -805,5 +866,15 @@ class JarvisConversation(
         private const val NO_PIPELINE =
             "%s never started listening. Check that this is jarvis-core's address " +
                 "(usually port 8080, not the web console on 8199) and that the token is valid."
+
+        /**
+         * Said when the audio was taken away mid-turn. Almost always a call.
+         *
+         * Named rather than generic because the remedy is "nothing, this is
+         * correct" — and a turn that simply vanished when the phone rang is the
+         * kind of thing people report as the assistant crashing.
+         */
+        private const val FOCUS_LOST =
+            "Something else needed the audio — a call, most likely. Ask me again after."
     }
 }

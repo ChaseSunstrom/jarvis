@@ -351,8 +351,42 @@
 		}
 	}
 
+	/**
+	 * The countdown, and the watcher that notices a scan.
+	 *
+	 * Both are started in `onMount` and not in the instance body. A component's
+	 * body runs on the SERVER too, so `setInterval` at the top level of this file
+	 * armed two timers per render of /settings inside the node process — which
+	 * never unmounts, so `onDestroy` never came, so they accumulated for the life
+	 * of the server and ticked against a component nobody was looking at.
+	 */
+	let ticker: ReturnType<typeof setInterval> | null = null;
+	let watcher: ReturnType<typeof setInterval> | null = null;
+
 	onMount(() => {
 		let disposed = false;
+		ticker = setInterval(() => {
+			now = Date.now();
+			// Stop drawing a code the server will no longer honour. A QR that looks
+			// live and is not sends somebody hunting a camera problem.
+			if (code && secondsLeft <= 0) {
+				code = '';
+				expiresAt = 0;
+				// Replace it, so the panel is never sitting there with a dead code
+				// and a button the operator has to notice. Bounded, so a tab left
+				// open overnight stops after MAX_AUTO_REISSUE rather than minting
+				// one every five minutes until the morning.
+				unclaimed += 1;
+				if (canIssue && unclaimed <= MAX_AUTO_REISSUE) void issue();
+			}
+		}, 1000);
+		// Notice the scan. The claim happens over HTTP directly against
+		// jarvis-core, so nothing tells this page about it; asking every two
+		// seconds while a code is live is what turns "single use" from a sentence
+		// in the copy into something the operator watches happen.
+		watcher = setInterval(() => {
+			if (code && conn) void loadTokens(conn);
+		}, 2000);
 		(async () => {
 			// The lock state first, and independently of the websocket: a
 			// backend that is down must still show the password form rather
@@ -390,37 +424,9 @@
 		if (!url && typeof location !== 'undefined') url = location.origin;
 	});
 
-	const ticker = setInterval(() => {
-		now = Date.now();
-		// Stop drawing a code the server will no longer honour. A QR that looks
-		// live and is not sends somebody hunting a camera problem.
-		if (code && secondsLeft <= 0) {
-			code = '';
-			expiresAt = 0;
-			// Replace it, so the panel is never sitting there with a dead code
-			// and a button the operator has to notice. Bounded, so a tab left
-			// open overnight stops after MAX_AUTO_REISSUE rather than minting
-			// one every five minutes until the morning.
-			unclaimed += 1;
-			if (canIssue && unclaimed <= MAX_AUTO_REISSUE) void issue();
-		}
-	}, 1000);
-
-	/**
-	 * Notice the scan.
-	 *
-	 * The claim happens over HTTP directly against jarvis-core, so nothing
-	 * tells this page about it. Asking every two seconds while a code is live
-	 * is what turns "single use" from a sentence in the copy into something the
-	 * operator watches happen.
-	 */
-	const watcher = setInterval(() => {
-		if (code && conn) void loadTokens(conn);
-	}, 2000);
-
 	onDestroy(() => {
-		clearInterval(ticker);
-		clearInterval(watcher);
+		if (ticker) clearInterval(ticker);
+		if (watcher) clearInterval(watcher);
 		if (revealTimer) clearTimeout(revealTimer);
 	});
 </script>
@@ -686,12 +692,18 @@
 		word-break: break-all;
 	}
 	.ok {
-		color: var(--jv-ok, #4ade80);
+		color: var(--jv-ok);
 	}
 	code {
-		/* A secret is read off the screen and typed elsewhere, so the glyphs
-		   have to be distinguishable — l/1 and O/0 in particular. */
-		font-family: var(--jv-font-mono, ui-monospace, monospace);
+		/*
+		 * A secret is read off the screen and typed elsewhere, so the glyphs have
+		 * to be distinguishable — l/1 and O/0 in particular. That is what
+		 * `--jv-font-chrome` is: a monospace stack. It used to ask for
+		 * `--jv-font-mono`, which no file declares, so the one string on this
+		 * console whose characters must not be guessable was rendered in the
+		 * fallback — and the fallback was the body face.
+		 */
+		font-family: var(--jv-font-chrome);
 		user-select: all;
 	}
 </style>

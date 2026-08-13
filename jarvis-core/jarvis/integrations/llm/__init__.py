@@ -162,6 +162,27 @@ def create_http_client(jarvis: "Jarvis", timeout: float) -> httpx.AsyncClient:
 BACKENDS = ("ollama", "openai")
 
 
+def _tristate(value: Any) -> bool | None:
+    """`true`/`false` from config, or None for "don't mention it".
+
+    Three states, not two: a missing `think:` must leave the request field out
+    entirely so the model's own default applies, which is what every install
+    had before the key existed. Coercing absence to `False` would be a silent
+    behaviour change for everyone who never opted in.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "yes", "on", "1"):
+        return True
+    if text in ("false", "no", "off", "0"):
+        return False
+    _LOGGER.warning("llm: think: %r is not a boolean; leaving it unset", value)
+    return None
+
+
 def _detect_backend(url: str) -> str:
     """Which wire a url is asking for, when nobody said.
 
@@ -280,6 +301,9 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         memory=memory,
         options=_as_dict(options.get("options")),
         language=str(options.get("language") or "en"),
+        # Unset leaves the model's own default alone, which is what every
+        # install had before this key existed.
+        think=_tristate(options.get("think")),
     )
 
     jarvis.data[DOMAIN] = agent

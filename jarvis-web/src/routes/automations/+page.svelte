@@ -5,6 +5,7 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
+	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
 	import {
 		applyStateChanged,
 		friendlyName,
@@ -38,6 +39,9 @@
 	 */
 	let rows = $state<AutomationRow[]>([]);
 	let rowMap = $derived(new Map(rows.map((row) => [row.entity_id, row])));
+	// Also by id, because that is what `editing` holds — the entity id is what
+	// the LIST is keyed by, and the two are different strings.
+	let rowById = $derived(new Map(rows.map((row) => [row.id, row])));
 
 	/** '' when closed, 'new' for the create form, otherwise an automation id. */
 	let editing = $state('');
@@ -112,7 +116,47 @@
 		}
 	}
 
+	/**
+	 * What the open editor started as, so "has this been edited" is answerable.
+	 *
+	 * Rebuilt from the row rather than remembered at open time: the row is
+	 * refreshed after every save, and comparing against a stale snapshot would
+	 * report a just-saved form as still dirty.
+	 */
+	let pristine = $derived.by<DraftForm>(() => {
+		if (editing === 'new' || !editing) return blankForm();
+		const row = rowById.get(editing);
+		return row ? formFromRow(row) : blankForm();
+	});
+	let dirty = $derived(Boolean(editing) && formsDiffer(form, pristine));
+
+	/**
+	 * Unsaved edits survive the press that would have discarded them.
+	 *
+	 * An automation's triggers and actions are JSON somebody typed by hand; they
+	 * are the most expensive thing on this console to lose, and opening another
+	 * row used to reassign the form with no warning at all.
+	 */
+	const discard = new DiscardGuard((target) =>
+		toasts.info(
+			editing === 'new' ? 'Unsaved new automation' : `Unsaved changes to ${labelOf(editing)}`,
+			target === editing ? 'Press again to discard it.' : 'Press again to discard them.'
+		)
+	);
+
+	/** An automation's own name, for a message about it. */
+	function labelOf(id: string): string {
+		return rowById.get(id)?.alias ?? id;
+	}
+
+	/** CANCEL. Goes through the same guard: it is a discard like any other. */
+	function closeEditor(): void {
+		if (!discard.allows(editing, dirty)) return;
+		editing = '';
+	}
+
 	function openNew(): void {
+		if (!discard.allows('new', dirty)) return;
 		editing = editing === 'new' ? '' : 'new';
 		form = blankForm();
 		formError = '';
@@ -120,6 +164,7 @@
 	}
 
 	function openEdit(row: AutomationRow): void {
+		if (!discard.allows(row.id, dirty)) return;
 		if (editing === row.id) {
 			editing = '';
 			return;
@@ -152,6 +197,7 @@
 				toasts.success(`Saved ${parsed.draft.alias}`);
 			}
 			editing = '';
+			discard.reset();
 			await refreshRows();
 			await refreshStates();
 		} catch (e) {
@@ -285,7 +331,7 @@
 		<button type="button" class="btn" data-testid="save" disabled={saving} onclick={save}>
 			{saving ? 'SAVING…' : editing === 'new' ? 'CREATE' : 'SAVE'}
 		</button>
-		<button type="button" class="btn ghost" data-testid="cancel" onclick={() => (editing = '')}>CANCEL</button>
+		<button type="button" class="btn ghost" data-testid="cancel" onclick={closeEditor}>CANCEL</button>
 	</div>
 {/snippet}
 

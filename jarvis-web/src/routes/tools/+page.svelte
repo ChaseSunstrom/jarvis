@@ -3,6 +3,7 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
+	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import {
 		friendlyName,
@@ -15,6 +16,8 @@
 		METHODS,
 		blankToolForm,
 		parseToolForm,
+		runnerOptions,
+		runnerSelection,
 		toolFormFromRow,
 		type ToolForm
 	} from '$lib/toolDraft';
@@ -72,7 +75,39 @@
 		}
 	}
 
+	/**
+	 * What the open editor started as, and whether it still is that.
+	 *
+	 * Rebuilt from the row each time rather than snapshotted at open, so a form
+	 * that has just been saved and re-read is not reported as still edited.
+	 */
+	let pristineTool = $derived.by<ToolForm>(() => {
+		if (editing === 'new' || !editing) return blankToolForm();
+		const row = rowMap.get(editing);
+		return row ? toolFormFromRow(row) : blankToolForm();
+	});
+	let dirty = $derived(Boolean(editing) && formsDiffer(form, pristineTool));
+
+	/**
+	 * A tool's URL template, headers and field schema are typed by hand and
+	 * exist nowhere else until CREATE is pressed. Opening another editor used to
+	 * take all of it with no warning.
+	 */
+	const discard = new DiscardGuard((target) =>
+		toasts.info(
+			editing === 'new' ? 'Unsaved new tool' : `Unsaved changes to ${editing}`,
+			target === editing ? 'Press again to discard it.' : 'Press again to discard them.'
+		)
+	);
+
+	/** CANCEL. Goes through the same guard: it is a discard like any other. */
+	function closeEditor(): void {
+		if (!discard.allows(editing, dirty)) return;
+		editing = '';
+	}
+
 	function openNewTool(): void {
+		if (!discard.allows('new', dirty)) return;
 		editing = editing === 'new' ? '' : 'new';
 		form = blankToolForm();
 		formError = '';
@@ -80,6 +115,7 @@
 	}
 
 	function openEditTool(row: ToolRow): void {
+		if (!discard.allows(row.name, dirty)) return;
 		if (editing === row.name) {
 			editing = '';
 			return;
@@ -109,6 +145,7 @@
 				toasts.success(`Saved ${parsed.draft.name}`);
 			}
 			editing = '';
+			discard.reset();
 			await refreshTools();
 		} catch (e) {
 			formError = describeError(e);
@@ -183,7 +220,20 @@
 			.sort((a, b) => a.entity_id.localeCompare(b.entity_id))
 	);
 	let exposedCount = $derived(entries.filter((e) => e.exposed !== false).length);
-	let selectedTool = $derived(tools.find((t) => t.name === selected));
+	/**
+	 * What the test runner may run, and what it is pointed at.
+	 *
+	 * Both read the CATALOGUE — the union of what the model sees and what this
+	 * console manages — rather than `tools`, which is only the first half of it.
+	 * A tool created here against a backend whose `jarvis/tools/list` does not
+	 * report it yet was listed, was runnable, and showed no description at all,
+	 * because the description was looked up in a list it was never in.
+	 */
+	let runnable = $derived(runnerOptions(catalogue, visibleTools, selected));
+	$effect(() => {
+		selected = runnerSelection(runnable, selected);
+	});
+	let selectedTool = $derived(catalogue.find((t) => t.name === selected));
 
 	async function toggleExposure(entry: EntityRegistryEntry): Promise<void> {
 		if (!conn) return;
@@ -245,7 +295,6 @@
 					hint =
 						'This backend has no jarvis/tools/list command, so the service catalogue is shown instead — the same calls the LLM tool layer makes.';
 				}
-				if (tools.length && !selected) selected = tools[0].name;
 				try {
 					rows = (await connection.client.listToolRows()) ?? [];
 				} catch (e) {
@@ -362,7 +411,7 @@
 		<button type="button" class="btn" data-testid="tool-save" disabled={saving} onclick={saveTool}>
 			{saving ? 'SAVING…' : editing === 'new' ? 'CREATE' : 'SAVE'}
 		</button>
-		<button type="button" class="btn ghost" data-testid="tool-cancel" onclick={() => (editing = '')}>
+		<button type="button" class="btn ghost" data-testid="tool-cancel" onclick={closeEditor}>
 			CANCEL
 		</button>
 	</div>
@@ -386,7 +435,7 @@
 	</div>
 	<div class="row">
 		<select data-testid="tool-select" aria-label="Tool to run" bind:value={selected}>
-			{#each visibleTools as tool (tool.name)}
+			{#each runnable as tool (tool.name)}
 				<option value={tool.name}>{tool.name}</option>
 			{/each}
 		</select>

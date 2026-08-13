@@ -203,26 +203,36 @@ def _tier(jarvis: Jarvis, name: str) -> int:
 # ---------------------------------------------------------------------------
 # the old shape must fail loudly, not silently
 # ---------------------------------------------------------------------------
-async def test_the_old_flat_shape_is_refused_with_a_message_worth_reading(jarvis):
+async def test_the_old_flat_shape_is_refused_before_it_reaches_a_human(jarvis):
     """There is deliberately no leniency for the shape that used to be advertised.
 
-    Two accepted spellings is how the first one got forgotten. What matters is
-    that the refusal comes back as text the model can act on next round, rather
-    than a stack trace or a silent no-op.
+    Two accepted spellings is how the first one got forgotten.
+
+    Note *where* the refusal happens: `service` is declared an object, a string
+    cannot be coerced to one, so `ToolRegistry.call` turns it back at the
+    schema check — before the Tier-3 gate raises anything. That is the right
+    end. A manifest that cannot possibly validate should not become a prompt on
+    somebody's phone asking them to approve it, and before argument checking
+    existed that is exactly what it did: the human was asked, said yes, and
+    *then* it failed.
     """
     registry = jarvis.data["llm_tools"]
 
-    outcome = await _create_as_a_human_would(
-        jarvis,
+    result = await registry.call(
+        "create_tool",
         {
             "name": "bin_day",
             "description": "Which bin goes out this week.",
             "service": "http.get",
             "fields": {"street": {"type": "string"}},
         },
+        context=None,
     )
 
-    result = outcome["result"]
     assert result["status"] == "error"
     assert result["error"], "a refusal with no message teaches the model nothing"
+    assert "service" in result["error"], "the message must name the argument at fault"
+    assert not registry.pending_requests(), (
+        "a manifest that cannot validate was still put in front of a human"
+    )
     assert "bin_day" not in registry.names()

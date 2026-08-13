@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 
 	let {
 		level = 0,
@@ -12,6 +13,24 @@
 	let webglOk = $state(true);
 	let smoothLevel = 0;
 	let smoothState = 0;
+
+	/**
+	 * Draw one frame, on demand.
+	 *
+	 * Bound by `onMount` and used by the effect below: with the animation loop
+	 * off, the orb still has to be repainted when the pipeline changes state,
+	 * because its colour is information — which of five things Jarvis is doing —
+	 * and not decoration. Null before mount and after destroy.
+	 */
+	let redraw: (() => void) | null = null;
+
+	$effect(() => {
+		// Tracked so a state change repaints a paused orb. `level` is deliberately
+		// NOT tracked: it changes with every audio frame, and following it here
+		// would be the animation loop again under another name.
+		orbState;
+		redraw?.();
+	});
 
 	const TAU = Math.PI * 2;
 
@@ -784,6 +803,23 @@ void main() {
 		gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
 		let raf = 0;
+		/*
+		 * THE MOTION KILL SWITCH, for the one thing CSS cannot reach.
+		 *
+		 * `base.css` cuts every animation and transition in the app to nothing
+		 * under `prefers-reduced-motion: reduce`, and it cannot touch this: a
+		 * requestAnimationFrame loop is not an animation as far as the cascade is
+		 * concerned. So the largest, brightest, most continuously moving object on
+		 * the screen — three drifting blobs, two counter-rotating rings, a radar
+		 * sweep and a breathing core — was the single thing that ignored the
+		 * setting entirely.
+		 *
+		 * Reduced does not mean blank. The orb is still drawn, in full, at its
+		 * resting phase; what stops is time. `watchReducedMotion` is why the
+		 * preference is honoured when it changes rather than only at load — a
+		 * system-wide toggle should not need a reload to take effect.
+		 */
+		let reduced = prefersReducedMotion();
 		const start = performance.now();
 		let last = start;
 		// Free-running, integrated against the wall clock. Deriving these from
@@ -796,10 +832,13 @@ void main() {
 		let drift = 0;
 
 		const draw = () => {
+			raf = 0;
 			const nowMs = performance.now();
 			// A tab that was in the background hands back one enormous dt; a
-			// clamp turns that into a dropped frame instead of a jump.
-			const dt = Math.min((nowMs - last) / 1000, 0.1);
+			// clamp turns that into a dropped frame instead of a jump. Zero when
+			// motion is off: every phase below is integrated from it, so one number
+			// stops the drift, the spin, the sweep and the breath together.
+			const dt = reduced ? 0 : Math.min((nowMs - last) / 1000, 0.1);
 			last = nowMs;
 
 			const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -813,9 +852,18 @@ void main() {
 			gl.clearColor(0, 0, 0, 0);
 			gl.clear(gl.COLOR_BUFFER_BIT);
 
-			smoothLevel += (Math.min(level, 1) - smoothLevel) * 0.22;
 			const target = STATE_NUM[orbState] ?? 0;
-			smoothState += (target - smoothState) * 0.15;
+			if (reduced) {
+				// Snapped rather than eased, for the same reason the CSS kill switch
+				// sets a duration of nothing: the end state is identical, it simply
+				// arrives at once. Easing over frames that are not coming would leave
+				// the colour a fifth of the way to the state it is reporting.
+				smoothLevel = Math.min(level, 1);
+				smoothState = target;
+			} else {
+				smoothLevel += (Math.min(level, 1) - smoothLevel) * 0.22;
+				smoothState += (target - smoothState) * 0.15;
+			}
 
 			const hz = mix4(ORBIT_HZ, smoothState) * (1 + 0.6 * smoothLevel);
 			for (let i = 0; i < 3; i++) {
@@ -841,10 +889,31 @@ void main() {
 			gl.uniform1f(uBreath, breath);
 			gl.uniform1f(uDrift, drift);
 			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-			raf = requestAnimationFrame(draw);
+			if (!reduced) raf = requestAnimationFrame(draw);
 		};
-		raf = requestAnimationFrame(draw);
-		return () => cancelAnimationFrame(raf);
+
+		/** Ask for a frame, unless one is already coming. */
+		const schedule = () => {
+			if (!raf) raf = requestAnimationFrame(draw);
+		};
+
+		const unwatch = watchReducedMotion((now) => {
+			reduced = now;
+			// The clock has been standing still while paused, and `last` with it —
+			// without this the first frame back integrates the whole pause into one
+			// step. The dt clamp caps that at a tenth of a second, which is still a
+			// tenth of a second of movement arriving in one frame.
+			last = performance.now();
+			schedule();
+		});
+		redraw = schedule;
+		schedule();
+		return () => {
+			if (raf) cancelAnimationFrame(raf);
+			raf = 0;
+			redraw = null;
+			unwatch();
+		};
 	});
 </script>
 

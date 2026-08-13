@@ -7,7 +7,11 @@
 	import Orb from '$lib/components/Orb.svelte';
 	import { accentFor } from '$lib/tokens';
 
-	let state = $state<PipelineState>('idle');
+	// `turnState` rather than `state`: a variable called `state` in a component
+	// makes `$state` ambiguous to the tooling — svelte-check reads it as the
+	// store-subscription form of that variable and reports the whole file as
+	// untyped, which is how a page this central ended up unchecked.
+	let turnState = $state<PipelineState>('idle');
 	let transcript = $state('');
 	let response = $state('');
 	let statusMsg = $state('booting');
@@ -25,6 +29,9 @@
 	let micError = $state('');
 	let orbLevel = $state(0);
 	let latText = $state('');
+	/** What is in the type-instead box, and whether it is mid-send. */
+	let draft = $state('');
+	let sending = $state(false);
 
 	let ws: WebSocket | null = null;
 	let client: PipelineClient | null = null;
@@ -82,7 +89,7 @@
 				},
 				{
 					onState: (s) => {
-						state = s;
+						turnState = s;
 						statusMsg = s;
 					},
 					onReady: () => {
@@ -119,14 +126,14 @@
 						} catch (e) {
 							console.warn('tts playback failed', e);
 						}
-						if (state === 'speaking') {
-							state = 'idle';
+						if (turnState === 'speaking') {
+							turnState = 'idle';
 							statusMsg = 'idle';
 						}
 					},
 					onRunEnd: () => {
-						if (state !== 'speaking') {
-							state = 'idle';
+						if (turnState !== 'speaking') {
+							turnState = 'idle';
 							statusMsg = 'idle';
 						}
 					},
@@ -163,13 +170,13 @@
 					// Fed nothing while muted, so the VAD cannot be sitting on
 					// half a phrase from before the mute when it comes back.
 					vad.reset();
-				} else if (!capturing && state === 'idle') {
+				} else if (!capturing && turnState === 'idle') {
 					if (vad.feed(r) === 'speech-start') void startInteraction();
 				} else if (capturing) {
 					if (vad.feed(r) === 'speech-end') stopCapture();
 				}
 				// Barge-in: user speaks over TTS -> kill playback, new run.
-				if (!muted && state === 'speaking' && bargeVad.feed(r) === 'speech-start') {
+				if (!muted && turnState === 'speaking' && bargeVad.feed(r) === 'speech-start') {
 					console.log('[jarvis] barge-in');
 					player.stopAll();
 					void startInteraction();
@@ -212,6 +219,50 @@
 		statusMsg = 'listening';
 		client?.startRun({ pipeline: pipelineId });
 		if (e2eMode) setTimeout(() => stopCapture(), 1500);
+	}
+
+	/**
+	 * Ask by typing.
+	 *
+	 * The HUD had no `<input>` at all, so somebody who denied the microphone
+	 * prompt — or is on a machine with none — could not say anything to Jarvis by
+	 * any means. This is the same pipeline the voice path uses, entered one stage
+	 * later: `startTextRun` sets `start_stage: 'intent'`, so the answer still
+	 * streams back and is still spoken.
+	 */
+	async function sendText(): Promise<void> {
+		const text = draft.trim();
+		if (!text || sending) return;
+		sending = true;
+		errorMsg = '';
+		// Echoed straight into the readout, because there is no stt-end coming to
+		// fill it in and the HUD's whole layout assumes the top line says what you
+		// asked. It is also already true — you typed it.
+		transcript = text;
+		response = '';
+		lat = {};
+		latText = '';
+		try {
+			await connectWs();
+		} catch {
+			errorMsg = 'cannot reach server websocket';
+			sending = false;
+			return;
+		}
+		if (!pipelineId && client) {
+			try {
+				pipelineId = await client.resolvePipelineId(pipelineName);
+			} catch (e) {
+				console.warn('pipeline list failed, using preferred', e);
+			}
+		}
+		// The same baseline the spoken path measures from: the moment there is
+		// nothing left for the human to do and the wait begins.
+		tAudioEnd = performance.now();
+		client?.startTextRun(text, { pipeline: pipelineId });
+		draft = '';
+		statusMsg = 'processing';
+		sending = false;
 	}
 
 	function markAudioEnd(): void {
@@ -284,7 +335,7 @@
 		thinking: 'PROCESSING',
 		speaking: 'RESPONDING'
 	};
-	let accent = $derived(accentFor(state, Boolean(errorMsg)));
+	let accent = $derived(accentFor(turnState, Boolean(errorMsg)));
 	// `booting` is not a pipeline state. It is the window between the server
 	// rendering this page and the browser having run any of it: no handler is
 	// bound to the PTT button yet and there is no socket. Reporting STANDBY
@@ -296,7 +347,7 @@
 			? 'CONNECTING'
 			: statusMsg === 'disconnected'
 				? 'OFFLINE'
-				: (LABEL[state] ?? state.toUpperCase())
+				: (LABEL[turnState] ?? turnState.toUpperCase())
 	);
 	let online = $derived(statusMsg !== 'disconnected' && statusMsg !== 'booting');
 	let clock = $state('--:--:--');
@@ -351,7 +402,7 @@
 
 		let raf = 0;
 		const tick = () => {
-			orbLevel = state === 'speaking' ? player.level() * 2 : Math.min(micLevel * 4, 1);
+			orbLevel = turnState === 'speaking' ? player.level() * 2 : Math.min(micLevel * 4, 1);
 			raf = requestAnimationFrame(tick);
 		};
 		raf = requestAnimationFrame(tick);
@@ -362,7 +413,7 @@
 	});
 </script>
 
-<main class="hud" style="--accent: {accent}" data-state={state}>
+<main class="hud" style="--accent: {accent}" data-state={turnState}>
 	<div class="jv-grid" aria-hidden="true"></div>
 	<span class="jv-bracket tl" aria-hidden="true"></span>
 	<span class="jv-bracket tr" aria-hidden="true"></span>
@@ -376,7 +427,7 @@
 		</div>
 		<div class="sysinfo">
 			<span class="status" data-testid="status" role="status" aria-live="polite">
-				<span class="dot {state}" class:off={!online} aria-hidden="true"></span>
+				<span class="dot {turnState}" class:off={!online} aria-hidden="true"></span>
 				{stateLabel}
 			</span>
 			<span class="clock" aria-label="Local time">{clock}</span>
@@ -386,7 +437,7 @@
 	<section class="stage" aria-hidden="true">
 		<div class="orb-frame">
 			<div class="orb-wrap">
-				<Orb level={orbLevel} orbState={state} />
+				<Orb level={orbLevel} orbState={turnState} />
 			</div>
 		</div>
 	</section>
@@ -396,7 +447,7 @@
 			{transcript}
 		</p>
 		<p class="response" data-testid="response" aria-live="polite" aria-label="Jarvis says">
-			{response}{#if state === 'thinking' || state === 'listening'}<span
+			{response}{#if turnState === 'thinking' || turnState === 'listening'}<span
 					class="caret"
 					aria-hidden="true"
 				></span>{/if}
@@ -407,6 +458,14 @@
 	</section>
 
 	<footer class="controls">
+		<!--
+		  No `aria-label`. One used to sit here saying "Mute the microphone",
+		  which OVERRODE the visible text — so when the button read
+		  MIC BLOCKED — ALLOW IT IN THE BROWSER, a screen reader announced a
+		  working mute button and the one thing the sighted user could see was the
+		  one thing the blind user could not. `aria-pressed` still carries the
+		  mute state, which is the part the label cannot say.
+		-->
 		<button
 			type="button"
 			class="ptt"
@@ -416,11 +475,40 @@
 			data-mic={micReady ? 'open' : 'closed'}
 			onclick={toggleMute}
 			aria-pressed={muted}
-			aria-label={muted ? 'Unmute the microphone' : 'Mute the microphone'}
 		>
 			<span class="ptt-ring" aria-hidden="true"></span>
 			{micLabel}
 		</button>
+
+		<!--
+		  Type instead of speaking.
+		  A denied microphone prompt used to end the conversation permanently:
+		  there was no `<input>` on this page at all, so there was no second way
+		  to ask Jarvis anything. This runs the same pipeline — see sendText().
+		-->
+		<form
+			class="say"
+			data-testid="text-form"
+			onsubmit={(e) => {
+				e.preventDefault();
+				void sendText();
+			}}
+		>
+			<label class="jv-sr-only" for="hud-text">Type what you want to say to Jarvis</label>
+			<input
+				id="hud-text"
+				type="text"
+				class="say-input"
+				data-testid="text-input"
+				placeholder="or type it…"
+				autocomplete="off"
+				bind:value={draft}
+			/>
+			<button type="submit" class="say-send" data-testid="text-send" disabled={!draft.trim()}>
+				SEND
+			</button>
+		</form>
+
 		<div class="meta">
 			<span class="hint" aria-hidden="true">
 				{muted ? 'NOTHING IS BEING HEARD' : 'JUST SPEAK'}
@@ -455,15 +543,32 @@
 		--jv-bracket-inset: 14px;
 
 		position: relative;
-		height: 100vh;
-		height: 100dvh;
+		/*
+		 * MIN-height, and nothing hidden.
+		 *
+		 * This was `height: 100dvh; overflow: hidden` on a four-row grid, which is
+		 * correct exactly while the content fits. A long answer, or a laptop in
+		 * landscape at 500 px tall, pushed the readout and the mute button past the
+		 * bottom edge — and with the overflow hidden there was no scroll path to
+		 * them at all: the one control on the page became unreachable at the moment
+		 * there was most to read. The rows still fill the viewport when there is
+		 * room, because `min-height` and `1fr` do that on their own.
+		 */
+		min-height: 100vh;
+		min-height: 100dvh;
 		display: grid;
-		grid-template-rows: auto 1fr auto auto;
+		/*
+		 * `min-content` as the stage row's floor: the orb is a fixed square, and a
+		 * 1fr row is free to squeeze a track below its content, which would slide
+		 * the orb over the readout instead of making the page taller.
+		 */
+		grid-template-rows: auto minmax(min-content, 1fr) auto auto;
 		padding: clamp(0.9rem, 2.5vw, 2rem);
 		gap: clamp(0.5rem, 2vh, 1.5rem);
 		color: var(--jv-text);
 		font-family: var(--body);
-		overflow: hidden;
+		/* Sideways is still forbidden — nothing here is wider than the viewport. */
+		overflow-x: hidden;
 		background:
 			radial-gradient(
 				ellipse 70% 55% at 50% 44%,
@@ -488,7 +593,7 @@
 	}
 	.logo {
 		font-family: var(--chrome);
-		font-size: clamp(1.2rem, 3.2vw, 1.9rem);
+		font-size: var(--jv-fs-display);
 		font-weight: 600;
 		letter-spacing: 0.55em;
 		color: var(--accent);
@@ -497,7 +602,7 @@
 	}
 	.tag {
 		font-family: var(--chrome);
-		font-size: clamp(0.5rem, 1.4vw, 0.68rem);
+		font-size: clamp(0.7rem, 1.4vw, 0.85rem);
 		letter-spacing: 0.24em;
 		text-transform: uppercase;
 		color: var(--dim);
@@ -514,12 +619,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		font-size: clamp(0.62rem, 1.6vw, 0.78rem);
+		font-size: clamp(0.8rem, 1.6vw, 0.95rem);
 		letter-spacing: 0.24em;
 		color: var(--accent);
 	}
 	.clock {
-		font-size: clamp(0.62rem, 1.6vw, 0.78rem);
+		font-size: clamp(0.8rem, 1.6vw, 0.95rem);
 		letter-spacing: 0.2em;
 		color: var(--dim);
 		font-variant-numeric: tabular-nums;
@@ -550,7 +655,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		min-height: 0;
 		z-index: 1;
 	}
 	.orb-frame {
@@ -603,7 +707,7 @@
 	.transcript {
 		font-family: var(--chrome);
 		color: var(--dim);
-		font-size: clamp(0.8rem, 2vw, 1rem);
+		font-size: clamp(0.95rem, 2vw, 1.15rem);
 		letter-spacing: 0.04em;
 		min-height: 1.3rem;
 		margin: 0;
@@ -619,7 +723,7 @@
 	}
 	.response {
 		color: var(--jv-text-bright);
-		font-size: clamp(1.15rem, 3vw, 1.6rem);
+		font-size: clamp(1.25rem, 3vw, 1.7rem);
 		line-height: 1.45;
 		font-weight: 300;
 		min-height: 2rem;
@@ -640,7 +744,7 @@
 	.error {
 		font-family: var(--chrome);
 		color: var(--jv-danger);
-		font-size: 0.8rem;
+		font-size: var(--jv-fs-md);
 		letter-spacing: 0.05em;
 		margin: 0.2rem 0 0;
 	}
@@ -661,7 +765,7 @@
 		padding: 0.85rem 2.6rem;
 		border-radius: 999px;
 		font-family: var(--chrome);
-		font-size: clamp(0.72rem, 1.8vw, 0.9rem);
+		font-size: clamp(0.85rem, 1.8vw, 1.05rem);
 		letter-spacing: 0.22em;
 		cursor: pointer;
 		transition: background 0.18s, box-shadow 0.18s, color 0.18s, transform 0.1s;
@@ -689,12 +793,74 @@
 		0% { transform: scale(1); opacity: 0.6; }
 		100% { transform: scale(1.25); opacity: 0; }
 	}
+	/*
+	 * The type-instead row. Deliberately quieter than the mute button: speaking
+	 * is still the way this thing is meant to be used, and a text box drawn as
+	 * loudly as the orb's own control would say otherwise. It is always present
+	 * rather than appearing when the microphone fails, because "there is another
+	 * way to do this" is not a message worth hiding until the moment somebody is
+	 * already stuck.
+	 */
+	.say {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: min(86vw, 34rem);
+	}
+	.say-input {
+		flex: 1 1 auto;
+		min-width: 0;
+		font-family: var(--chrome);
+		font-size: var(--jv-fs-sm);
+		letter-spacing: 0.08em;
+		color: var(--jv-text-bright);
+		background: color-mix(in srgb, var(--accent) 6%, var(--jv-bg-raised));
+		border: 1px solid var(--line-soft);
+		border-radius: var(--jv-radius-pill);
+		padding: 0.5rem 1rem;
+		transition:
+			border-color var(--jv-dur-fast) var(--jv-ease-out),
+			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.say-input::placeholder {
+		color: var(--dim);
+		opacity: 0.7;
+	}
+	.say-input:hover,
+	.say-input:focus {
+		border-color: var(--line);
+		box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 18%, transparent);
+	}
+	.say-send {
+		flex: none;
+		font-family: var(--chrome);
+		font-size: var(--jv-fs-xs);
+		letter-spacing: 0.2em;
+		color: var(--accent);
+		background: transparent;
+		border: 1px solid var(--line);
+		border-radius: var(--jv-radius-pill);
+		padding: 0.5rem 1.1rem;
+		cursor: pointer;
+		transition:
+			background var(--jv-dur-fast) var(--jv-ease-out),
+			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.say-send:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 24%, transparent);
+	}
+	.say-send:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
 	.meta {
 		display: flex;
 		align-items: center;
 		gap: 1.2rem;
 		font-family: var(--chrome);
-		font-size: 0.66rem;
+		font-size: var(--jv-fs-sm);
 		letter-spacing: 0.18em;
 		color: var(--dim);
 		text-transform: uppercase;

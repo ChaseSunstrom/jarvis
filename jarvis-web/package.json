@@ -9,7 +9,8 @@
     "icons": "node scripts/make-icons.mjs",
     "preview": "vite preview",
     "start": "node build",
-    "test": "vitest run",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "npm run check && vitest run",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -20,7 +21,10 @@
     "@sveltejs/adapter-node": "^5.2.11",
     "@sveltejs/kit": "^2.16.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
     "svelte": "^5.19.0",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.7.3",
     "vite": "^6.0.11",
     "vitest": "^3.0.5"

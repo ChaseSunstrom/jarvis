@@ -245,11 +245,19 @@
 		align-items: center;
 		gap: 0.35rem;
 	}
+	/*
+	 * Tokens, not `--chrome` / `--dim`.
+	 *
+	 * Those two are declared inside `.hud` in the HUD's own page, and this row is
+	 * only ever drawn inside `.console` — so both lookups fell through to nothing
+	 * and every slider label lost its font AND its colour, inheriting the body
+	 * face at the row's text colour. It looked like a design decision.
+	 */
 	.slabel {
-		font-family: var(--chrome);
-		font-size: 0.52rem;
-		letter-spacing: 0.16em;
-		color: var(--dim);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-chrome);
+		color: var(--jv-text-dim);
 		opacity: 0.7;
 	}
 </style>

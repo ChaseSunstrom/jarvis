@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from ...services import ServiceCall
 from ...store import Store
+from .vectors import DEFAULT_EMBED_MODEL, VectorIndex, fuse
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...core import Jarvis
@@ -81,6 +82,12 @@ DEPENDENCIES = ["llm"]
 
 STORAGE_KEY = "memory"
 STORAGE_VERSION = 1
+
+#: The vector sidecar. Separate file, separate version: it is derived from the
+#: notes and can be deleted at any time to force a rebuild, so it must never
+#: share a version number with the thing it is derived from.
+VECTOR_STORAGE_KEY = "memory-vectors"
+VECTOR_STORAGE_VERSION = 1
 
 EVENT_MEMORY_CHANGED = "memory_changed"
 
@@ -332,6 +339,7 @@ class MemoryStore:
         max_entries: int = DEFAULT_MAX_ENTRIES,
         context_limit: int = DEFAULT_CONTEXT_LIMIT,
         context_entries: int = DEFAULT_CONTEXT_ENTRIES,
+        vectors: "VectorIndex | None" = None,
     ) -> None:
         self.jarvis = jarvis
         self.store = store or Store(jarvis.config_dir, STORAGE_KEY, STORAGE_VERSION)
@@ -339,6 +347,10 @@ class MemoryStore:
         self.context_limit = max(0, int(context_limit or 0))
         self.context_entries = max(1, int(context_entries or DEFAULT_CONTEXT_ENTRIES))
         self.entries: list[MemoryEntry] = []
+        #: Semantic recall, or None. Absent is the normal state on a box with
+        #: no embedding model pulled, and everything below degrades to the
+        #: keyword scorer rather than failing — see `vectors.py`.
+        self.vectors = vectors
 
     # --- persistence ------------------------------------------------------
     async def async_load(self) -> None:
@@ -351,6 +363,7 @@ class MemoryStore:
                 loaded.append(entry)
         loaded.sort(key=lambda e: e.created)
         self.entries = loaded[-self.max_entries :]
+        await self._async_reindex()
 
     async def async_save(self) -> None:
         await self.store.save({"entries": [e.as_dict() for e in self.entries]})
@@ -572,7 +585,11 @@ class MemoryStore:
 
     # --- the prompt block -------------------------------------------------
     def get_context_block(
-        self, limit: int | None = None, query: str | None = None, max_entries: int | None = None
+        self,
+        limit: int | None = None,
+        query: str | None = None,
+        max_entries: int | None = None,
+        semantic: dict[str, float] | None = None,
     ) -> str:
         """A compact, length-capped block for the agent's system prompt.
 
@@ -600,7 +617,7 @@ class MemoryStore:
 
         self.purge_expired()
         if query:
-            candidates = self._pinned_then_relevant(query, count)
+            candidates = self._pinned_then_relevant(query, count, semantic)
         else:
             candidates = sorted(
                 self.entries, key=lambda e: (not e.pinned, -e.created)
@@ -625,7 +642,34 @@ class MemoryStore:
             return ""
         return "\n".join([header, *lines])
 
-    def _pinned_then_relevant(self, query: str, count: int) -> list[MemoryEntry]:
+    async def _async_reindex(self) -> None:
+        """Bring the vector sidecar level with the notes, and drop the rest.
+
+        Runs on load, which is the one moment the two can be out of step: the
+        notes file is hand-editable, so a note may have changed text or stopped
+        existing while nothing was watching. Pruning matters as much as
+        indexing — a forgotten note whose vector survived would be the one
+        place deletion did not reach, and being wholly deletable is a promise
+        this integration makes in its own docstring.
+        """
+        if self.vectors is None:
+            return
+        dropped = self.vectors.prune(entry.id for entry in self.entries)
+        indexed = await self.vectors.async_index(
+            [(entry.id, entry.text) for entry in self.entries]
+        )
+        if dropped or indexed:
+            _LOGGER.debug("Vector index: +%d, -%d", indexed, dropped)
+
+    async def async_semantic_ids(self, query: str) -> dict[str, float]:
+        """`{id: similarity}` for a query, or `{}` when recall is unavailable."""
+        if self.vectors is None:
+            return {}
+        return await self.vectors.async_search(query)
+
+    def _pinned_then_relevant(
+        self, query: str, count: int, semantic: dict[str, float] | None = None
+    ) -> list[MemoryEntry]:
         """Pinned notes, then the ones this turn is about, then the newest.
 
         Three passes rather than one ranking, because the three answer
@@ -650,10 +694,27 @@ class MemoryStore:
 
         # `_score` ranks everything, so a floor is what separates "about this"
         # from "merely sorted above the ones it is about even less".
-        for score, entry in self._score(query, None):
-            if score < MATCH_FLOOR:
-                break
-            take(entry)
+        keyword = {
+            entry.id: score
+            for score, entry in self._score(query, None)
+            if score >= MATCH_FLOOR
+        }
+        if semantic:
+            # Two rankings that do not share a scale — a fraction of matched
+            # terms and an angle — so they are fused by ORDER rather than by
+            # value. A note both agree on outranks a note either found alone,
+            # which is the point: lexical and semantic agreement is the
+            # strongest signal available without a reranker.
+            by_id = {entry.id: entry for entry in self.entries}
+            for entry_id in fuse(keyword, semantic):
+                entry = by_id.get(entry_id)
+                if entry is not None:
+                    take(entry)
+        else:
+            for entry_id in sorted(keyword, key=lambda i: -keyword[i]):
+                entry = next((e for e in self.entries if e.id == entry_id), None)
+                if entry is not None:
+                    take(entry)
 
         for entry in sorted(self.entries, key=lambda e: -e.created):
             take(entry)
@@ -700,6 +761,64 @@ def get_memory(jarvis: "Jarvis") -> MemoryStore | None:
 # ---------------------------------------------------------------------------
 # setup
 # ---------------------------------------------------------------------------
+def _build_index(jarvis: "Jarvis", options: dict[str, Any]) -> VectorIndex | None:
+    """Semantic recall, if this deployment can have it.
+
+    Returns None when `embeddings: false`, and an index that quietly disables
+    itself when the model server has no embedding model pulled. Either way the
+    keyword scorer is what runs, which is what every install has today — the
+    upgrade is additive and its absence is not an error.
+
+    The embedding client is **the chat client**, borrowed. Ollama serves
+    `/v1/embeddings` on the same port as `/api/chat`, so on a stock install
+    this reaches a server that is already running, through an httpx client that
+    already exists, for the price of one `ollama pull`. Nothing new listens on
+    a port and nothing new holds a copy of the user's notes.
+    """
+    if options.get("embeddings") is False:
+        return None
+
+    chat_client = _embedding_client(jarvis, options)
+    if chat_client is None:
+        return None
+    return VectorIndex(
+        client=chat_client,
+        model=str(options.get("embedding_model") or DEFAULT_EMBED_MODEL),
+        store=Store(jarvis.config_dir, VECTOR_STORAGE_KEY, VECTOR_STORAGE_VERSION),
+    )
+
+
+def _embedding_client(jarvis: "Jarvis", options: dict[str, Any]) -> Any:
+    """A client with an `embed()`, or None.
+
+    The Ollama-native client has no `embed` — `/api/embed` is a different
+    endpoint with a different shape, and this deliberately does not learn it.
+    An install on the native wire gets keyword search and a log line saying so,
+    which is the honest outcome: the OpenAI wire is one config key away and is
+    the one this project is moving to.
+    """
+    explicit = options.get("embedding_url")
+    if explicit:
+        from ...llm.openai_compat import OpenAICompatClient
+
+        return OpenAICompatClient(
+            url=str(explicit),
+            model=str(options.get("embedding_model") or DEFAULT_EMBED_MODEL),
+            client=jarvis.data.get("llm_client"),
+        )
+
+    agent = jarvis.data.get("llm")
+    client = getattr(agent, "client", None)
+    if client is not None and callable(getattr(client, "embed", None)):
+        return client
+    _LOGGER.info(
+        "Semantic recall is off: the configured LLM backend has no embeddings "
+        "endpoint. Set `llm: backend: openai` (Ollama serves it on the same "
+        "port), or `memory: embedding_url:`. Keyword search is unaffected."
+    )
+    return None
+
+
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     options = config if isinstance(config, dict) else {}
 
@@ -710,6 +829,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
             options.get("context_limit", DEFAULT_CONTEXT_LIMIT) or 0
         ),
         context_entries=int(options.get("context_entries") or DEFAULT_CONTEXT_ENTRIES),
+        vectors=_build_index(jarvis, options),
     )
     await memory.async_load()
     # The documented hook: the LLM agent reads this and calls

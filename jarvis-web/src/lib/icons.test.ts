@@ -15,7 +15,6 @@ import {
 	readIco,
 	readPng,
 	renderSvg
-	// @ts-expect-error -- plain .mjs, no types; it is a build script, not app code.
 } from '../../scripts/icons.mjs';
 
 const file = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)));

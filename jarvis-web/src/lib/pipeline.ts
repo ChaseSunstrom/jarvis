@@ -156,6 +156,37 @@ export class PipelineClient {
 		return id;
 	}
 
+	/**
+	 * Start a run from TYPED text: the same pipeline, entered one stage later.
+	 *
+	 * `start_stage: 'intent'` is how the backend is told there is no audio to
+	 * transcribe — the run goes straight to the conversation agent and still ends
+	 * at tts, so a typed question is answered out loud exactly like a spoken one.
+	 * A run started this way has no `stt_binary_handler_id`, so `sendAudio` and
+	 * `endAudio` stay no-ops for its whole life and there is no half-open audio
+	 * stream to close.
+	 *
+	 * This exists because the HUD's microphone is not always available — a denied
+	 * permission, a machine with no microphone — and without it the answer to
+	 * "the browser said no" was that Jarvis could not be spoken to at all.
+	 */
+	startTextRun(text: string, opts: RunOptions = {}): number {
+		const id = this.nextId++;
+		this.runId = id;
+		this.sttBinaryHandlerId = null;
+		const msg: Record<string, any> = {
+			id,
+			type: 'assist_pipeline/run',
+			start_stage: 'intent',
+			end_stage: 'tts',
+			input: { text },
+			conversation_id: opts.conversationId !== undefined ? opts.conversationId : this.conversationId
+		};
+		if (opts.pipeline) msg.pipeline = opts.pipeline;
+		this.send(JSON.stringify(msg));
+		return id;
+	}
+
 	/** Stream one chunk of 16 kHz Int16 PCM (no-op until run-start arrived). */
 	sendAudio(pcm: Int16Array): void {
 		if (this.sttBinaryHandlerId === null) return;

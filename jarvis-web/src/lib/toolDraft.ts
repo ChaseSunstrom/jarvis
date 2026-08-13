@@ -153,6 +153,43 @@ export function parseToolForm(form: ToolForm): ToolResult {
 	return { ok: true, draft: { name, description, tier, service } };
 }
 
+/** The least a thing needs to be offered by the test runner's picker. */
+export interface Named {
+	name: string;
+}
+
+/**
+ * What the test runner's `<select>` may offer.
+ *
+ * The picker used to be filled straight from the filtered catalogue while the
+ * selection was independent state, so typing a filter that excluded the chosen
+ * tool left a `<select>` whose value matched no option — which browsers render
+ * as an empty box, with RUN still enabled and still pointing at the tool you
+ * can no longer see. So whatever is selected is always among the options, even
+ * when the filter says otherwise, and it goes first because it is the one the
+ * button is about to run.
+ */
+export function runnerOptions<T extends Named>(
+	catalogue: readonly T[],
+	visible: readonly T[],
+	selected: string
+): T[] {
+	if (!selected || visible.some((tool) => tool.name === selected)) return [...visible];
+	const chosen = catalogue.find((tool) => tool.name === selected);
+	return chosen ? [chosen, ...visible] : [...visible];
+}
+
+/**
+ * The name the picker should be showing, given its options.
+ *
+ * Falls to the first option when the selection names nothing on offer — a tool
+ * that was deleted from another tab, or the empty string on first load.
+ */
+export function runnerSelection(options: readonly Named[], selected: string): string {
+	if (selected && options.some((tool) => tool.name === selected)) return selected;
+	return options[0]?.name ?? '';
+}
+
 /** Why a row cannot be edited, in words that say what to do instead. */
 export function toolReadOnlyNote(row: ToolRow): string {
 	return (

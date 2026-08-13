@@ -76,6 +76,8 @@ export interface ConsoleLinkOptions {
 	/** Injected in tests to make the backoff deterministic. */
 	random?: () => number;
 	connect?: typeof openConnection;
+	/** Whether to load the palette's index on connect. See [ConsoleLink.setIndexed]. */
+	indexed?: boolean;
 }
 
 export class ConsoleLink {
@@ -88,6 +90,7 @@ export class ConsoleLink {
 	private attempts = 0;
 	private running = false;
 	private everConnected = false;
+	private indexed: boolean;
 
 	private readonly setTimeoutFn: typeof setTimeout;
 	private readonly clearTimeoutFn: typeof clearTimeout;
@@ -113,6 +116,28 @@ export class ConsoleLink {
 		this.clearTimeoutFn = opts.clearTimeoutFn ?? clearTimeout;
 		this.random = opts.random ?? Math.random;
 		this.connect = opts.connect ?? openConnection;
+		this.indexed = opts.indexed ?? true;
+	}
+
+	/**
+	 * Whether this link keeps the palette's index — states, areas, entities,
+	 * devices — up to date.
+	 *
+	 * The socket itself is needed on every route, because the approvals banner
+	 * and the tool-activity strip ride on it and a tier-3 request can be raised
+	 * by a voice turn on the HUD. The INDEX is not: the HUD has no palette and no
+	 * lists, and pulling a whole house's states down to feed a search box that
+	 * cannot be opened is a payload for nothing, on the one surface most likely
+	 * to be a wall panel.
+	 *
+	 * Turning it back on reloads immediately rather than waiting for the next
+	 * reconnect, or the palette would open empty on the first console page after
+	 * the HUD.
+	 */
+	setIndexed(on: boolean): void {
+		if (this.indexed === on) return;
+		this.indexed = on;
+		if (on && this.conn) void this.load(this.conn);
 	}
 
 	get current(): LinkSnapshot {
@@ -191,11 +216,16 @@ export class ConsoleLink {
 		this.attempts = 0;
 		this.everConnected = true;
 		this.emit({ status: 'connected' });
-		await this.load(connection);
+		if (this.indexed) await this.load(connection);
 	}
 
 	private async load(connection: Connection): Promise<void> {
 		const client = connection.client;
+		// A second load on the same socket (the HUD → console switch) must not
+		// leave the first subscription behind, or every state change is applied
+		// twice and the palette's list is rebuilt for each of them.
+		void this.sub?.unsubscribe();
+		this.sub = null;
 		const optional = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
 			try {
 				return (await fn()) ?? fallback;

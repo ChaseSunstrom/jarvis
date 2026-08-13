@@ -77,7 +77,7 @@ object DeviceChannelHost {
             Log.e(TAG, "could not build the device channel", t)
             return
         }
-        val link = DeviceLink(built)
+        val link = DeviceLink(built, app)
         AutomationRuntime.deviceEvents = link
         AutomationRuntime.askJarvis = link
         channel = built

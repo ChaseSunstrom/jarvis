@@ -1,5 +1,6 @@
 package ai.jarvis.app.companion
 
+import ai.jarvis.app.assist.ConversationRegistry
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
@@ -162,6 +163,26 @@ object CompanionMessageHandler {
      * off it in [ai.jarvis.app.channel.JarvisChannel].
      */
     private fun present(app: Context, message: CompanionProtocol.Message) {
+        // THE HANDOFF, on this end.
+        //
+        // `companion.handoff` is documented in `docs/cross-device.md` as moving
+        // an in-flight conversation to another device, and grepping this package
+        // for "handoff" used to return nothing at all. It turns out there is no
+        // `handoff` frame to implement: the server's service (see
+        // `jarvis/integrations/companion/__init__.py`) is an ordinary
+        // `manager.send(kind="say", conversation_id=…)` aimed at a chosen
+        // device. The move IS the conversation_id on a normal message.
+        //
+        // So this is the whole of it, and it was the missing line: adopt the
+        // thread the message arrived on, so the next thing said to this phone
+        // continues it. `CompanionProtocol` parsed the field, the handler put it
+        // in an intent extra, and nothing anywhere read it — the documented
+        // continuity reached the device and was dropped.
+        //
+        // Adopted for every mode, not just `ask`. A handoff is a `say`, and a
+        // `notify` that names a conversation is the server telling this device
+        // which thread the user is now in.
+        ConversationRegistry.remember(app, message.conversationId)
         when (message.mode) {
             CompanionProtocol.MODE_ASK -> ask(app, message)
             CompanionProtocol.MODE_SPEAK -> speak(app, message)

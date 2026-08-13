@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 
@@ -14,8 +14,14 @@
 	import ToolActivity from '$lib/components/ToolActivity.svelte';
 	import { ConsoleLink, statusLabel, type LinkSnapshot } from '$lib/consoleLink';
 	import { ChordTracker, isBareKey, isPaletteShortcut, isTypingTarget } from '$lib/shortcuts';
+	import { applyTextSize, readTextSize } from '$lib/textSize';
 
 	let { children } = $props();
+
+	// The reader's own text size, on every route rather than on the page that
+	// sets it: it is one multiplier on the root element (see textSize.ts), and a
+	// preference that only applied to the settings page would be a joke.
+	onMount(() => applyTextSize(document, readTextSize(localStorage)));
 
 	const NAV = [
 		{ href: '/devices', label: 'DEVICES', chord: 'g d' },
@@ -39,13 +45,23 @@
 	// own, and a surface holding the old Connection would go quietly deaf.
 	let approvalConn = $derived(snapshot.status === 'connected' ? link.connection : null);
 
+	/*
+	 * The link runs on EVERY route, the HUD included.
+	 *
+	 * It used to be stopped on `/`, which quietly made the approvals banner a
+	 * console-only feature — and approvals are raised by voice turns, which is
+	 * to say by the HUD. A tier-3 request that arrives while you are standing in
+	 * front of the orb has to be answerable there; expiring unseen because the
+	 * only surface that could show it was two navigations away is exactly the
+	 * failure the banner exists to prevent.
+	 *
+	 * What the HUD does not need is the palette index, so it does not load it.
+	 */
 	$effect(() => {
-		if (!isHud && !linkStarted) {
+		link.setIndexed(!isHud);
+		if (!linkStarted) {
 			link.start();
 			linkStarted = true;
-		} else if (isHud && linkStarted) {
-			link.stop();
-			linkStarted = false;
 		}
 	});
 
@@ -72,6 +88,11 @@
 
 	function onWindowKeyDown(e: KeyboardEvent): void {
 		if (isPaletteShortcut(e)) {
+			// The HUD has no palette, so it must not eat the key. This used to
+			// preventDefault() BEFORE the `isHud` check below, which took
+			// Ctrl/Cmd-K away from the browser on `/` and gave nothing back —
+			// the palette it toggled is only rendered in the console branch.
+			if (isHud) return;
 			e.preventDefault();
 			paletteOpen = !paletteOpen;
 			return;
@@ -108,6 +129,18 @@
 
 {#if isHud}
 	{@render children()}
+	<!--
+	  The safety surface, on the bare shell.
+
+	  Docked over the HUD rather than folded into it: the HUD is one object in a
+	  dark room and it stays that way, but a held action and a running tool are
+	  the two things that must be visible wherever you are standing. Same two
+	  components the console renders, same socket, no console chrome around them.
+	-->
+	<div class="jv-alerts" data-testid="hud-alerts">
+		<Approvals conn={approvalConn} />
+		<ToolActivity conn={approvalConn} />
+	</div>
 	<a class="hud-console-link" href="/devices" data-testid="console-link">CONSOLE</a>
 {:else}
 	<a class="jv-skip" href="#console-main">Skip to content</a>

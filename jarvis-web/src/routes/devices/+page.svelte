@@ -6,6 +6,7 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
+	import { DiscardGuard } from '$lib/unsaved';
 	import {
 		applyStateChanged,
 		type CompanionDevice,
@@ -117,7 +118,23 @@
 	let pending = $derived(entityChanges(entryMap.get(editing), form));
 	let summary = $derived(describeChanges(pending));
 
+	/**
+	 * Unsaved edits, and the press that would have thrown them away.
+	 *
+	 * Opening another entity's editor — or closing this one — used to reassign
+	 * `form` outright, so a half-typed name or a just-ticked exposure box left no
+	 * trace. `pending` already knows whether anything would be sent; this makes
+	 * the first press say so and the second one mean it.
+	 */
+	const discard = new DiscardGuard((target) =>
+		toasts.info(
+			`Unsaved changes to ${labelFor(editing)}`,
+			target === editing ? 'Press CLOSE again to discard them.' : 'Press again to discard them.'
+		)
+	);
+
 	function edit(entityId: string): void {
+		if (!discard.allows(entityId, Boolean(editing) && !isUnchanged(pending))) return;
 		if (editing === entityId) {
 			editing = '';
 			return;
@@ -140,6 +157,7 @@
 			// never settles.
 			entries = (await conn.client.listEntities()) ?? entries;
 			form = formFor(entryMap.get(entityId));
+			discard.reset();
 			toasts.success(`Updated ${label}`, entityId);
 		} catch (e) {
 			err = describeError(e);

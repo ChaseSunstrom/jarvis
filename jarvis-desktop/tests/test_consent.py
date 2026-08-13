@@ -300,6 +300,7 @@ def test_a_chain_is_unattended_only_when_every_usable_backend_refuses():
 
 async def test_a_second_prompt_is_refused_while_the_first_still_owns_stdin():
     import threading
+    import time
 
     released = threading.Event()
 
@@ -324,6 +325,16 @@ async def test_a_second_prompt_is_refused_while_the_first_still_owns_stdin():
         assert StuckTty.reads == 1, "a second reader was started for the same stdin"
     finally:
         released.set()
+        # The keystroke that finally arrives belongs to two prompts that have
+        # both already been answered with TIMEOUT, so it must be discarded
+        # rather than banked for the next one. Waited on rather than assumed:
+        # the reader is parked in a read this test started, and letting the
+        # test end first leaves that thread to finish after teardown.
+        for _ in range(500):
+            if gateway._reader.dropped:
+                break
+            time.sleep(0.01)
+        assert gateway._reader.dropped == 1
 
 
 async def test_stdin_is_handed_back_after_a_normal_answer():

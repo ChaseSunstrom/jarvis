@@ -635,6 +635,33 @@
 }
 
 /* ===================================================================== *
+ * The alert dock — the two global surfaces, on the voice HUD
+ * ===================================================================== */
+
+/*
+ * Approvals and tool activity are drawn on the HUD as well as in the console.
+ * The HUD is not `.console` and must not become it, so they get a dock instead
+ * of a page: fixed under the CONSOLE link, as wide as it needs to be and no
+ * wider, and gone entirely when neither component has anything to say (both
+ * render nothing when idle, so the dock collapses to zero height).
+ *
+ * `pointer-events` is off on the dock and back on for its contents, or an empty
+ * dock would sit over the top of the HUD swallowing clicks meant for the orb.
+ */
+.jv-alerts {
+	position: fixed;
+	top: 3.4rem;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 50;
+	width: min(46rem, calc(100vw - 1.6rem));
+	pointer-events: none;
+}
+.jv-alerts > * {
+	pointer-events: auto;
+}
+
+/* ===================================================================== *
  * Console furniture — the management pages' shared vocabulary
  * ===================================================================== */
 
@@ -861,8 +888,15 @@
 	box-shadow: var(--jv-glow-sm);
 }
 
+/*
+ * These few are also what the approvals banner is built from, and that banner
+ * is drawn on the HUD as well — which is not `.console` and must not become it.
+ * So the buttons, the field and the error line name `.jv-alerts` too; anything
+ * that only ever appears on a management page stays scoped to `.console` alone.
+ */
 .console button.btn,
-.console .btn {
+.console .btn,
+.jv-alerts .btn {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-xs);
 	letter-spacing: var(--jv-track-chrome);
@@ -882,43 +916,50 @@
 		transform var(--jv-dur-instant) var(--jv-ease-out);
 }
 .console button.btn:hover,
-.console .btn:hover {
+.console .btn:hover,
+.jv-alerts .btn:hover {
 	background: var(--jv-wash-strong);
 	box-shadow: var(--jv-glow-md);
 }
 /* A press you can feel. 60 ms of 2% is enough; more reads as a bug. */
 .console button.btn:active:not(:disabled),
-.console .btn:active {
+.console .btn:active,
+.jv-alerts .btn:active:not(:disabled) {
 	transform: translateY(1px) scale(0.98);
 }
-.console button.btn:disabled {
+.console button.btn:disabled,
+.jv-alerts .btn:disabled {
 	opacity: 0.45;
 	cursor: not-allowed;
 	box-shadow: none;
 	transform: none;
 }
-.console button.btn.ghost {
+.console button.btn.ghost,
+.jv-alerts .btn.ghost {
 	color: var(--jv-text-dim);
 	background: transparent;
 	border-color: var(--jv-line-soft);
 }
-.console button.btn.ghost:hover {
+.console button.btn.ghost:hover,
+.jv-alerts .btn.ghost:hover {
 	color: var(--jv-text-bright);
 	border-color: var(--jv-line);
 }
-.console button.btn.danger {
+.console button.btn.danger,
+.jv-alerts .btn.danger {
 	color: var(--jv-danger-text);
 	border-color: rgba(255, 107, 92, 0.4);
 	background: rgba(255, 107, 92, 0.08);
 }
-.console button.btn.danger:hover {
+.console button.btn.danger:hover,
+.jv-alerts .btn.danger:hover {
 	background: rgba(255, 107, 92, 0.18);
 	box-shadow: 0 0 18px rgba(255, 107, 92, 0.25);
 }
 .console button.btn.on {
 	color: var(--jv-accent-ink);
 	/* Lit from above, like every other surface here. */
-	background: linear-gradient(180deg, #7ee6ff, var(--jv-accent));
+	background: linear-gradient(180deg, var(--jv-accent-lift), var(--jv-accent));
 	border-color: var(--jv-accent);
 	box-shadow:
 		var(--jv-glow-lg),
@@ -1019,7 +1060,8 @@
 .console input[type='number'],
 .console input[type='search'],
 .console select,
-.console textarea {
+.console textarea,
+.jv-alerts input[type='text'] {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-sm);
 	color: var(--jv-text-bright);
@@ -1033,7 +1075,8 @@
 		box-shadow var(--jv-dur-fast) var(--jv-ease-out);
 }
 .console input::placeholder,
-.console textarea::placeholder {
+.console textarea::placeholder,
+.jv-alerts input::placeholder {
 	color: var(--jv-text-dim);
 	opacity: 0.8;
 }
@@ -1086,7 +1129,8 @@
 	margin-bottom: var(--jv-space-3);
 	animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 }
-.console .err {
+.console .err,
+.jv-alerts .err {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-xs);
 	letter-spacing: var(--jv-track-tight);

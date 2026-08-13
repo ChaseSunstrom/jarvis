@@ -15,7 +15,6 @@ import {
 	parseAllowedOrigins as parseAllowedOriginsJs,
 	attachWsProxy
 } from '../../../server/ws-proxy.js';
-// @ts-expect-error - plain .mjs test double, no types
 import { startMockHA, MOCK_TOKEN } from '../../../../tests/web/mock-ha.mjs';
 
 const CASES: Record<string, string | undefined>[] = [

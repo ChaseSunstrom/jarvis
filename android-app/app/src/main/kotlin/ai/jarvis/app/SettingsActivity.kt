@@ -123,12 +123,7 @@ class SettingsActivity : Activity() {
         urlField = JarvisUi.field(ctx, "http://192.168.2.10:8123", config.serverUrl)
         col.addView(urlField, matchWidth())
         col.addView(
-            explain(
-                ctx,
-                "The address you reach jarvis-core on over LAN or WireGuard. Plain http is " +
-                    "accepted only for private addresses, and only for the hosts listed in " +
-                    "res/xml/network_security_config.xml."
-            )
+            explain(ctx, getString(R.string.settings_server_url_explain))
         )
 
         col.addView(JarvisUi.label(ctx, "Access token"))
@@ -141,11 +136,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            explain(
-                ctx,
-                "Create it in the Jarvis management UI. It is stored on this device only, is " +
-                    "excluded from backups, and is never sent anywhere but your server."
-            )
+            explain(ctx, getString(R.string.settings_token_explain))
         )
 
         col.addView(JarvisUi.label(ctx, "Pipeline name"))
@@ -156,7 +147,7 @@ class SettingsActivity : Activity() {
         deviceNameField = JarvisUi.field(ctx, "This phone", config.deviceName)
         col.addView(deviceNameField, matchWidth())
         col.addView(
-            explain(ctx, "Shown on the server when this device registers. Device id: ${config.deviceId}")
+            explain(ctx, getString(R.string.settings_device_name_explain, config.deviceId))
         )
 
         // --- voice ----------------------------------------------------------
@@ -165,11 +156,7 @@ class SettingsActivity : Activity() {
         wakeEnabled = switchRow(ctx, "Listen for \"Hey Jarvis\"", config.wakeWordEnabled)
         col.addView(wakeEnabled, matchWidth())
         col.addView(
-            explain(
-                ctx,
-                "Android gives third-party apps no low-power hotword path, so always-on " +
-                    "detection means a genuinely open mic and real battery cost."
-            )
+            explain(ctx, getString(R.string.settings_wake_word_explain))
         )
 
         // Whether listening can come back on its own after a restart, which is
@@ -198,15 +185,7 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "On this phone"))
         col.addView(
-            explain(
-                ctx,
-                "Off, the microphone streams continuously to your server, which does the " +
-                    "detecting — everything the room says, all the time. On, the phone " +
-                    "decides for itself and nothing is sent until you have said the name. " +
-                    "The models are about 3.6 MB and come from YOUR server, not from the " +
-                    "internet: Jarvis mirrors them so the phone never has to talk to anyone " +
-                    "else."
-            )
+            explain(ctx, getString(R.string.settings_on_device_explain))
         )
         wakeOnDevice = switchRow(ctx, "Detect \u201CHey Jarvis\u201D on this phone", config.wakeWordOnDevice)
         // Every one of these switches has a line of status under it that says
@@ -234,13 +213,7 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "Speech to text"))
         col.addView(
-            explain(
-                ctx,
-                "Separate from the models above. Transcription uses Android's own " +
-                    "offline recogniser, which is part of the system rather than " +
-                    "something Jarvis can download \u2014 if this phone does not have one, " +
-                    "the line below says so."
-            )
+            explain(ctx, getString(R.string.settings_stt_explain))
         )
         sttOnDevice = switchRow(ctx, "Transcribe on this phone", config.sttOnDevice)
         sttOnDevice.setOnCheckedChangeListener { _, _ ->
@@ -261,35 +234,14 @@ class SettingsActivity : Activity() {
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "In the car"))
         col.addView(
-            explain(
-                ctx,
-                "Jarvis has an Android Auto screen — the orb, what you said and the " +
-                    "reply — but a SIDELOADED build never appears in the car. Android " +
-                    "Auto's \"unknown sources\" developer setting covers media, messaging " +
-                    "and parked apps, and Google documents that it does not cover apps " +
-                    "built with the Android for Cars App Library. This one is.\n\n" +
-                    "Two ways to see it: install from Google Play (an internal-testing " +
-                    "track with one tester is enough — installing from Play is what makes " +
-                    "the app a trusted source), or run the Desktop Head Unit on a computer " +
-                    "and connect this phone to it, which is the supported way to develop " +
-                    "against it. docs/android-auto.md has both.\n\n" +
-                    "Voice in the car is separate and is not affected: \"Hey Jarvis\" runs " +
-                    "on this phone while Android Auto is connected, and the reply plays " +
-                    "through the car's speakers over Bluetooth."
-            )
+            explain(ctx, getString(R.string.settings_car_explain))
         )
 
         // --- whose voice ------------------------------------------------------
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "Whose voice"))
         col.addView(
-            explain(
-                ctx,
-                "Jarvis can be told to answer only you. Enrolling teaches it what you " +
-                    "sound like; whether it refuses anyone else is a setting on the server, " +
-                    "so that turning on the thing which can refuse you is never a switch " +
-                    "you hit by accident here."
-            )
+            explain(ctx, getString(R.string.settings_voice_identity_explain))
         )
         col.addView(
             JarvisUi.ghost(ctx, "TEACH JARVIS MY VOICE") {
@@ -298,44 +250,31 @@ class SettingsActivity : Activity() {
             matchWidth()
         )
         col.addView(
-            explain(
-                ctx,
-                "Transcribing on this phone and \"only my voice\" cannot both be in " +
-                    "force: the check runs on your server, on the sound, and a turn this " +
-                    "phone transcribes sends words instead. Nothing is left to you — " +
-                    "while the gate is enforcing, on-device transcription suspends itself " +
-                    "and the line above says so. It cannot simply move here either: " +
-                    "Android's offline recogniser owns the microphone and hands this app " +
-                    "partial text and a level, never the audio."
-            )
+            explain(ctx, getString(R.string.settings_voice_identity_conflict_explain))
         )
 
         // --- when to listen ---------------------------------------------------
         //
-        // Kept together and labelled for what they are. `WakeWordGate` needs to
-        // know whether the phone is at home, and nothing on this device produces
-        // that signal — there is no home-presence source anywhere in the app.
-        // Enforcing the gate without one would mean "not at home" always, which
-        // would silence the wake word everywhere except a car. So these are
-        // stored and not yet applied, and a settings screen that implied
-        // otherwise would be lying. One admission, in one place, instead of the
-        // two paragraphs this used to spend saying it.
+        // This section was labelled "saved, not yet in effect" and it was
+        // telling the truth: `WakeWordGate` implemented the whole policy,
+        // `shouldListen` had no production caller, and four preference keys were
+        // written here and read by nothing. `WakeListenWatch` is the missing
+        // half — it gathers the signals and consults the gate before every
+        // microphone open — so the label goes.
+        //
+        // The one thing that has NOT changed is that "am I at home" is usually
+        // unknowable on a phone. What changed is that it is now modelled as
+        // unknown rather than as false, and the explanation below says exactly
+        // what happens then. See `WakeWordGate.decide`.
 
         col.addView(JarvisUi.spacer(ctx, 12))
-        col.addView(JarvisUi.label(ctx, "When to listen — saved, not yet in effect"))
+        col.addView(JarvisUi.label(ctx, "When to listen"))
         wakeInCar = switchRow(ctx, "While car Bluetooth is connected", config.wakeInCar)
         col.addView(wakeInCar, matchWidth())
         wakeAtHome = switchRow(ctx, "While at home, during waking hours", config.wakeAtHome)
         col.addView(wakeAtHome, matchWidth())
         col.addView(hourRow(ctx), matchWidth())
-        col.addView(
-            explain(
-                ctx,
-                "Jarvis has no home-presence signal on this device yet, so these are " +
-                    "remembered but not applied — the switch above is what decides. A window " +
-                    "that wraps midnight (22 to 6) is fine."
-            )
-        )
+        col.addView(explain(ctx, getString(R.string.settings_when_to_listen_explain)))
 
         // --- headset / earpiece -----------------------------------------------
         //
@@ -357,15 +296,7 @@ class SettingsActivity : Activity() {
         headsetWarmLink = switchRow(ctx, "Keep listening after a reply", config.warmLink)
         col.addView(headsetWarmLink, matchWidth())
         col.addView(
-            explain(
-                ctx,
-                "Only when the headset has a microphone of its own. Jarvis then captures " +
-                    "through the phone's call path, where the hardware echo canceller stops " +
-                    "it hearing its own reply two centimetres away — at some cost to " +
-                    "transcription accuracy, which is why it is not the default. Keeping " +
-                    "the mic open after a reply needs that canceller, so it does nothing on " +
-                    "a route without one. The button never answers a confirmation prompt."
-            )
+            explain(ctx, getString(R.string.settings_headset_explain))
         )
 
         // --- permissions ------------------------------------------------------
@@ -393,12 +324,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            explain(
-                ctx,
-                "System check lists every permission and special access Jarvis can use, " +
-                    "whether it is granted, and what stops working without it. None of them " +
-                    "changes what tier an action is — they only decide whether it is possible."
-            )
+            explain(ctx, getString(R.string.settings_permissions_explain))
         )
 
         // --- other screens --------------------------------------------------
@@ -421,15 +347,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            explain(
-                ctx,
-                "Phone tasks are what THIS device does on its own \u2014 a geofence, a media " +
-                    "button, a rule pushed to it. The house's automations live in the " +
-                    "console's AUTOMATIONS tab, on this phone and in a browser alike.\n\n" +
-                    "APPROVALS is where you say which actions Jarvis may run without asking. " +
-                    "The tier is the default and it is a good one; this is for the handful " +
-                    "where you disagree with it."
-            )
+            explain(ctx, getString(R.string.settings_more_explain))
         )
         col.addView(
             row(
@@ -453,11 +371,7 @@ class SettingsActivity : Activity() {
             )
         )
         col.addView(
-            explain(
-                ctx,
-                "The audit log records every action this device actually executed, with its " +
-                    "tier and how it was authorised. Both it and the crash logs are local and yours."
-            )
+            explain(ctx, getString(R.string.settings_logs_explain))
         )
 
         // --- updates ----------------------------------------------------------
@@ -519,7 +433,13 @@ class SettingsActivity : Activity() {
         val framed = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         framed.addView(
             ConsoleFrame.tabBar(this, current = null, onPhone = true) { tab ->
-                startActivity(ManagementActivity.intent(this, tab))
+                // NOT startActivity directly. SAVE is the last control on a
+                // screen several screens long, and this strip is at the very
+                // top: tapping a tab after editing the token used to leave the
+                // screen and discard every edited field, silently, with the
+                // typing still on screen behind the new activity for a frame.
+                // See [leaveIfSaved].
+                leaveIfSaved { startActivity(ManagementActivity.intent(this, tab)) }
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -584,18 +504,132 @@ class SettingsActivity : Activity() {
         }
     }
 
+    // --- leaving with unsaved edits -----------------------------------------
+
+    /**
+     * Every field's saved value, as one comparable string.
+     *
+     * Compared against the same function run over the *controls* — see
+     * [isDirty]. A snapshot rather than a per-control dirty flag because there
+     * are eleven of them across four types (EditText, Switch, two chooser
+     * indices) and a flag on each is eleven places to forget one; this is one
+     * place, and adding a control that is not in it is a visible omission rather
+     * than a silent one.
+     */
+    private fun savedSnapshot(): String = listOf(
+        ServerUrl.normalize(config.serverUrl),
+        config.token,
+        config.pipeline,
+        config.deviceName,
+        config.allowPrereleaseUpdates,
+        config.wakeWordEnabled,
+        config.wakeWordOnDevice,
+        config.sttOnDevice,
+        config.wakeInCar,
+        config.wakeAtHome,
+        config.wakingHourStart,
+        config.wakingHourEnd,
+        config.headsetMode,
+        config.headsetButton,
+        config.warmLink,
+    ).joinToString(" ")
+
+    private fun editedSnapshot(): String = listOf(
+        ServerUrl.normalize(urlField.text.toString()),
+        tokenField.text.toString().trim(),
+        // Through the same normalisation `save` applies, or an empty pipeline
+        // box would read as an edit against the default it is about to become.
+        pipelineField.text.toString().trim().ifEmpty { JarvisConfig.DEFAULT_PIPELINE },
+        deviceNameField.text.toString().trim().ifEmpty { config.deviceName },
+        prereleaseUpdates.isChecked,
+        wakeEnabled.isChecked,
+        wakeOnDevice.isChecked,
+        sttOnDevice.isChecked,
+        wakeInCar.isChecked,
+        wakeAtHome.isChecked,
+        wakingStart,
+        wakingEnd,
+        headsetMode.isChecked,
+        // The two that read `headsetMode` in their own getters, mirrored here so
+        // the comparison sees what `save` will actually store rather than what
+        // the switch shows.
+        headsetMode.isChecked && headsetButton.isChecked,
+        headsetMode.isChecked && headsetWarmLink.isChecked,
+    ).joinToString(" ")
+
+    /**
+     * True when something on screen differs from what is stored.
+     *
+     * Reported as settings silently vanishing: the console tab strip at the top
+     * of this screen went straight to `startActivity`, and Back went straight
+     * out, while `save()` only ever ran from the SAVE pill at the bottom of a
+     * long ScrollView. Editing the server URL and then tapping any tab — the
+     * most natural thing to do on a screen with a nav bar across the top —
+     * discarded the edit with no warning and no way to get it back.
+     */
+    private fun isDirty(): Boolean = try {
+        savedSnapshot() != editedSnapshot()
+    } catch (t: Throwable) {
+        // A control that has not been built yet cannot be dirty, and a
+        // half-constructed screen must not trap the user on it.
+        false
+    }
+
+    /**
+     * Run [go], having given the user a chance to keep their edits.
+     *
+     * Three answers, and the third is the one that matters: SAVE runs the same
+     * validation the pill does, so leaving cannot store an invalid URL by the
+     * side door — if it refuses, the user stays here with the error, which is
+     * the correct outcome and not a dropped navigation.
+     */
+    private fun leaveIfSaved(go: () -> Unit) {
+        if (!isDirty()) {
+            go()
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Unsaved changes")
+            .setMessage(
+                "You have changed something on this screen. Leaving now discards it."
+            )
+            .setPositiveButton("SAVE") { _, _ ->
+                // `save()` finishes this activity on success, so the
+                // destination is started from the same place SAVE lands.
+                if (save()) go()
+            }
+            .setNegativeButton("DISCARD") { _, _ -> go() }
+            .setNeutralButton("KEEP EDITING", null)
+            .show()
+    }
+
+    @Deprecated("Predictive back is disabled in the manifest, so this is the back path.")
+    override fun onBackPressed() {
+        // Back is the other way off this screen, and it discarded edits exactly
+        // as silently as the tab strip did.
+        leaveIfSaved {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
+    }
+
     // --- persistence --------------------------------------------------------
 
-    private fun save() {
+    /**
+     * @return true when everything was stored. False means a validation refused
+     *   it and the screen has said why — which [leaveIfSaved] needs, because
+     *   "SAVE and then leave" must not leave when the save did not happen.
+     */
+    private fun save(): Boolean {
         val check = ServerUrl.check(urlField.text.toString())
         if (!check.isValid) {
             toast(check.error ?: "Invalid server URL")
-            return
+            return false
         }
         val token = tokenField.text.toString().trim()
         if (token.isEmpty()) {
             toast("An access token is required")
-            return
+            return false
         }
 
         config.serverUrl = check.normalized
@@ -652,6 +686,7 @@ class SettingsActivity : Activity() {
         check.warning?.let { toast(it) }
         toast("Saved")
         finish()
+        return true
     }
 
     // --- token entry --------------------------------------------------------

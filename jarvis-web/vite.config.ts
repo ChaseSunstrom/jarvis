@@ -21,7 +21,11 @@ export default defineConfig({
 				});
 
 				const { attachWsProxy } = await import('./server/ws-proxy.js');
-				if (server.httpServer) attachWsProxy(server.httpServer);
+				// Vite types `httpServer` as http.Server OR http2.Http2SecureServer,
+				// because a dev server configured for https/2 is the latter. This one
+				// is not — there is no https block in this config — and the relay only
+				// ever asks it for 'upgrade', which both of them have.
+				if (server.httpServer) attachWsProxy(server.httpServer as import('node:http').Server);
 			}
 		}
 	],

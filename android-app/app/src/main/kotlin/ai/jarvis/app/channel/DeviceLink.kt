@@ -1,6 +1,8 @@
 package ai.jarvis.app.channel
 
+import android.content.Context
 import android.util.Log
+import ai.jarvis.app.assist.ConversationRegistry
 import ai.jarvis.app.automation.policy.TrustLevel
 import ai.jarvis.app.automation.tasks.AskJarvisClient
 import ai.jarvis.app.automation.tasks.DeviceEventSink
@@ -17,7 +19,7 @@ import org.json.JSONObject
  * server attached at all. This class fills them:
  *
  * ```kotlin
- * val link = DeviceLink(channel)
+ * val link = DeviceLink(channel, appContext)
  * AutomationRuntime.deviceEvents = link
  * AutomationRuntime.askJarvis = link
  * channel.start(subscribeToBridgeEvents = false)   // ← note the false
@@ -33,15 +35,14 @@ import org.json.JSONObject
  * automation module, never back, so nothing in `automation/` needs to know a
  * WebSocket exists.
  */
-class DeviceLink(private val channel: JarvisChannel) : DeviceEventSink, AskJarvisClient {
-
+class DeviceLink(
+    private val channel: JarvisChannel,
     /**
-     * Conversation continuity for `ask_jarvis`, so a follow-up question lands in
-     * the same thread rather than starting a fresh one. Server-issued, opaque,
-     * and dropped whenever the channel restarts.
+     * For [ConversationRegistry]. Application context — this object outlives
+     * every screen.
      */
-    @Volatile
-    private var conversationId: String? = null
+    private val context: Context,
+) : DeviceEventSink, AskJarvisClient {
 
     override val isConnected: Boolean get() = channel.isRegistered
 
@@ -87,7 +88,15 @@ class DeviceLink(private val channel: JarvisChannel) : DeviceEventSink, AskJarvi
         if (text.isEmpty()) return null
 
         val payload = JSONObject().put("text", text)
-        conversationId?.let { payload.put("conversation_id", it) }
+        // THE SHARED THREAD, not a third private copy of one.
+        //
+        // This used to be a `@Volatile private var conversationId` of its own —
+        // the second of three unconnected conversation-id state machines on this
+        // device (the others being `AssistPipelineClient`'s and the companion
+        // field nothing read). A task asking Jarvis something and the user
+        // asking Jarvis something were two separate conversations on one phone,
+        // which is exactly what `docs/cross-device.md` says does not happen.
+        ConversationRegistry.current(context)?.let { payload.put("conversation_id", it) }
 
         val reply = channel.request(TYPE_CONVERSATION, payload, timeoutMs) ?: return null
         if (!ChannelFrames.isSuccess(reply)) {
@@ -95,7 +104,8 @@ class DeviceLink(private val channel: JarvisChannel) : DeviceEventSink, AskJarvi
             return null
         }
         val result = reply.optJSONObject("result") ?: return null
-        result.optString("conversation_id").takeIf { it.isNotEmpty() }?.let { conversationId = it }
+        result.optString("conversation_id").takeIf { it.isNotEmpty() }
+            ?.let { ConversationRegistry.remember(context, it) }
 
         val speech = result.optJSONObject("response")
             ?.optJSONObject("speech")
@@ -107,7 +117,7 @@ class DeviceLink(private val channel: JarvisChannel) : DeviceEventSink, AskJarvi
 
     /** Forget the conversation thread, e.g. when the user clears history. */
     fun resetConversation() {
-        conversationId = null
+        ConversationRegistry.clear(context)
     }
 
     // --- Map -> JSON ---------------------------------------------------------

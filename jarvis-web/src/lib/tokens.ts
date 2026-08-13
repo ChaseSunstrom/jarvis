@@ -18,6 +18,10 @@ export const TOKENS = {
 	// wrong rather than something is waiting.
 	'--jv-warn': '#ffb347',
 	'--jv-accent-deep': '#2bb0d8',
+	// The lit top edge of a filled control. A surface lit from above is
+	// brighter where the light lands; this is that highlight, and it was a
+	// raw hex sitting in chrome.css beside a rule forbidding raw hexes.
+	'--jv-accent-lift': '#7ee6ff',
 	'--jv-accent-ink': '#04121a',
 	'--jv-amber': '#ff9e2c',
 	'--jv-gold': '#ffcf5c',
@@ -36,13 +40,18 @@ export const TOKENS = {
 	'--jv-font-chrome':
 		"'SFMono-Regular', ui-monospace, 'Cascadia Code', 'Cascadia Mono', Menlo, Consolas, monospace",
 	'--jv-font-body': "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-	'--jv-fs-2xs': '0.55rem',
-	'--jv-fs-xs': '0.62rem',
-	'--jv-fs-sm': '0.68rem',
-	'--jv-fs-md': '0.8rem',
-	'--jv-fs-lg': '0.95rem',
-	'--jv-fs-xl': 'clamp(0.95rem, 2vw, 1.15rem)',
-	'--jv-fs-display': 'clamp(1.2rem, 3.2vw, 1.9rem)',
+	// The type scale, and its floor. These used to start at 0.55rem — under nine
+	// pixels — for every pill, entity id and caption in the console, with 0.8rem
+	// as the body size: beautiful in a screenshot, unreadable at arm's length on
+	// a wall panel. The steps keep their ratios, so it is the same look one size
+	// up, and `textSize.ts` scales the whole set from the root element.
+	'--jv-fs-2xs': '0.72rem',
+	'--jv-fs-xs': '0.8rem',
+	'--jv-fs-sm': '0.88rem',
+	'--jv-fs-md': '1rem',
+	'--jv-fs-lg': '1.15rem',
+	'--jv-fs-xl': 'clamp(1.05rem, 2vw, 1.35rem)',
+	'--jv-fs-display': 'clamp(1.35rem, 3.2vw, 2rem)',
 	'--jv-track-tight': '0.08em',
 	'--jv-track-chrome': '0.16em',
 	'--jv-track-wide': '0.24em',

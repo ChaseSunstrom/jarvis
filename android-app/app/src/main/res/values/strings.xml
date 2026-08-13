@@ -32,4 +32,118 @@
 
     <!-- Quick-settings tile. Short enough to survive the shade's two-line cap. -->
     <string name="tile_wake_word">Hey Jarvis</string>
+
+    <!-- ===================================================================
+         Settings screen prose.
+
+         Every user-visible sentence in this app was a Kotlin literal, which
+         made the settings screen — fourteen sections, around 570 words of
+         explanation — impossible to translate, impossible to proof-read
+         without opening a 1200-line Activity, and impossible to change
+         without a Kotlin diff. The short control labels stay in Kotlin (they
+         are read back by `console_parity_test.py` and `on_device_turn_test.py`
+         as structural markers, and they are the words the layout is built
+         around); the paragraphs live here, where prose belongs.
+         =================================================================== -->
+
+    <string name="settings_server_url_explain">The address you reach jarvis-core on over LAN or
+        WireGuard. Plain http is accepted only for private addresses, and only for the hosts listed
+        in res/xml/network_security_config.xml.</string>
+
+    <string name="settings_token_explain">Create it in the Jarvis management UI. It is stored on
+        this device only, is excluded from backups, and is never sent anywhere but your
+        server.</string>
+
+    <string name="settings_device_name_explain">Shown on the server when this device registers.
+        Device id: %1$s</string>
+
+    <string name="settings_wake_word_explain">Android gives third-party apps no low-power hotword
+        path, so always-on detection means a genuinely open mic and real battery cost.</string>
+
+    <string name="settings_on_device_explain">Off, the microphone streams continuously to your
+        server, which does the detecting — everything the room says, all the time. On, the phone
+        decides for itself and nothing is sent until you have said the name. The models are about
+        3.6 MB and come from YOUR server, not from the internet: Jarvis mirrors them so the phone
+        never has to talk to anyone else.</string>
+
+    <string name="settings_stt_explain">Separate from the models above. Transcription uses
+        Android\'s own offline recogniser, which is part of the system rather than something Jarvis
+        can download — if this phone does not have one, the line below says so.</string>
+
+    <string name="settings_car_explain">Jarvis has an Android Auto screen — the orb, what you said
+        and the reply — but a SIDELOADED build never appears in the car. Android Auto\'s "unknown
+        sources" developer setting covers media, messaging and parked apps, and Google documents
+        that it does not cover apps built with the Android for Cars App Library. This one is.\n\nTwo
+        ways to see it: install from Google Play (an internal-testing track with one tester is
+        enough — installing from Play is what makes the app a trusted source), or run the Desktop
+        Head Unit on a computer and connect this phone to it, which is the supported way to develop
+        against it. docs/android-auto.md has both.\n\nVoice in the car is separate and is not
+        affected: "Hey Jarvis" runs on this phone while Android Auto is connected, and the reply
+        plays through the car\'s speakers over Bluetooth.</string>
+
+    <string name="settings_voice_identity_explain">Jarvis can be told to answer only you. Enrolling
+        teaches it what you sound like; whether it refuses anyone else is a setting on the server,
+        so that turning on the thing which can refuse you is never a switch you hit by accident
+        here.</string>
+
+    <string name="settings_voice_identity_conflict_explain">Transcribing on this phone and "only my
+        voice" cannot both be in force: the check runs on your server, on the sound, and a turn this
+        phone transcribes sends words instead. Nothing is left to you — while the gate is enforcing,
+        on-device transcription suspends itself and the line above says so. It cannot simply move
+        here either: Android\'s offline recogniser owns the microphone and hands this app partial
+        text and a level, never the audio.</string>
+
+    <!-- The section that used to be labelled "saved, not yet in effect". It is
+         in effect now (WakeListenWatch consults WakeWordGate before every
+         microphone open), and the honest remaining limit is the place signal —
+         so that is what this says, rather than claiming a geofence everyone
+         has. -->
+    <string name="settings_when_to_listen_explain">These are in force. Jarvis asks this policy
+        before it opens the microphone, and again whenever a headset or a car stereo connects,
+        whenever you cross a geofence, and on the hour.\n\nA phone usually cannot tell whether it is
+        at home. Jarvis only knows if you have a location automation whose geofence is called
+        "home" — with one, "while at home" means what it says, and leaving the house stops the
+        listening. Without one, being at home is treated as the answer, so the hours below are what
+        decides: outside them nothing is listening unless you are in the car or wearing a headset. A
+        window that wraps midnight (22 to 6) is fine.</string>
+
+    <string name="settings_headset_explain">Only when the headset has a microphone of its own.
+        Jarvis then captures through the phone\'s call path, where the hardware echo canceller stops
+        it hearing its own reply two centimetres away — at some cost to transcription accuracy,
+        which is why it is not the default. Keeping the mic open after a reply needs that canceller,
+        so it does nothing on a route without one. The button never answers a confirmation
+        prompt.</string>
+
+    <string name="settings_permissions_explain">System check lists every permission and special
+        access Jarvis can use, whether it is granted, and what stops working without it. None of
+        them changes what tier an action is — they only decide whether it is possible.</string>
+
+    <string name="settings_more_explain">Phone tasks are what THIS device does on its own — a
+        geofence, a media button, a rule pushed to it. The house\'s automations live in the
+        console\'s AUTOMATIONS tab, on this phone and in a browser alike.\n\nAPPROVALS is where you
+        say which actions Jarvis may run without asking. The tier is the default and it is a good
+        one; this is for the handful where you disagree with it.</string>
+
+    <string name="settings_logs_explain">The audit log records every action this device actually
+        executed, with its tier and how it was authorised. Both it and the crash logs are local and
+        yours.</string>
+
+    <!-- ===================================================================
+         Accessibility labels. TalkBack reads these; nothing else does.
+
+         Before them the app had ZERO contentDescription, announceForAccessibility
+         or accessibilityLiveRegion calls outside automation/accessibility/ —
+         which READS other apps' screens. The orb, the state captions, every
+         tool-activity row and every ghost/pill button were unlabelled, and a
+         pipeline that moved from listening to thinking to speaking announced
+         nothing at all. See `tools/accessibility_labels_test.py`.
+         =================================================================== -->
+
+    <string name="a11y_orb">Jarvis</string>
+    <string name="a11y_orb_state">Jarvis: %1$s</string>
+    <string name="a11y_transcript">What you said: %1$s</string>
+    <string name="a11y_response">Jarvis said: %1$s</string>
+    <string name="a11y_tool_activity">Jarvis is using %1$s</string>
+    <string name="a11y_question">Jarvis asks: %1$s</string>
+    <string name="a11y_approval">Approval needed: %1$s</string>
 </resources>

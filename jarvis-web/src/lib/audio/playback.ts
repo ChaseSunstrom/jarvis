@@ -5,7 +5,11 @@ export class Player {
 	private ctx: AudioContext | null = null;
 	private analyser: AnalyserNode | null = null;
 	private sources = new Set<AudioBufferSourceNode>();
-	private timeData: Uint8Array | null = null;
+	// `Uint8Array<ArrayBuffer>`, not a bare `Uint8Array`: since TypeScript 5.7
+	// the array is generic in its buffer, a bare one widens to ArrayBufferLike,
+	// and `getByteTimeDomainData` will not take a view that might be over a
+	// SharedArrayBuffer.
+	private timeData: Uint8Array<ArrayBuffer> | null = null;
 
 	private ensure(): AudioContext {
 		if (!this.ctx) {

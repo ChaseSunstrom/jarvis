@@ -71,6 +71,128 @@ class WakeWordGate(
     }
 
     /**
+     * The gate applied to what a phone can actually observe, plus the user's
+     * two opt-ins. **This is the production entry point**; [shouldListen] is
+     * the policy underneath it.
+     *
+     * ## Why this exists at all
+     *
+     * [shouldListen] takes `isHome: Boolean` — a fact — and for the life of this
+     * app no caller could supply one, so the whole gate sat unwired: the policy
+     * was written, unit-tested and described in `DEVIATIONS.md` as shipped
+     * behaviour, and `shouldListen` had no production caller. That is the
+     * `MediaButtonGate` shape exactly, and `no_empty_seams_test.py` carried four
+     * settings in its exceptions list admitting it.
+     *
+     * The missing half was never the policy. It was that "am I at home" has
+     * three answers on a phone, not two, and a `Boolean` cannot hold the third.
+     *
+     * ## The three answers, and what each one means here
+     *
+     *  * **yes / no** — this phone has a place signal and it is definite. The
+     *    home rule applies as written.
+     *  * **unknown** ([atHome] null) — nothing on this device can say. That is
+     *    the ordinary case: a home signal exists only when the user has
+     *    configured a geofence for it (see
+     *    [ai.jarvis.app.assist.WakeListenWatch]), and most have not.
+     *
+     * An unknown is resolved as *at home*, deliberately, and it is the one
+     * decision in this file worth arguing with. The alternative — resolving it
+     * as away — reads "we cannot tell where you are, so stop listening", which
+     * silences always-on detection everywhere except a car for every user who
+     * has not drawn a circle on a map. That is not a battery policy, it is the
+     * feature switched off. Resolving it as home instead means the *hour* window
+     * still applies, which is the half of the rule this phone genuinely knows
+     * the answer to: the clock is not in any doubt.
+     *
+     * @param atHome inside the home zone, or null when this device has no place
+     *   signal at all.
+     * @param listenAtHome the user's "while at home, during waking hours" switch.
+     *   Off, the home rule cannot open the microphone whatever the place signal
+     *   says, and only a car or a worn headset can.
+     * @param listenInCar the user's "while car Bluetooth is connected" switch.
+     */
+    fun decide(
+        atHome: Boolean?,
+        carBtConnected: Boolean,
+        headsetCapture: Boolean,
+        hour: Int,
+        listenAtHome: Boolean,
+        listenInCar: Boolean,
+    ): Decision {
+        val car = carBtConnected && listenInCar
+        val home = listenAtHome && (atHome ?: true)
+        val listen = shouldListen(
+            isHome = home,
+            carBtConnected = car,
+            hour = hour,
+            headsetCapture = headsetCapture,
+        )
+        val reason = when {
+            headsetCapture -> Reason.HEADSET
+            car -> Reason.CAR
+            carBtConnected -> Reason.CAR_RULE_OFF
+            !listenAtHome -> Reason.HOME_RULE_OFF
+            atHome == false -> Reason.AWAY
+            listen -> Reason.WAKING_HOURS
+            else -> Reason.QUIET_HOURS
+        }
+        return Decision(listen, reason)
+    }
+
+    /**
+     * Why the gate said what it said.
+     *
+     * Carried rather than derived by the caller because the notification is the
+     * only place a user ever sees this: a wake listener that has quietly gone
+     * silent because it is 03:00 is indistinguishable from one that is broken,
+     * and "Quiet until 07:00" is the difference between a policy and a bug.
+     */
+    data class Decision(val listen: Boolean, val reason: Reason) {
+
+        /**
+         * One line for the foreground notification. Present tense and specific:
+         * the user is reading it while the thing it describes is happening.
+         */
+        fun explain(wakingHourStart: Int, wakingHourEnd: Int): String = when (reason) {
+            Reason.HEADSET -> "Listening — your headset is in."
+            Reason.CAR -> "Listening — connected to the car."
+            Reason.CAR_RULE_OFF ->
+                "Not listening in the car — that switch is off in Settings."
+            Reason.HOME_RULE_OFF ->
+                "Not listening — “while at home” is off, so only the car or a " +
+                    "headset opens the microphone."
+            Reason.AWAY -> "Not listening — you are away from home."
+            Reason.WAKING_HOURS -> "Say “Hey Jarvis” at any time"
+            Reason.QUIET_HOURS -> "Quiet until %02d:00 — these are your waking hours (%02d:00–%02d:00)."
+                .format(wakingHourStart, wakingHourStart, wakingHourEnd % 24)
+        }
+    }
+
+    enum class Reason {
+        /** A worn headset with the user's capture opt-in. Beats everything. */
+        HEADSET,
+
+        /** Car Bluetooth, with the car switch on. */
+        CAR,
+
+        /** Car Bluetooth is connected but the user turned that rule off. */
+        CAR_RULE_OFF,
+
+        /** The "while at home" switch is off. */
+        HOME_RULE_OFF,
+
+        /** A place signal says this phone is not at home. */
+        AWAY,
+
+        /** Inside the waking-hours window. */
+        WAKING_HOURS,
+
+        /** Outside it. */
+        QUIET_HOURS,
+    }
+
+    /**
      * True if [hour] falls inside [wakingHourStart, wakingHourEnd).
      * Windows that wrap midnight (start > end, e.g. 22..6) are supported.
      */

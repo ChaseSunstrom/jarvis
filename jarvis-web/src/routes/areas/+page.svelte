@@ -240,30 +240,44 @@
 	{/if}
 {/each}
 
+<!--
+  Everything with no area.
+
+  The list inside is guarded by `loading`, and that is the whole point of the
+  guard: this section sits OUTSIDE the loading branch above, so before the first
+  registry answer arrived it drew an empty list — and an empty list here reads
+  "Everything has an area", which is a claim about a house the page had not yet
+  been told anything about. It is also the exact opposite of the truth on a
+  fresh install, where nothing has an area at all.
+-->
 <section class="panel" data-testid="area-unassigned">
 	<div class="panel-head">
 		<span>Unassigned</span>
-		<span class="muted">{(assignments.get(UNASSIGNED) ?? []).length}</span>
+		<span class="muted">{loading ? '…' : (assignments.get(UNASSIGNED) ?? []).length}</span>
 	</div>
-	{#each assignments.get(UNASSIGNED) ?? [] as entry (entry.entity_id)}
-		<div class="row">
-			<span class="name">
-				<b>{friendlyName(stateMap.get(entry.entity_id), entry)}</b>
-				<span class="eid">{entry.entity_id}</span>
-			</span>
-			<select
-				data-testid="assign-{entry.entity_id}"
-				aria-label="Area for {entry.entity_id}"
-				value=""
-				onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
-			>
-				<option value="">— unassigned —</option>
-				{#each areas as option (areaKey(option))}
-					<option value={areaKey(option)}>{option.name}</option>
-				{/each}
-			</select>
-		</div>
+	{#if loading}
+		<Skeleton rows={3} label="Loading unassigned entities" />
 	{:else}
-		<p class="muted">Everything has an area.</p>
-	{/each}
+		{#each assignments.get(UNASSIGNED) ?? [] as entry (entry.entity_id)}
+			<div class="row">
+				<span class="name">
+					<b>{friendlyName(stateMap.get(entry.entity_id), entry)}</b>
+					<span class="eid">{entry.entity_id}</span>
+				</span>
+				<select
+					data-testid="assign-{entry.entity_id}"
+					aria-label="Area for {entry.entity_id}"
+					value=""
+					onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
+				>
+					<option value="">— unassigned —</option>
+					{#each areas as option (areaKey(option))}
+						<option value={areaKey(option)}>{option.name}</option>
+					{/each}
+				</select>
+			</div>
+		{:else}
+			<p class="muted" data-testid="all-assigned">Everything has an area.</p>
+		{/each}
+	{/if}
 </section>

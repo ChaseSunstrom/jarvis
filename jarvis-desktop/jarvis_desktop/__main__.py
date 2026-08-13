@@ -8,9 +8,14 @@ Subcommands::
     python -m jarvis_desktop audit --limit 50
     python -m jarvis_desktop cron "*/15 9-17 * * mon-fri"
     python -m jarvis_desktop doctor           # what works on this machine
+    python -m jarvis_desktop status --watch   # what the running agent is doing
 
 ``run`` is the default, so ``python -m jarvis_desktop --server ... --token ...``
 does the obvious thing.
+
+``doctor`` and ``status`` answer two different questions and are both worth
+having: doctor is about this *machine* and can be run with nothing going on,
+status is about the *process* and is empty without one.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from typing import Any, Sequence
 
 from . import __version__
@@ -35,6 +41,7 @@ from .config import Config, load_config, normalize_server_url
 from .consent import build_gateway
 from .policy import ActionTier, PolicyStore, UserPolicy
 from .presence import PresenceReporter
+from .status import StatusSnapshot, StatusWriter
 from .triggers import CronSchedule, TriggerManager, build_triggers, next_fire_times
 
 _LOGGER = logging.getLogger("jarvis_desktop")
@@ -129,6 +136,18 @@ def build_parser() -> argparse.ArgumentParser:
     cron.add_argument("--count", type=int, default=5)
 
     sub("doctor", "report what this machine can and cannot do")
+
+    status = sub("status", "what the running agent is doing right now")
+    status.add_argument(
+        "--watch", action="store_true", help="redraw until interrupted"
+    )
+    status.add_argument(
+        "--interval", type=float, default=2.0, help="seconds between redraws with --watch"
+    )
+    status.add_argument(
+        "--limit", type=int, default=5, help="recent audit lines to show (0 for none)"
+    )
+    status.add_argument("--json", action="store_true")
 
     return parser
 
@@ -273,9 +292,69 @@ def cmd_cron(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_status(config: Config, args: argparse.Namespace) -> int:
+    """Print what the running agent is doing; ``--watch`` keeps printing.
+
+    Exit code 1 when there is no agent running (missing or stale status file),
+    so this doubles as a health check for a supervisor or a shell script — the
+    reason people reach for a status command at all.
+    """
+    from .status import StatusFile, render
+
+    store = StatusFile(config.status_path)
+    log = AuditLog(config.audit_path)
+    policy = PolicyStore(config.policy_path)
+    limit = max(0, args.limit)
+
+    def once() -> int:
+        snapshot = store.read()
+        entries = log.read(limit=limit) if limit else []
+        running = snapshot is not None and not snapshot.stale()
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "running": running,
+                        "status": snapshot.to_json() if snapshot else None,
+                        "recent": [e.to_json() for e in entries],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(
+                render(
+                    snapshot,
+                    entries,
+                    path=config.status_path,
+                    panic=policy.panic,
+                    automation_enabled=policy.automation_enabled,
+                )
+            )
+        return 0 if running else 1
+
+    if not args.watch:
+        return once()
+
+    interval = max(0.5, args.interval)
+    try:
+        while True:
+            if sys.stdout.isatty():
+                # Home, then clear: a redraw that scrolls is not a status
+                # display, it is a log. Only on a terminal, so piping `status
+                # --watch` into a file does not fill it with escape codes.
+                print("\x1b[H\x1b[2J", end="")
+            once()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        # ^C is how you leave a watch. It is not a failure.
+        return 0
+
+
 def cmd_doctor(config: Config) -> int:
     from .actions.clipboard import clipboard_backend
-    from .consent import TerminalConsentGateway, TkConsentGateway
+    from .consent import NotifyingDenyGateway, TerminalConsentGateway, TkConsentGateway
+    from .status import StatusFile
 
     ctx = build_context(config)
     registry = build_registry(config, PolicyStore(config.policy_path), AuditLog(config.audit_path), ctx=ctx)
@@ -290,6 +369,15 @@ def cmd_doctor(config: Config) -> int:
     for gateway in (TkConsentGateway(), TerminalConsentGateway()):
         print(f"  {gateway.name:<12} {'available' if gateway.usable() else 'not available'}")
     print("  deny-all     always (nothing is approved without a human)")
+    notice = NotifyingDenyGateway()
+    print(f"               refusals are announced via {notice.notifier.name}")
+    print()
+    snapshot = StatusFile(config.status_path).read()
+    if snapshot is None:
+        print(f"status        no agent running ({config.status_path})")
+    else:
+        state = "stale" if snapshot.stale() else ("connected" if snapshot.connected else "up")
+        print(f"status        {state}, pid {snapshot.pid} ({config.status_path})")
     print()
     print(f"clipboard     {clipboard_backend(ctx) or 'none - read/write unsupported'}")
     try:
@@ -327,14 +415,14 @@ async def cmd_run(config: Config, once: bool = False) -> int:
 
     policy = PolicyStore(config.policy_path)
     audit = AuditLog(config.audit_path)
-    consent = build_gateway(headless_deny=config.headless_deny)
-    registry = build_registry(config, policy, audit, consent=consent)
-    channel = DeviceChannel(config, registry)
 
+    # `emit` is written before the channel it sends through because the wiring
+    # below is a ring: presence needs emit, the consent gateway needs presence's
+    # hook (answering a prompt is being at the machine), the registry needs the
+    # gateway and the channel needs the registry. The closure reads `channel`
+    # when it is called, which is long after the assignment below.
     async def emit(event: str, data: dict) -> bool:
         return await channel.emit_event(event, data)
-
-    triggers = TriggerManager(emit, build_triggers(config.triggers))
 
     # --- the other direction: jarvis-core reaching the human at this desk ---
     #
@@ -343,6 +431,28 @@ async def cmd_run(config: Config, once: bool = False) -> int:
     # or the policy store, so a proactive message has no path to running
     # anything — that is wiring, not a rule someone has to remember.
     presence = PresenceReporter(emit)
+    consent = build_gateway(
+        headless_deny=config.headless_deny,
+        on_interaction=presence.note_interaction,
+    )
+    registry = build_registry(config, policy, audit, consent=consent)
+    channel = DeviceChannel(config, registry)
+
+    triggers = TriggerManager(emit, build_triggers(config.triggers))
+
+    status = StatusWriter(
+        config.status_path,
+        lambda: StatusSnapshot(
+            version=__version__,
+            device_id=config.device_id,
+            device_name=config.device_name,
+            server_url=config.server_url,
+            consent_backend=consent.name,
+            action_count=len(registry),
+            connected=channel.registered,
+        ),
+    )
+
     companion = CompanionHandler(
         channel.send_frame,
         asker=build_asker(headless=config.headless_deny),
@@ -375,6 +485,7 @@ async def cmd_run(config: Config, once: bool = False) -> int:
 
     await triggers.start()
     await presence.start()
+    await status.start()
     runner = asyncio.create_task(channel.run_forever(max_sessions=1 if once else None))
     stopper = asyncio.create_task(stop.wait())
     try:
@@ -383,6 +494,10 @@ async def cmd_run(config: Config, once: bool = False) -> int:
         _LOGGER.info("shutting down")
         await channel.stop()
         await presence.stop()
+        # Removes the status file: an agent that has stopped must not leave one
+        # behind saying it is up. A killed agent cannot get here, which is what
+        # `status` reads staleness for.
+        await status.stop()
         # Cancels any question still on screen. The ledger records nothing for
         # it, so the server gets no answer and a redelivery after the next
         # connection is free to ask again.
@@ -394,7 +509,7 @@ async def cmd_run(config: Config, once: bool = False) -> int:
     return 0
 
 
-SUBCOMMANDS = ("run", "tiers", "policy", "audit", "cron", "doctor")
+SUBCOMMANDS = ("run", "tiers", "policy", "audit", "cron", "doctor", "status")
 
 #: Global flags that take a value, so the scanner below skips both tokens.
 _GLOBAL_VALUE_FLAGS = ("-c", "--config", "--log-file")
@@ -450,6 +565,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_audit(config, args)
         if command == "doctor":
             return cmd_doctor(config)
+        if command == "status":
+            return cmd_status(config, args)
     except KeyboardInterrupt:
         return 130
     except ValueError as exc:

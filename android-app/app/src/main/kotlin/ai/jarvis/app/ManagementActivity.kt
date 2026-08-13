@@ -82,6 +82,43 @@ class ManagementActivity : Activity() {
     private var tabSlot: FrameLayout? = null
 
     /**
+     * Jarvis's own "loading" and "that did not work", drawn over the WebView.
+     *
+     * This screen had neither, and the result was the worst-looking failure in
+     * the app: an unreachable console rendered **Chromium's** white
+     * "webpage not available" page — system fonts, a Chrome error code, a
+     * RELOAD button that is not this app's — full-bleed inside an all-black
+     * Jarvis, while the tab strip above it still highlighted a tab it had never
+     * loaded. There was no `onReceivedError` override, no
+     * `onReceivedHttpError`, and no progress indicator of any kind, so a slow
+     * console was indistinguishable from a dead one for as long as it took.
+     */
+    private var statusPanel: LinearLayout? = null
+    private var statusTitle: TextView? = null
+    private var statusDetail: TextView? = null
+    private var statusRetry: android.widget.Button? = null
+
+    /**
+     * True while a navigation THIS APP started is in flight.
+     *
+     * Load-bearing for the error path: `onReceivedError` fires for every failed
+     * sub-resource as well as for the page, and a favicon that 404s must not
+     * replace a console that loaded perfectly well with an error screen. Only
+     * the main frame counts — see [showError].
+     */
+    private var loading = false
+
+    /**
+     * Set when the current navigation failed, so [onPageFinished] does not
+     * clear the error panel it is about to be told about.
+     *
+     * The platform calls `onReceivedError` BEFORE `onPageFinished` for a failed
+     * main frame, and hiding the panel on "finished" would flash the error and
+     * then show Chromium's page underneath it anyway.
+     */
+    private var failed = false
+
+    /**
      * Set while an app-initiated navigation is in flight. See [onBackPressed].
      */
     private var resettingHistory = false
@@ -144,9 +181,51 @@ class ManagementActivity : Activity() {
     private fun load(next: ConsoleTab) {
         tab = next
         resettingHistory = true
+        failed = false
+        loading = true
+        showLoading(next)
         val base = config.serverUrl.trimEnd('/')
         webView?.loadUrl(base + next.path, mapOf("Authorization" to "Bearer ${config.token}"))
         markCurrentTab()
+    }
+
+    // --- loading and failure ------------------------------------------------
+
+    /**
+     * Say which section is being fetched, in Jarvis's own type.
+     *
+     * Named rather than a bare spinner: the tab strip highlights the
+     * destination the instant it is tapped, so without this the only difference
+     * between "Tools is loading" and "Tools is blank" is that one of them
+     * eventually changes.
+     */
+    private fun showLoading(next: ConsoleTab) {
+        statusTitle?.text = "LOADING ${next.label.uppercase()}"
+        statusDetail?.text = serverOrigin?.host.orEmpty()
+        statusRetry?.visibility = android.view.View.GONE
+        statusPanel?.visibility = android.view.View.VISIBLE
+    }
+
+    private fun hideStatus() {
+        statusPanel?.visibility = android.view.View.GONE
+    }
+
+    /**
+     * Replace Chromium's error page with one that says something useful.
+     *
+     * The WebView is blanked first, with `about:blank`: the platform has
+     * already rendered its own error document into it by the time this is
+     * called, and a panel drawn over the top would still be sitting on a white
+     * page — visible around the edges and behind every scroll.
+     */
+    private fun showError(title: String, detail: String) {
+        failed = true
+        loading = false
+        webView?.loadUrl("about:blank")
+        statusTitle?.text = title
+        statusDetail?.text = detail
+        statusRetry?.visibility = android.view.View.VISIBLE
+        statusPanel?.visibility = android.view.View.VISIBLE
     }
 
     private fun buildUi(view: WebView): ViewGroup {

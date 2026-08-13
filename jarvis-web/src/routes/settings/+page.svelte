@@ -3,6 +3,8 @@
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, relayUrl, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
+	import { TEXT_SIZES, applyTextSize, readTextSize, writeTextSize } from '$lib/textSize';
+	import { coerceSetting } from '$lib/settingsDraft';
 	import type { BusEvent, SettingRow, Subscription } from '$lib/jarvisClient';
 
 	interface ClientConfig {
@@ -99,7 +101,7 @@
 						: await failureText(res);
 				return;
 			}
-			toasts.push({ kind: 'ok', text: 'Voiceprint deleted. Jarvis answers any voice again.' });
+			toasts.success('Voiceprint deleted', 'Jarvis answers any voice again.');
 			await loadSpeaker();
 		} finally {
 			speakerBusy = false;
@@ -160,19 +162,12 @@
 		restartNeeded = result.restart_required ? [...rest, key] : rest;
 	}
 
-	/** Coerce a form string back to what the setting's type wants. */
-	function valueFor(row: SettingRow, raw: string): unknown {
-		if (row.type === 'boolean') return raw === 'true';
-		if (row.type === 'number' || row.type === 'integer') return raw.trim();
-		return raw;
-	}
-
 	async function saveSetting(row: SettingRow): Promise<void> {
 		if (!conn) return;
 		busyKey = row.key;
 		fieldError = { ...fieldError, [row.key]: '' };
 		try {
-			const result = await conn.client.setSetting(row.key, valueFor(row, draftOf(row)));
+			const result = await conn.client.setSetting(row.key, coerceSetting(row.type, draftOf(row)));
 			adopt(result.settings ?? settings);
 			noteResult(row.key, result);
 			toasts.success(`${row.label} saved`, result.restart_required ? 'restart to apply' : 'in effect now');
@@ -199,6 +194,23 @@
 		} finally {
 			busyKey = '';
 		}
+	}
+
+	/**
+	 * How big the text is, in this browser.
+	 *
+	 * Not a house setting and deliberately not sent anywhere: it is a property of
+	 * the screen somebody is reading, and the same house is read from a phone at
+	 * arm's length and a wall panel across a room. Applied the moment it is
+	 * picked — a text-size control you have to save is one you cannot judge.
+	 */
+	let textSize = $state('standard');
+
+	function chooseTextSize(id: string): void {
+		const size = writeTextSize(localStorage, id);
+		applyTextSize(document, size);
+		textSize = size.id;
+		toasts.success(`Text size · ${size.label}`, 'Remembered in this browser.');
 	}
 
 	let eventFilter = $state('state_changed');
@@ -239,6 +251,7 @@
 
 	onMount(() => {
 		let disposed = false;
+		textSize = readTextSize(localStorage).id;
 		loadSpeaker();
 		fetch('/api/config')
 			.then((r) => (r.ok ? r.json() : Promise.reject(new Error(`/api/config → ${r.status}`))))
@@ -390,6 +403,46 @@
 		</section>
 	{/each}
 {/if}
+
+<!--
+  Text size.
+
+  Above the pairing panel because it is the one setting on this page that
+  changes what you can read while you read it, and below the house settings
+  because it changes nothing about the house. It is stored in this browser and
+  goes nowhere near jarvis-core: the right size for a phone in a hallway and
+  for a monitor on a desk are different answers to the same question, and a
+  house-wide value would have to be wrong for one of them.
+-->
+<section class="panel" data-testid="text-size">
+	<div class="panel-head">
+		<span>Text size</span>
+		<span class="muted">this browser only</span>
+	</div>
+	<div class="row">
+		<span class="name">
+			<b>Scale</b><span class="eid">multiplies every size in the interface</span>
+		</span>
+		{#each TEXT_SIZES as size (size.id)}
+			<button
+				type="button"
+				class="btn"
+				class:on={textSize === size.id}
+				data-testid="text-size-{size.id}"
+				aria-pressed={textSize === size.id}
+				title={size.note}
+				onclick={() => chooseTextSize(size.id)}
+			>
+				{size.label}
+			</button>
+		{/each}
+	</div>
+	<p class="muted">
+		STANDARD is whatever text size this browser is already set to — so raising it in the
+		browser and raising it here compound, which is the intent. Everything in the console and
+		the HUD is sized in <code>rem</code>, so one number moves all of it at once.
+	</p>
+</section>
 
 <Pairing />
 

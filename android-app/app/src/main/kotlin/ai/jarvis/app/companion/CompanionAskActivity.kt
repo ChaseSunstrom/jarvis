@@ -1,5 +1,6 @@
 package ai.jarvis.app.companion
 
+import ai.jarvis.app.assist.ConversationRegistry
 import ai.jarvis.app.assist.TtsPlayer
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
@@ -64,6 +65,24 @@ import android.widget.TextView
 class CompanionAskActivity : Activity() {
 
     private var messageId: String? = null
+
+    /**
+     * The conversation this question belongs to, from `EXTRA_CONVERSATION_ID`.
+     *
+     * Kept as a field rather than used once in `onCreate` because [answer] needs
+     * it: an answer given here is the user speaking in that thread, so the
+     * thread has to still be current when the next thing is said on this phone.
+     * See [ai.jarvis.app.assist.ConversationRegistry].
+     *
+     * It is deliberately NOT put on the `jarvis_message_result` frame. The
+     * server matches an answer by `message_id` and holds the
+     * message_id → conversation_id mapping itself — `CompanionManager
+     * .on_device_answer` fires `EVENT_MESSAGE_ANSWERED` with the conversation id
+     * off its own pending message — so a copy from this end would be a field
+     * nothing reads, which is the exact shape of bug this repo keeps finding.
+     */
+    private var conversationId: String? = null
+
     private var mode: String = CompanionProtocol.MODE_ASK
     private var importance: String = "normal"
     private var questionText: String = ""
@@ -138,6 +157,24 @@ class CompanionAskActivity : Activity() {
             ) ?: CompanionProtocol.DEFAULT_ASK_TIMEOUT_MS) / 1000.0,
             CompanionProtocol.DEFAULT_ASK_TIMEOUT_MS
         )
+        // THE EXTRA NOTHING READ.
+        //
+        // `CompanionMessageHandler.askIntent` has put `EXTRA_CONVERSATION_ID` on
+        // this intent since the extra existed, and this activity read
+        // MESSAGE_ID, MODE, TEXT, IMPORTANCE, OPTIONS and TIMEOUT_MS — six of
+        // the seven. So the phone was handed the conversation the question came
+        // from and threw it away, which is the Android half of
+        // `docs/cross-device.md`'s *"answer on your phone and the reply lands
+        // back in the same conversation the desktop started"* not being true.
+        //
+        // Read here as well as in the handler, because this activity has a
+        // second entrance: a notification the user taps minutes later, after the
+        // process has been killed and restarted, at which point the handler's
+        // adoption is gone with the process that made it.
+        conversationId = intent?.getStringExtra(CompanionMessageHandler.EXTRA_CONVERSATION_ID)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        ConversationRegistry.remember(this, conversationId)
 
         // A question is only answerable while it is genuinely in flight, and
         // there are two different ways for that not to be true:
@@ -653,6 +690,13 @@ class CompanionAskActivity : Activity() {
         countdown?.cancel()
         countdown = null
         stopVoice()
+        if (status == CompanionProtocol.STATUS_ANSWERED) {
+            // Answering is the user speaking in this thread, so the thread is
+            // live and belongs to this phone now. Without this the clock started
+            // when the question ARRIVED, and a question read after lunch would
+            // be answered into a conversation that had already expired.
+            ConversationRegistry.remember(this, conversationId)
+        }
         messageId?.let { CompanionMessageHandler.onAnswer(this, it, status, text) }
         finish()
     }

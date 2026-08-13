@@ -185,6 +185,20 @@ llm:
   #
   # backend: openai
   persona_file: prompts/jarvis.txt
+  # Whether to let the model reason before answering.
+  #
+  # qwen3 and its relatives emit a `<think>` block, and `ThinkStripper` in the
+  # agent has always deleted it from the stream — so Jarvis was paying to
+  # generate a paragraph of deliberation that nothing ever read, on every
+  # spoken turn. On a voice path that is silence the user hears while waiting.
+  #
+  # `false` here because a conversation rarely needs it: the persona is two
+  # sentences of dry wit and the tool loop does the actual work. Comment it out
+  # to leave the model's own default alone. Deliberation earns its keep in the
+  # places that plan rather than chat — the orchestrator's decomposition, and
+  # authoring an automation — which ask for it separately.
+  think: false
+
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.
   max_tool_rounds: 5
@@ -310,6 +324,31 @@ memory:
   max_entries: 500        # oldest non-pinned notes fall off the end
   context_limit: 600      # characters of notes injected into the system prompt
   context_entries: 8      # and at most this many of them
+
+  # Semantic recall — finding a note by what it MEANS, not the words in it.
+  #
+  # Keyword search finds "the good coffee is in the left cupboard" from "where
+  # is the good coffee" and misses it entirely from "where do we keep the
+  # caffeine". Embeddings close that gap, and they cost almost nothing here:
+  # the vectors come from the model server already running (Ollama serves
+  # /v1/embeddings on the same port it serves chat), and they live in a plain
+  # sidecar file beside the notes. No new container, no new Python dependency,
+  # no second copy of your notes anywhere.
+  #
+  # It needs two things:
+  #   1. `llm: backend: openai` above, because /v1/embeddings is on that wire;
+  #   2. `ollama pull nomic-embed-text` — 274 MB, Apache-2.0, 768 dimensions.
+  #      `all-minilm` (46 MB, 384 dims) is the Raspberry-Pi-tier alternative
+  #      and needs no change here beyond the name.
+  #
+  # Without either, this degrades silently to the keyword search that has
+  # always shipped — one log line, no error, no lost turn.
+  #
+  # On an 8 GB card, set OLLAMA_MAX_LOADED_MODELS=2 so the chat model and the
+  # embedder do not evict each other between turns.
+  # embeddings: true
+  # embedding_model: nomic-embed-text
+  # embedding_url: http://127.0.0.1:11434/v1   # defaults to the chat backend
 
 # ---------------------------------------------------------------------------
 # Undo and trace — what it did, and taking it back.

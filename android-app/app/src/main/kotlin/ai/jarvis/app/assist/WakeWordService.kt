@@ -3,10 +3,12 @@ package ai.jarvis.app.assist
 import ai.jarvis.app.JarvisAssistActivity
 import ai.jarvis.app.ListenTrampolineActivity
 import ai.jarvis.app.R
+import ai.jarvis.app.audio.CallGuard
 import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.companion.ConversationAskHost
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.WakeWordGate
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.PromptPresence
 import android.Manifest
@@ -84,6 +86,20 @@ import androidx.core.app.ServiceCompat
  * The mic is released the moment a conversation starts and re-acquired when it
  * ends, because two `AudioRecord`s on one device is a coin toss over which one
  * gets the audio — see [pause].
+ *
+ * **Two things now decide whether the microphone is open at all, and neither
+ * used to exist here.**
+ *
+ *  1. [WakeListenWatch] — the battery policy. `WakeWordGate` had implemented it
+ *     since the app was written and nothing called it, so four settings and a
+ *     whole section of the settings screen were stored and inert. It is
+ *     consulted before every open and re-consulted on every edge that can change
+ *     its answer.
+ *  2. [CallGuard] — a call in progress. A call was previously discovered by
+ *     *failing to open the recorder*, and recovery was blind exponential backoff
+ *     plus the quarter-hourly alarm, so hanging up left the phone deaf for as
+ *     long as those said. Hanging up is an edge, and now something is watching
+ *     it.
  */
 class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
@@ -174,6 +190,32 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     private val reconnect = Runnable { if (running) openLink() }
 
     /**
+     * The battery policy, as a live thing rather than a class nobody called.
+     *
+     * Created with the service and torn down with it. Its callback fires on the
+     * headset, car-Bluetooth, geofence and hour-boundary edges — see
+     * [WakeListenWatch] — and each one is a chance to open a microphone that was
+     * closed, or close one that should be.
+     */
+    private var listenWatch: WakeListenWatch? = null
+
+    /** True while the gate is what is holding the microphone shut. */
+    private var heldByGate = false
+
+    /** True while a call is what is holding it shut. */
+    private var heldByCall = false
+
+    /**
+     * Somebody is on a call. See [ai.jarvis.app.audio.CallGuard].
+     *
+     * The listener gives the microphone up on the way IN — a wake listener that
+     * waits to lose the race for the recorder takes the first seconds of the
+     * call's audio path with it — and takes it back on the way out, at once,
+     * rather than at the end of a backoff that knows nothing about calls.
+     */
+    private var calls: CallGuard? = null
+
+    /**
      * Take the microphone back when a wake word led nowhere.
      *
      * Cancelled by ACTION_PAUSE, which the assist activity sends as it starts,
@@ -192,6 +234,61 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         super.onCreate()
         PromptPresence.addListener(promptListener)
         config = JarvisConfig(this)
+        listenWatch = WakeListenWatch(this, config) { decision -> onGateChanged(decision) }
+        calls = CallGuard(this) { inCall -> onCallChanged(inCall) }
+    }
+
+    /**
+     * The listening policy changed its mind.
+     *
+     * The two directions are not symmetrical, and that asymmetry is the whole
+     * point of driving this from edges: coming back ON must reopen the
+     * microphone immediately (the car has just connected, the user is talking to
+     * a phone in a cradle), while going OFF must not tear down a conversation
+     * that is already in progress. A gate that closed mid-sentence because the
+     * clock struck 23:00 would be a worse bug than the one this fixes.
+     */
+    private fun onGateChanged(decision: WakeWordGate.Decision) {
+        if (!running) return
+        if (decision.listen) {
+            if (heldByGate) {
+                heldByGate = false
+                Log.i(TAG, "the listening policy allows the microphone again")
+                resume()
+            }
+            return
+        }
+        if (convo != null) {
+            // Mid-conversation. It ends on its own and hands the mic back
+            // through onIdle, which calls resume(), which asks the gate again.
+            Log.i(TAG, "the listening policy says stop, but a conversation is live")
+            return
+        }
+        heldByGate = true
+        pause(decision.explain(config.wakingHourStart, config.wakingHourEnd))
+    }
+
+    private fun onCallChanged(inCall: Boolean) {
+        if (!running) return
+        if (inCall) {
+            if (heldByCall) return
+            heldByCall = true
+            pause(WAITING_IN_CALL)
+            return
+        }
+        // Only act on the way back out of a pause WE took. A mode change that
+        // was never a call — a media app briefly asking for MODE_RINGTONE — must
+        // not become a reason to reopen a microphone the gate is holding shut.
+        if (!heldByCall) return
+        heldByCall = false
+        // NOT a backoff. The call ending is the exact moment the recorder became
+        // available again, and waiting out an exponential delay after it — or
+        // worse, the fifteen-minute alarm — is the reported "it stops working
+        // after a phone call".
+        micFailures = 0
+        main.removeCallbacks(reconnect)
+        Log.i(TAG, "the call ended; taking the microphone back")
+        resume()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -257,6 +354,12 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         armHeartbeat(this)
         if (!running) {
             running = true
+            // Started BEFORE the first open, so `openLink` has a gate to ask
+            // rather than falling back to "listen" on the very first pass —
+            // which would open the microphone at 03:00 exactly once per start
+            // and look like the policy flapping.
+            listenWatch?.start()
+            calls?.start()
             openLink()
         }
         // STICKY: a wake-word listener the system killed under memory pressure
@@ -272,6 +375,11 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         running = false
         main.removeCallbacks(reconnect)
         main.removeCallbacks(rearm)
+        // Both hold platform registrations — an AudioDeviceCallback and, on 31+,
+        // an audio-mode listener — and a service that leaks one keeps waking for
+        // an event it can no longer act on.
+        listenWatch?.stop()
+        calls?.stop()
         endOverlayConversation(giveMicBack = false)
         closeLink()
         super.onDestroy()
@@ -289,6 +397,42 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             stopSelf()
             return
         }
+
+        // THE BATTERY POLICY, asked before anything opens a microphone.
+        //
+        // This call is the whole of what `WakeWordGate` was missing: the policy,
+        // its four settings and its section of the settings screen existed for
+        // the life of the app with no production caller, which is why that
+        // section was labelled "saved, not yet in effect". Asked here rather
+        // than in `onStartCommand` because every path that reopens the mic —
+        // resume, the reconnect backoff, a run ending — comes through this
+        // function, and a check in only one of them is a gate with a way round
+        // it.
+        //
+        // The service stays alive and foreground when the answer is no. It has
+        // to: the notification is what tells the user why nothing is listening,
+        // and [WakeListenWatch] needs a live process to notice the edge that
+        // turns it back on.
+        val decision = listenWatch?.decide()
+        if (decision != null && !decision.listen) {
+            heldByGate = true
+            Log.i(TAG, "not listening: ${decision.reason}")
+            updateNotification(decision.explain(config.wakingHourStart, config.wakingHourEnd))
+            return
+        }
+        heldByGate = false
+
+        // A recorder opened over a live call loses the race for it, and takes
+        // the start of the call's own audio with it. Asked here as well as on
+        // the edge, because a device below API 31 has no mode callback at all —
+        // see CallGuard.edgeDriven — and this is where it gets its answer.
+        if (calls?.inCall == true) {
+            heldByCall = true
+            Log.i(TAG, "not listening: a call is in progress")
+            updateNotification(WAITING_IN_CALL)
+            return
+        }
+        heldByCall = false
 
         if (openLocalListener()) return
 
@@ -382,7 +526,28 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             stopSelf()
             return
         }
-        val delay = backoff(micFailures)
+        // ASK WHY, instead of assuming it was random.
+        //
+        // Failing to open the recorder used to be the only way this service
+        // learned a call was happening, and the answer was always the same blind
+        // exponential backoff — capped at a minute, on top of a fifteen-minute
+        // alarm. A call is the overwhelmingly common cause and it has an ending
+        // that can be watched, so this re-reads the audio mode: `publish` fires
+        // the call-started edge if that is what it was, and `onCallChanged`
+        // takes the microphone back the instant it ends rather than whenever the
+        // backoff happens to land.
+        calls?.publish()
+        if (calls?.inCall == true) {
+            heldByCall = true
+            updateNotification(WAITING_IN_CALL)
+            main.removeCallbacks(reconnect)
+            // A safety net, not the mechanism. On API 31+ the mode listener is
+            // what brings this back; below it there is no callback, so something
+            // has to look again — and a minute is a far cry from fifteen.
+            main.postDelayed(reconnect, CALL_RECHECK_MS)
+            return
+        }
+        val delay = micBackoff(micFailures)
         micFailures++
         updateNotification("$reason Retrying.")
         main.removeCallbacks(reconnect)
@@ -416,16 +581,25 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
      * one device is a coin toss over which gets the audio, and losing that toss
      * means the conversation the user just triggered hears nothing — the exact
      * symptom this whole area has been plagued by.
+     *
+     * @param text what the notification says while the microphone is shut. It
+     *   is a parameter because there are now four different reasons — a
+     *   conversation took it, a call took it, the hour, the place — and a
+     *   notification that says "Paused while you are talking" at three in the
+     *   morning is a listener that looks broken.
      */
-    private fun pause() {
+    private fun pause(text: String = WAITING_PAUSED) {
         main.removeCallbacks(reconnect)
         closeLink()
-        updateNotification(WAITING_PAUSED)
+        updateNotification(text)
     }
 
     private fun resume() {
         if (!running || !config.wakeWordEnabled) return
         updateNotification(WAITING)
+        // openLink consults the gate and the call guard, so a resume from any
+        // source — a finished conversation, the re-arm net, a call ending —
+        // cannot walk past either of them.
         openLink()
     }
 
@@ -439,6 +613,19 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
     /** Exponential, capped: a server that is off overnight must not be a radio. */
     private fun backoff(attempts: Int): Long =
         (BACKOFF_BASE_MS shl attempts.coerceAtMost(5)).coerceAtMost(BACKOFF_MAX_MS)
+
+    /**
+     * The same curve with a much lower ceiling.
+     *
+     * A socket and a microphone fail for opposite reasons. An unreachable server
+     * is usually off and may be off all night, so a minute between attempts is
+     * right. A recorder that could not be opened is almost always held by
+     * something with a *short* life — a voice note, an alarm, another
+     * assistant's one-shot — and a minute of not listening after a two-second
+     * conflict is most of what "the wake word stops working" was.
+     */
+    private fun micBackoff(attempts: Int): Long =
+        (BACKOFF_BASE_MS shl attempts.coerceAtMost(3)).coerceAtMost(MIC_BACKOFF_MAX_MS)
 
     private fun hasMic(): Boolean =
         checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -891,6 +1078,15 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         private const val WAITING_PAUSED = "Paused while you are talking"
 
         /**
+         * Said while somebody is on a call.
+         *
+         * Distinguished from the ordinary pause because the two are fixed by
+         * different things: one ends when the user stops talking to Jarvis, the
+         * other when they stop talking to a person.
+         */
+        private const val WAITING_IN_CALL = "Paused for your call — back when it ends"
+
+        /**
          * How long a wake word gets to become a conversation before the mic is
          * taken back. Long enough to walk to the phone and tap the heads-up.
          */
@@ -908,6 +1104,18 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
 
         private const val BACKOFF_BASE_MS = 2_000L
         private const val BACKOFF_MAX_MS = 60_000L
+
+        /** See [micBackoff]. A recorder conflict is short; the wait should be. */
+        private const val MIC_BACKOFF_MAX_MS = 16_000L
+
+        /**
+         * How long to wait before looking at the audio mode again during a call.
+         *
+         * Only load-bearing below API 31, where there is no mode callback and
+         * something has to ask. On 31+ the edge arrives first and this is
+         * cancelled before it ever fires.
+         */
+        private const val CALL_RECHECK_MS = 60_000L
 
         /**
          * How often to check that the listener is actually up.

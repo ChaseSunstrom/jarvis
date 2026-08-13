@@ -210,6 +210,140 @@ def similarity(query: str, candidate: str) -> float:
     return min(score, 1.0)
 
 
+#: JSON-schema `type` -> what counts as already being it.
+_SCHEMA_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "array": (list, tuple),
+    "object": (dict,),
+}
+
+_TRUE = frozenset({"true", "yes", "on", "1"})
+_FALSE = frozenset({"false", "no", "off", "0"})
+
+
+def coerce_arguments(tool: "Tool", args: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Check one call against the schema the model was shown.
+
+    Returns the arguments (coerced where that is unambiguous) and a complaint,
+    which is `""` when the call is usable.
+
+    ## Why this is coercion and not validation
+
+    A strict validator would be the wrong tool. A local model writes `"50"`
+    where the schema says integer and `"true"` where it says boolean roughly as
+    often as it gets them right, and refusing those would turn a call that
+    everybody can see is correct into a wasted round out of five. So anything
+    that converts without ambiguity is converted silently.
+
+    What is refused is what cannot be guessed at: a **missing required
+    argument**, and a value whose type cannot be reached from what arrived
+    (`{"brightness_pct": "quite bright"}`). Both come back naming the argument,
+    because the failure the model could previously see was
+    `"nothing here matches None"` — a sentence about the house, produced three
+    layers away from the mistake, which is unactionable.
+
+    Unknown keys are **passed through untouched**. Several handlers read
+    arguments their schema does not declare (`area_id` beside `area`, the
+    `input` fallback `parse_arguments` produces), and dropping them here would
+    break working tools to enforce a tidiness nobody asked for.
+
+    Booleans are checked before integers deliberately: `bool` is a subclass of
+    `int` in Python, so `True` satisfies `isinstance(x, int)` and an unordered
+    check would let `{"brightness": true}` through as the integer 1.
+    """
+    schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return args, ""
+
+    missing = [
+        name
+        for name in (schema.get("required") or [])
+        if isinstance(name, str) and _is_absent(args.get(name))
+    ]
+    if missing:
+        joined = ", ".join(repr(m) for m in missing)
+        return args, (
+            f"{tool.name} needs {joined}. Call it again with "
+            f"{'that argument' if len(missing) == 1 else 'those arguments'}."
+        )
+
+    out = dict(args)
+    for name, spec in properties.items():
+        if name not in out or not isinstance(spec, dict):
+            continue
+        wanted = spec.get("type")
+        if not isinstance(wanted, str):
+            continue
+        value, ok = _coerce(out[name], wanted)
+        if not ok:
+            return args, (
+                f"{tool.name}: {name!r} should be a {wanted}, not "
+                f"{out[name]!r}. Call it again with a {wanted}."
+            )
+        out[name] = value
+    return out, ""
+
+
+def _is_absent(value: Any) -> bool:
+    """Missing, or present as the empty string a model writes for "no value"."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _coerce(value: Any, wanted: str) -> tuple[Any, bool]:
+    """`(value, ok)` for one argument against one schema type."""
+    types = _SCHEMA_TYPES.get(wanted)
+    if types is None:
+        return value, True  # a type this schema vocabulary does not know
+
+    # Before the isinstance check: `bool` is a subclass of `int`.
+    if wanted == "boolean":
+        if isinstance(value, bool):
+            return value, True
+        text = str(value).strip().lower()
+        if text in _TRUE:
+            return True, True
+        if text in _FALSE:
+            return False, True
+        return value, False
+
+    if isinstance(value, types) and not (wanted != "boolean" and isinstance(value, bool)):
+        return value, True
+
+    if wanted in ("integer", "number"):
+        try:
+            number = float(str(value).strip())
+        except (TypeError, ValueError):
+            return value, False
+        if wanted == "integer":
+            # `"50.0"` is an integer written by something that thinks in
+            # floats; `"50.5"` is a different number and not one to round on
+            # the model's behalf.
+            if number != int(number):
+                return value, False
+            return int(number), True
+        return number, True
+
+    if wanted == "string":
+        # Anything renders. A model that sent a number for a name meant the
+        # name, and `str()` is what every handler would have done anyway.
+        if isinstance(value, (dict, list, tuple)):
+            return value, False
+        return str(value), True
+
+    if wanted == "array":
+        # A single value where a list was asked for is the commonest shape a
+        # model gets wrong, and the intent is never ambiguous.
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()], True
+        return [value], True
+
+    return value, False
+
+
 def _positive_int(value: Any, fallback: int) -> int:
     """A count from the model, or the fallback. Never zero, never negative.
 
@@ -865,6 +999,24 @@ class ToolRegistry:
             }
         arguments = dict(args) if isinstance(args, dict) else ({} if args is None else {"input": args})
         self.purge_expired()
+
+        # Against the schema the model was shown — which nothing used to do.
+        # `required` and `type` were decorative for every built-in tool: the
+        # registry took whatever arrived and handed it to the handler, so
+        # `turn_on({"entity": "lamp"})` (wrong key, right idea) resolved nothing
+        # and came back as "nothing here matches None" — a sentence about the
+        # house rather than about the argument, and the model has no way to act
+        # on it. Coercing and refusing here turns that into a message naming the
+        # key, which is something the next round can fix.
+        arguments, complaint = coerce_arguments(tool, arguments)
+        if complaint:
+            return {
+                "status": "error",
+                "error": complaint,
+                # The schema back, so a model that misread it once can read it
+                # again without a round trip through `list_entities`.
+                "expected": tool.parameters.get("properties", {}),
+            }
 
         if self.requires_approval(tool, arguments):
             return self._request_approval(tool, arguments, context)

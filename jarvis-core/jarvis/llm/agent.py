@@ -252,6 +252,7 @@ class ConversationAgent:
         options: dict[str, Any] | None = None,
         language: str = "en",
         summary_limit: int = DEFAULT_SUMMARY_LIMIT,
+        think: bool | None = None,
     ) -> None:
         self.jarvis = jarvis
         self.client = client
@@ -262,6 +263,15 @@ class ConversationAgent:
         self.options = dict(options or {})
         self.language = language
         self.summary_limit = summary_limit
+        #: Whether to ask the model to reason before answering.
+        #:
+        #: `False` on a conversation is usually right and is what the shipped
+        #: config sets: the persona is two sentences of dry wit and the tool
+        #: loop does the actual work, so a thinking block is latency the user
+        #: hears as silence. `True` is for the places where deliberation earns
+        #: its keep — authoring an automation, planning a delegation — and
+        #: `None` leaves the model's own default alone.
+        self.think = think
         self._persona_override = persona
         self.persona_file = Path(persona_file) if persona_file else None
 
@@ -327,7 +337,9 @@ class ConversationAgent:
             )
         return "\n".join(lines)
 
-    def system_prompt(self, query: str = "") -> str:
+    def system_prompt(
+        self, query: str = "", semantic: dict[str, float] | None = None
+    ) -> str:
         """The system message for one turn.
 
         ``query`` is what the user just said. It reaches only the memory block,
@@ -341,10 +353,12 @@ class ConversationAgent:
         if areas:
             parts.append(f"Areas in this home: {areas}.")
         parts.append(self.house_summary())
-        parts.append(self.remembered_notes(query))
+        parts.append(self.remembered_notes(query, semantic))
         return "\n\n".join(part for part in parts if part)
 
-    def remembered_notes(self, query: str = "") -> str:
+    def remembered_notes(
+        self, query: str = "", semantic: dict[str, float] | None = None
+    ) -> str:
         """Durable notes from the `memory` integration, if it is set up.
 
         Returns "" when there is nothing (or no memory integration), so this is
@@ -366,7 +380,7 @@ class ConversationAgent:
         if not callable(block):
             return ""
         try:
-            return str(block(query=query) or "")
+            return str(block(query=query, semantic=semantic) or "")
         except TypeError:
             # A store that predates the parameter. Better the old block than no
             # block: this is duck-typed on purpose so memory can be absent.
@@ -394,12 +408,19 @@ class ConversationAgent:
             self._finish(conversation.id, result, record=False)
             return
 
+        # Semantic recall, before the prompt is assembled because the notes it
+        # picks go into it. Awaited here rather than inside `system_prompt`
+        # because that is called from synchronous places — the console's prompt
+        # preview, the tests — and making it async would cost them all a
+        # rewrite to gain nothing.
+        semantic = await self._semantic_hits(message)
+
         messages: list[dict[str, Any]] = [
             # The turn is handed to the prompt builder, not just appended after
             # it: the memory block is chosen by relevance to what was just
             # said, and it is built before the history so the notes it picks
             # are about this turn rather than the one twenty turns ago.
-            {"role": "system", "content": self.system_prompt(message)},
+            {"role": "system", "content": self.system_prompt(message, semantic)},
             *conversation.messages(),
             {"role": "user", "content": message},
         ]
@@ -431,6 +452,24 @@ class ConversationAgent:
             # user just had.
             result.text = "".join(pieces).strip()
             self._finish(conversation.id, result, user_text=message)
+
+    async def _semantic_hits(self, message: str) -> dict[str, float]:
+        """`{note_id: similarity}` from the memory store, or `{}`.
+
+        Everything about this is optional: no memory integration, no embedding
+        model, an unreachable model server — each ends in an empty dict and the
+        keyword scorer does what it already did. A turn is never lost to the
+        part of retrieval that is an improvement.
+        """
+        store = self.jarvis.data.get("memory")
+        search = getattr(store, "async_semantic_ids", None)
+        if not callable(search):
+            return {}
+        try:
+            return await search(message)
+        except Exception:
+            _LOGGER.debug("Semantic recall failed for this turn", exc_info=True)
+            return {}
 
     async def _run_rounds(
         self,
@@ -583,6 +622,16 @@ class _Round:
             tools=self._schema,
             stream=True,
             options=agent.options or None,
+            # Reasoning tokens were being generated at full cost and thrown
+            # away. `ThinkStripper` below deletes the `<think>` block from the
+            # stream, and nothing ever told the model not to produce one — so
+            # every spoken turn paid for a paragraph of deliberation that no
+            # human or machine ever read. On a voice path that is the largest
+            # avoidable component of time-to-first-word.
+            #
+            # `None` leaves the model's own default alone, which is what an
+            # install that has not set `llm: think:` gets.
+            think=agent.think,
         )
         try:
             async for delta in stream:

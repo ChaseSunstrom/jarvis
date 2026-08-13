@@ -80,6 +80,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
+from . import theme
+
 _LOGGER = logging.getLogger(__name__)
 
 __all__ = [
@@ -508,6 +510,11 @@ class TkAsker(Asker):
     runs on. Closing the window is a *dismissal*, not a timeout, because the
     two mean different things to the server: dismissing says "not here, try
     elsewhere" immediately, while a timeout burns the whole window first.
+
+    Drawn from :mod:`jarvis_desktop.theme`, the same palette the consent prompt
+    uses and the same one the console and the phone are pinned to. The two
+    dialogs used to share nothing but the word JARVIS, in different fonts, on
+    the system's grey.
     """
 
     name = "tk-dialog"
@@ -541,11 +548,7 @@ class TkAsker(Asker):
 
         result: list[AskOutcome] = []
         root = tk.Tk()
-        root.title("Jarvis")
-        try:
-            root.attributes("-topmost", True)
-        except Exception:  # noqa: BLE001
-            pass
+        theme.style_window(root, "Jarvis")
 
         entry: Any = None
 
@@ -554,47 +557,48 @@ class TkAsker(Asker):
                 result.append(outcome)
             root.quit()
 
-        tk.Label(
-            root,
-            text="JARVIS",
-            font=("TkFixedFont", 11, "bold"),
-            anchor="w",
-            justify="left",
-        ).pack(fill="x", padx=16, pady=(14, 2))
+        theme.wordmark(root).pack(fill="x", padx=16, pady=(14, 2))
 
-        body = tk.Message(root, text=message.text or "(no message)", width=520)
-        body.pack(fill="both", expand=True, padx=16, pady=(4, 8))
+        # The text came off a socket and may quote a web page the model just
+        # read. It is drawn, and nothing else.
+        theme.message(root, message.text or "(no message)").pack(
+            fill="both", expand=True, padx=16, pady=(4, 8)
+        )
 
-        countdown_label = tk.Label(root, text="", font=("TkFixedFont", 10))
+        countdown_label = theme.label(
+            root, "", colour=theme.TEXT_FAINT, size=theme.FS_SMALL
+        )
         countdown_label.pack(fill="x", padx=16)
 
-        row = tk.Frame(root)
+        row = theme.row(root)
         row.pack(fill="x", padx=16, pady=(6, 14))
 
         if message.options:
             for option in message.options:
-                tk.Button(
+                theme.button(
                     row,
-                    text=option,
+                    option,
+                    lambda value=option: settle(AskOutcome.answered(value)),
+                    kind="accent",
                     width=max(8, min(18, len(option) + 2)),
-                    command=lambda value=option: settle(AskOutcome.answered(value)),
                 ).pack(side="left", padx=4)
         else:
-            entry = tk.Entry(row)
+            entry = theme.field(row)
             entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
             entry.bind(
                 "<Return>",
                 lambda _event: settle(_typed(entry.get())),
             )
-            tk.Button(
+            theme.button(
                 row,
-                text="Send",
+                "Send",
+                lambda: settle(_typed(entry.get())),
+                kind="accent",
                 width=8,
-                command=lambda: settle(_typed(entry.get())),
             ).pack(side="left", padx=4)
 
-        tk.Button(
-            row, text="Dismiss", width=10, command=lambda: settle(AskOutcome.dismissed())
+        theme.button(
+            row, "Dismiss", lambda: settle(AskOutcome.dismissed()), kind="quiet", width=10
         ).pack(side="right", padx=4)
 
         # Closing the window says "not here" — the server should try elsewhere
@@ -638,11 +642,16 @@ class TerminalAsker(Asker):
     """A TTY prompt, for a machine with no display.
 
     ``input()`` cannot be interrupted, so the read runs on a daemon thread and
-    the *caller* enforces the timeout — exactly the shape
-    :class:`jarvis_desktop.consent.TerminalConsentGateway` uses, including the
-    stdin lock: a prompt that timed out leaves its reader blocked in
-    ``readline()`` forever, and two readers racing for one keystroke means an
-    answer meant for one question can be consumed by another.
+    the *caller* enforces the timeout. The lock is what stops two readers racing
+    for one keystroke, which would let an answer meant for one question be
+    consumed by another.
+
+    Unlike :class:`jarvis_desktop.consent.TerminalConsentGateway`, which now
+    keeps one long-lived reader precisely so a timed-out prompt cannot disable
+    it for good, a jammed asker here is recoverable without one: the question
+    comes back as ``undeliverable`` and the server escalates it to another
+    device the user is at. A refused approval has no such second device — it is
+    simply refused — which is why the two are not the same shape.
     """
 
     name = "terminal"

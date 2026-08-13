@@ -70,6 +70,29 @@ class AssistPipelineClient(
      * bookkeeping rather than something the UI reacts to.
      */
     private val onKindResolved: (ServerKind) -> Unit = {},
+    /**
+     * The conversation this run continues, or null to start a new one.
+     *
+     * **This parameter is the fix for a documented feature that did not work.**
+     * `conversationId` was a `private var` with no constructor parameter and no
+     * setter: it could be *learned* from an `intent-end` event and could never
+     * be *given*, so nothing could seed a conversation. Every client this app
+     * built started from nothing, which broke the thread in three places at
+     * once — a text turn after a voice turn (`JarvisConversation.speakToServer`
+     * builds a second client), the wake orb and the assist card on one phone
+     * (each builds its own `JarvisConversation`), and every cross-device
+     * `conversation_id` the server sent, which `docs/cross-device.md` promises
+     * lands back in the conversation the other device started.
+     *
+     * The store is [ConversationRegistry]; this is the way in.
+     */
+    conversationId: String? = null,
+    /**
+     * Called on the main thread when the server issues or confirms a
+     * conversation id, so the caller can persist it. Defaulted, because a
+     * one-shot run that does not care is a legitimate caller.
+     */
+    private val onConversationId: (String) -> Unit = {},
 ) : WebSocketListener() {
 
     enum class State { IDLE, LISTENING, THINKING, SPEAKING }
@@ -178,7 +201,17 @@ class AssistPipelineClient(
     /** Audio captured before the run could accept it. See [sendAudio]. */
     private val prebuffer = ArrayDeque<ByteArray>()
     private var prebufferedBytes = 0
-    private var conversationId: String? = null
+    /**
+     * The thread this client's runs belong to.
+     *
+     * Public and settable, so a caller that learns of a conversation after
+     * construction — a `jarvis_message` arriving mid-turn, a handoff from
+     * another device — can join it without tearing the socket down. Seeded from
+     * the constructor parameter of the same name.
+     */
+    @Volatile
+    var conversationId: String? = conversationId
+
     private var pendingRunAfterList = false
 
     fun connect(pipelineName: String) {
@@ -604,7 +637,15 @@ class AssistPipelineClient(
             "intent-end" -> {
                 val output = data?.optJSONObject("intent_output")
                 output?.optString("conversation_id")?.takeIf { it.isNotEmpty() }
-                    ?.let { conversationId = it }
+                    ?.let {
+                        conversationId = it
+                        // Told to the caller as well as kept here. This client
+                        // lives for one connection; the thread outlives it, and
+                        // for the life of the app nothing outside this class
+                        // could ever hear about it — which is why every new
+                        // client started a fresh conversation.
+                        post { onConversationId(it) }
+                    }
                 val speech = output?.optJSONObject("response")
                     ?.optJSONObject("speech")?.optJSONObject("plain")
                     ?.optString("speech").orEmpty()

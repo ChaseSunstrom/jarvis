@@ -304,8 +304,8 @@
 		position: sticky;
 		top: 0;
 		z-index: 40;
-		border: 1px solid var(--jv-warn, #ffb347);
-		border-left: 3px solid var(--jv-warn, #ffb347);
+		border: 1px solid var(--jv-warn);
+		border-left: 3px solid var(--jv-warn);
 		border-radius: var(--jv-radius-sm);
 		background: var(--jv-panel);
 		box-shadow: var(--jv-elev-panel);
@@ -325,10 +325,10 @@
 	/* Louder than the ordinary accent, quieter than a denial: this is a
 	   provenance note, not a failure. */
 	.req.tainted {
-		border-left-color: var(--jv-warn, #ffb347);
+		border-left-color: var(--jv-warn);
 	}
 	.desc.warn {
-		color: var(--jv-warn, #ffb347);
+		color: var(--jv-warn);
 	}
 	.choices {
 		display: flex;
@@ -343,7 +343,7 @@
 		font-size: var(--jv-fs-xs);
 		letter-spacing: var(--jv-track-wide);
 		text-transform: uppercase;
-		color: var(--jv-warn, #ffb347);
+		color: var(--jv-warn);
 		margin-bottom: var(--jv-space-2);
 	}
 	.req {
@@ -373,10 +373,10 @@
 	.left {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
-		color: var(--jv-warn, #ffb347);
+		color: var(--jv-warn);
 	}
 	.approve {
-		border-color: var(--jv-ok, #35d08a);
-		color: var(--jv-ok, #35d08a);
+		border-color: var(--jv-ok);
+		color: var(--jv-ok);
 	}
 </style>
