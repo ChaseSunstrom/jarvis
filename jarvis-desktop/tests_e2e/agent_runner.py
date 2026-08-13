@@ -81,12 +81,18 @@ class FileConsentGateway(ConsentGateway):
     ``unattended`` is False on purpose: this stub stands in for a human who is
     present and clicking, so a denial here must read as "the user said no" and
     not as "there was nobody to ask".
+
+    For the same reason it honours ``on_interaction``: answering a prompt is
+    being at the machine, and the real gateways report it as presence. A stub
+    that stayed silent there would leave the e2e agent looking idle in exactly
+    the situation where it is not.
     """
 
     name = "e2e-file-consent"
 
-    def __init__(self, control: Path) -> None:
+    def __init__(self, control: Path, on_interaction: Any = None) -> None:
         self.control = control
+        self.on_interaction = on_interaction
 
     @property
     def unattended(self) -> bool:
@@ -114,6 +120,8 @@ class FileConsentGateway(ConsentGateway):
                 "rendered": render_prompt(request),
             },
         )
+        # The control file standing in for a person who answered.
+        self.note_interaction()
         return verdict
 
 
@@ -173,7 +181,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # `cmd_run` calls these by name out of its own module namespace, so this is
     # the whole substitution. Signatures match the originals.
-    entry.build_gateway = lambda headless_deny=False: FileConsentGateway(control)
+    entry.build_gateway = lambda headless_deny=False, on_interaction=None: (
+        FileConsentGateway(control, on_interaction)
+    )
     entry.build_asker = lambda headless=False: FileAsker(control)
 
     return int(entry.main(sys.argv[1:] if argv is None else argv))

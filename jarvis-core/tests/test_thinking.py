@@ -144,3 +144,109 @@ def test_the_shipped_config_turns_it_off_for_conversation():
         "the shipped config no longer disables thinking on the conversation "
         "path; see this test's docstring before changing it"
     )
+
+
+# ---------------------------------------------------------------------------
+# retrying a round, but only while nothing has been said
+# ---------------------------------------------------------------------------
+class _FlakyClient:
+    """Fails the first N attempts, then answers."""
+
+    def __init__(self, failures: int, before_failing: str = "") -> None:
+        self.failures = failures
+        self.before_failing = before_failing
+        self.attempts = 0
+
+    def chat(self, **kwargs):
+        self.attempts += 1
+        if self.attempts <= self.failures:
+            return _FailingStream(self.before_failing)
+        return _TextStream("Good evening, Sir.")
+
+
+class _FailingStream:
+    result = type("R", (), {"tool_calls": [], "content": "", "thinking": ""})()
+
+    def __init__(self, said: str = "") -> None:
+        self._said = said
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        from jarvis.llm.ollama import OllamaError
+
+        # Optionally speak first, which is what makes the retry unsafe.
+        if self._said:
+            yield self._said
+        raise OllamaError("connection reset")
+
+    async def aclose(self):
+        return None
+
+
+class _TextStream:
+    result = type("R", (), {"tool_calls": [], "content": "", "thinking": ""})()
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        yield self._text
+
+    async def aclose(self):
+        return None
+
+
+async def test_a_blip_before_the_first_word_is_retried(jarvis):
+    """A model server restarting used to cost a whole turn and an apology.
+
+    One `OllamaError` ended it: no backoff, no second attempt. A container
+    still warming up or a socket closed by a keep-alive timeout is a blip of a
+    few hundred milliseconds.
+    """
+    client = _FlakyClient(failures=1)
+    agent = _agent(jarvis, client)
+    agent.retry_backoff = 0.0  # the delay is not what is under test
+
+    said = [delta async for delta in agent.converse("hello")]
+
+    assert client.attempts == 2
+    assert "".join(said) == "Good evening, Sir."
+
+
+async def test_a_failure_mid_sentence_is_not_replayed(jarvis):
+    """Retrying after a token has been spoken would repeat it.
+
+    On a voice path the user hears the sentence start again, which is worse
+    than the apology. `emitted` is what gates the retry, and this is the case
+    that makes the gate necessary rather than cautious.
+    """
+    client = _FlakyClient(failures=1, before_failing="Good ev")
+    agent = _agent(jarvis, client)
+    agent.retry_backoff = 0.0
+
+    said = "".join([delta async for delta in agent.converse("hello")])
+
+    assert client.attempts == 1, "the turn was restarted after speaking"
+    assert said.startswith("Good ev")
+    assert "Good evGood" not in said
+
+
+async def test_a_model_that_is_genuinely_down_still_gives_up(jarvis):
+    """Two attempts, not indefinite.
+
+    A server that is actually off must not turn into a thirty-second wait for
+    the same apology.
+    """
+    client = _FlakyClient(failures=99)
+    agent = _agent(jarvis, client)
+    agent.retry_backoff = 0.0
+
+    said = "".join([delta async for delta in agent.converse("hello")])
+
+    assert client.attempts == agent.max_attempts
+    assert "couldn't reach" in said

@@ -47,11 +47,20 @@ python3 -m pip install -e '.[full]'                   # everything
 On Linux the consent dialog wants `python3-tk`. Without it the agent falls back
 to a terminal prompt, and without a terminal it denies. It never falls open.
 
-The terminal prompt answers one question at a time. `readline()` cannot be
-interrupted, so a prompt nobody answers leaves its reader holding stdin for the
-life of the process; rather than start a second reader and have two prompts race
-for the same keystroke, the next request is refused outright. A refusal is a
-denial, so this fails in the safe direction.
+A denial nobody could have answered is not silent. When there is no display and
+no TTY — a `systemd --user` unit inherits neither — the refusal goes out as a
+desktop notification (`notify-send` / `osascript` / a Windows toast), naming the
+action and the tier and pointing at the audit log for the rest. It carries
+neither the parameters nor the server's stated reason: a toast can be shown on a
+lock screen. `--headless` is the one case that stays quiet, because there the
+operator has already said nobody is watching.
+
+The terminal prompt answers one question at a time, through a single reader
+thread that lives as long as the process. `readline()` cannot be interrupted, so
+a prompt nobody answers leaves a read outstanding — but the next line typed goes
+to whichever prompt is on screen when it arrives, so one unanswered question no
+longer disables terminal approval until a restart. A line that arrives with no
+prompt waiting is discarded rather than banked, and a timeout is still a denial.
 
 Check what this machine can actually do:
 
@@ -70,6 +79,43 @@ python3 -m jarvis_desktop run --server ws://jarvis.lan:8080
 works too. The server URL accepts `host`, `host:8080`, `http://host` or a full
 `ws://host/api/websocket` — it is normalised to the WebSocket endpoint either
 way.
+
+### Is it running?
+
+```bash
+python3 -m jarvis_desktop status            # once
+python3 -m jarvis_desktop status --watch    # redraws until ^C
+python3 -m jarvis_desktop status --json     # for a script
+```
+
+```
+jarvis-desktop 0.1.0: running, connected to the server
+  device      workshop-desktop (desktop-19efc0e2cf33)
+  server      ws://jarvis.lan:8080/api/websocket
+  pid         41207 (alive)
+  uptime      2h 14m
+  updated     1s ago
+  consent     tk-dialog
+  actions     21
+
+the last 3 action(s), newest first:
+     14:02:11  read_file            AUTO     ok
+  !! 14:01:58  run_command          CONFIRM  denied
+```
+
+The running agent rewrites `status.json` in the state directory every few
+seconds and `status` reads it; the recent actions come from the audit log, which
+already records every dispatch. There is no tray icon and no listening socket —
+one file is the whole mechanism, and it adds no dependency.
+
+A status file is a claim that an agent was alive when it was written, not that
+one is running now. A clean shutdown removes it; a killed agent cannot, so a
+file nobody has refreshed reads as `STALE`, and one whose pid is gone reads as
+`NOT RUNNING`. `status` exits non-zero in both cases, and when there is no file
+at all, so it can be used as a health check.
+
+`doctor` answers a different question — what this *machine* can do — and works
+with no agent running at all.
 
 ### Configuration
 
@@ -489,7 +535,9 @@ swallowed and logged.
 |---|---|
 | `policy.py` | tiers, decisions, the JSON policy store. **Start here.** Pure logic. |
 | `audit.py` | JSONL log, redaction, rotation |
-| `consent.py` | the Tier-3 prompt: tkinter → terminal → deny |
+| `consent.py` | the Tier-3 prompt: tkinter → terminal → deny, out loud |
+| `theme.py` | the `--jv-*` palette, mirrored from `jarvis-web/src/lib/tokens.ts` |
+| `status.py` | the status file a running agent maintains, and what `status` prints |
 | `channel.py` | the WebSocket device protocol, reconnect, host pinning |
 | `ratelimit.py` | token bucket, backoff, admission control. Pure logic, no clock. |
 | `triggers.py` | cron arithmetic, file watch, idle, manual |

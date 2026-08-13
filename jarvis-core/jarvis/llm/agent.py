@@ -21,6 +21,7 @@ the action has *not* happened.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -272,6 +273,13 @@ class ConversationAgent:
         #: its keep — authoring an automation, planning a delegation — and
         #: `None` leaves the model's own default alone.
         self.think = think
+        #: How many times one round may be attempted, and the first backoff.
+        #: Only ever used before a token has reached the user — see
+        #: `_Round.stream`. Two attempts covers the overwhelmingly common case
+        #: (a server that was restarting) without turning a genuinely down
+        #: model into a thirty-second wait for the same apology.
+        self.max_attempts = 2
+        self.retry_backoff = 0.5
         self._persona_override = persona
         self.persona_file = Path(persona_file) if persona_file else None
 
@@ -614,51 +622,86 @@ class _Round:
         return self.stream()
 
     async def stream(self) -> AsyncIterator[str]:
-        agent = self._agent
-        stripper = ThinkStripper()
-        stream = agent.client.chat(
-            model=agent.model,
-            messages=self._messages,
-            tools=self._schema,
-            stream=True,
-            options=agent.options or None,
-            # Reasoning tokens were being generated at full cost and thrown
-            # away. `ThinkStripper` below deletes the `<think>` block from the
-            # stream, and nothing ever told the model not to produce one — so
-            # every spoken turn paid for a paragraph of deliberation that no
-            # human or machine ever read. On a voice path that is the largest
-            # avoidable component of time-to-first-word.
-            #
-            # `None` leaves the model's own default alone, which is what an
-            # install that has not set `llm: think:` gets.
-            think=agent.think,
-        )
-        try:
-            async for delta in stream:
-                visible = stripper.feed(delta)
-                if visible:
-                    yield visible
-            tail = stripper.flush()
-            if tail:
-                yield tail
+        """One request, retried while nothing has been said yet.
 
-            chat_result = stream.result
-            if chat_result.tool_calls and self._schema is not None:
-                self.pending_tool_calls = True
-                await agent._execute_tool_calls(
-                    chat_result, self._messages, self._context, self._result
+        ## Why the retry is conditional
+
+        A single `OllamaError` used to end the turn: `converse` caught it and
+        yielded "I couldn't reach the language model just now, Sir." No
+        backoff, no second attempt. A model server restarting after an update,
+        a container still warming up, a socket closed by a keep-alive timeout —
+        each of those is a blip of a few hundred milliseconds, and each cost
+        the user a whole turn and an apology.
+
+        But a retry is only safe **before the first token reaches the user**.
+        Once a delta has been spoken or drawn, re-running the request would
+        replay the sentence from the start — and on a voice path that is a
+        stutter the user hears, which is worse than the apology. So `emitted`
+        gates it: a failure mid-sentence is reported, not repeated.
+        """
+        agent = self._agent
+        attempts = max(1, agent.max_attempts)
+        for attempt in range(attempts):
+            emitted = 0
+            stripper = ThinkStripper()
+            stream = agent.client.chat(
+                model=agent.model,
+                messages=self._messages,
+                tools=self._schema,
+                stream=True,
+                options=agent.options or None,
+                # Reasoning tokens were being generated at full cost and thrown
+                # away. `ThinkStripper` deletes the `<think>` block from the
+                # stream, and nothing ever told the model not to produce one —
+                # so every spoken turn paid for a paragraph of deliberation
+                # that no human or machine ever read. On a voice path that is
+                # the largest avoidable component of time-to-first-word.
+                #
+                # `None` leaves the model's own default alone, which is what an
+                # install that has not set `llm: think:` gets.
+                think=agent.think,
+            )
+            try:
+                async for delta in stream:
+                    visible = stripper.feed(delta)
+                    if visible:
+                        emitted += 1
+                        yield visible
+                tail = stripper.flush()
+                if tail:
+                    yield tail
+
+                chat_result = stream.result
+                if chat_result.tool_calls and self._schema is not None:
+                    self.pending_tool_calls = True
+                    await agent._execute_tool_calls(
+                        chat_result, self._messages, self._context, self._result
+                    )
+                elif chat_result.tool_calls:
+                    # Tools were withdrawn for this round; a call now is the
+                    # model ignoring us, and running it would sidestep the
+                    # round budget.
+                    _LOGGER.debug(
+                        "Ignoring %d tool call(s) after tools were withdrawn",
+                        len(chat_result.tool_calls),
+                    )
+                return
+            except OllamaError:
+                if emitted or attempt == attempts - 1:
+                    raise
+                delay = agent.retry_backoff * (2**attempt)
+                _LOGGER.warning(
+                    "The model server failed before saying anything; retrying "
+                    "in %.1fs (attempt %d of %d)",
+                    delay,
+                    attempt + 2,
+                    attempts,
                 )
-            elif chat_result.tool_calls:
-                # Tools were withdrawn for this round; a call now is the model
-                # ignoring us, and running it would sidestep the round budget.
-                _LOGGER.debug(
-                    "Ignoring %d tool call(s) after tools were withdrawn",
-                    len(chat_result.tool_calls),
-                )
-        finally:
-            # Normal end, an error, or the consumer walking away: the upstream
-            # response gets closed either way.
-            await stream.aclose()
+                await asyncio.sleep(delay)
+            finally:
+                # Normal end, an error, or the consumer walking away: the
+                # upstream response gets closed either way.
+                await stream.aclose()
 
 
 def _dumps(value: Any) -> str:

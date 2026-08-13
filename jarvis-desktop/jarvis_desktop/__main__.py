@@ -447,7 +447,7 @@ async def cmd_run(config: Config, once: bool = False) -> int:
             device_id=config.device_id,
             device_name=config.device_name,
             server_url=config.server_url,
-            consent_backend=consent.name,
+            consent_backend=consent.describe(),
             action_count=len(registry),
             connected=channel.registered,
         ),
@@ -467,7 +467,7 @@ async def cmd_run(config: Config, once: bool = False) -> int:
         config.device_name,
         config.server_url,
         len(registry),
-        consent.name,
+        consent.describe(),
     )
     _LOGGER.info("%s", companion.describe())
     if policy.panic:

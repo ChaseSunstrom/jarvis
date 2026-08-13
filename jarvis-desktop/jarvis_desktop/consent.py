@@ -178,6 +178,10 @@ class ConsentGateway(ABC):
         """Cheap probe so :func:`build_gateway` can pick a backend up front."""
         return True
 
+    def describe(self) -> str:
+        """The backend that would actually answer, for a human reading a log."""
+        return self.name
+
     def note_interaction(self) -> None:
         """Tell the agent a human just clicked or typed on this machine.
 
@@ -260,7 +264,8 @@ class NotifyingDenyGateway(DenyAllGateway):
     where to go for the rest, which is the audit log.
     """
 
-    #: Contains "deny-all" on purpose: this is that gateway, plus a shout.
+    #: Says "deny-all" on purpose: for anyone reading a log or a status line
+    #: this is that gateway, and the suffix is the only difference.
     name = "deny-all+notice"
 
     def __init__(self, notifier: Notifier | None = None) -> None:
@@ -270,8 +275,9 @@ class NotifyingDenyGateway(DenyAllGateway):
     def notifier(self) -> Notifier:
         """The backend the notice goes out through, built on first use.
 
-        Lazily, because ``doctor`` builds a chain purely to print it, and
-        probing the OS for ``notify-send`` to print one line is work nobody
+        Lazily, because a gateway is very often built only to be looked at —
+        every test that checks the chain's shape, and ``build_gateway`` itself
+        — and probing the OS for ``notify-send`` at construction is work nobody
         asked for.
         """
         if self._notifier is None:
@@ -328,6 +334,21 @@ class ChainGateway(ConsentGateway):
     def unattended(self) -> bool:
         """True when every backend that could actually answer is a refusal."""
         return all(g.unattended for g in self.gateways if g.usable())
+
+    def describe(self) -> str:
+        """The backend that would answer *here*, not the word "chain".
+
+        The startup banner and the status file both say which way this machine
+        can reach a human, and "chain" answers that for nobody. An empty chain
+        describes itself as the refusal it behaves as.
+        """
+        for gateway in self.gateways:
+            try:
+                if gateway.usable():
+                    return gateway.describe()
+            except Exception:  # noqa: BLE001 - an unusable backend is not fatal
+                continue
+        return DenyAllGateway.name
 
     async def request(self, request: ApprovalRequest) -> ApprovalVerdict:
         for gateway in self.gateways:
@@ -509,6 +530,17 @@ class _StdinReader:
         #: baffling from the outside.
         self.dropped = 0
 
+    @property
+    def closed(self) -> bool:
+        """True once stdin has hit EOF and nothing more can ever be typed.
+
+        Separate from "somebody else is waiting" so the refusal can say which
+        one it was. Two reasons behind one log line is how a closed pipe gets
+        debugged as a stuck prompt.
+        """
+        with self._lock:
+            return self._closed
+
     def claim(self) -> "queue.SimpleQueue[str] | None":
         """Take the next typed line, or None when another prompt already has it."""
         with self._lock:
@@ -623,13 +655,19 @@ class TerminalConsentGateway(ConsentGateway):
     async def request(self, request: ApprovalRequest) -> ApprovalVerdict:
         box = self._reader.claim()
         if box is None:
-            # Another prompt is already on screen and holds the keyboard. Two
-            # prompts sharing one stdin means a "y" meant for one could answer
-            # the other, so the second is refused rather than raced.
-            _LOGGER.warning(
-                "another terminal prompt is already waiting for input; denying %s",
-                request.action_id,
-            )
+            if self._reader.closed:
+                _LOGGER.warning(
+                    "stdin has closed, so nothing more can be typed here; denying %s",
+                    request.action_id,
+                )
+            else:
+                # Another prompt is already on screen and holds the keyboard.
+                # Two prompts sharing one stdin means a "y" meant for one could
+                # answer the other, so the second is refused rather than raced.
+                _LOGGER.warning(
+                    "another terminal prompt is already waiting for input; denying %s",
+                    request.action_id,
+                )
             return ApprovalVerdict.TIMEOUT
 
         try:
