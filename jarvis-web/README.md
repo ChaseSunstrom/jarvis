@@ -82,7 +82,7 @@ matches a DNS-rebinding attacker, who controls both headers).
 
 | Route | What it does |
 | --- | --- |
-| `/` | Voice HUD: push-to-talk, hands-free VAD, barge-in, orb, latency readout |
+| `/` | Voice HUD: hands-free VAD, barge-in, orb, latency readout, a mute that is remembered, and a text box for when the microphone is refused. Tier-3 approvals and live tool activity are docked over it — they are raised by voice turns, so the surface you spoke to is where they have to be answerable |
 | `/devices` | Every entity grouped by area, live over `subscribe_events`, with inline controls (toggle, brightness, cover open/stop/close + position, climate setpoint and HVAC mode, media transport and volume, locks, selects, numbers). MANAGE edits an entity's name, area, aliases and its exposed / hidden / disabled flags |
 | `/areas` | Create / rename / delete areas and assign entities to them |
 | `/automations` | Enable, disable and run automations; shows `last_triggered`. Create, edit and delete automations — triggers, conditions and actions as JSON |
@@ -215,7 +215,18 @@ furniture* — headings, labels, pills, buttons, entity ids, the readout — and
 uppercase with generous tracking (`--jv-track-chrome` `.16em`,
 `--jv-track-wide` `.24em`, `--jv-track-logo` `.5em` for the wordmark).
 
-Size scale: `--jv-fs-2xs` `.55rem` → `--jv-fs-display` `clamp(1.2rem, 3.2vw, 1.9rem)`.
+Size scale: `--jv-fs-2xs` `.72rem` → `--jv-fs-display` `clamp(1.35rem, 3.2vw, 2rem)`,
+with `--jv-fs-md` `1rem` for body text. The scale used to bottom out at `.55rem`
+— under nine pixels, and that was the size of every pill, entity id and caption
+in the console. The steps kept their ratios when they were raised, so it is the
+same look one size up; `tokens.test.ts` now fails anything under `.7rem`.
+
+On top of that, a reader's own multiplier: **Settings → Text size** writes one
+percentage onto the root element (`textSize.ts`), which moves every `rem` in
+both surfaces together. It is a percentage rather than a pixel size on purpose —
+it multiplies whatever the browser is already set to instead of overriding it —
+and it is stored per browser, because the right size for a phone in a hallway
+and for a monitor on a desk are different answers to the same question.
 
 The recurring devices: **corner brackets** (`.jv-bracket` ×4, overridable via
 `--jv-bracket-size` / `--jv-bracket-inset`), the **masked technical grid**
@@ -291,7 +302,14 @@ Fast, consistent, and always optional.
 animation and transition to 0.001 ms — the end state is identical, it simply
 arrives at once — and `motion.ts:prefersReducedMotion()` makes the boot sequence
 not run at all, since a timeline that gates content cannot be neutralised by
-shortening it. `prefersReducedMotion` defaults to **true** when there is no
+shortening it. **The orb obeys it too**, which took JavaScript: a
+`requestAnimationFrame` loop is not an animation as far as the cascade is
+concerned, so the largest and brightest moving object in the app was for a while
+the one thing that ignored the setting. It now integrates `dt = 0` and draws a
+single frame, repainting only when the pipeline state changes — a colour that
+says what Jarvis is doing is information, not decoration —  and
+`motion.ts:watchReducedMotion()` picks up a change to the preference without a
+reload. `prefersReducedMotion` defaults to **true** when there is no
 `matchMedia` to ask (SSR), because guessing "animate" and being wrong is the
 failure that actually costs someone.
 
@@ -340,7 +358,14 @@ what is still on screen ten seconds later.
 - A skip link as the first tab stop; `aria-current="page"` on the active nav
   item, which also gets a lit underline so the current route is not signalled by
   colour alone.
-- The command palette is a proper combobox/listbox with `aria-activedescendant`.
+- The command palette is a proper combobox/listbox with `aria-activedescendant`,
+  and `aria-expanded` / `aria-controls` follow the list rather than asserting it:
+  a query that matches nothing announces a collapsed combobox, because there is
+  no `<ul>` for it to point at.
+- `aria-label` is used to name a control, never to overwrite what it says. The
+  mute button carries none: its visible text is the accessible name, so
+  `MIC BLOCKED — ALLOW IT IN THE BROWSER` is read out rather than replaced by a
+  cheerful "Mute the microphone".
 - Colour contrast passes AA for text, asserted numerically in `tokens.test.ts`.
 - Usable down to phone width (the Android app's WebView): the nav scrolls
   horizontally, panel-head filters take their own line, rows stack, and the
@@ -390,12 +415,15 @@ Docker: `docker build -t jarvis-web .` — multi-stage, listens on 8199,
 ## Tests
 
 ```sh
-npm test                             # vitest unit tests (framing, downsample, pipeline
-                                     # events, jarvisClient, the browser transport,
-                                     # backend resolution, tts path allow-list, and the
-                                     # UI logic: design tokens, motion policy, the boot
+npm run check                        # svelte-check: types across .ts AND .svelte
+npm test                             # the same check, then the vitest unit tests
+                                     # (framing, downsample, pipeline events,
+                                     # jarvisClient, the browser transport, backend
+                                     # resolution, tts path allow-list, and the UI
+                                     # logic: design tokens, motion policy, the boot
                                      # timeline, palette ranking, chords, toasts, the
-                                     # reconnecting console link)
+                                     # reconnecting console link, settings coercion,
+                                     # the unsaved-edit guard, text size)
 node ../tests/web/smoke.test.mjs     # protocol smoke test against the mock backend
 npx playwright test                  # e2e: built app + mock backend + fake mic in chromium
 ```
@@ -425,6 +453,15 @@ npx playwright test                  # e2e: built app + mock backend + fake mic 
   opens from the keyboard, filters, and toggles an entity; a rejected
   `call_service` raises a toast; the first tab stop has a real focus ring; and
   the console fits a 390 px viewport with nothing clipped off the right edge.
+- `npm test` runs `svelte-check` first, and that is not a nicety: markup and
+  component props were the one part of this app no type checker looked at, which
+  is how `toasts.push({ kind: 'ok', text: … })` — an object handed to a
+  `(kind, text, detail?, ttl?)` signature — shipped as a blank toast that never
+  dismissed itself.
+- `components/ssr.test.ts` server-renders the components that own timers and
+  fails if one is armed during the render. A component body runs on the server
+  too, and the server never unmounts anything, so a `setInterval` in an instance
+  body accumulates one per request for the life of the process.
 - The mock backend carries a `lock.front_door` with no `lock` domain in its
   service catalogue. That is not an oversight — it is the fixture for "the UI
   offers a control the backend cannot perform", which is the path a silent

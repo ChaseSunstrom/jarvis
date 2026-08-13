@@ -7,6 +7,8 @@ import {
 	NAME_RE,
 	blankToolForm,
 	parseToolForm,
+	runnerOptions,
+	runnerSelection,
 	toolFormFromRow,
 	toolReadOnlyNote,
 	type ToolForm
@@ -105,6 +107,40 @@ describe('toolFormFromRow', () => {
 		const loaded = toolFormFromRow({ name: 'builtin', description: 'x', tier: 1, editable: false });
 		expect(loaded.method).toBe('GET');
 		expect(loaded.payload).toBe('');
+	});
+});
+
+describe('the test runner\'s picker', () => {
+	const catalogue = [
+		{ name: 'lock_control' },
+		{ name: 'paperless_search' },
+		{ name: 'weather' }
+	];
+
+	it('offers what the filter shows', () => {
+		const visible = [catalogue[1]];
+		expect(runnerOptions(catalogue, visible, 'paperless_search')).toEqual(visible);
+	});
+
+	it('keeps the selected tool on the list even when the filter hides it', () => {
+		// The bug: options came from the filtered list while the selection was
+		// independent state, so filtering away the chosen tool left a `<select>`
+		// whose value matched no option — an empty box, with RUN still lit.
+		const options = runnerOptions(catalogue, [catalogue[1]], 'lock_control');
+		expect(options.map((t) => t.name)).toEqual(['lock_control', 'paperless_search']);
+	});
+
+	it('does not offer a selection the catalogue has never heard of', () => {
+		expect(runnerOptions(catalogue, [catalogue[0]], 'deleted_tool')).toEqual([catalogue[0]]);
+	});
+
+	it('holds a valid selection and rescues an invalid one', () => {
+		expect(runnerSelection(catalogue, 'weather')).toBe('weather');
+		// Deleted from another tab, or nothing chosen yet: fall to the first
+		// option rather than leaving the box blank and the button enabled.
+		expect(runnerSelection(catalogue, 'deleted_tool')).toBe('lock_control');
+		expect(runnerSelection(catalogue, '')).toBe('lock_control');
+		expect(runnerSelection([], 'anything')).toBe('');
 	});
 });
 

@@ -3,6 +3,7 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
+	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import {
 		areaForEntity,
@@ -111,23 +112,45 @@
 		);
 	}
 
-	onMount(() => {
-		let disposed = false;
-		(async () => {
-			try {
-				const connection = await openConnection({ onStatus: (s) => (status = s) });
-				if (disposed) {
-					connection.close();
-					return;
+	// Dial and load, as a function the RECONNECT button can run again. See
+	// Reconnect.svelte for why a page's socket does not reattach on its own.
+	let disposed = false;
+	let redialling = $state(false);
+	// The socket being replaced reports its close asynchronously; without a
+	// generation the late 'closed' overwrites the new socket's 'open'.
+	let dial = 0;
+
+	async function connect(): Promise<void> {
+		if (redialling) return;
+		redialling = true;
+		const mine = ++dial;
+		conn?.close();
+		conn = null;
+		err = '';
+		loading = true;
+		try {
+			const connection = await openConnection({
+				onStatus: (s) => {
+					if (mine === dial) status = s;
 				}
-				conn = connection;
-				await refresh();
-			} catch (e) {
-				err = describeError(e);
-			} finally {
-				if (!disposed) loading = false;
+			});
+			if (disposed || mine !== dial) {
+				connection.close();
+				return;
 			}
-		})();
+			conn = connection;
+			await refresh();
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			redialling = false;
+			if (!disposed) loading = false;
+		}
+	}
+
+	onMount(() => {
+		disposed = false;
+		void connect();
 		return () => {
 			disposed = true;
 			conn?.close();
@@ -140,6 +163,8 @@
 
 <h1>AREAS</h1>
 <p class="lede">{areas.length} area(s) · link {status}</p>
+
+<Reconnect {status} busy={redialling} retry={connect} />
 
 {#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}

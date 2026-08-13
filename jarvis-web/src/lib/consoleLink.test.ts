@@ -186,6 +186,42 @@ describe('ConsoleLink', () => {
 		link.stop();
 	});
 
+	it('connects without indexing when the surface has no palette', async () => {
+		// The HUD needs the socket — approvals ride on it — and has no use for a
+		// whole house of states to feed a search box it cannot open.
+		const f = fakeConnector();
+		const link = new ConsoleLink({ connect: f.connect, random: () => 0, indexed: false });
+		link.start();
+		await flush();
+		expect(link.status).toBe('connected');
+		expect(f.opened[0].sent).toHaveLength(0);
+		link.stop();
+	});
+
+	it('loads the index the moment indexing is turned on, without waiting for a reconnect', async () => {
+		// Walking from the HUD to /devices must not leave the palette empty until
+		// the next time the backend happens to drop.
+		const f = fakeConnector();
+		const link = new ConsoleLink({ connect: f.connect, random: () => 0, indexed: false });
+		link.start();
+		await flush();
+		link.setIndexed(true);
+		await flush();
+		const socket = f.opened[0];
+		expect(JSON.parse(socket.sent[0]).type).toBe('get_states');
+		socket.reply(1, [{ entity_id: 'light.a', state: 'on', attributes: {} }]);
+		await flush();
+		expect(link.current.states).toHaveLength(1);
+
+		// Turning it on again is not a second load, and the socket is not re-dialled.
+		const before = socket.sent.length;
+		link.setIndexed(true);
+		await flush();
+		expect(socket.sent).toHaveLength(before);
+		expect(f.opened).toHaveLength(1);
+		link.stop();
+	});
+
 	it('callService refuses rather than hanging when there is no link', async () => {
 		const link = new ConsoleLink({ connect: fakeConnector().connect });
 		await expect(link.callService('light', 'turn_on', {})).rejects.toThrow(/no link/);

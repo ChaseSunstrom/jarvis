@@ -127,6 +127,14 @@
 	>
 		<div class="jv-palette-head">
 			<span class="jv-palette-prompt" aria-hidden="true">&gt;</span>
+			<!--
+				`aria-expanded` and `aria-controls` track the list rather than
+				asserting it. They were hardcoded to true and to
+				"jv-palette-list", and that `<ul>` only exists while something
+				matches — so a query that matched nothing announced an expanded
+				listbox and pointed at an id that was not in the document, which
+				is a combobox a screen reader cannot navigate and cannot explain.
+			-->
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				bind:this={input}
@@ -135,8 +143,8 @@
 				data-testid="palette-input"
 				type="text"
 				role="combobox"
-				aria-expanded="true"
-				aria-controls="jv-palette-list"
+				aria-expanded={visible.length > 0}
+				aria-controls={visible.length ? 'jv-palette-list' : undefined}
 				aria-activedescendant={visible.length ? `jv-palette-opt-${clampIndex(index, visible.length)}` : undefined}
 				aria-label="Search entities, areas, automations and pages"
 				autocomplete="off"

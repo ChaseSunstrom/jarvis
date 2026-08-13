@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Pairing from '$lib/components/Pairing.svelte';
+	import Reconnect from '$lib/components/Reconnect.svelte';
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, relayUrl, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
@@ -249,8 +250,57 @@
 		}
 	}
 
+	// Dial, load, subscribe — as a function the RECONNECT button can run again.
+	// See Reconnect.svelte for why a page's socket does not reattach on its own.
+	let disposed = false;
+	let redialling = $state(false);
+	// The socket being replaced reports its close asynchronously; without a
+	// generation the late 'closed' overwrites the new socket's 'open'.
+	let dial = 0;
+
+	async function connect(): Promise<void> {
+		if (redialling) return;
+		redialling = true;
+		const mine = ++dial;
+		void sub?.unsubscribe();
+		sub = null;
+		conn?.close();
+		conn = null;
+		err = '';
+		try {
+			const connection = await openConnection({
+				onStatus: (s) => {
+					if (mine === dial) status = s;
+				}
+			});
+			if (disposed || mine !== dial) {
+				connection.close();
+				return;
+			}
+			conn = connection;
+			try {
+				backendConfig = await connection.client.getConfig();
+			} catch (e) {
+				hint = describeError(e);
+			}
+			try {
+				const list = await connection.client.listPipelines();
+				pipelines = list?.pipelines ?? [];
+				preferred = list?.preferred_pipeline ?? null;
+			} catch (e) {
+				hint = describeError(e);
+			}
+			await loadSettings();
+			sub = await connection.client.subscribeEvents(push, liveFilter || undefined);
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			redialling = false;
+		}
+	}
+
 	onMount(() => {
-		let disposed = false;
+		disposed = false;
 		textSize = readTextSize(localStorage).id;
 		loadSpeaker();
 		fetch('/api/config')
@@ -260,32 +310,7 @@
 			// placeholders with nothing to explain why.
 			.catch((e) => (hint = describeError(e)));
 
-		(async () => {
-			try {
-				const connection = await openConnection({ onStatus: (s) => (status = s) });
-				if (disposed) {
-					connection.close();
-					return;
-				}
-				conn = connection;
-				try {
-					backendConfig = await connection.client.getConfig();
-				} catch (e) {
-					hint = describeError(e);
-				}
-				try {
-					const list = await connection.client.listPipelines();
-					pipelines = list?.pipelines ?? [];
-					preferred = list?.preferred_pipeline ?? null;
-				} catch (e) {
-					hint = describeError(e);
-				}
-				await loadSettings();
-				sub = await connection.client.subscribeEvents(push, liveFilter || undefined);
-			} catch (e) {
-				err = describeError(e);
-			}
-		})();
+		void connect();
 
 		return () => {
 			disposed = true;
@@ -300,6 +325,8 @@
 
 <h1>SETTINGS</h1>
 <p class="lede">link {status} · relay {typeof location === 'undefined' ? '' : relayUrl()}</p>
+
+<Reconnect {status} busy={redialling} retry={connect} />
 
 {#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}

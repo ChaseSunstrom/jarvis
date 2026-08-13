@@ -4,6 +4,7 @@
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
+	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import {
 		friendlyName,
@@ -277,43 +278,65 @@
 		}
 	}
 
-	onMount(() => {
-		let disposed = false;
-		(async () => {
-			try {
-				const connection = await openConnection({ onStatus: (s) => (status = s) });
-				if (disposed) {
-					connection.close();
-					return;
+	// Dial and load, as a function the RECONNECT button can run again. See
+	// Reconnect.svelte for why a page's socket does not reattach on its own.
+	let disposed = false;
+	let redialling = $state(false);
+	// The socket being replaced reports its close asynchronously; without a
+	// generation the late 'closed' overwrites the new socket's 'open'.
+	let dial = 0;
+
+	async function connect(): Promise<void> {
+		if (redialling) return;
+		redialling = true;
+		const mine = ++dial;
+		conn?.close();
+		conn = null;
+		err = '';
+		loading = true;
+		try {
+			const connection = await openConnection({
+				onStatus: (s) => {
+					if (mine === dial) status = s;
 				}
-				conn = connection;
-				tools = await connection.client.listTools();
-				// From the client's own record of which command answered — reading
-				// tools[0].source mislabels an empty native list as a fallback.
-				source = connection.client.supportsNativeTools ? 'tools' : 'services';
-				if (source === 'services') {
-					hint =
-						'This backend has no jarvis/tools/list command, so the service catalogue is shown instead — the same calls the LLM tool layer makes.';
-				}
-				try {
-					rows = (await connection.client.listToolRows()) ?? [];
-				} catch (e) {
-					rows = [];
-					manageable = false;
-					console.warn('tool management unavailable', e);
-				}
-				try {
-					entries = (await connection.client.listEntities()) ?? [];
-					states = (await connection.client.getStates()) ?? [];
-				} catch (e) {
-					hint = describeError(e);
-				}
-			} catch (e) {
-				err = describeError(e);
-			} finally {
-				if (!disposed) loading = false;
+			});
+			if (disposed || mine !== dial) {
+				connection.close();
+				return;
 			}
-		})();
+			conn = connection;
+			tools = await connection.client.listTools();
+			// From the client's own record of which command answered — reading
+			// tools[0].source mislabels an empty native list as a fallback.
+			source = connection.client.supportsNativeTools ? 'tools' : 'services';
+			if (source === 'services') {
+				hint =
+					'This backend has no jarvis/tools/list command, so the service catalogue is shown instead — the same calls the LLM tool layer makes.';
+			}
+			try {
+				rows = (await connection.client.listToolRows()) ?? [];
+			} catch (e) {
+				rows = [];
+				manageable = false;
+				console.warn('tool management unavailable', e);
+			}
+			try {
+				entries = (await connection.client.listEntities()) ?? [];
+				states = (await connection.client.getStates()) ?? [];
+			} catch (e) {
+				hint = describeError(e);
+			}
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			redialling = false;
+			if (!disposed) loading = false;
+		}
+	}
+
+	onMount(() => {
+		disposed = false;
+		void connect();
 		return () => {
 			disposed = true;
 			conn?.close();
@@ -424,6 +447,8 @@
 		? 'y'
 		: 'ies'} · link {status}
 </p>
+
+<Reconnect {status} busy={redialling} retry={connect} />
 
 {#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}

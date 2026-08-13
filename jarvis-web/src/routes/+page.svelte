@@ -6,6 +6,7 @@
 	import { EnergyVAD } from '$lib/wake';
 	import Orb from '$lib/components/Orb.svelte';
 	import { accentFor } from '$lib/tokens';
+	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 
 	// `turnState` rather than `state`: a variable called `state` in a component
 	// makes `$state` ambiguous to the tooling — svelte-check reads it as the
@@ -400,15 +401,32 @@
 		tickClock();
 		const clk = setInterval(tickClock, 1000);
 
+		// The audio level, followed frame by frame. This is the other half of the
+		// orb's motion — it swells the ball with the voice, and it scales the
+		// no-WebGL fallback outright — so it stops when the orb does. Left running
+		// under reduced motion it would be a per-frame loop feeding a picture that
+		// is only ever redrawn on a state change, which costs a wall panel its
+		// battery to animate nothing.
 		let raf = 0;
 		const tick = () => {
 			orbLevel = turnState === 'speaking' ? player.level() * 2 : Math.min(micLevel * 4, 1);
 			raf = requestAnimationFrame(tick);
 		};
-		raf = requestAnimationFrame(tick);
+		const follow = (reduced: boolean) => {
+			if (reduced) {
+				if (raf) cancelAnimationFrame(raf);
+				raf = 0;
+				orbLevel = 0;
+			} else if (!raf) {
+				raf = requestAnimationFrame(tick);
+			}
+		};
+		follow(prefersReducedMotion());
+		const unwatchMotion = watchReducedMotion(follow);
 		return () => {
-			cancelAnimationFrame(raf);
+			if (raf) cancelAnimationFrame(raf);
 			clearInterval(clk);
+			unwatchMotion();
 		};
 	});
 </script>

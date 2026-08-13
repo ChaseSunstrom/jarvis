@@ -24,10 +24,15 @@ export const DISCARD_WINDOW_MS = 4000;
  * two spellings of the same JSON identical — and one of them is the one the
  * person is still typing.
  */
-export function formsDiffer<T extends Record<string, unknown>>(a: T, b: T): boolean {
-	const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
+export function formsDiffer<T extends object>(a: T, b: T): boolean {
+	// Widened here rather than constrained in the signature: a form is declared
+	// as an interface, and an interface has no index signature, so asking for
+	// `Record<string, unknown>` would refuse every type this is written for.
+	const left = (a ?? {}) as Record<string, unknown>;
+	const right = (b ?? {}) as Record<string, unknown>;
+	const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
 	for (const key of keys) {
-		if (a?.[key] !== b?.[key]) return true;
+		if (left[key] !== right[key]) return true;
 	}
 	return false;
 }

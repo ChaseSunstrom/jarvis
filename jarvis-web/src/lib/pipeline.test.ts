@@ -169,6 +169,48 @@ describe('PipelineClient', () => {
 		expect(secondRun.conversation_id).toBe('conv-42');
 	});
 
+	it('runs a typed turn from the intent stage, with no audio stream at all', () => {
+		const { client, cb, sent } = setup();
+		const runId = client.startTextRun('turn on the lab lights', { pipeline: 'p1' });
+		expect(JSON.parse(sent[0] as string)).toMatchObject({
+			id: runId,
+			type: 'assist_pipeline/run',
+			// The whole point: no stt stage, so nothing is waiting for a microphone
+			// that the browser has refused. It still ends at tts, so a typed
+			// question is answered out loud like a spoken one.
+			start_stage: 'intent',
+			end_stage: 'tts',
+			input: { text: 'turn on the lab lights' },
+			pipeline: 'p1',
+			conversation_id: null
+		});
+		expect(JSON.parse(sent[0] as string).input.sample_rate).toBeUndefined();
+
+		// A text run has no binary handler, so the audio calls stay no-ops for its
+		// whole life — there is no half-open stream to close.
+		client.handleMessage(event(runId, 'run-start', { runner_data: {} }));
+		expect(client.sttBinaryHandlerId).toBe(null);
+		client.sendAudio(new Int16Array([1, 2]));
+		client.endAudio();
+		expect(sent).toHaveLength(1);
+
+		// ...and everything after the stt stage is the ordinary path.
+		client.handleMessage(
+			event(runId, 'intent-end', {
+				intent_output: {
+					conversation_id: 'conv-typed',
+					response: { speech: { plain: { speech: 'Turning on the lab lights.' } } }
+				}
+			})
+		);
+		expect(cb.onResponse).toHaveBeenCalledWith('Turning on the lab lights.');
+		expect(client.conversationId).toBe('conv-typed');
+
+		// The conversation carries on into the next turn, spoken or typed.
+		client.startTextRun('and the kitchen');
+		expect(JSON.parse(sent[1] as string).conversation_id).toBe('conv-typed');
+	});
+
 	it('ignores events for other message ids', () => {
 		const { client, cb } = setup();
 		const runId = client.startRun({});

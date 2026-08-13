@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
@@ -245,36 +246,60 @@
 		publish();
 	}
 
-	onMount(() => {
-		let disposed = false;
-		let sub: Subscription | null = null;
-		(async () => {
-			try {
-				const connection = await openConnection({ onStatus: (s) => (status = s) });
-				if (disposed) {
-					connection.close();
-					return;
+	// Dial, load, subscribe — as a function the RECONNECT button can run again.
+	// See Reconnect.svelte for why a page's socket does not reattach on its own.
+	let disposed = false;
+	let sub: Subscription | null = null;
+	let redialling = $state(false);
+	// The socket being replaced reports its close asynchronously; without a
+	// generation the late 'closed' overwrites the new socket's 'open'.
+	let dial = 0;
+
+	async function connect(): Promise<void> {
+		if (redialling) return;
+		redialling = true;
+		const mine = ++dial;
+		void sub?.unsubscribe();
+		sub = null;
+		conn?.close();
+		conn = null;
+		err = '';
+		loading = true;
+		try {
+			const connection = await openConnection({
+				onStatus: (s) => {
+					if (mine === dial) status = s;
 				}
-				conn = connection;
-				const fresh = await connection.client.getStates();
-				stateMap.clear();
-				for (const state of fresh) stateMap.set(state.entity_id, state);
-				publish();
-				try {
-					entries = (await connection.client.listEntities()) ?? [];
-				} catch {
-					entries = [];
-				}
-				await refreshRows();
-				sub = await connection.client.subscribeEvents((event) => {
-					if (applyStateChanged(stateMap, event)) publish();
-				}, 'state_changed');
-			} catch (e) {
-				err = describeError(e);
-			} finally {
-				if (!disposed) loading = false;
+			});
+			if (disposed || mine !== dial) {
+				connection.close();
+				return;
 			}
-		})();
+			conn = connection;
+			const fresh = await connection.client.getStates();
+			stateMap.clear();
+			for (const state of fresh) stateMap.set(state.entity_id, state);
+			publish();
+			try {
+				entries = (await connection.client.listEntities()) ?? [];
+			} catch {
+				entries = [];
+			}
+			await refreshRows();
+			sub = await connection.client.subscribeEvents((event) => {
+				if (applyStateChanged(stateMap, event)) publish();
+			}, 'state_changed');
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			redialling = false;
+			if (!disposed) loading = false;
+		}
+	}
+
+	onMount(() => {
+		disposed = false;
+		void connect();
 		return () => {
 			disposed = true;
 			clearTimeout(flashTimer);
@@ -337,6 +362,8 @@
 
 <h1>AUTOMATIONS</h1>
 <p class="lede">{automations.length} automation(s) · link {status}</p>
+
+<Reconnect {status} busy={redialling} retry={connect} />
 
 {#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if flash}<p class="notice" data-testid="flash">{flash}</p>{/if}

@@ -57,13 +57,15 @@ done
 
 | Suite | Tests | Result | Runtime |
 |---|---:|---|---:|
-| `jarvis-core` | 1554 | all pass | ~150 s |
-| `jarvis-desktop` | 722 | all pass | ~16 s |
+| `jarvis-core` | 1758 | all pass | ~180 s |
+| `jarvis-desktop` | 803 | all pass | ~16 s |
 | `jarvis-browser` | 328 | all pass | ~2 s |
 | `jarvis-orchestrator` + `jarvis-sandbox` | 23 | all pass | ~2 s |
 | `evals` (routing table + its mirrors) | 17 | all pass | <1 s |
-| `jarvis-web` (vitest, 20 files) | 325 | all pass | ~4 s |
-| `jarvis-web` (Playwright, chromium) | 44 | all pass | ~56 s |
+| `evals` (entity resolution) | 22 + 19 skipped | all pass | <1 s |
+| `jarvis-web` (vitest, 24 files) | 365 | all pass | ~6 s |
+| `jarvis-web` (`svelte-check`) | 415 files | 0 errors | ~5 s |
+| `jarvis-web` (Playwright, chromium) | 59 | all pass | ~80 s |
 | `android-app/tools` (spec files) | all pass | all pass | ~3 s |
 
 Within `jarvis-core`, by file:

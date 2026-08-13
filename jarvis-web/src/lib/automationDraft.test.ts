@@ -62,7 +62,10 @@ describe('parseForm', () => {
 		[{ mode: 'sideways' }, 'mode', 'Mode must be'],
 		[{ trigger: '[]' }, 'trigger', 'at least one trigger'],
 		[{ trigger: '[{}]' }, 'trigger', 'platform'],
-		[{ trigger: '[{"platform":"sun"}]' }, 'trigger', 'no `sun` trigger'],
+		// `moon`, not `sun`: sun was the example here until the engine grew a sun
+		// trigger, at which point this case was asserting that the form refuses
+		// something it should accept.
+		[{ trigger: '[{"platform":"moon"}]' }, 'trigger', 'no `moon` trigger'],
 		[{ trigger: '[1,2]' }, 'trigger', 'must be an object'],
 		[{ trigger: '{oops' }, 'trigger', 'trigger:'],
 		[{ action: '[]' }, 'action', 'at least one action'],

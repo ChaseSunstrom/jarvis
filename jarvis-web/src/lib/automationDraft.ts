@@ -35,6 +35,10 @@ export const TRIGGER_PLATFORMS = [
 	'shutdown',
 	'start',
 	'state',
+	// `sun` arrived in the engine after this list was written, and the drift test
+	// beside it is what said so — until it was added here the console refused a
+	// trigger jarvis-core can attach perfectly well.
+	'sun',
 	'template',
 	'time',
 	'time_pattern',
