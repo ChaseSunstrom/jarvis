@@ -57,7 +57,35 @@ BOOKKEEPING = ("id", "created_at", "updated_at")
 #: than stored: the engine ignores unknown keys, so an accepted-but-ignored
 #: field is a setting that appears to work and does nothing.
 ALLOWED_FIELDS = frozenset(
-    {"id", "alias", "description", "mode", "max", "trigger", "condition", "action"}
+    {
+        "id",
+        "alias",
+        "description",
+        "mode",
+        "max",
+        "trigger",
+        "condition",
+        "action",
+        # `variables:` is read by the engine (`Automation._async_trigger_fired`
+        # merges it into every run's variable scope) and was missing here, so a
+        # templated automation could be written in YAML and **not** through the
+        # console or by the model — the two surfaces silently refused a field
+        # the engine supports. That is the inverse of the rule this list exists
+        # for: an accepted-but-ignored field is a setting that does nothing,
+        # and a rejected-but-supported one is a capability nobody can reach.
+        "variables",
+        # Same shape. The engine reads it when deciding whether an automation
+        # comes back enabled after a restart.
+        "initial_state",
+        # The plural spellings `Automation.__init__` accepts. `reach.part_of`
+        # exists precisely because the engine reads either, and a validator
+        # that took only the singular refused automations the engine would
+        # have run — which is the bug `reach.part_of`'s docstring describes
+        # from the other side.
+        "triggers",
+        "conditions",
+        "actions",
+    }
 )
 
 MAX_ALIAS = 120

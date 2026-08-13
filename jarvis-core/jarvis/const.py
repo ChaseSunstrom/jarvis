@@ -15,6 +15,13 @@ EVENT_DEVICE_REGISTRY_UPDATED = "device_registry_updated"
 EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
 EVENT_AUTOMATION_TRIGGERED = "automation_triggered"
 
+#: An automation whose action list raised. Fired beside the log line, because a
+#: log line on a headless box is not a notification: the 3am automation is the
+#: one everybody writes and nobody watches, and the first sign of trouble used
+#: to be noticing weeks later that something had stopped happening. An
+#: automation can trigger on this to tell you.
+EVENT_AUTOMATION_FAILED = "automation_failed"
+
 MATCH_ALL = "*"
 
 # --- common states ---------------------------------------------------------

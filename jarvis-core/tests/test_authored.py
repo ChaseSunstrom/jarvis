@@ -44,12 +44,17 @@ def test_validate_accepts_a_reasonable_automation():
         # A trigger with no platform never fires, and an automation that never
         # fires is indistinguishable from a broken one at three in the morning.
         ({"alias": "x", "trigger": [{}], "action": GOOD["action"]}, "platform"),
-        # `sun` is a Home Assistant trigger this engine does not have. Saving it
-        # would produce an automation that lists, looks right and never fires,
-        # which is worse than refusing it.
+        # A platform this engine does not have. Saving it would produce an
+        # automation that lists, looks right and never fires, which is worse
+        # than refusing it.
+        #
+        # This used to be `sun`, which the engine now HAS — "30 minutes before
+        # sunset" is the rule everybody writes first. `device` is Home
+        # Assistant's device-trigger abstraction and there is no equivalent
+        # here, so it took over the job of being the example.
         (
-            {**GOOD, "trigger": [{"platform": "sun", "event": "sunset"}]},
-            "no `sun` trigger",
+            {**GOOD, "trigger": [{"platform": "device", "device_id": "abc"}]},
+            "no `device` trigger",
         ),
         ({**GOOD, "mode": "sideways"}, "Mode"),
         ({**GOOD, "max": "lots"}, "whole number"),

@@ -8,7 +8,7 @@ trigger and cancels anything it scheduled.
 Supported ``platform:`` (``trigger:`` is accepted as an alias, matching newer
 Home Assistant YAML)::
 
-    state | numeric_state | time | time_pattern | event | mqtt | webhook
+    state | numeric_state | time | sun | time_pattern | event | mqtt | webhook
     template | jarvis_start (aliases: homeassistant_start, start, jarvis,
     homeassistant with `event: start|shutdown`)
 """
@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..const import EVENT_JARVIS_START, EVENT_JARVIS_STOP, EVENT_STATE_CHANGED
@@ -374,6 +375,111 @@ async def async_attach_time(
     return task.cancel
 
 
+async def async_attach_sun(
+    jarvis: "Jarvis", config: dict[str, Any], fire: FireTrigger
+) -> Unsub:
+    """`platform: sun`, with an offset. The archetypal home automation.
+
+    ## Why this exists
+
+    "Turn the porch light on 30 minutes before sunset" is the rule everybody
+    writes first, and it could not be expressed. The *condition* side has had
+    solar times with offsets since the beginning — `after: "sunset - 00:30"`
+    parses, resolves against the `sun` integration and works — but there was no
+    trigger platform, so the only ways to build it were a `state` trigger on
+    `sun.sun` (which fires on the horizon crossing, up to a minute late, and
+    takes no offset) or polling with `time_pattern` and filtering with the
+    condition that already knew how.
+
+    So this is not new arithmetic. `event` and `offset` are handed to the same
+    `sun.next()` the condition side calls, which keeps one implementation of
+    what "sunset" means in a codebase that has been bitten before by two
+    analysers disagreeing about one config.
+
+        automations:
+          - alias: Porch light
+            triggers:
+              - platform: sun
+                event: sunset
+                offset: "-00:30"
+            actions: [{service: light.turn_on, target: {entity_id: light.porch}}]
+
+    `event` accepts what `SunData.next` accepts — sunrise, sunset, dawn, dusk,
+    noon, midnight. `offset` is `HH:MM` or `HH:MM:SS`, negative for before.
+    """
+    event = str(config.get("event") or "sunset").strip().lower()
+    offset = _sun_offset(config.get("offset"))
+
+    sun = (getattr(jarvis, "data", None) or {}).get("sun")
+    if sun is None or not hasattr(sun, "next"):
+        # Inert with a reason, matching how an unknown platform behaves: a
+        # rule that cannot fire must not take the other rules down with it.
+        _LOGGER.warning(
+            "sun trigger wants `sun:` in configuration.yaml, which is not set "
+            "up; this automation will never fire"
+        )
+        return lambda: None
+
+    emit = _wrap_fire(fire)
+    clock = get_clock(jarvis)
+
+    async def _loop() -> None:
+        while True:
+            now = clock.now()
+            try:
+                nxt = sun.next(event, now, offset)
+            except Exception:
+                _LOGGER.exception("sun.next(%r) failed; the trigger stops here", event)
+                return
+            if nxt is None:
+                _LOGGER.warning("sun has no next %r; the trigger stops here", event)
+                return
+            delay = (nxt - now).total_seconds()
+            # Polar latitudes and a `noon` that has just passed both produce a
+            # non-positive delay; sleeping a minute and re-asking is what stops
+            # that becoming a busy loop that fires the rule hundreds of times.
+            await clock.sleep(delay if delay > 0 else 60.0)
+            await asyncio.sleep(0)  # stay cancellable even with a fake clock
+            if delay <= 0:
+                continue
+            trigger = _base_trigger(config, "sun")
+            trigger.update(
+                {
+                    "event": event,
+                    "offset": offset.total_seconds(),
+                    "now": clock.now(),
+                    "description": f"sun {event}",
+                }
+            )
+            await emit(trigger)
+
+    task = jarvis.async_create_task(_loop())
+    return task.cancel
+
+
+def _sun_offset(value: Any) -> timedelta:
+    """`"-00:30"` -> half an hour early. Anything unreadable is no offset.
+
+    Written as a signed clock time rather than a number of seconds because
+    that is how the condition side spells it (`"sunset - 00:30"`), and one
+    concept spelled two ways in one config file is how people end up with a
+    rule that fires half an hour late and no idea why.
+    """
+    if value is None:
+        return timedelta()
+    if isinstance(value, (int, float)):
+        return timedelta(seconds=float(value))
+    text = str(value).strip()
+    if not text:
+        return timedelta()
+    sign = -1.0 if text.startswith("-") else 1.0
+    seconds = parse_duration(text.lstrip("+-").strip())
+    if seconds is None:
+        _LOGGER.warning("sun trigger offset %r is not HH:MM[:SS]; ignoring it", value)
+        return timedelta()
+    return timedelta(seconds=sign * seconds)
+
+
 async def async_attach_time_pattern(
     jarvis: "Jarvis", config: dict[str, Any], fire: FireTrigger
 ) -> Unsub:
@@ -661,6 +767,7 @@ TRIGGER_PLATFORMS: dict[str, Callable[..., Awaitable[Unsub]]] = {
     "state": async_attach_state,
     "numeric_state": async_attach_numeric_state,
     "time": async_attach_time,
+    "sun": async_attach_sun,
     "time_pattern": async_attach_time_pattern,
     "event": async_attach_event,
     "mqtt": async_attach_mqtt,

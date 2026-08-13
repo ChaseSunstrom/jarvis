@@ -161,14 +161,38 @@ async def test_the_list_shows_both_kinds_and_says_which_is_editable(jarvis):
 
 
 async def test_a_refused_automation_says_why_and_stores_nothing(jarvis):
+    # `device` rather than `sun`: the engine grew a sun trigger, so it is no
+    # longer an example of something it cannot do.
     with pytest.raises(ApiError) as err:
         await common.async_create_automation(
-            jarvis, {"automation": {**NEW, "trigger": [{"platform": "sun"}]}}
+            jarvis, {"automation": {**NEW, "trigger": [{"platform": "device"}]}}
         )
 
     assert err.value.status == 400
-    assert "sun" in err.value.message
+    assert "device" in err.value.message
     assert get_authored(jarvis).items == {}
+
+
+async def test_a_sun_automation_can_be_authored(jarvis):
+    """The rule everybody writes first, from the console and from the model.
+
+    The *condition* side has understood `"sunset - 00:30"` since the beginning;
+    there was simply no trigger platform, so the archetypal home automation
+    could not be expressed at all. It is authorable now, which means the web
+    editor and `create_automation` can both write it.
+    """
+    stored = await common.async_create_automation(
+        jarvis,
+        {
+            "automation": {
+                **NEW,
+                "trigger": [{"platform": "sun", "event": "sunset", "offset": "-00:30"}],
+            }
+        },
+    )
+
+    assert stored["automation"]["trigger"][0]["platform"] == "sun"
+    assert get_authored(jarvis).items
 
 
 async def test_the_websocket_envelope_is_not_mistaken_for_the_automation():

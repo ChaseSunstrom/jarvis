@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..bus import Context
-from ..const import EVENT_AUTOMATION_TRIGGERED, STATE_OFF, STATE_ON
+from ..const import EVENT_AUTOMATION_FAILED, EVENT_AUTOMATION_TRIGGERED, STATE_OFF, STATE_ON
 from ..entity import Entity, EntityPlatform
 from ..state import slugify
 from .actions import ScriptRunner
@@ -33,6 +33,8 @@ DEFAULT_MAX = 10
 MODES = ("single", "restart", "queued", "parallel")
 
 ATTR_LAST_TRIGGERED = "last_triggered"
+ATTR_LAST_ERROR = "last_error"
+ATTR_LAST_ERROR_AT = "last_error_at"
 ATTR_CURRENT = "current"
 ATTR_MODE = "mode"
 ATTR_ID = "id"
@@ -211,6 +213,13 @@ class AutomationEntity(Entity):
             "friendly_name": automation.alias,
             ATTR_ID: automation.automation_id,
             ATTR_LAST_TRIGGERED: automation.last_triggered,
+            # What went wrong the last time it ran, and when. Both None on an
+            # automation that has never failed. These are on the ENTITY, not
+            # only in a log line, because the entity is what the console lists,
+            # what `get_state` reads and what an automation watching for
+            # trouble can trigger on — see `_async_execute`.
+            ATTR_LAST_ERROR: automation.last_error,
+            ATTR_LAST_ERROR_AT: automation.last_error_at,
             ATTR_MODE: automation.mode,
             ATTR_CURRENT: automation.current,
             "max": automation.max_runs,
@@ -240,6 +249,8 @@ class Automation:
         # bool() silently enabled automations the user had switched off.
         self.enabled = result_as_boolean(self.config.get("initial_state", True))
         self.last_triggered: str | None = None
+        self.last_error: str | None = None
+        self.last_error_at: str | None = None
 
         # Through `part_of` rather than inline, so that this precedence has
         # exactly ONE definition. It used to live here alone, and every reader
@@ -361,12 +372,47 @@ class Automation:
         )
         runner = ScriptRunner(self.jarvis, variables, context, f"automation {self.alias}")
         try:
-            return await runner.async_run(self.actions)
+            result = await runner.async_run(self.actions)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            # ## Why this is more than a log line
+            #
+            # This used to be `_LOGGER.exception(...); return None`, and that
+            # was the whole of it. The automation's entity still read `on`,
+            # `last_triggered` had already been written *above* — before the
+            # actions ran — so the state said "ran fine at 03:00", no event
+            # fired, and nothing anywhere recorded that the run had failed.
+            #
+            # The 3am automation is the one everybody writes and nobody
+            # watches. Failing into a log file on a headless box means the
+            # first sign of trouble is noticing, weeks later, that something
+            # stopped happening. So a failure now lands in three places a
+            # person or a rule can actually reach: the entity's attributes,
+            # an event on the bus, and the log.
             _LOGGER.exception("Error running automation %s", self.alias)
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.last_error_at = datetime.now().astimezone().isoformat()
+            self._write_state()
+            self.jarvis.bus.fire(
+                EVENT_AUTOMATION_FAILED,
+                {
+                    "entity_id": self.entity_id,
+                    "name": self.alias,
+                    "id": self.automation_id,
+                    "error": self.last_error,
+                },
+                context,
+            )
             return None
+        # A clean run clears the mark. Otherwise one bad night would leave a
+        # permanent red flag on an automation that has worked every day since,
+        # and a warning that never goes away is a warning nobody reads.
+        if self.last_error is not None:
+            self.last_error = None
+            self.last_error_at = None
+            self._write_state()
+        return result
 
 
 # ---------------------------------------------------------------------------
