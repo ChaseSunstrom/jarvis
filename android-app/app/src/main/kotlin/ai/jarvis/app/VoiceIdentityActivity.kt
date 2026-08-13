@@ -8,10 +8,12 @@ import ai.jarvis.app.ui.JarvisUi
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.TypedValue
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -78,9 +80,47 @@ class VoiceIdentityActivity : Activity() {
     private lateinit var recordButton: Button
     private lateinit var testButton: Button
     private lateinit var forgetButton: Button
+    private lateinit var redoButton: Button
+
+    /** One row per phrase: what it says and whether it has been given. */
+    private lateinit var stepList: LinearLayout
 
     private var status: VoiceIdentityClient.Status? = null
-    private var promptIndex = 0
+
+    /**
+     * Which phrase to read next.
+     *
+     * **Derived from the server's sample count, not counted here.** It was a
+     * plain field starting at 0 and reset only by FORGET MY VOICE, so rotating
+     * the phone, taking a call, or coming back to finish enrolment tomorrow
+     * restarted the list from the top — while the server's count kept climbing.
+     * The user re-read phrases they had already given, which is the one thing
+     * this screen must not ask for: the profile's whole value is that the
+     * samples differ from each other.
+     *
+     * Persisting a local counter would have been the obvious fix and the wrong
+     * one. Two devices can enrol into one profile, `FORGET MY VOICE` is not the
+     * only way samples go away, and a local number is a second opinion about
+     * something the server already knows exactly. `samples` IS the index: with
+     * three stored, the next phrase to read is the fourth.
+     *
+     * [redo] is the one thing that can move it backwards, and only by one.
+     */
+    private val promptIndex: Int
+        get() = ((status?.samples ?: 0) - redo).coerceAtLeast(0)
+
+    /**
+     * How far REDO has stepped the phrase list back.
+     *
+     * Not a sample count and never negative: it exists so "say that one again"
+     * re-offers the phrase just read. Cleared whenever a sample is accepted,
+     * because the list has moved on.
+     */
+    private var redo = 0
+
+    /** What the server said about the last sample. Cleared when a new one starts. */
+    private var lastNote: String? = null
+
     private var mic: MicStreamer? = null
     private var capture: ByteArrayOutputStream? = null
     private var busy = false
@@ -180,10 +220,24 @@ class VoiceIdentityActivity : Activity() {
             )
         )
 
-        column.addView(JarvisUi.spacer(this, 12))
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
         column.addView(JarvisUi.label(this, "Say this"))
         promptView = JarvisUi.responseView(this)
         column.addView(promptView)
+
+        // THE STEP LIST, which this screen did not have.
+        //
+        // Progress was one line of text — "3 of 20 samples · gate is observe" —
+        // so the only way to know which phrases had been given was to remember.
+        // With the phrase list restarting from the top on every rotation (see
+        // [promptIndex]) that was not a small gap: the screen and the server
+        // disagreed about where enrolment had got to, and nothing on screen
+        // showed the disagreement.
+        //
+        // Built once and re-bound in [renderSteps], because the phrases arrive
+        // from the server and can change under a running screen.
+        stepList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(stepList, matchWidth())
 
         column.addView(JarvisUi.spacer(this, 12))
         // TAP, not hold.
@@ -204,7 +258,9 @@ class VoiceIdentityActivity : Activity() {
         detailView = JarvisUi.hint(this, "")
         column.addView(detailView)
 
-        column.addView(JarvisUi.spacer(this, 16))
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
+        redoButton = JarvisUi.ghost(this, "SAY THAT ONE AGAIN") { redo() }
+        column.addView(redoButton, matchWidth())
         testButton = JarvisUi.ghost(this, "TEST MY VOICE") { startTest() }
         column.addView(testButton, matchWidth())
         forgetButton = JarvisUi.ghost(this, "FORGET MY VOICE") { forget() }
@@ -349,6 +405,8 @@ class VoiceIdentityActivity : Activity() {
         }
         statusView.text = listeningPrompt
         detailView.text = ""
+        // The previous sample's verdict is about the previous sample.
+        lastNote = null
         main.postDelayed(autoStop, window)
         main.post(countdown)
         syncButtons()
@@ -391,15 +449,52 @@ class VoiceIdentityActivity : Activity() {
     private fun refresh() = offMainThread({ it.status() }) { render(it) }
 
     private fun submitEnrolment(pcm: ByteArray) =
-        offMainThread({ it.enrol(pcm) }) { fresh ->
-            promptIndex += 1
-            render(fresh)
+        offMainThread({ it.enrol(pcm) }) { enrolment ->
+            // The phrase list advances because the SERVER's count advanced —
+            // see [promptIndex]. Nothing is counted here.
+            redo = 0
+            // The per-sample verdict the API exists to provide, said out loud
+            // for the first time. Null when there is nothing wrong with it.
+            lastNote = enrolment.note()
+            render(enrolment.status)
         }
 
     private fun forget() = offMainThread({ it.forget() }) { fresh ->
-        promptIndex = 0
+        redo = 0
+        lastNote = null
         toast("Voiceprint deleted.")
         render(fresh)
+    }
+
+    /**
+     * "That one was not my best — let me say it again."
+     *
+     * ## What this can and cannot do
+     *
+     * It re-offers the phrase just read, so the next sample is another go at
+     * the same line. It does **not** delete the sample already stored, because
+     * `/api/voice/speaker` has no way to: the four endpoints are status, enrol,
+     * verify and forget-everything, and there is no per-sample delete to call.
+     * Saying so on screen is the honest half of this button — a REDO that
+     * quietly left the bad sample in the profile would be worse than none.
+     *
+     * A sample the server REFUSED — too quiet, no measurable pitch — was never
+     * added, so for that case redo genuinely is a clean second attempt, and
+     * that is the case this button is mostly for.
+     */
+    private fun redo() {
+        if (busy || recording) return
+        val phrases = status?.prompts.orEmpty()
+        if (promptIndex <= 0 || phrases.isEmpty()) {
+            toast("There is no earlier phrase to go back to.")
+            return
+        }
+        redo += 1
+        lastNote = "Reading that line again. The sample you already gave stays in " +
+            "the profile — the server has no way to remove just one — so this " +
+            "adds to it rather than replacing it. FORGET MY VOICE is the only " +
+            "clean restart."
+        status?.let { render(it) }
     }
 
     private fun submitTest(pcm: ByteArray) = offMainThread({ it.verify(pcm) }) { result ->
@@ -483,6 +578,72 @@ class VoiceIdentityActivity : Activity() {
         recordButton.text = if (recording) RECORD_STOP else RECORD_START
         testButton.isEnabled = paired && !busy && !recording
         forgetButton.isEnabled = paired && !busy && !recording && (status?.enrolled == true)
+        // Only once there is an earlier phrase to go back to. Live from the
+        // FIRST accepted sample, which is exactly when "that was too quiet"
+        // first becomes possible to think.
+        redoButton.isEnabled = paired && !busy && !recording && promptIndex > 0
+        redoButton.alpha = if (redoButton.isEnabled) 1f else 0.4f
+    }
+
+    /**
+     * Draw one row per phrase, marked with what has happened to it.
+     *
+     * Text glyphs rather than icons, for the same reason [JarvisUi.checkRow]
+     * uses them: they survive any font and any accessibility scale, and they
+     * copy into a bug report as-is.
+     */
+    private fun renderSteps(fresh: VoiceIdentityClient.Status) {
+        stepList.removeAllViews()
+        val phrases = fresh.prompts
+        if (phrases.isEmpty()) return
+        val next = promptIndex
+        for ((index, phrase) in phrases.withIndex()) {
+            val given = index < next
+            val current = index == next
+            val glyph = when {
+                given -> "[ok]"
+                current -> "[>>]"
+                else -> "[  ]"
+            }
+            val tone = when {
+                given -> JarvisUi.APPROVE
+                current -> JarvisUi.ACCENT
+                else -> JarvisUi.FAINT
+            }
+            stepList.addView(
+                TextView(this).apply {
+                    text = "$glyph  $phrase"
+                    setTextColor(tone)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.HINT)
+                    typeface = Typeface.MONOSPACE
+                    setPadding(0, JarvisUi.dp(this@VoiceIdentityActivity, 3), 0, 0)
+                    // The glyphs are drawings. TalkBack reads "[ok]" as
+                    // bracket-o-k-bracket, so the row says it in English
+                    // instead — and the current one says so, because "which
+                    // line am I meant to be reading" is the entire question
+                    // this list answers.
+                    JarvisUi.describe(
+                        this,
+                        when {
+                            given -> "Given: $phrase"
+                            current -> "Say this now: $phrase"
+                            else -> "Still to say: $phrase"
+                        },
+                    )
+                },
+                matchWidth(),
+            )
+        }
+        if (next >= phrases.size) {
+            stepList.addView(
+                JarvisUi.hint(
+                    this,
+                    "Every phrase has been given. More samples only help if Jarvis " +
+                        "stops recognising you — say something different each time.",
+                ),
+                matchWidth(),
+            )
+        }
     }
 
     private fun render(fresh: VoiceIdentityClient.Status) {
@@ -492,11 +653,14 @@ class VoiceIdentityActivity : Activity() {
         // bypass the gate. See JarvisConfig.speakerGateEnforcing.
         config.speakerGateEnforcing = fresh.mode == "enforce" && fresh.enrolled
         val prompts = fresh.prompts
+        // Read AFTER `status` is assigned: promptIndex is derived from it.
+        val index = promptIndex
         promptView.text = when {
             prompts.isEmpty() -> "Say a sentence in your ordinary voice."
-            promptIndex < prompts.size -> prompts[promptIndex]
+            index < prompts.size -> prompts[index]
             else -> "That is enough — add more only if it stops recognising you."
         }
+        renderSteps(fresh)
         statusView.text = if (fresh.enrolled) {
             "${fresh.samples} of ${fresh.maxSamples} samples · gate is ${fresh.mode}"
         } else {
@@ -527,6 +691,11 @@ class VoiceIdentityActivity : Activity() {
                 worst, fresh.suggestedThreshold,
             )
         }
+        // The per-sample verdict goes FIRST and above the profile-wide numbers.
+        // It is about the thing the user just did, and it is the reason this API
+        // is one sample per request; burying it under a threshold calculation
+        // would be throwing it away a second time.
+        lastNote?.let { detailView.text = "$it\n\n${detailView.text}" }
         syncButtons()
     }
 

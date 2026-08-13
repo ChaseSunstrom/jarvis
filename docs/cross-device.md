@@ -70,8 +70,31 @@ hanging forever.
 
 Messages carry a `conversation_id`. Answer on your phone and the reply lands
 back in the same conversation the desktop started — so "yes" means the right
-thing without re-establishing context. `companion.handoff` moves an in-flight
-conversation to another device deliberately.
+thing without re-establishing context.
+
+**Two different mechanisms, and it is worth knowing which is which.** Your
+*answer* gets back to the right conversation because the server matched it by
+`message_id`: the device replies with `{message_id, status, answer}` and nothing
+else, and `CompanionManager.on_device_answer` looks the thread up from its own
+pending message. The device never echoes the conversation id back, because
+nothing would read it.
+
+What the `conversation_id` on the *inbound* message is for is the device's own
+next turn. A device that receives one adopts it, so the next thing you say to
+*that* device continues that thread rather than starting a new one.
+
+`companion.handoff` moves an in-flight conversation to another device
+deliberately — and it is **not a separate wire kind**. It is
+`manager.send(kind="say", conversation_id=…)` aimed at a chosen `device_id`: an
+ordinary `jarvis_message` that happens to carry a thread. So a device implements
+handoff by adopting the thread on any message that names one, and there is no
+`"kind": "handoff"` frame to look for.
+
+Per-device notes:
+
+| | |
+|---|---|
+| **Android** | One persisted registry (`assist/ConversationRegistry.kt`) shared by the voice pipeline, the on-device-transcription path, `ask_jarvis` from a task, and the companion question screen. It expires after 30 minutes of silence: continuing a thread you have forgotten providing context to is worse than starting a fresh one. Pinned by `android-app/tools/conversation_thread_test.py`. |
 
 ## Wire protocol
 

@@ -190,13 +190,13 @@ SETTING_EXCEPTIONS: dict[str, str] = {
     # which reads the SharedPreferences file directly rather than through
     # JarvisConfig — see channel/ChannelConfig.kt.
     "deviceId": "generated on first read; nothing should ever write it",
-    # The screen labels these four "saved, not yet in effect" out loud: nothing
-    # on this device produces a home-presence signal, so WakeWordGate cannot be
-    # given one. Stored deliberately, consumed by nothing, and SAID so.
-    "wakeInCar": "stored and not applied; no home-presence signal exists — the screen says so",
-    "wakeAtHome": "stored and not applied; same",
-    "wakingHourStart": "stored and not applied; same",
-    "wakingHourEnd": "stored and not applied; same",
+    # `wakeInCar`, `wakeAtHome`, `wakingHourStart` and `wakingHourEnd` were all
+    # four listed here, with the reason "stored and not applied; no
+    # home-presence signal exists — the screen says so". That was true and it
+    # was an admission that `WakeWordGate` — a hundred lines of policy with a
+    # unit test and a section of the settings screen — had no production caller
+    # at all. `assist/WakeListenWatch.kt` is what reads them now, and
+    # `wake_listen_gate_test.py` is what stops them going quiet again.
     # Consumed inside the settings screen itself, and legitimately: the switch
     # is read straight into UpdateChecker.check(installed, allowPrerelease),
     # which is the screen's own action rather than a round trip to nowhere.
@@ -376,6 +376,49 @@ KNOWN_SEAMS: list[tuple[str, str, str]] = [
         "nothing can tell whether the consent prompt reached the screen, so a "
         "background activity start the platform silently dropped is "
         "indistinguishable from one the user is reading",
+    ),
+    (
+        # `decide` and not `shouldListen`: the only caller of `shouldListen` is
+        # `decide`, in this same file, and this check deliberately excludes the
+        # declaring file so a seam cannot certify itself. What has to exist
+        # OUTSIDE `WakeWordGate.kt` is somebody asking it. That
+        # `decide` still routes through `shouldListen` — rather than
+        # reimplementing the policy the unit test covers — is checked by
+        # `wake_listen_gate_test.py`.
+        "WakeWordGate.decide",
+        r"\.decide\(\s*\n?\s*atHome",
+        "the always-on battery policy is unwired again: the gate, its four "
+        "settings and its whole section of the settings screen go back to "
+        "being a documentation page, and DEVIATIONS.md's claim that the car-BT "
+        "policy turns detection on for the drive and off afterwards goes back "
+        "to being false",
+    ),
+    (
+        "WakeListenWatch",
+        r"WakeListenWatch\(this, config\)",
+        "nothing gathers the signals the gate needs, so the gate has nothing "
+        "to decide from even if something asks it",
+    ),
+    (
+        "ConversationRegistry",
+        r"ConversationRegistry\.current\(",
+        "every surface starts a conversation of its own again — a text turn "
+        "drops the voice turn, the wake orb and the assist card lose each "
+        "other, and the conversation_id the server hands this device for "
+        "`companion.handoff` is dropped on the floor",
+    ),
+    (
+        "TurnFocus",
+        r"TurnFocus\(context\)",
+        "no part of this app requests audio focus, so Jarvis talks over the "
+        "user's music and is never told when a call takes the audio mid-turn",
+    ),
+    (
+        "CallGuard",
+        r"CallGuard\(this\)",
+        "a call is discovered only by failing to open the recorder, and "
+        "hanging up is an edge nobody is watching — so the phone stays deaf "
+        "until a backoff or the quarter-hourly alarm happens to land",
     ),
 ]
 

@@ -198,11 +198,17 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         captionView = TextView(this).apply {
             text = "LISTENING"
             setTextColor(JarvisOrbView.Mode.LISTENING.color)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
             letterSpacing = 0.2f
             typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 10), 0, 0)
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
+            // "A real view, so it is in the accessibility tree" — it was in the
+            // tree and nothing ever read it aloud, because being in the tree
+            // only earns a description on focus and nothing focuses a caption.
+            // This is the one line that says whether Jarvis is listening,
+            // thinking or speaking, and it changes several times a turn.
+            JarvisUi.liveRegion(this)
         }
         root.addView(captionView, fullWidth())
 

@@ -541,10 +541,16 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
             heldByCall = true
             updateNotification(WAITING_IN_CALL)
             main.removeCallbacks(reconnect)
-            // A safety net, not the mechanism. On API 31+ the mode listener is
-            // what brings this back; below it there is no callback, so something
-            // has to look again — and a minute is a far cry from fifteen.
-            main.postDelayed(reconnect, CALL_RECHECK_MS)
+            // How long before looking again depends on whether looking is the
+            // MECHANISM or a safety net. On API 31+ the mode listener brings us
+            // back the moment the call ends and this timer never fires; below
+            // it there is no callback at all — see `CallGuard.edgeDriven` — so
+            // this poll is the only thing that will ever notice, and it has to
+            // be short enough that hanging up does not mean a lost minute.
+            main.postDelayed(
+                reconnect,
+                if (calls?.edgeDriven == true) CALL_RECHECK_MS else CALL_POLL_MS,
+            )
             return
         }
         val delay = micBackoff(micFailures)
@@ -1109,13 +1115,23 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         private const val MIC_BACKOFF_MAX_MS = 16_000L
 
         /**
-         * How long to wait before looking at the audio mode again during a call.
+         * How long to wait before looking at the audio mode again during a call,
+         * on a device that will also be TOLD when it ends.
          *
-         * Only load-bearing below API 31, where there is no mode callback and
-         * something has to ask. On 31+ the edge arrives first and this is
-         * cancelled before it ever fires.
+         * A safety net against a missed callback, nothing more: on API 31+ the
+         * edge arrives first and this is cancelled before it fires.
          */
         private const val CALL_RECHECK_MS = 60_000L
+
+        /**
+         * The same wait on a device with no mode callback (below API 31), where
+         * looking is the only way the end of a call is ever noticed.
+         *
+         * Short, because it is the mechanism rather than the backstop, and a
+         * poll of the audio mode is one binder call — several orders of
+         * magnitude cheaper than the microphone it is deciding whether to open.
+         */
+        private const val CALL_POLL_MS = 10_000L
 
         /**
          * How often to check that the listener is actually up.

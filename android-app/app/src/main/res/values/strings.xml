@@ -146,4 +146,58 @@
     <string name="a11y_tool_activity">Jarvis is using %1$s</string>
     <string name="a11y_question">Jarvis asks: %1$s</string>
     <string name="a11y_approval">Approval needed: %1$s</string>
+
+    <!-- Status lines: what is ACTUALLY happening, as opposed to what the
+         switch above each one says. These are the sentences most worth getting
+         right on the whole screen — a privacy switch that looks on while the
+         thing it turns off is still running is worse than no switch — and they
+         were Kotlin literals inside a `when`, three or four to a branch. -->
+
+    <string name="status_permissions_missing">%1$d required item(s) missing, %2$d optional off.</string>
+    <string name="status_permissions_optional">Everything required is granted. %1$d optional item(s) are off.</string>
+    <string name="status_permissions_ok">Everything is granted.</string>
+
+    <string name="status_overlay_no_notifications">Notifications are OFF. Jarvis cannot show you
+        anything at all — not the wake word, not an approval waiting for your answer. Turn them on
+        from SYSTEM CHECK, under Permissions.</string>
+    <string name="status_overlay_granted">Wake word: opens over whatever you are using. This is the
+        good one — the orb is drawn directly, with no notification in the way.</string>
+    <string name="status_overlay_full_screen">Wake word: takes over the screen via a full-screen
+        notification. Turn on DISPLAY OVER APPS as well for the orb to be drawn directly
+        instead.</string>
+    <string name="status_overlay_none">Wake word: arrives as a notification you have to TAP.
+        Android will not let Jarvis put anything on screen by itself without DISPLAY OVER APPS
+        above, or the full-screen grant in SYSTEM CHECK — on Android 14 the second is reserved for
+        calling and alarm apps unless you grant it by hand.</string>
+
+    <string name="status_listen_both">Starts on its own: yes — battery exemption and overlay are
+        both granted.</string>
+    <string name="status_listen_battery">Starts on its own: yes — Jarvis is exempt from battery
+        optimisation.</string>
+    <string name="status_listen_overlay">Starts on its own: yes — “display over other apps” covers
+        it.</string>
+    <string name="status_listen_no">Starts on its own: NO. Android will not let Jarvis open the
+        microphone after a restart without one of these. Until you grant one, a reboot leaves a
+        notification you have to tap before “Hey Jarvis” works again.</string>
+
+    <string name="status_models_ready">On-device detection is ready (%1$.1f MB). Nothing reaches
+        your server until you say the name.</string>
+    <string name="status_models_unused">Models are downloaded (%1$.1f MB) but detection is still on
+        the server. Turn the switch above on to use them.</string>
+    <string name="status_models_wanted">Models are NOT downloaded, so detection is still happening
+        on the server — which means the microphone is streaming there continuously. Tap DOWNLOAD
+        MODELS.</string>
+    <string name="status_models_absent">Models are not downloaded. About 3.6 MB, from your own
+        server.</string>
+
+    <string name="status_stt_suspended">SUSPENDED while Jarvis is set to answer only your voice.
+        That check runs on your server, on the sound; a turn transcribed here sends words, which
+        cannot be checked — so audio is being streamed instead. Android\'s offline recogniser owns
+        the microphone and never hands this app the audio, so the check cannot move here.</string>
+    <string name="status_stt_local">Speech is turned into text on this phone. The recording never
+        leaves it — only the words do.</string>
+    <string name="status_stt_unavailable">This phone has NO offline speech recognition, so audio is
+        still being sent to your server for every turn. Android needs an on-device recogniser and
+        the language pack installed.</string>
+    <string name="status_stt_streamed">Audio is streamed to your server, which transcribes it.</string>
 </resources>

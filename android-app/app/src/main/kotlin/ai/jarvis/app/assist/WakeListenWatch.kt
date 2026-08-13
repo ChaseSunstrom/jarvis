@@ -165,7 +165,7 @@ class WakeListenWatch(
     }
 
     /** Re-read everything; call [onChanged] only if the verdict actually moved. */
-    fun reevaluate() {
+    private fun reevaluate() {
         val next = try {
             decide()
         } catch (t: Throwable) {

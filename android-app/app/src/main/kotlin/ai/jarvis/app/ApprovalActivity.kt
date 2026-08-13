@@ -231,7 +231,7 @@ class ApprovalActivity : Activity() {
     ): ViewGroup {
         val ctx = this
         val root = FrameLayout(ctx).apply { setBackgroundColor(0xF204070C.toInt()) }
-        val column = JarvisUi.column(ctx, padDp = 24)
+        val column = JarvisUi.column(ctx, padDp = JarvisUi.Space.WIDE)
 
         column.addView(
             TextView(ctx).apply {
@@ -262,6 +262,19 @@ class ApprovalActivity : Activity() {
                 textSize = 19f
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 setTextIsSelectable(true)
+                // AN ACTION ID IS NOT A SENTENCE. TalkBack reads
+                // `media.play_on_speaker` as one run-on word; the underscores
+                // and dots are what a sighted reader sees as separators, so
+                // they become spaces for a listener. This is the screen that
+                // decides whether something irreversible happens, and mishearing
+                // WHICH thing is the failure that matters here.
+                JarvisUi.describe(
+                    this,
+                    ctx.getString(
+                        R.string.a11y_approval,
+                        actionId.ifEmpty { "no action id" }.replace(Regex("[._]"), " "),
+                    ),
+                )
             }
         )
         if (description.isNotEmpty()) {
@@ -282,7 +295,7 @@ class ApprovalActivity : Activity() {
                 // Remote text. Rendered as text and nothing else.
                 text = reason.ifEmpty { "(no reason given — treat that as suspicious)" }
                 setTextColor(if (reason.isEmpty()) JarvisUi.DENY else Color.WHITE)
-                textSize = 15f
+                textSize = JarvisUi.Type.FIELD
                 setTextIsSelectable(true)
                 setLineSpacing(JarvisUi.dp(ctx, 3).toFloat(), 1f)
             }
@@ -305,10 +318,15 @@ class ApprovalActivity : Activity() {
 
         countdownView = TextView(ctx).apply {
             setTextColor(JarvisUi.FAINT)
-            textSize = 12f
+            textSize = JarvisUi.Type.HINT
             typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(ctx, 16), 0, JarvisUi.dp(ctx, 8))
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.SECTION), 0, JarvisUi.dp(ctx, 8))
+            // A prompt that auto-denies is one a user has a limited time to
+            // answer, and the only thing saying so is this line. Nothing read
+            // it out; the countdown ran to zero in silence and the action was
+            // refused with no explanation a listener ever received.
+            JarvisUi.liveRegion(this)
         }
         column.addView(countdownView)
 
@@ -337,7 +355,13 @@ class ApprovalActivity : Activity() {
         )
         column.addView(buttons)
 
-        gateNoteView = JarvisUi.hint(ctx, "").apply { gravity = Gravity.CENTER }
+        gateNoteView = JarvisUi.hint(ctx, "").apply {
+            gravity = Gravity.CENTER
+            // Says WHY the buttons are dead — locked phone, arming delay. A
+            // disabled button with an unspoken reason beside it is a screen
+            // that appears to have stopped working.
+            JarvisUi.liveRegion(this)
+        }
         column.addView(gateNoteView)
 
         val footer = StringBuilder(

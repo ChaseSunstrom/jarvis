@@ -49,8 +49,23 @@ word broke", not "the threshold is 0.4 too low".
 
 ### 1. Enrol
 
-On the phone: **Settings → Whose voice → TEACH JARVIS MY VOICE**. Five phrases,
-hold the button while you say each one.
+On the phone: **Settings → Whose voice → TEACH JARVIS MY VOICE**. The screen
+lists the phrases your server asked for and marks off the ones you have given —
+**tap to start, tap again when you have finished the line**, one line per tap.
+
+Two details that used to be wrong here. It is *not* press-and-hold: holding does
+nothing, and the label says `TAP TO SPEAK`. And the count is not five — it is
+whatever your server's `min_samples`/`max_samples` say, which is why the screen
+shows "3 of 20 samples" rather than a fixed list. The phrases themselves come
+from the server too (`prompts` in the status payload), so the phone and the
+console offer the same ones.
+
+The screen tells you about each sample as you give it: a line that was too short
+or had no measurable pitch says so straight away, which is the whole reason the
+API takes one sample per request. **SAY THAT ONE AGAIN** re-offers the phrase you
+just read — worth knowing that it cannot *remove* the sample already stored,
+because there is no per-sample delete in the API; `DELETE /api/voice/speaker`
+(FORGET MY VOICE) is all-or-nothing.
 
 Say them **the way you would actually say them** — the question as a question,
 the order as an order. This is the single biggest thing between a gate that

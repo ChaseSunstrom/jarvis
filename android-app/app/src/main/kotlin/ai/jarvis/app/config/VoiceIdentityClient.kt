@@ -159,14 +159,72 @@ class VoiceIdentityClient(
     }
 
     /**
+     * What the server said about ONE sample, alongside the new profile state.
+     *
+     * The whole reason the API is one-sample-per-request, spelled out in
+     * `docs/voice-identity.md`: *"the useful feedback is per sample — 'that one
+     * was too quiet, say it again' between phrases, rather than one failure for
+     * the whole set at the end."* The server has always sent it —
+     * `async_enrol` returns `accepted` and a `sample` block with `speech_ms` and
+     * `has_pitch` — and this client parsed neither, so the screen showed a
+     * running total and nothing else. The per-sample half of a per-sample API
+     * was thrown away in the parser.
+     */
+    data class Enrolment(
+        val status: Status,
+        /** How much speech the server found in that sample. */
+        val speechMs: Double?,
+        /**
+         * Whether it could measure a pitch.
+         *
+         * The one quality signal that matters at enrolment time: a sample with
+         * no measurable pitch is refused outright (see `async_enrol`), because
+         * accepting one would teach the profile a placeholder pitch histogram
+         * that every later turn is then measured against.
+         */
+        val hasPitch: Boolean,
+    ) {
+        /**
+         * One sentence about the sample just given, or null when there is
+         * nothing worth saying.
+         *
+         * Only speaks up when something is *off*. A screen that congratulates
+         * the user on each of five samples trains them to stop reading it,
+         * which is precisely when the sixth one needs to be read.
+         */
+        fun note(): String? = when {
+            !hasPitch ->
+                "That one had no measurable pitch — it went in, but a breathy or " +
+                    "distant sample teaches the profile less than a spoken one."
+
+            speechMs != null && speechMs < SHORT_SAMPLE_MS ->
+                "That was only %.1f seconds of speech. Short samples narrow the profile; "
+                    .format(speechMs / 1000.0) +
+                    "say the whole line at your ordinary pace."
+
+            else -> null
+        }
+    }
+
+    /**
      * Add one enrolment sample.
      *
      * One per request rather than five in a batch, because the useful feedback
      * is per sample: "that one was too quiet, say it again" between phrases,
      * rather than a single failure for the whole set at the end.
      */
-    fun enrol(pcm: ByteArray): Result<Status> =
-        post("/api/voice/speaker/enrol", pcm).map(Status::from)
+    fun enrol(pcm: ByteArray): Result<Enrolment> =
+        post("/api/voice/speaker/enrol", pcm).map { json ->
+            val sample = json.optJSONObject("sample")
+            Enrolment(
+                status = Status.from(json),
+                speechMs = sample?.optDouble("speech_ms")?.takeIf { !it.isNaN() },
+                // Defaults TRUE for a server too old to send the field. A false
+                // here puts a warning in front of the user, and inventing one
+                // from an absent field is worse than staying quiet.
+                hasPitch = sample?.optBoolean("has_pitch", true) ?: true,
+            )
+        }
 
     /**
      * Score a sample without enrolling it, and report whether it would have
@@ -263,5 +321,15 @@ class VoiceIdentityClient(
     private companion object {
         const val TAG = "JarvisVoiceId"
         val PCM = "application/octet-stream".toMediaType()
+
+        /**
+         * Below this much speech, a sample is worth commenting on.
+         *
+         * Not a rejection — the server took it — but the profile's denominator
+         * is how much the owner varies, and a set of one-second samples is a
+         * narrow profile whatever the phrases said. 1.2 s is roughly the
+         * shortest of the server's own prompts read at an ordinary pace.
+         */
+        const val SHORT_SAMPLE_MS = 1_200.0
     }
 }

@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -22,6 +23,7 @@ import android.webkit.HttpAuthHandler
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -99,16 +101,6 @@ class ManagementActivity : Activity() {
     private var statusRetry: android.widget.Button? = null
 
     /**
-     * True while a navigation THIS APP started is in flight.
-     *
-     * Load-bearing for the error path: `onReceivedError` fires for every failed
-     * sub-resource as well as for the page, and a favicon that 404s must not
-     * replace a console that loaded perfectly well with an error screen. Only
-     * the main frame counts — see [showError].
-     */
-    private var loading = false
-
-    /**
      * Set when the current navigation failed, so [onPageFinished] does not
      * clear the error panel it is about to be told about.
      *
@@ -182,7 +174,6 @@ class ManagementActivity : Activity() {
         tab = next
         resettingHistory = true
         failed = false
-        loading = true
         showLoading(next)
         val base = config.serverUrl.trimEnd('/')
         webView?.loadUrl(base + next.path, mapOf("Authorization" to "Bearer ${config.token}"))
@@ -213,15 +204,20 @@ class ManagementActivity : Activity() {
     /**
      * Replace Chromium's error page with one that says something useful.
      *
-     * The WebView is blanked first, with `about:blank`: the platform has
-     * already rendered its own error document into it by the time this is
-     * called, and a panel drawn over the top would still be sitting on a white
-     * page — visible around the edges and behind every scroll.
+     * The WebView is blanked first: the platform has already rendered its own
+     * error document into it by the time this is called, and a panel drawn over
+     * the top would still be sitting on a white page — visible around the edges
+     * and behind every scroll.
+     *
+     * `loadData` with an empty document, never `loadUrl("about:blank")`. Every
+     * `loadUrl` from this activity carries the bearer header, and
+     * `console_parity_test.py` enforces that because a navigation without it
+     * lands on the console's login page inside a WebView nobody can type into.
+     * Clearing the document is not a navigation and should not look like one.
      */
     private fun showError(title: String, detail: String) {
         failed = true
-        loading = false
-        webView?.loadUrl("about:blank")
+        webView?.loadData("", "text/html", "utf-8")
         statusTitle?.text = title
         statusDetail?.text = detail
         statusRetry?.visibility = android.view.View.VISIBLE
@@ -283,11 +279,79 @@ class ManagementActivity : Activity() {
             )
         )
 
-        root.addView(
+        // The WebView and Jarvis's own status panel share the remaining space,
+        // stacked. A FrameLayout rather than swapping views in and out: the
+        // WebView keeps its state and its scroll position across a failed
+        // reload, and the panel is one `visibility` away in either direction.
+        val body = FrameLayout(this)
+        body.addView(
             view,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        body.addView(
+            buildStatusPanel(),
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(
+            body,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
         )
         return root
+    }
+
+    /**
+     * The panel that stands in for Chromium's white page.
+     *
+     * Opaque, on Jarvis's own ground, and clickable so it swallows taps: a
+     * transparent overlay would let the user interact with an error document
+     * underneath it, and a half-loaded console is exactly the thing not to be
+     * tapping at.
+     */
+    private fun buildStatusPanel(): LinearLayout {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(JarvisUi.BG)
+            isClickable = true
+            val p = JarvisUi.dp(this@ManagementActivity, JarvisUi.Space.SCREEN)
+            setPadding(p, p, p, p)
+            visibility = android.view.View.GONE
+        }
+        statusTitle = TextView(this).apply {
+            setTextColor(JarvisUi.ACCENT)
+            textSize = JarvisUi.Type.LABEL
+            letterSpacing = 0.2f
+            typeface = android.graphics.Typeface.create(
+                android.graphics.Typeface.MONOSPACE,
+                android.graphics.Typeface.BOLD,
+            )
+            gravity = Gravity.CENTER
+            // Read out when it changes: this is the only thing on screen that
+            // says whether the console arrived, and a blank black rectangle
+            // announces nothing on its own.
+            JarvisUi.liveRegion(this)
+        }
+        panel.addView(statusTitle)
+        statusDetail = JarvisUi.hint(this, "").apply { gravity = Gravity.CENTER }
+        panel.addView(statusDetail)
+        statusRetry = JarvisUi.ghost(this, "TRY AGAIN") { reload() }.apply {
+            visibility = android.view.View.GONE
+        }
+        panel.addView(
+            statusRetry,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = JarvisUi.dp(this@ManagementActivity, JarvisUi.Space.GAP) }
+        )
+        statusPanel = panel
+        return panel
     }
 
     /**
@@ -399,6 +463,13 @@ class ManagementActivity : Activity() {
     private fun originLockedClient() = object : WebViewClient() {
 
         override fun onPageFinished(view: WebView, url: String) {
+            // `failed` rather than the url. The platform calls onReceivedError
+            // BEFORE onPageFinished for a failed main frame, and it calls
+            // onPageFinished again for the empty document showError loads to
+            // clear Chromium's own error page — so "finished" arrives twice for
+            // one failure, and taking the panel down on either would flash the
+            // message and then show nothing.
+            if (!failed) hideStatus()
             markEmbedded(view)
             if (!resettingHistory) return
             resettingHistory = false
@@ -435,6 +506,69 @@ class ManagementActivity : Activity() {
             return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
         }
 
+        /**
+         * The console could not be reached at all — DNS, refused, timed out,
+         * the server off.
+         *
+         * `request.isForMainFrame` is the whole guard. This fires for every
+         * failed sub-resource too, including the ones
+         * [shouldInterceptRequest] deliberately blocks, and turning a blocked
+         * tracker into a full-screen "cannot reach your server" would be a
+         * worse lie than Chromium's page.
+         */
+        override fun onReceivedError(
+            view: WebView,
+            request: WebResourceRequest,
+            error: WebResourceError,
+        ) {
+            if (!request.isForMainFrame) return
+            val detail = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                error.description?.toString().orEmpty()
+            } else {
+                ""
+            }
+            showError(
+                "CANNOT REACH THE CONSOLE",
+                "${serverOrigin?.host ?: "That address"} did not answer" +
+                    (if (detail.isEmpty()) "." else ": $detail.") +
+                    "\n\nCheck the server is running and that this phone is on the " +
+                    "same network — or on the VPN — then try again."
+            )
+        }
+
+        /**
+         * It answered, and said no.
+         *
+         * Kept apart from [onReceivedError] because the two send the user to
+         * completely different places: one is a network to fix, the other is a
+         * token to re-pair. 401/403 is the common one — a WebView navigation
+         * carries the bearer only on the requests this app starts, and an
+         * expired token looks exactly like a broken console otherwise.
+         */
+        override fun onReceivedHttpError(
+            view: WebView,
+            request: WebResourceRequest,
+            response: WebResourceResponse,
+        ) {
+            if (!request.isForMainFrame) return
+            val code = response.statusCode
+            showError(
+                "THE CONSOLE ANSWERED $code",
+                when (code) {
+                    401, 403 ->
+                        "Your server refused this phone's access token. Re-pair the " +
+                            "phone from Settings — PASTE or SCAN QR."
+
+                    404 ->
+                        "That address has no ${tab.label.lowercase()} page. It may be " +
+                            "jarvis-core rather than the web console: jarvis-core is the " +
+                            "API and has no management UI."
+
+                    else -> "Something went wrong on your server. Its logs will say what."
+                }
+            )
+        }
+
         override fun onReceivedSslError(
             view: WebView,
             handler: SslErrorHandler,
@@ -443,7 +577,16 @@ class ManagementActivity : Activity() {
             // Never proceed. A private CA belongs in the user trust anchors of
             // res/xml/network_security_config.xml, not in a "continue anyway".
             handler.cancel()
-            toast("TLS error from the server; connection refused")
+            // A toast alone was the whole report, and a cancelled navigation
+            // leaves the WebView showing Chromium's error page underneath it —
+            // so the panel says the same thing where it will still be readable
+            // in ten seconds.
+            showError(
+                "TLS ERROR",
+                "The certificate your server presented was not trusted, so nothing " +
+                    "was loaded. A private CA belongs in this app's network security " +
+                    "config, never in a “continue anyway”."
+            )
         }
 
         override fun onReceivedHttpAuthRequest(

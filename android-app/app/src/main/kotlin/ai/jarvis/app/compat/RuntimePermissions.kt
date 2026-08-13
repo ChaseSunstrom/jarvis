@@ -147,11 +147,6 @@ object RuntimePermissions {
             why = "Placing a call. Tier 3, every time.",
         ),
         Entry(
-            permission = Manifest.permission.READ_PHONE_STATE,
-            group = ID_PEOPLE,
-            why = "Lets Jarvis notice you are on a call and stop talking over it.",
-        ),
-        Entry(
             permission = Manifest.permission.READ_CALENDAR,
             group = ID_CALENDAR,
             why = "\"What is on today\" reads nothing without it.",

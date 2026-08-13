@@ -39,9 +39,29 @@ parties, and the head-unit mic is routed to the AA stack while connected.
 
 **The fallback, implemented:** phone-side "Hey Jarvis" runs in parallel while
 AA is connected — the mic is the phone's, TTS routes out over the car's
-Bluetooth link, nothing renders on the head unit. The car-BT wake policy
-(`WakeWordGate`) turns detection on for the drive and off afterwards. Full
-write-up in [`docs/android-auto.md`](docs/android-auto.md).
+Bluetooth link, nothing renders on the head unit. Full write-up in
+[`docs/android-auto.md`](docs/android-auto.md).
+
+**The car-BT wake policy, stated precisely.** This section used to claim that
+`WakeWordGate` "turns detection on for the drive and off afterwards". The gate
+implemented exactly that policy and **nothing in the app called it** — it had no
+production caller at all, and the settings screen said so in its own heading
+("When to listen — saved, not yet in effect"). It is wired now
+(`assist/WakeListenWatch.kt`, pinned by
+`android-app/tools/wake_listen_gate_test.py`), and what it does is:
+
+* Car Bluetooth connects → detection on, whatever the hour. Disconnects → the
+  at-home rule decides again. That much is the original claim and it now holds.
+* **"Afterwards" depends on a place signal a phone usually does not have.** The
+  gate only knows you are away from home if you have a location automation whose
+  geofence is named `home`; with one, leaving the house stops the listening.
+  Without one, "at home" is *unknown*, and unknown is resolved as at home — so
+  the waking-hours window is what decides, and outside it nothing listens unless
+  you are in the car or wearing a headset.
+
+Resolving unknown the other way was considered and rejected: it would silence
+always-on detection everywhere except a car for every user who has not drawn a
+circle on a map, which is the feature switched off rather than a battery policy.
 
 ## 3. Tier-3 multi-agent quality at 8B is aspirational
 

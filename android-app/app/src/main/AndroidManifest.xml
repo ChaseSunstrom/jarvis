@@ -100,8 +100,6 @@
     <!-- Tier 1 (resolve a name to a number for the consent prompt) — but the
          send/call it feeds is Tier 3. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <!-- Tier 1. Call state, so Jarvis shuts up during a call. -->
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- ===================== calendar ===================== -->
     <!-- Tier 1 to read. -->

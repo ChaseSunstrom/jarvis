@@ -532,7 +532,7 @@ class SettingsActivity : Activity() {
         config.headsetMode,
         config.headsetButton,
         config.warmLink,
-    ).joinToString(" ")
+    ).joinToString(" ")
 
     private fun editedSnapshot(): String = listOf(
         ServerUrl.normalize(urlField.text.toString()),
@@ -555,7 +555,7 @@ class SettingsActivity : Activity() {
         // the switch shows.
         headsetMode.isChecked && headsetButton.isChecked,
         headsetMode.isChecked && headsetWarmLink.isChecked,
-    ).joinToString(" ")
+    ).joinToString(" ")
 
     /**
      * True when something on screen differs from what is stored.
@@ -607,10 +607,13 @@ class SettingsActivity : Activity() {
     override fun onBackPressed() {
         // Back is the other way off this screen, and it discarded edits exactly
         // as silently as the tab strip did.
-        leaveIfSaved {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
-        }
+        //
+        // `finish()` and not `super.onBackPressed()`: Kotlin refuses a `super`
+        // call from inside a lambda, and this one has to happen after the user
+        // answers a dialog. They are the same thing here anyway — this activity
+        // has no fragment back stack, and predictive back is off in the
+        // manifest, so the default Back behaviour IS finishing.
+        leaveIfSaved { finish() }
     }
 
     // --- persistence --------------------------------------------------------
@@ -810,9 +813,9 @@ class SettingsActivity : Activity() {
         val missing = requirements.count { it.essential && !it.satisfied }
         val optional = requirements.count { !it.essential && !it.satisfied }
         permissionStatus.text = when {
-            missing > 0 -> "$missing required item(s) missing, $optional optional off."
-            optional > 0 -> "Everything required is granted. $optional optional item(s) are off."
-            else -> "Everything is granted."
+            missing > 0 -> getString(R.string.status_permissions_missing, missing, optional)
+            optional > 0 -> getString(R.string.status_permissions_optional, optional)
+            else -> getString(R.string.status_permissions_ok)
         }
         permissionStatus.setTextColor(if (missing > 0) JarvisUi.GOLD else JarvisUi.DIM)
     }
@@ -825,23 +828,14 @@ class SettingsActivity : Activity() {
         // screen, and until now the screen only mentioned one of them. Reported
         // together because the useful question is not "which of these do I
         // have" but "will saying my name do anything".
-        overlayStatus.text = when {
-            !notify ->
-                "Notifications are OFF. Jarvis cannot show you anything at all — not the " +
-                    "wake word, not an approval waiting for your answer. Turn them on from " +
-                    "SYSTEM CHECK, under Permissions."
-            overlay ->
-                "Wake word: opens over whatever you are using. This is the good one — the " +
-                    "orb is drawn directly, with no notification in the way."
-            fullScreen ->
-                "Wake word: takes over the screen via a full-screen notification. Turn on " +
-                    "DISPLAY OVER APPS as well for the orb to be drawn directly instead."
-            else ->
-                "Wake word: arrives as a notification you have to TAP. Android will not let " +
-                    "Jarvis put anything on screen by itself without DISPLAY OVER APPS above, " +
-                    "or the full-screen grant in SYSTEM CHECK — on Android 14 the second is " +
-                    "reserved for calling and alarm apps unless you grant it by hand."
-        }
+        overlayStatus.text = getString(
+            when {
+                !notify -> R.string.status_overlay_no_notifications
+                overlay -> R.string.status_overlay_granted
+                fullScreen -> R.string.status_overlay_full_screen
+                else -> R.string.status_overlay_none
+            }
+        )
         overlayStatus.setTextColor(
             if (notify && (overlay || fullScreen)) JarvisUi.DIM else JarvisUi.GOLD
         )
@@ -862,18 +856,14 @@ class SettingsActivity : Activity() {
         val exempt = isExemptFromBatteryOptimisation()
         val overlay = Settings.canDrawOverlays(this)
         val ok = exempt || overlay
-        listenStatus.text = when {
-            ok && exempt && overlay ->
-                "Starts on its own: yes — battery exemption and overlay are both granted."
-            ok && exempt ->
-                "Starts on its own: yes — Jarvis is exempt from battery optimisation."
-            ok ->
-                "Starts on its own: yes — “display over other apps” covers it."
-            else ->
-                "Starts on its own: NO. Android will not let Jarvis open the microphone " +
-                    "after a restart without one of these. Until you grant one, a reboot " +
-                    "leaves a notification you have to tap before “Hey Jarvis” works again."
-        }
+        listenStatus.text = getString(
+            when {
+                ok && exempt && overlay -> R.string.status_listen_both
+                ok && exempt -> R.string.status_listen_battery
+                ok -> R.string.status_listen_overlay
+                else -> R.string.status_listen_no
+            }
+        )
         listenStatus.setTextColor(if (ok) JarvisUi.DIM else JarvisUi.GOLD)
     }
 
@@ -890,17 +880,10 @@ class SettingsActivity : Activity() {
         val wanted = config.wakeWordOnDevice || wakeOnDevice.isChecked
         val megabytes = ModelStore.bytesOnDisk(this) / 1024.0 / 1024.0
         modelStatus.text = when {
-            have && wanted ->
-                "On-device detection is ready (%.1f MB). Nothing reaches your server until "
-                    .format(megabytes) + "you say the name."
-            have ->
-                "Models are downloaded (%.1f MB) but detection is still on the server. "
-                    .format(megabytes) + "Turn the switch above on to use them."
-            wanted ->
-                "Models are NOT downloaded, so detection is still happening on the server — " +
-                    "which means the microphone is streaming there continuously. Tap " +
-                    "DOWNLOAD MODELS."
-            else -> "Models are not downloaded. About 3.6 MB, from your own server."
+            have && wanted -> getString(R.string.status_models_ready, megabytes)
+            have -> getString(R.string.status_models_unused, megabytes)
+            wanted -> getString(R.string.status_models_wanted)
+            else -> getString(R.string.status_models_absent)
         }
         modelStatus.setTextColor(if (have && wanted) JarvisUi.DIM else JarvisUi.GOLD)
     }
@@ -922,22 +905,14 @@ class SettingsActivity : Activity() {
         // leaves this phone" while every turn is being streamed would be the
         // one wrong thing this screen could say.
         val suspended = wanted && config.speakerGateEnforcing
-        sttStatus.text = when {
-            suspended ->
-                "SUSPENDED while Jarvis is set to answer only your voice. That check runs " +
-                    "on your server, on the sound; a turn transcribed here sends words, " +
-                    "which cannot be checked — so audio is being streamed instead. " +
-                    "Android's offline recogniser owns the microphone and never hands this " +
-                    "app the audio, so the check cannot move here."
-            wanted && possible ->
-                "Speech is turned into text on this phone. The recording never leaves it — " +
-                    "only the words do."
-            wanted ->
-                "This phone has NO offline speech recognition, so audio is still being sent " +
-                    "to your server for every turn. Android needs an on-device recogniser " +
-                    "and the language pack installed."
-            else -> "Audio is streamed to your server, which transcribes it."
-        }
+        sttStatus.text = getString(
+            when {
+                suspended -> R.string.status_stt_suspended
+                wanted && possible -> R.string.status_stt_local
+                wanted -> R.string.status_stt_unavailable
+                else -> R.string.status_stt_streamed
+            }
+        )
         sttStatus.setTextColor(
             if (wanted && possible && !suspended) JarvisUi.DIM else JarvisUi.GOLD
         )

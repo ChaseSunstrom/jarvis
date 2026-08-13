@@ -1,6 +1,7 @@
 package ai.jarvis.app.ui
 
 import ai.jarvis.app.BuildConfig
+import ai.jarvis.app.R
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -133,6 +134,14 @@ class JarvisOrbView @JvmOverloads constructor(
     var scrimEnabled = true
 
     private var stateLabel = "LISTENING"
+
+    init {
+        // Focusable so TalkBack can land on it and read the state, and given a
+        // description before the first frame so a screen whose orb never
+        // changes mode still says what it is.
+        isFocusable = true
+        contentDescription = context.getString(R.string.a11y_orb)
+    }
 
     /** Ring rotation, degrees, free-running so a mode change never jumps it. */
     private var spinDeg = 0f
@@ -417,13 +426,43 @@ class JarvisOrbView @JvmOverloads constructor(
     /** Caption under the orb (e.g. LISTENING / PROCESSING / RESPONDING). */
     fun setStateLabel(label: String) {
         stateLabel = label
+        describeSelf()
         invalidate()
+    }
+
+    /**
+     * Say what this orb is, and what it is doing.
+     *
+     * A custom `View` that draws everything itself has no text for TalkBack to
+     * find, so this one was announced as nothing at all — on every surface, for
+     * the life of the app. It is the largest thing on four screens and it is the
+     * *only* thing on the wake overlay, so a blind user got a screen with no
+     * content on it and a conversation that never said it had started.
+     *
+     * `announceForAccessibility` as well as the description, because the state
+     * caption is the whole information and it changes several times a turn:
+     * listening → processing → responding. A description alone is read once, on
+     * focus, and nothing here takes focus.
+     */
+    private fun describeSelf() {
+        val caption = stateLabel.trim().lowercase()
+        val spoken = context.getString(
+            R.string.a11y_orb_state,
+            if (caption.isEmpty()) mode.name.lowercase() else caption,
+        )
+        if (contentDescription?.toString() == spoken) return
+        contentDescription = spoken
+        // Only once the view is attached: an announcement from a detached view
+        // is dropped by the platform, and the description above is what a
+        // TalkBack focus will read when it does arrive.
+        if (isAttachedToWindow) announceForAccessibility(spoken)
     }
 
     /** Switch orb colour scheme (listening/thinking/speaking). */
     fun setMode(newMode: Mode) {
         if (newMode == mode) return
         mode = newMode
+        describeSelf()
         blendFrom = blobColors.copyOf()
         blendCoreFrom = coreColor
         blendRimFrom = currentColor

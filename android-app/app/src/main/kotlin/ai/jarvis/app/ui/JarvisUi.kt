@@ -69,8 +69,137 @@ object JarvisUi {
      */
     const val GOLD = 0xFFFFB347.toInt()
 
+    /**
+     * The type scale.
+     *
+     * The colours in this file have been tokenised — and pinned against
+     * `jarvis-web/src/lib/tokens.ts` by `tools/design_token_test.py` — since the
+     * phone and the console were found to be running two palettes that merely
+     * looked alike. Type had exactly the same problem and no such treatment:
+     * sizes were inline SP literals (11, 12, 13, 14, 15, 20, 21, 22) scattered
+     * across every activity, so "the same size as a hint" was a number somebody
+     * remembered rather than a name, and `CompanionAskActivity`'s question was
+     * 21sp against `JarvisUi.responseView`'s 20sp for no reason anybody could
+     * state.
+     *
+     * Seven steps, named for the job rather than for the number, so a screen
+     * asks for "a label" and gets whatever a label is.
+     */
+    object Type {
+        /** All-caps section labels and chrome captions. */
+        const val LABEL = 11f
+
+        /** Explanatory body copy, ghost buttons, status lines. */
+        const val HINT = 12f
+
+        /** Verbatim machine text, checklist glyphs. */
+        const val MONO = 13f
+
+        /** Ordinary interface text: switch rows, checklist titles, pills. */
+        const val BODY = 14f
+
+        /** Text the user typed or is about to, plus consent buttons. */
+        const val FIELD = 15f
+
+        /** What Jarvis said. The largest thing on a conversation surface. */
+        const val RESPONSE = 20f
+
+        /** The JARVIS wordmark and screen titles. */
+        const val TITLE = 22f
+    }
+
+    /**
+     * The spacing scale, in dp, for use with [dp].
+     *
+     * Same argument as [Type]: `dp(ctx, 10)`, `dp(ctx, 12)`, `dp(ctx, 14)`,
+     * `dp(ctx, 16)`, `dp(ctx, 20)` and `dp(ctx, 24)` all appeared across the
+     * screens with nothing to say which was which. These are the steps that were
+     * actually in use, named — not a new rhythm imposed on a working layout,
+     * which is why the numbers are unchanged.
+     */
+    object Space {
+        /** A hairline stroke. */
+        const val HAIRLINE = 1
+
+        /** Between a line of text and its own line spacing. */
+        const val TIGHT = 4
+
+        /** Between a label and the thing it labels. */
+        const val SNUG = 6
+
+        /** Inside a row: a glyph and its text. */
+        const val ROW = 10
+
+        /** Between two controls. */
+        const val GAP = 12
+
+        /** Between one section and the next. */
+        const val SECTION = 16
+
+        /** A screen's own margin. */
+        const val SCREEN = 20
+
+        /** A screen's margin where the content is a single centred column. */
+        const val WIDE = 24
+    }
+
     fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).toInt()
+
+    // --- accessibility --------------------------------------------------------
+    //
+    // There were NO `contentDescription`, `announceForAccessibility` or
+    // `accessibilityLiveRegion` calls anywhere in `app/src/main/kotlin` outside
+    // `automation/accessibility/`, which is the module that READS OTHER APPS'
+    // screens for the automation engine. Jarvis could drive another app's UI for
+    // a blind user and could not describe its own: the orb was an unlabelled
+    // custom View, every state caption was silent, tool-activity rows were
+    // silent, and a pipeline moving from listening to thinking to speaking
+    // announced nothing at all — on a voice assistant, whose users include
+    // people who cannot see the screen it is drawing.
+    //
+    // These three helpers are deliberately tiny and deliberately here rather
+    // than per screen: `tools/accessibility_labels_test.py` requires every
+    // surface to use them, and a screen that has to write its own
+    // `sendAccessibilityEvent` boilerplate is a screen that will not.
+
+    /**
+     * Mark [view] as a region TalkBack re-reads whenever its text changes.
+     *
+     * `POLITE`, never `ASSERTIVE`: a pipeline state changes several times a
+     * turn, and assertive interrupts whatever the user is currently listening to
+     * — including Jarvis's own reply. Polite queues behind it, which is the
+     * behaviour the words themselves have.
+     */
+    fun liveRegion(view: View) {
+        view.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+    }
+
+    /**
+     * Say [text] out loud now, whether or not anything on screen changed.
+     *
+     * For the transitions that are not a text change: the orb entering, a turn
+     * ending, a question arriving on a surface that was already up. A live
+     * region cannot cover those because nothing it contains moved.
+     *
+     * A no-op when the text is blank, so a caller may pass a value that is
+     * sometimes empty without guarding it.
+     */
+    fun announce(view: View, text: String) {
+        if (text.isBlank()) return
+        view.announceForAccessibility(text)
+    }
+
+    /**
+     * Give [view] a spoken label, or take one away.
+     *
+     * Blank clears it rather than setting an empty description — an empty string
+     * is a description, and TalkBack reads a control with one as unlabelled
+     * *and* silent, which is worse than the default.
+     */
+    fun describe(view: View, text: String?) {
+        view.contentDescription = text?.takeIf { it.isNotBlank() }
+    }
 
     /**
      * Inset a screen's root so its content is not under the status bar or the
@@ -173,18 +302,28 @@ object JarvisUi {
         }
     }
 
+    /**
+     * What the user said, as it is transcribed.
+     *
+     * A live region: the words appear one partial at a time, and a blind user
+     * needs to hear that the microphone is hearing them at all — which is the
+     * whole job this view does for a sighted one.
+     */
     fun transcriptView(context: Context): TextView = TextView(context).apply {
         setTextColor(DIM)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.FIELD)
         gravity = Gravity.CENTER
         typeface = Typeface.MONOSPACE
+        liveRegion(this)
     }
 
+    /** What Jarvis said. Also a live region, for the same reason. */
     fun responseView(context: Context): TextView = TextView(context).apply {
         setTextColor(Color.WHITE)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.RESPONSE)
         gravity = Gravity.CENTER
-        setPadding(0, dp(context, 10), 0, 0)
+        setPadding(0, dp(context, Space.ROW), 0, 0)
+        liveRegion(this)
     }
 
     // --- text ---------------------------------------------------------------
@@ -193,7 +332,7 @@ object JarvisUi {
     fun title(context: Context, text: String): TextView = TextView(context).apply {
         this.text = text
         setTextColor(ACCENT)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.TITLE)
         letterSpacing = 0.32f
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         gravity = Gravity.CENTER
@@ -203,29 +342,30 @@ object JarvisUi {
     fun label(context: Context, text: String): TextView = TextView(context).apply {
         this.text = text.uppercase()
         setTextColor(ACCENT)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
         letterSpacing = 0.2f
         typeface = Typeface.MONOSPACE
-        setPadding(0, dp(context, 14), 0, dp(context, 4))
+        setPadding(0, dp(context, Space.GAP), 0, dp(context, Space.TIGHT))
     }
 
     /** Explanatory body copy. */
     fun hint(context: Context, text: String): TextView = TextView(context).apply {
         this.text = text
         setTextColor(FAINT)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.HINT)
         setLineSpacing(dp(context, 3).toFloat(), 1f)
-        setPadding(0, dp(context, 6), 0, 0)
+        setPadding(0, dp(context, Space.SNUG), 0, 0)
     }
 
     /** Monospace block for verbatim machine text (params, log lines). */
     fun mono(context: Context, text: String): TextView = TextView(context).apply {
         this.text = text
         setTextColor(Color.WHITE)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.MONO)
         typeface = Typeface.MONOSPACE
         setTextIsSelectable(true)
-        setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12))
+        val p = dp(context, Space.GAP)
+        setPadding(p, p, p, p)
         background = panel(context)
     }
 
@@ -234,13 +374,13 @@ object JarvisUi {
     /** Rounded translucent panel with a hairline accent stroke. */
     fun panel(context: Context, fill: Int = SURFACE, stroke: Int = 0x553FD8FF): GradientDrawable =
         GradientDrawable().apply {
-            cornerRadius = dp(context, 10).toFloat()
+            cornerRadius = dp(context, Space.ROW).toFloat()
             setColor(fill)
-            setStroke(dp(context, 1), stroke)
+            setStroke(dp(context, Space.HAIRLINE), stroke)
         }
 
     /** Vertical column with the standard screen padding. */
-    fun column(context: Context, padDp: Int = 20): LinearLayout = LinearLayout(context).apply {
+    fun column(context: Context, padDp: Int = Space.SCREEN): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         val p = dp(context, padDp)
         setPadding(p, p, p, p)
@@ -278,7 +418,7 @@ object JarvisUi {
             TextView(context).apply {
                 this.text = text
                 setTextColor(0xFFFFC773.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.MONO)
                 setLineSpacing(dp(context, 3).toFloat(), 1f)
             }
         )
@@ -323,8 +463,12 @@ object JarvisUi {
                 text = if (satisfied) "[ok]" else if (essential) "[--]" else "[  ]"
                 setTextColor(tone)
                 typeface = Typeface.MONOSPACE
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setPadding(0, 0, dp(context, 10), 0)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.MONO)
+                setPadding(0, 0, dp(context, Space.ROW), 0)
+                // "[ok]" and "[--]" are drawings, not words. TalkBack reads
+                // them as punctuation soup; the row's own description below
+                // says the same thing in English, so this stays silent.
+                isImportantForAccessibility = false
             }
         )
 
@@ -333,7 +477,7 @@ object JarvisUi {
             TextView(context).apply {
                 text = if (essential) label else "$label (optional)"
                 setTextColor(if (satisfied) Color.WHITE else tone)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.BODY)
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }
         )
@@ -341,7 +485,7 @@ object JarvisUi {
             TextView(context).apply {
                 this.text = why
                 setTextColor(FAINT)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.HINT)
                 setLineSpacing(dp(context, 2).toFloat(), 1f)
                 setPadding(0, dp(context, 3), 0, 0)
             }
@@ -353,9 +497,10 @@ object JarvisUi {
                 TextView(context).apply {
                     text = if (satisfied) "" else "OPEN >"
                     setTextColor(ACCENT)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
                     typeface = Typeface.MONOSPACE
                     setPadding(dp(context, 8), 0, 0, 0)
+                    isImportantForAccessibility = false
                 }
             )
             setOnClickListener { onClick() }
@@ -374,7 +519,7 @@ object JarvisUi {
         setText(value)
         setTextColor(Color.WHITE)
         setHintTextColor(FAINT)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.FIELD)
         inputType = if (secret) {
             // VISIBLE_PASSWORD: a token is pasted and eyeballed, not typed from
             // memory, and hiding it just invites paste errors nobody can debug.
@@ -384,7 +529,11 @@ object JarvisUi {
         }
         setSingleLine(!secret)
         background = panel(context, fill = 0xFF080D13.toInt(), stroke = 0x443FD8FF)
-        setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12))
+        val p = dp(context, Space.GAP)
+        setPadding(p, p, p, p)
+        // An EditText with a hint is announced by the hint, and every field on
+        // every screen has one — so the label above it would be read twice.
+        // Stated here so a later screen does not add a second one.
     }
 
     /** Primary action: filled accent pill. */
@@ -393,7 +542,7 @@ object JarvisUi {
             text = label
             isAllCaps = true
             setTextColor(ACCENT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.BODY)
             letterSpacing = 0.15f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             background = GradientDrawable().apply {
@@ -401,7 +550,12 @@ object JarvisUi {
                 setColor(0x2233D8FF)
                 setStroke(dp(context, 1), ACCENT)
             }
-            setPadding(dp(context, 34), dp(context, 16), dp(context, 34), dp(context, 16))
+            setPadding(
+                dp(context, 34),
+                dp(context, Space.SECTION),
+                dp(context, 34),
+                dp(context, Space.SECTION),
+            )
             setOnClickListener { onClick() }
         }
 
@@ -411,7 +565,7 @@ object JarvisUi {
             text = label
             isAllCaps = true
             setTextColor(DIM)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.HINT)
             letterSpacing = 0.12f
             typeface = Typeface.MONOSPACE
             background = GradientDrawable().apply {
@@ -419,7 +573,12 @@ object JarvisUi {
                 setColor(Color.TRANSPARENT)
                 setStroke(dp(context, 1), 0x5533D8FF)
             }
-            setPadding(dp(context, 20), dp(context, 12), dp(context, 20), dp(context, 12))
+            setPadding(
+                dp(context, Space.SCREEN),
+                dp(context, Space.GAP),
+                dp(context, Space.SCREEN),
+                dp(context, Space.GAP),
+            )
             setOnClickListener { onClick() }
         }
 
@@ -470,7 +629,7 @@ object JarvisUi {
             text = label
             isAllCaps = true
             setTextColor(tone)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.FIELD)
             letterSpacing = 0.2f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             background = GradientDrawable().apply {

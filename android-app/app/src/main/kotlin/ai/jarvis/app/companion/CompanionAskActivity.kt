@@ -1,5 +1,6 @@
 package ai.jarvis.app.companion
 
+import ai.jarvis.app.R
 import ai.jarvis.app.assist.ConversationRegistry
 import ai.jarvis.app.assist.TtsPlayer
 import ai.jarvis.app.config.JarvisConfig
@@ -252,7 +253,16 @@ class CompanionAskActivity : Activity() {
             questionView.postDelayed(armRunnable, CompanionAskGate.ARM_MS)
         }
 
-        questionView.text = CompanionAskGate.textFor(locked, importance, questionText)
+        val shown = CompanionAskGate.textFor(locked, importance, questionText)
+        val changed = questionView.text?.toString() != shown
+        questionView.text = shown
+        if (changed) {
+            // Announced as a QUESTION, not as a bare sentence. The screen has
+            // "JARVIS ASKS" above it in 12sp letterspaced caps, which carries
+            // that for a sighted user and is read as three unrelated words by
+            // TalkBack.
+            JarvisUi.announce(questionView, getString(R.string.a11y_question, shown))
+        }
 
         val canAnswer = CompanionAskGate.answerEnabled(locked, armed, answered, importance)
         for (control in answerControls) {
@@ -354,21 +364,34 @@ class CompanionAskActivity : Activity() {
         questionView = TextView(ctx).apply {
             text = CompanionAskGate.HIDDEN_TEXT
             setTextColor(Color.WHITE)
-            textSize = 21f
+            // Was 21f against `JarvisUi.responseView`'s 20f, for no reason
+            // anybody could state — which is the argument for the scale. This
+            // IS Jarvis speaking, so it is the response step.
+            textSize = JarvisUi.Type.RESPONSE
             gravity = Gravity.CENTER
-            setLineSpacing(JarvisUi.dp(ctx, 4).toFloat(), 1f)
-            setPadding(0, JarvisUi.dp(ctx, 18), 0, JarvisUi.dp(ctx, 10))
+            setLineSpacing(JarvisUi.dp(ctx, JarvisUi.Space.TIGHT).toFloat(), 1f)
+            setPadding(0, JarvisUi.dp(ctx, 18), 0, JarvisUi.dp(ctx, JarvisUi.Space.ROW))
             // Remote text: rendered as text and nothing else.
             setTextIsSelectable(false)
+            // The question changes under the user twice: once when the keyguard
+            // gate replaces the placeholder with the real text, and once if the
+            // phone is unlocked while it is up. Neither was announced, so a
+            // blind user was offered YES and NO beneath a sentence TalkBack had
+            // read as "Jarvis has a question".
+            JarvisUi.liveRegion(this)
         }
         column.addView(questionView)
 
         countdownView = TextView(ctx).apply {
             setTextColor(JarvisUi.FAINT)
-            textSize = 12f
+            textSize = JarvisUi.Type.HINT
             typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, JarvisUi.dp(ctx, 12))
+            setPadding(0, 0, 0, JarvisUi.dp(ctx, JarvisUi.Space.GAP))
+            // Deliberately NOT a live region: this ticks once a second, and a
+            // polite region that re-reads every second would talk over the
+            // question itself for the whole two minutes. `NO ANSWER` at the end
+            // is announced once, from onFinish.
         }
         column.addView(countdownView)
 
@@ -389,7 +412,12 @@ class CompanionAskActivity : Activity() {
         }
         column.addView(dismissRow)
 
-        noteView = JarvisUi.hint(ctx, "").apply { gravity = Gravity.CENTER }
+        noteView = JarvisUi.hint(ctx, "").apply {
+            gravity = Gravity.CENTER
+            // The line that says why the buttons are dim, and the one that
+            // says "I did not catch that" after a failed spoken answer.
+            JarvisUi.liveRegion(this)
+        }
         column.addView(noteView)
 
         if (mode == CompanionProtocol.MODE_ASK) {
@@ -676,6 +704,7 @@ class CompanionAskActivity : Activity() {
 
             override fun onFinish() {
                 countdownView.text = "NO ANSWER"
+                JarvisUi.announce(countdownView, "Time is up. Jarvis will ask elsewhere.")
                 answer(CompanionProtocol.STATUS_TIMEOUT)
             }
         }.also { it.start() }

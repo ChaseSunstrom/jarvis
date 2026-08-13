@@ -32,7 +32,7 @@ private const val TAG = "JarvisAudioAttention"
  */
 
 /**
- * The audio focus a *turn* holds, and gives back.
+ * The audio focus a *turn* holds, and gives back. See the file banner above.
  *
  * Deliberately scoped to a turn and never to the always-on listener. Focus is a
  * claim on the user's speakers — taking it pauses their music — and a wake-word
@@ -193,40 +193,60 @@ class CallGuard(
 
     @Volatile
     private var last = false
-    private var registered = false
 
     private val executor = Executor { it.run() }
 
-    private val modeListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        AudioManager.OnModeChangedListener { publish() }
-    } else {
-        null
-    }
+    /**
+     * The registered listener, typed [Any] on purpose.
+     *
+     * `AudioManager.OnModeChangedListener` is an API-31 interface, and a FIELD
+     * whose declared type is a class the platform does not have can be resolved
+     * at class-load time on some ART versions — which would throw
+     * `NoClassDefFoundError` when this object is constructed on the API 29
+     * devices this app still supports, long before any version check could run.
+     * The guard has to be around the class being *loaded*, not merely around
+     * the call, which is what [ModeListener] below is for.
+     *
+     * Null when nothing is registered, which on those devices is always.
+     */
+    private var modeListener: Any? = null
 
     /** Begin watching, and record the current state without announcing it. */
     fun start() {
         last = inCall
-        if (registered) return
+        if (modeListener != null) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         val manager = audio ?: return
-        val listener = modeListener ?: return
         try {
+            val listener = ModeListener { publish() }
             manager.addOnModeChangedListener(executor, listener)
-            registered = true
+            modeListener = listener
         } catch (t: Throwable) {
             Log.w(TAG, "could not watch the audio mode", t)
         }
     }
 
     fun stop() {
-        if (!registered) return
-        registered = false
-        val manager = audio ?: return
         val listener = modeListener ?: return
+        modeListener = null
+        val manager = audio ?: return
         try {
-            manager.removeOnModeChangedListener(listener)
+            manager.removeOnModeChangedListener(listener as AudioManager.OnModeChangedListener)
         } catch (t: Throwable) {
             Log.d(TAG, "could not stop watching the audio mode", t)
         }
+    }
+
+    /**
+     * The API-31 interface, in a class of its own so it is loaded only when one
+     * is constructed — which only happens inside the version check in [start].
+     * A lambda here would put the interface in this file's enclosing class
+     * instead. See [modeListener].
+     */
+    private class ModeListener(
+        private val onChanged: () -> Unit,
+    ) : AudioManager.OnModeChangedListener {
+        override fun onModeChanged(mode: Int) = onChanged()
     }
 
     /**

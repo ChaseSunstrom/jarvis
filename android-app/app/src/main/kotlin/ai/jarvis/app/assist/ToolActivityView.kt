@@ -1,5 +1,6 @@
 package ai.jarvis.app.assist
 
+import ai.jarvis.app.R
 import ai.jarvis.app.ui.JarvisUi
 import android.animation.ValueAnimator
 import android.content.Context
@@ -117,6 +118,21 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
         label.setTextColor(if (run.failed > 0 && !run.running) JarvisUi.GOLD else JarvisUi.DIM)
         count.text = "${run.done} / ${run.total}"
         setPercent(run.percent, failed = run.failed > 0)
+
+        // WHAT JARVIS IS TOUCHING, out loud.
+        //
+        // This whole panel — a header, a progress track and up to four rows of
+        // tool calls — was invisible to TalkBack: a `View` progress bar with no
+        // description, and rows made of three TextViews that are each a
+        // fragment. Read one at a time they are noise ("weather", "…",
+        // "kitchen"); read as a row they are the sentence. So the ROW carries
+        // the description and its parts stay silent, and the header is a live
+        // region because "3 / 5" moving is the only thing that says progress is
+        // happening at all.
+        JarvisUi.describe(
+            this,
+            context.getString(R.string.a11y_tool_activity, "${label.text} ${count.text}"),
+        )
 
         while (rowViews.size < rows.size) {
             val row = RowView(context)
@@ -238,6 +254,15 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
                 },
             )
             addView(meta, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+
+            // The row is the unit of meaning; its three text fragments are not.
+            // Read separately TalkBack says "weather", "kitchen", "412ms" as
+            // three unrelated things.
+            isFocusable = true
+            name.isImportantForAccessibility = false
+            args.isImportantForAccessibility = false
+            meta.isImportantForAccessibility = false
+            dot.isImportantForAccessibility = false
         }
 
         fun bind(row: ToolRun.Row?) {
@@ -271,6 +296,24 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
                     meta.setTextColor(JarvisUi.DENY)
                 }
             }
+            JarvisUi.describe(this, spokenRow(row))
+        }
+
+        /**
+         * The row as one English sentence.
+         *
+         * Deliberately says the STATE first. A blind user scanning this list
+         * wants "failed" before the tool name, the same way the red dot on the
+         * left is the first thing a sighted one sees.
+         */
+        private fun spokenRow(row: ToolRun.Row): String {
+            val state = when (row.state) {
+                ToolRun.State.RUNNING -> "running"
+                ToolRun.State.OK -> "done in ${row.durationMs} milliseconds"
+                ToolRun.State.FAILED -> "failed: ${row.error ?: "no reason given"}"
+            }
+            val what = if (row.summary.isEmpty()) row.name else "${row.name}, ${row.summary}"
+            return "$state — $what"
         }
 
         private fun tint(color: Int) {
