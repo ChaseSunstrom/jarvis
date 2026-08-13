@@ -193,7 +193,9 @@ def check_window_flags(android: Path) -> int:
     # through touches OUTSIDE the window, so a MATCH_PARENT width would eat
     # every tap across the display. Only the WINDOW's own params are checked —
     # the child views inside the card are match-width on purpose.
-    params = re.search(r"private fun params\(\).*?\n    \}", text, re.S)
+    # `params(compact: Boolean = false)` since the badge form landed — the
+    # signature carries an argument now, so match up to the closing paren.
+    params = re.search(r"private fun params\([^)]*\).*?\n    \}", text, re.S)
     if not params:
         print("FAIL  AssistOverlay has no window params")
         failures += 1

@@ -229,6 +229,19 @@ def test_the_overlay_gets_off_the_prompts_buttons() -> None:
     through. That is *"it still forces me to click on the tool call to
     approve"*, and it is not a background-activity-start problem at all: the
     prompt was there the whole time.
+
+    ## What this used to pin, and why it does not any more
+
+    The first fix was `View.GONE`. It cleared the buttons, and it did it by
+    making the two surfaces mutually exclusive: **any** prompt going up took the
+    orb off the screen. So Jarvis asking you something meant Jarvis disappearing
+    while it asked, and a conversation that was still running — still listening,
+    still able to be barged in on — had no visible surface at all.
+
+    The z-order cannot be argued with. The geometry can. The card now collapses
+    to a badge at the TOP of the screen, opposite the prompt's buttons, and
+    stays visible; `FLAG_NOT_TOUCH_MODAL` then passes every touch aimed at the
+    prompt through on its own. Coexistence, rather than one or the other.
     """
     overlay = code_of(OVERLAY)
     assert "fun setHiddenForPrompt(" in overlay, (
@@ -238,13 +251,43 @@ def test_the_overlay_gets_off_the_prompts_buttons() -> None:
     # ran straight into `fun detach()` below it and failed on its own name.
     after = overlay[overlay.index("fun setHiddenForPrompt("):]
     body = after[: after.index("\n    fun ", 1)]
-    assert "View.GONE" in body, "hidden by something other than visibility"
+
+    assert "updateViewLayout" in body, (
+        "the orb no longer moves out of the way; if it is being hidden again "
+        "instead, read this test's docstring first — a prompt that blanks the "
+        "assistant asking the question is the defect this replaced"
+    )
+    assert "View.GONE" not in body.replace("rows = if (hidden) View.GONE", ""), (
+        "the WINDOW is hidden again rather than moved. Collapsing the card's "
+        "text rows to a badge is the intended use of GONE here; taking the "
+        "whole window off screen is not"
+    )
+    assert "View.VISIBLE" in body, "the window has to stay on screen"
     assert "detach" not in body, (
         "hiding by detaching drops the view tree and the conversation's "
         "callbacks with it; the orb has to come back when the prompt is answered"
     )
     assert "setHiddenForPrompt(true)" in code_of(WAKE), "nothing ever hides it"
     assert "setHiddenForPrompt(false)" in code_of(WAKE), "nothing ever brings it back"
+
+
+def test_the_badge_is_clear_of_where_a_prompt_puts_its_buttons() -> None:
+    """Moving is only a fix if it moves somewhere the buttons are not.
+
+    A consent screen builds a vertical column and puts DENY/APPROVE at the end
+    of it, so the badge goes to the opposite end of the screen — not merely to
+    a smaller box in the same place, which is where the original bug lived.
+    """
+    overlay = code_of(OVERLAY)
+    after = overlay[overlay.index("private fun params("):]
+    body = after[: after.index("\n    /**", 1)] if "\n    /**" in after else after[:2000]
+
+    assert "Gravity.TOP" in body, (
+        "the badge is not pinned to the top, so it can still land on the "
+        "prompt's buttons"
+    )
+    assert "compact" in body, "params() does not have a badge form at all"
+    assert "BADGE_DP" in overlay, "the badge has no width of its own"
 
 
 def test_a_prompt_announces_itself_to_the_surfaces() -> None:

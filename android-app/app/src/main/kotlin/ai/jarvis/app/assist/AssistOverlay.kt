@@ -53,6 +53,17 @@ class AssistOverlay(
 ) {
 
     private var root: ViewGroup? = null
+
+    /**
+     * Whether the card is currently worn as a badge, out of a prompt's way.
+     *
+     * Held so [setHiddenForPrompt] is idempotent: `PromptPresence` fires on the
+     * 0->1 and 1->0 edges, but `WakeWordService` also re-asserts the state when
+     * a conversation starts or ends underneath a prompt that is already up, and
+     * a second `updateViewLayout` with identical params is a visible flicker on
+     * the one surface whose job is to look alive.
+     */
+    private var compact = false
     private var orb: SiriOrbView? = null
     private var caption: TextView? = null
     private var transcript: TextView? = null
@@ -101,29 +112,76 @@ class AssistOverlay(
     }
 
     /**
-     * Get out of the way of a prompt, without ending the conversation.
+     * Get out of the way of a prompt — by moving, not by disappearing.
      *
      * A `TYPE_APPLICATION_OVERLAY` window is drawn **above every Activity**, so
      * while this card is up it is on top of `ApprovalActivity` — and that screen
      * puts DENY and APPROVE at the end of its column, which is where this card
      * sits: 340dp wide, anchored 72dp off the bottom. `FLAG_NOT_TOUCH_MODAL`
      * passes through only the touches that land OUTSIDE the card, so the two
-     * buttons were on screen and unpressable. The only way through was the
-     * notification, which is exactly what was reported: *"it still forces me to
-     * click on the tool call to approve"*.
+     * buttons were on screen and unpressable. That was the report: *"it still
+     * forces me to click on the tool call to approve"*.
      *
-     * `View.GONE` rather than [detach]: detaching would drop the whole view
-     * tree and the conversation's callbacks with it, and this has to be
-     * reversible — the orb comes back when the prompt is answered, with the
-     * conversation still running underneath it.
+     * The first fix for that was `View.GONE`, and it worked by making the two
+     * surfaces mutually exclusive: any prompt going up took the orb off the
+     * screen entirely. So Jarvis asking you something meant Jarvis vanishing
+     * while it asked, and the conversation you were having — still running,
+     * still listening — had no visible surface at all. The prompt and the orb
+     * could not coexist, which is the defect this replaces.
+     *
+     * They can. The z-order cannot be argued with and the geometry can: the
+     * card collapses to a small badge pinned to the TOP of the screen, clear of
+     * the prompt's buttons, and stays visible and animating. `FLAG_NOT_TOUCH_MODAL`
+     * then does the right thing on its own — every touch aimed at the prompt
+     * lands outside the badge and goes through.
+     *
+     * Never [detach]: that would drop the view tree and the conversation's
+     * callbacks with it, and this has to be reversible — the card comes back
+     * the moment the prompt is answered, with the turn still running underneath.
      */
     fun setHiddenForPrompt(hidden: Boolean) {
-        root?.visibility = if (hidden) View.GONE else View.VISIBLE
+        val view = root ?: return
+        if (compact == hidden) return
+        compact = hidden
+        // The rows that make this a card rather than a badge. The orb itself
+        // stays: it is the thing that says Jarvis is still listening, which is
+        // the whole reason for not hiding the window.
+        val rows = if (hidden) View.GONE else View.VISIBLE
+        caption?.visibility = rows
+        transcript?.visibility = rows
+        response?.visibility = rows
+        toolActivity?.visibility = rows
+        // The orb has to shrink with the window. It is laid out at ORB_DP
+        // (176dp) inside a card 340dp wide; left at that size in an 88dp badge
+        // it would simply be clipped, and a clipped arc reactor reads as a
+        // rendering fault rather than as a smaller Jarvis.
+        orb?.let { ball ->
+            val size = JarvisUi.dp(context, if (hidden) BADGE_ORB_DP else ORB_DP)
+            ball.layoutParams = ball.layoutParams?.also {
+                it.width = size
+                it.height = size
+            } ?: LinearLayout.LayoutParams(size, size)
+            ball.requestLayout()
+        }
+        view.visibility = View.VISIBLE
+        val windows = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+        try {
+            windows?.updateViewLayout(view, params(compact = hidden))
+        } catch (t: Throwable) {
+            // A window the platform has already taken away. Falling back to the
+            // old behaviour is worse than leaving it where it is: the prompt is
+            // what matters here, and it is on screen either way.
+            Log.w(TAG, "could not move the overlay clear of the prompt", t)
+        }
     }
 
     fun detach() {
         val view = root ?: return
         root = null
+        // So the next conversation opens as a card. Without this a turn that
+        // ended while a prompt was up would come back as a badge, and
+        // `setHiddenForPrompt(false)` would think it had nothing to do.
+        compact = false
         // All of them, not just the orb: a late callback from a conversation
         // that is still winding down would otherwise write into views that are
         // no longer on screen and keep the whole tree alive.
@@ -275,9 +333,17 @@ class AssistOverlay(
         )
     }
 
-    private fun params(): WindowManager.LayoutParams {
+    /**
+     * @param compact the badge form, worn while a prompt is on screen. Narrow
+     *   enough to be clear of a consent screen's buttons and pinned to the top
+     *   rather than the bottom, so `FLAG_NOT_TOUCH_MODAL` lets every touch
+     *   aimed at the prompt through. See [setHiddenForPrompt].
+     */
+    private fun params(compact: Boolean = false): WindowManager.LayoutParams {
         val screen = context.resources.displayMetrics.widthPixels
-        val width = min(screen - JarvisUi.dp(context, 32), JarvisUi.dp(context, 340))
+        val width =
+            if (compact) JarvisUi.dp(context, BADGE_DP)
+            else min(screen - JarvisUi.dp(context, 32), JarvisUi.dp(context, 340))
         return WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -307,10 +373,17 @@ class AssistOverlay(
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = JarvisUi.dp(context, 72)
+            // Top while a prompt is up. A consent screen puts its buttons at the
+            // end of its column, so the badge goes to the opposite end of the
+            // screen rather than merely somewhere smaller.
+            gravity =
+                if (compact) Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = JarvisUi.dp(context, if (compact) BADGE_MARGIN_DP else 72)
             windowAnimations = 0
-            blurBehind(this)
+            // No blur in the badge form: it would dim the prompt the user is
+            // being asked to read.
+            if (!compact) blurBehind(this)
         }
     }
 
@@ -360,6 +433,27 @@ class AssistOverlay(
          * that. The card is 340dp wide; this leaves a comfortable margin.
          */
         private const val ORB_DP = 176
+
+        /**
+         * The badge worn while a prompt is on screen. See [setHiddenForPrompt].
+         *
+         * Wide enough that the orb is still legibly the orb — it is the only
+         * thing still saying Jarvis is listening — and narrow enough that a
+         * consent screen's buttons are nowhere near it. It sits at the top,
+         * the prompt's buttons are at the bottom, and `FLAG_NOT_TOUCH_MODAL`
+         * does the rest.
+         */
+        private const val BADGE_DP = 88
+        private const val BADGE_MARGIN_DP = 28
+
+        /**
+         * The orb inside the badge. Smaller than [ORB_DP] by the same reasoning
+         * that made ORB_DP large: the ball is drawn inside its own bounds with
+         * room for the ring and the glow, so the box has to be the assembly's
+         * size rather than the ball's. 64 in an 88dp window leaves the margin
+         * that keeps the glow from being cut off at the window edge.
+         */
+        private const val BADGE_ORB_DP = 64
 
         /**
          * Whether "display over other apps" is granted.
