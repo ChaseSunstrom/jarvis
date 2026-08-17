@@ -470,3 +470,339 @@ def test_both_clients_present_the_surface_the_agent_uses():
         assert callable(getattr(OllamaClient, name, None)), name
         assert callable(getattr(OpenAICompatClient, name, None)), name
     assert hasattr(OllamaClient, "http") and hasattr(OpenAICompatClient, "http")
+
+
+# ---------------------------------------------------------------------------
+# authentication — the part that was silently not happening
+# ---------------------------------------------------------------------------
+async def test_the_api_key_reaches_the_wire_through_an_injected_client():
+    """The regression test for a bug that shipped.
+
+    Headers were set on the `AsyncClient` the constructor builds — but the llm
+    integration ALWAYS injects a shared one (a single connection pool for the
+    model server and every YAML tool), so `client or httpx.AsyncClient(...)`
+    took the injected client and the headers were dropped on the floor. Every
+    request to a LiteLLM with a master key came back 401, and nothing anywhere
+    said why.
+
+    Injected, not default-constructed, because the default path was never the
+    broken one.
+    """
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, content=_sse(_delta(content="hi")))
+
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OpenAICompatClient(url="http://litellm:4000/v1", client=shared, api_key="sk-test")
+
+    async for _ in client.chat(messages=[{"role": "user", "content": "x"}]):
+        pass
+
+    assert seen[0]["authorization"] == "Bearer sk-test"
+    await shared.aclose()
+
+
+async def test_the_key_is_not_installed_on_the_shared_client():
+    """Per-request is not merely a fix, it is the only correct place.
+
+    jarvis-core hands the same `AsyncClient` to every YAML- and console-authored
+    HTTP tool. A proxy key set at client level would be sent to every
+    third-party endpoint the model can reach — and which endpoints those are is
+    a decision the MODEL makes.
+    """
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    OpenAICompatClient(url="http://litellm:4000/v1", client=shared, api_key="sk-secret")
+
+    assert shared.headers.get("authorization") is None
+    await shared.aclose()
+
+
+async def test_custom_headers_reach_every_endpoint():
+    """`headers:` is for a router that wants more than a bearer token."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.url.path}:{request.headers.get('x-litellm-tags')}")
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "house-model"}]})
+        if request.url.path.endswith("/embeddings"):
+            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1]}]})
+        return httpx.Response(200, content=_sse(_delta(content="hi")))
+
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OpenAICompatClient(
+        url="http://litellm:4000/v1", client=shared, headers={"x-litellm-tags": "house"}
+    )
+
+    async for _ in client.chat(messages=[{"role": "user", "content": "x"}]):
+        pass
+    await client.list_models()
+    await client.embed(["a note"])
+
+    assert seen == [
+        "/v1/chat/completions:house",
+        "/v1/models:house",
+        "/v1/embeddings:house",
+    ]
+    await shared.aclose()
+
+
+async def test_no_key_sends_no_authorization_header():
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, content=_sse(_delta(content="hi")))
+
+    async for _ in _client(handler).chat(messages=[{"role": "user", "content": "x"}]):
+        pass
+
+    assert "authorization" not in seen[0]
+
+
+# ---------------------------------------------------------------------------
+# base urls people actually paste
+# ---------------------------------------------------------------------------
+def test_a_pasted_full_endpoint_is_trimmed_to_its_base():
+    # Copied out of a LiteLLM README. Without this the client posts to
+    # /v1/chat/completions/chat/completions and 404s.
+    assert (
+        normalise_base_url("http://litellm:4000/v1/chat/completions")
+        == "http://litellm:4000/v1"
+    )
+    assert normalise_base_url("http://vllm:8000/v1/models") == "http://vllm:8000/v1"
+
+
+def test_the_v1_check_is_case_insensitive():
+    # `/V1` used to become `/V1/v1`.
+    assert normalise_base_url("http://host:8000/V1") == "http://host:8000/V1"
+
+
+def test_a_bare_host_gains_v1_and_a_real_one_is_left_alone():
+    assert normalise_base_url("http://host:8000") == "http://host:8000/v1"
+    assert normalise_base_url("http://host:8000/") == "http://host:8000/v1"
+    assert normalise_base_url("http://host:8000/v1") == "http://host:8000/v1"
+    assert normalise_base_url("http://gw/openai") == "http://gw/openai"
+
+
+# ---------------------------------------------------------------------------
+# the tool loop's wire shape
+# ---------------------------------------------------------------------------
+def test_an_assistant_message_is_openai_shaped():
+    """Three differences from Ollama's shape, each of which a strict server
+    rejects: `type: "function"`, `arguments` as a JSON string, and an id."""
+    from jarvis.llm.ollama import ChatResult, ToolCall
+
+    client = OpenAICompatClient(url="http://x/v1")
+    result = ChatResult(
+        content="",
+        tool_calls=[ToolCall(name="turn_on", arguments={"name": "lab"}, id="call_abc")],
+    )
+
+    message = client.assistant_message(result)
+
+    call = message["tool_calls"][0]
+    assert call["type"] == "function"
+    assert call["id"] == "call_abc"
+    assert call["function"]["arguments"] == '{"name": "lab"}'
+    assert isinstance(call["function"]["arguments"], str)
+
+
+def test_a_tool_result_names_the_call_it_answers():
+    """LiteLLM in front of Anthropic or Bedrock rejects a `tool_result` with no
+    matching `tool_use` id, so without this the SECOND round of every
+    multi-tool turn 400s."""
+    from jarvis.llm.ollama import ToolCall
+
+    client = OpenAICompatClient(url="http://x/v1")
+    message = client.tool_message(ToolCall(name="turn_on", id="call_abc"), '{"status": "ok"}')
+
+    assert message["tool_call_id"] == "call_abc"
+    assert message["role"] == "tool"
+
+
+def test_ids_are_backfilled_so_the_result_can_point_at_the_call():
+    """A server that omitted ids would otherwise get a result addressed to a
+    call it never announced."""
+    from jarvis.llm.ollama import ChatResult, ToolCall
+
+    client = OpenAICompatClient(url="http://x/v1")
+    call = ToolCall(name="turn_on", arguments={}, id="")
+    message = client.assistant_message(ChatResult(tool_calls=[call]))
+
+    assert message["tool_calls"][0]["id"] == "call_0"
+    # ...and the same value reaches the result, which is the point.
+    assert client.tool_message(call, "{}")["tool_call_id"] == "call_0"
+
+
+def test_the_ollama_client_keeps_its_own_shape():
+    """The two wires disagree, and the agent must not have to know."""
+    from jarvis.llm.ollama import OllamaClient, ToolCall
+
+    message = OllamaClient().tool_message(ToolCall(name="turn_on", id="call_0"), "{}")
+
+    assert "tool_call_id" not in message
+    assert message["tool_name"] == "turn_on"
+
+
+# ---------------------------------------------------------------------------
+# request body
+# ---------------------------------------------------------------------------
+async def test_guided_decoding_does_not_discard_the_passthrough_options():
+    """`_translate_format` used to replace the whole `extra_body` key that
+    `_translate_options` had just written, so asking for guided decoding
+    silently dropped every option the config had set."""
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, content=_sse(_delta(content="{}")))
+
+    stream = _client(handler).chat(
+        messages=[{"role": "user", "content": "x"}],
+        options={"temperature": 0.6, "repetition_penalty": 1.1},
+        format={"type": "object"},
+    )
+    async for _ in stream:
+        pass
+
+    body = sent[0]
+    assert body["temperature"] == 0.6
+    assert body["extra_body"]["repetition_penalty"] == 1.1
+    assert body["extra_body"]["guided_json"] == {"type": "object"}
+    assert body["response_format"]["type"] == "json_schema"
+
+
+# ---------------------------------------------------------------------------
+# failures a proxy actually produces
+# ---------------------------------------------------------------------------
+async def test_a_429_carries_its_status_and_retry_after():
+    """The retry logic cannot tell "come back in nine seconds" from "your key is
+    wrong" without these."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"retry-after": "9"}, text="budget exceeded")
+
+    with pytest.raises(OllamaError) as raised:
+        async for _ in _client(handler).chat(messages=[{"role": "user", "content": "x"}]):
+            pass
+
+    assert raised.value.status == 429
+    assert raised.value.retry_after == 9.0
+    assert "budget exceeded" in str(raised.value)
+
+
+async def test_an_http_date_retry_after_is_ignored_rather_than_guessed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429, headers={"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}, text="slow down"
+        )
+
+    with pytest.raises(OllamaError) as raised:
+        async for _ in _client(handler).chat(messages=[{"role": "user", "content": "x"}]):
+            pass
+
+    assert raised.value.retry_after == 0.0
+
+
+async def test_a_401_from_the_model_list_says_what_the_server_said():
+    """A bare "returned 401" is a support ticket; LiteLLM puts the reason in
+    the body."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"message": "Invalid proxy key"}})
+
+    with pytest.raises(OllamaError) as raised:
+        await _client(handler).list_models()
+
+    assert raised.value.status == 401
+    assert "Invalid proxy key" in str(raised.value)
+
+
+async def test_list_models_fills_the_dropdown_the_console_reads():
+    """`settings.py` has read `client.known_models` since it was written, and
+    no client defined it — so the console's model dropdown was always empty."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "house-model"}, {"id": "big"}]})
+
+    client = _client(handler)
+    assert client.known_models == []
+
+    assert await client.list_models() == ["house-model", "big"]
+    assert client.known_models == ["house-model", "big"]
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        # `/v1` anywhere, not only at the end — this used to look at the final
+        # segment alone, so a pasted full endpoint was normalised as OpenAI and
+        # then dispatched to Ollama's /api/chat.
+        ("http://litellm:4000/v1/chat/completions", "openai"),
+        ("http://litellm:4000/V1", "openai"),
+        # A bare host:port stays Ollama. Deliberate: every existing install
+        # writes its Ollama url exactly that way, and changing this default
+        # would break all of them on upgrade.
+        ("http://litellm:4000", "ollama"),
+    ],
+)
+def test_backend_detection_matches_how_the_url_is_normalised(url, expected):
+    from jarvis.integrations.llm import _detect_backend
+
+    assert _detect_backend(url) == expected
+
+
+def test_an_unset_env_var_default_is_not_sent_as_a_literal_bearer_quote():
+    """`!env_var LLM_API_KEY ""` with nothing in the environment.
+
+    `config.py` keeps the default token verbatim, so an empty-string default
+    arrives as the two CHARACTERS `""`. Passed through, that is
+    `Authorization: Bearer ""` and a 401 against a config file that looks
+    entirely correct.
+    """
+    from jarvis.integrations.llm import _build_model_client
+
+    client = _build_model_client(
+        {"backend": "openai", "api_key": '""'}, "http://litellm:4000/v1", "m", 30.0, None
+    )
+
+    assert client.request_headers() is None
+
+
+def test_configured_headers_reach_the_client():
+    from jarvis.integrations.llm import _build_model_client
+
+    client = _build_model_client(
+        {
+            "backend": "openai",
+            "api_key": "sk-1",
+            "headers": {"x-litellm-tags": "house", "x-empty": '""'},
+        },
+        "http://litellm:4000/v1",
+        "m",
+        30.0,
+        None,
+    )
+
+    headers = client.request_headers()
+    assert headers["Authorization"] == "Bearer sk-1"
+    assert headers["x-litellm-tags"] == "house"
+    # A header whose env var is unset is dropped rather than sent empty.
+    assert "x-empty" not in headers
+
+
+def test_the_label_appears_in_the_error_so_it_names_the_right_server():
+    """"could not reach the model server" is unhelpful when there are two."""
+    from jarvis.integrations.llm import _build_model_client
+
+    client = _build_model_client(
+        {"backend": "openai", "backend_name": "LiteLLM"},
+        "http://litellm:4000/v1",
+        "m",
+        30.0,
+        None,
+    )
+    assert client.label == "LiteLLM"

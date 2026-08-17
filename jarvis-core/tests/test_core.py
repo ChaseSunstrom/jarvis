@@ -1,6 +1,5 @@
 """Core contract tests: bus, state machine, services, registries, config."""
 
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -564,7 +563,6 @@ async def test_a_real_httpx_connect_error_is_not_treated_as_a_bug(tmp_path, capl
     printing the traceback. Constructed here from the real class rather than a
     stand-in, because a stand-in is what let the wrong assumption through.
     """
-    import logging as _logging
 
     import httpx
 
@@ -588,7 +586,6 @@ async def test_a_wrapped_connect_error_is_found_through_the_cause_chain(
     socket's OSError, so only the innermost link is in a hierarchy anyone can
     rely on. A wrapper whose own class means nothing must not defeat this.
     """
-    import logging as _logging
 
     class SomeLibraryError(Exception):
         pass

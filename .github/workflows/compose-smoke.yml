@@ -51,15 +51,20 @@ name: Compose smoke
 # question it asks is "is the process alive and serving", not "is the log
 # clean".
 
+# Triggers match ci.yml — see that file's header for why `push` and
+# `pull_request` are scoped to the integration branches rather than overlapping.
 on:
   push:
-    branches: ["**"]
+    branches: [main, dev]
     # Only for the things that can break the stack. A web-only change should
     # not pay for 6 GB of image pulls.
-    paths:
+    paths: &paths
       - "jarvis-core/**"
       - "jarvis-browser/**"
       - ".github/workflows/compose-smoke.yml"
+  pull_request:
+    branches: [main, dev]
+    paths: *paths
   # Every upstream image here is pinned to `:latest`, so a default install can
   # break with no commit of ours involved. Once a week catches that drift.
   schedule:

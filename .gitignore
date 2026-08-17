@@ -4,6 +4,11 @@ build/
 dist/
 __pycache__/
 *.pyc
+# setuptools writes this on every `pip install -e .`, so it was committed once
+# and then quietly carried a stale file list — `SOURCES.txt` still named modules
+# that had been deleted. It is generated, it is per-machine, and nothing reads
+# the committed copy.
+*.egg-info/
 .pytest_cache/
 .venv/
 venv/

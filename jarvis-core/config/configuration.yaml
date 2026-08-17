@@ -183,7 +183,30 @@ llm:
   #   model: Qwen/Qwen3-8B
   #   # api_key: !env_var VLLM_API_KEY      # only if you started it with one
   #
+  # ...and to put a LiteLLM (or any other OpenAI-compatible router) in front,
+  # so the model behind it can be swapped without touching Jarvis:
+  #
+  #   url: !env_var LLM_URL http://litellm:4000/v1
+  #   backend: openai
+  #   model: !env_var LLM_MODEL house-model     # a name from YOUR litellm config
+  #   api_key: !env_var LLM_API_KEY             # the proxy's master or virtual key
+  #   # headers:                                # anything else it routes on
+  #   #   x-litellm-tags: house
+  #
+  # Two things worth knowing before you point it at one. The `/v1` matters: a
+  # bare `http://host:4000` is read as Ollama, because that is how every
+  # existing install writes its Ollama url and changing that default would
+  # break them all — so write the `/v1`, or set `backend: openai` explicitly.
+  # And `model:` is the name the ROUTER knows, not the name the underlying
+  # provider uses; `docs/openai-compat.md` has a worked pair of config files.
+  #
   # backend: openai
+  #
+  # The proxy's key. Read unconditionally because it costs nothing to: the
+  # Ollama wire ignores it entirely, so there is no state where this line has
+  # to be commented out. Empty (the default) sends no Authorization header at
+  # all rather than an empty one.
+  api_key: !env_var LLM_API_KEY ''
   persona_file: prompts/jarvis.txt
   # Whether to let the model reason before answering.
   #
@@ -291,9 +314,26 @@ llm:
   #   awake: input_boolean.you_awake
   #   active_device: sensor.your_active_device
 
+  # The two halves of conversational memory, which are not the same thing.
+  #
+  # `ttl` and `max_turns` bound what the MODEL is told: twenty turns, fifteen
+  # minutes of silence, and gone. That is deliberate — a follow-up an hour later
+  # ("and the other one?") should not resolve against this morning.
+  #
+  # `history` is what a PERSON can read: every finished turn, on disk in
+  # `.storage/conversations.json`, with the tool calls each one made and the
+  # reasoning behind them. It is what the console's chat mode lists, and
+  # reopening one hands its history back to the model for that conversation
+  # only. Set it to false and chat mode still works — it simply has no past.
+  #
+  # A tool's *result* is never written here, only whether it worked. That is the
+  # one field that could hold something you never chose to keep: a fetched page,
+  # a document body, the text off a camera frame.
   conversation:
     ttl: 900
     max_turns: 20
+    history: true
+    history_limit: 200
 
   # Every *.tool.yaml in this directory becomes a tool the model can call. No
   # Python, no restart of anything but Jarvis. The console writes here too, and

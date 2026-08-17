@@ -97,7 +97,6 @@ def test_clearing_is_by_identity():
     """Two surfaces handing over must not leave the slot pointing at the one
     that went away first — the handover is the common case, not the rare one:
     the orb hands off to the home screen every time the app is opened."""
-    source = code_only(SEAM.read_text(encoding="utf-8"))
     handler = code_only(HANDLER.read_text(encoding="utf-8"))
     assert "speechHost === host" in handler, (
         "clearSpeechHost no longer compares by identity"

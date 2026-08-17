@@ -140,7 +140,7 @@ def check_the_mobile_half_is_named_for_itself() -> list[str]:
             f'the native settings button is called "{label}", which is also one of the '
             "console's tabs. That collision is the confusion this whole change is about."
         )
-    if f"ConsoleTab.PHONE_LABEL" not in main and "ConsoleTab.DEFAULT" not in main:
+    if "ConsoleTab.PHONE_LABEL" not in main and "ConsoleTab.DEFAULT" not in main:
         failures.append(
             "MainActivity names a console destination itself rather than taking one "
             "from ConsoleTab, so the two can disagree"

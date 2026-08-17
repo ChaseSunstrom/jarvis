@@ -74,6 +74,39 @@ The HUD is then at `http://<server>:8199` and jarvis-core's own API at
 `:8080`, both over WireGuard/LAN only. For the phone, see
 [`android-app/README.md`](android-app/README.md).
 
+## Two ways to talk to it
+
+The HUD opens on the orb: the microphone is live, the VAD decides when a turn
+starts, and the reply is spoken. The toggle in the top-right corner (or
+`?mode=chat`) swaps it for **chat mode** — a transcript you can read and scroll
+back through, past conversations in a sidebar, and every turn's tool calls and
+reasoning drawn inline as they happen.
+
+It is a mode rather than a second page, so the socket, the run in flight and the
+microphone all survive the switch. Speaking still starts a turn in chat mode;
+typed replies are silent unless you ask for them out loud.
+
+Conversations are kept in `.storage/conversations.json` and survive a restart —
+`llm: conversation: history: false` turns that off. A tool's *result* is never
+written there, only whether it worked.
+
+## A different model server
+
+Ollama is the default and needs no configuration. Anything speaking
+`/v1/chat/completions` works instead — LiteLLM, vLLM, llama.cpp's server, LM
+Studio, TGI, SGLang — which is four lines:
+
+```yaml
+llm:
+  backend: openai
+  url: http://litellm:4000/v1     # the /v1 is not optional
+  model: house-model              # the name YOUR router knows
+  api_key: !env_var LLM_API_KEY
+```
+
+[`jarvis-core/docs/openai-compat.md`](jarvis-core/docs/openai-compat.md) has a
+worked LiteLLM pair and the differences between the two wires.
+
 `ORCHESTRATOR_TOKEN` and `APPROVAL_SECRET` must be **different values** if you
 enable the orchestrator — that split is what stops the API token alone from
 being able to run a command.
@@ -83,9 +116,10 @@ being able to run a command.
 Every suite runs offline: no network, no hardware, no camera, no model.
 
 ```bash
-make test                  # every python suite + the routing eval
+make test                  # lint + every python suite + both evals
 make test-core             # just jarvis-core (the big one)
 make test-web              # HUD build + unit + smoke + Playwright
+make lint                  # ruff, defect-only ruleset (see ruff.toml)
 make help                  # everything else
 ```
 
@@ -177,6 +211,7 @@ The full model is [`docs/security.md`](docs/security.md).
 | [`docs/cross-device.md`](docs/cross-device.md) | one conversation across phone, desktop and HUD |
 | [`docs/voice-identity.md`](docs/voice-identity.md) | answering only your voice: how it works, what it is worth, how to tune it |
 | [`docs/wake-word-training.md`](docs/wake-word-training.md) | training `hey_jarvis` |
+| [`jarvis-core/docs/openai-compat.md`](jarvis-core/docs/openai-compat.md) | running Jarvis on LiteLLM, vLLM, llama.cpp, LM Studio, TGI or SGLang instead of Ollama |
 | [`jarvis-core/docs/`](jarvis-core/docs/) | configuration, integrations, voice, search, clients, migrating from HA |
 
 `DEVIATIONS.md` records where this build knowingly differs from the original

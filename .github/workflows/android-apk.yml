@@ -24,8 +24,11 @@ on:
   # jobs and names the run after the file). `paths` cannot be applied per-ref,
   # so releases come in via the `release` event below, which has no path filter.
   push:
-    branches: ["**"]
-    paths: ["android-app/**", ".github/workflows/android-apk.yml"]
+    branches: [main, dev]
+    paths: &paths ["android-app/**", ".github/workflows/android-apk.yml"]
+  pull_request:
+    branches: [main, dev]
+    paths: *paths
   release:
     types: [published]
 

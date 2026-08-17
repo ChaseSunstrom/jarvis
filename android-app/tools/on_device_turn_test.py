@@ -190,9 +190,6 @@ def check_the_failures_are_told_apart() -> list[str]:
         return ["LocalTranscriber no longer explains its errors"]
     body = describe.group(0)
 
-    arms = dict(
-        re.findall(r"SpeechRecognizer\.(ERROR_\w+)[,\s]*(?:SpeechRecognizer\.ERROR_\w+,\s*)?->\s*\n?\s*(.+)", body)
-    )
     for code in (
         "ERROR_AUDIO",
         "ERROR_NO_MATCH",

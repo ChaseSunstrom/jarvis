@@ -30,7 +30,6 @@ from jarvis.voice.dsp import (  # noqa: E402
     autocorrelation,
     dct2,
     hann_window,
-    log_mel,
     mel_filterbank,
     power_spectrum,
     pre_emphasis,

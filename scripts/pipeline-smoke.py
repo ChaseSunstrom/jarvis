@@ -81,7 +81,7 @@ async def run() -> int:
                     pipeline_id = m["result"].get("preferred_pipeline")
                 break
 
-        run_id = await send({
+        await send({
             "type": "assist_pipeline/run",
             "start_stage": "stt", "end_stage": "tts",
             "input": {"sample_rate": 16000},

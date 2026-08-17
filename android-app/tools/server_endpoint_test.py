@@ -362,7 +362,6 @@ def main() -> int:
         + check_no_client_hardcodes_a_socket_path(android)
         + check_the_channel_rediscovers_on_failure(android)
     )
-    total = len(CASES) + 3 + 3 + 6 + len(RELAY_KEYS)
     if failures:
         print(f"\n{failures} failure(s)")
         return 1

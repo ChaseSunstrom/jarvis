@@ -25,15 +25,21 @@ name: End-to-end
 # an emulator run: catching a server change that breaks a real client is the
 # entire reason this workflow exists. `run_emulator: false` on a manual dispatch
 # is the escape hatch when you only want the fast two.
+# Triggers match ci.yml: `push` for the integration branches, `pull_request`
+# for what is on its way to them, and no overlap between the two. See that
+# file's header for why.
 on:
   push:
-    branches: ["**"]
-    paths:
+    branches: [main, dev]
+    paths: &paths
       - "android-app/**"
       - "testing/**"
       - "jarvis-core/**"
       - "jarvis-desktop/**"
       - ".github/workflows/e2e.yml"
+  pull_request:
+    branches: [main, dev]
+    paths: *paths
   workflow_dispatch:
     inputs:
       run_emulator:

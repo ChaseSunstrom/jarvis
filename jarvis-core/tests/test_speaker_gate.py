@@ -39,7 +39,7 @@ from jarvis.voice.speaker import (  # noqa: E402
     VoiceProfile,
     embed,
 )
-from synth_voice import IMPOSTORS, OWNER, RATE, samples_for  # noqa: E402
+from synth_voice import IMPOSTORS, OWNER, RATE  # noqa: E402
 
 _ENROL = (
     {"seconds": 2.5, "seed": 0},

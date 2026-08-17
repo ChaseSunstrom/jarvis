@@ -250,3 +250,99 @@ async def test_a_model_that_is_genuinely_down_still_gives_up(jarvis):
 
     assert client.attempts == agent.max_attempts
     assert "couldn't reach" in said
+
+
+# ---------------------------------------------------------------------------
+# which failures are worth retrying, once a proxy is in the way
+# ---------------------------------------------------------------------------
+class _StatusStream(_FailingStream):
+    """Fails with a real HTTP status, the way an OpenAI-compatible server does."""
+
+    def __init__(self, status: int, retry_after: float = 0.0) -> None:
+        super().__init__("")
+        self._status = status
+        self._retry_after = retry_after
+
+    async def _gen(self):
+        from jarvis.llm.ollama import OllamaError
+
+        error = OllamaError(f"the model server returned {self._status}")
+        error.status = self._status
+        error.retry_after = self._retry_after
+        raise error
+        yield  # pragma: no cover - unreachable, marks this a generator
+
+
+class _StatusClient:
+    def __init__(self, status: int, retry_after: float = 0.0) -> None:
+        self.status = status
+        self.retry_after = retry_after
+        self.attempts = 0
+
+    def chat(self, **kwargs):
+        self.attempts += 1
+        return _StatusStream(self.status, self.retry_after)
+
+
+async def test_a_wrong_key_is_not_retried(jarvis):
+    """A 401 will be exactly as wrong half a second later.
+
+    Through a proxy these are the common failures — a bad key, an exhausted
+    budget, a model name the router does not know — and retrying one only
+    doubles how long somebody waits for the same apology.
+    """
+    client = _StatusClient(401)
+    agent = _agent(jarvis, client)
+    agent.retry_backoff = 0.0
+
+    said = "".join([delta async for delta in agent.converse("hello")])
+
+    assert client.attempts == 1
+    assert "couldn't reach" in said
+
+
+async def test_a_rate_limit_is_retried_because_it_means_again_later(jarvis):
+    client = _StatusClient(429)
+    agent = _agent(jarvis, client)
+    agent.retry_backoff = 0.0
+
+    async for _ in agent.converse("hello"):
+        pass
+
+    assert client.attempts == agent.max_attempts
+
+
+async def test_an_upstream_failure_is_retried(jarvis):
+    """502 from a proxy is the model behind it flapping, which is a blip."""
+    client = _StatusClient(502)
+    agent = _agent(jarvis, client)
+    agent.retry_backoff = 0.0
+
+    async for _ in agent.converse("hello"):
+        pass
+
+    assert client.attempts == agent.max_attempts
+
+
+async def test_a_servers_retry_after_is_honoured_but_capped(jarvis):
+    """A rate limiter under load will happily name several minutes. Somebody
+    standing in front of the orb needs an answer or an apology."""
+    import asyncio
+
+    from jarvis.llm.agent import MAX_RETRY_DELAY
+
+    slept: list[float] = []
+
+    async def _record(delay: float) -> None:
+        slept.append(delay)
+
+    client = _StatusClient(429, retry_after=600.0)
+    agent = _agent(jarvis, client)
+    real_sleep, asyncio.sleep = asyncio.sleep, _record
+    try:
+        async for _ in agent.converse("hello"):
+            pass
+    finally:
+        asyncio.sleep = real_sleep
+
+    assert slept == [MAX_RETRY_DELAY]

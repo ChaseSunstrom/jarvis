@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 import random
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 RATE = 16000
 

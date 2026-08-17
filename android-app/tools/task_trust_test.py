@@ -40,7 +40,6 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, field
-from itertools import product
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "app/src/main/kotlin/ai/jarvis/app"

@@ -30,8 +30,20 @@ test-browser: ## jarvis-browser
 test-services: ## orchestrator + sandbox
 	python3 -m pytest jarvis-orchestrator/tests jarvis-sandbox/tests -q
 
+.PHONY: test-contract
+test-contract: ## the workflow files, checked against how GitHub runs them
+	python3 -m pytest testing/e2e/test_ci_workflow_contract.py -q --timeout=120
+
 .PHONY: test-python
-test-python: test-core test-desktop test-browser test-services eval-routing eval-resolution ## every python suite
+test-python: test-core test-desktop test-browser test-services test-contract eval-routing eval-resolution ## every python suite
+
+.PHONY: lint
+lint: ## ruff, defect-only ruleset (see ruff.toml)
+	python3 -m ruff check .
+
+.PHONY: lint-fix
+lint-fix: ## the same, applying what it can fix
+	python3 -m ruff check . --fix
 
 .PHONY: test-web
 test-web: ## build + unit + smoke + e2e for the HUD
@@ -43,7 +55,7 @@ test-android: ## the Kotlin logic mirrors (pure python, no SDK)
 	@fail=0; for t in android-app/tools/*.py; do echo "--- $$t"; python3 "$$t" || fail=1; done; exit $$fail
 
 .PHONY: test
-test: test-python ## everything runnable without hardware or models
+test: lint test-python ## everything runnable without hardware or models
 	@echo "OFFLINE TEST SUITE PASSED"
 
 # --- evals ------------------------------------------------------------------

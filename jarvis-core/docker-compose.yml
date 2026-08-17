@@ -100,8 +100,20 @@ services:
     environment:
       # Where Ollama is. Loopback by default because it is usually on the host;
       # with `network_mode: host` a container or LAN address works unchanged.
-      - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+      # `LLM_URL` and `LLM_MODEL` are the same two knobs under the names that
+      # make sense once the server is not Ollama — LiteLLM, vLLM, llama.cpp,
+      # LM Studio, TGI, SGLang all work here. They feed the SAME container
+      # variables, so an install that has only ever set `OLLAMA_URL` is
+      # unchanged, and nothing has to read two names.
+      #
+      # Set `backend: openai` in the `llm:` block of configuration.yaml as
+      # well; the url alone only switches wires when it ends in `/v1`. See
+      # docs/openai-compat.md.
+      - OLLAMA_URL=${LLM_URL:-${OLLAMA_URL:-http://127.0.0.1:11434}}
+      - OLLAMA_MODEL=${LLM_MODEL:-${OLLAMA_MODEL:-qwen3:8b}}
+      # The proxy's key, if it has one. Ignored on the Ollama wire, so it is
+      # safe to leave set.
+      - LLM_API_KEY=${LLM_API_KEY:-}
       # Named zone for time-of-day triggers and the sun integration. Keep this
       # in step with `jarvis: time_zone:` in config/configuration.yaml.
       - TZ=${TZ:-Europe/London}

@@ -178,14 +178,36 @@ llm:
 
 | Key | Notes |
 |---|---|
-| `url` `model` | Ollama. `llm.list_models` tells you what is pulled. |
+| `url` `model` | The model server. `llm.list_models` tells you what it is serving. |
+| `backend` | `ollama` (the default) or `openai`. Inferred from the url when unset — `/v1` anywhere in it means `openai`. See [openai-compat.md](openai-compat.md). |
+| `api_key` | Sent as `Authorization: Bearer …` to the model server and nowhere else. `openai` backend only. |
+| `headers` | Extra headers for a router that wants them (`x-litellm-tags`, a tenant id). `openai` backend only. |
+| `backend_name` | What error messages call the server. Defaults to "the model server". |
 | `persona_file` | Relative to the config directory. Defaults to `prompts/jarvis.txt` if that file exists. `persona:` sets the text inline instead. |
+| `think` | Whether to let the model reason before answering. Unset leaves the model's own default alone; `false` is what the shipped config sets, because on a spoken turn deliberation is silence the user hears. |
 | `max_tool_rounds` | Tool-call rounds per turn. Higher chains more steps and multiplies worst-case latency by the same factor. |
 | `approval_ttl` | Seconds a Tier-3 approval request stays valid. Requests are single-use, so a model cannot replay one. |
-| `options` | Passed to Ollama verbatim. |
-| `conversation: {ttl, max_turns}` | How long context survives and how much of it is kept. |
+| `options` | Passed to Ollama verbatim. On the `openai` backend the keys with an equivalent are translated and the rest go through as `extra_body`; `num_ctx` is dropped, because on that wire the context length is a property of how the server was started. |
+| `conversation: {ttl, max_turns}` | How long the MODEL's context survives and how much of it is kept. |
+| `conversation: {history, history_limit}` | The durable half: every finished turn in `.storage/conversations.json`, which is what the console's chat mode lists and reopens. `history: false` turns it off. A tool's *result* is never written there — only whether it worked. |
 | `tools_dir` | Directory of `*.tool.yaml` manifests. |
 | `tools:` | The same tools declared inline — and the only place a tool can use `!secret`. |
+
+### A different model server
+
+Anything speaking `/v1/chat/completions` works in place of Ollama — LiteLLM,
+vLLM, llama.cpp's server, LM Studio, TGI, SGLang:
+
+```yaml
+llm:
+  backend: openai
+  url: http://litellm:4000/v1     # the /v1 is not optional
+  model: house-model              # the name YOUR router knows the model by
+  api_key: !env_var LLM_API_KEY
+```
+
+[openai-compat.md](openai-compat.md) is the full account: a worked LiteLLM
+config pair, what differs between the two wires, and how failures are retried.
 
 ### `expose:` — the blast radius
 

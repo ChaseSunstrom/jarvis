@@ -1,14 +1,33 @@
 name: CI
 
-# Fast feedback on every push: the whole test estate except the things that
-# genuinely need hardware (a GrapheneOS phone, real Wyoming/Ollama containers,
-# a GPU). Those are listed in docs/verification.md and run by the operator.
+# Fast feedback: the whole test estate except the things that genuinely need
+# hardware (a GrapheneOS phone, real Wyoming/Ollama containers, a GPU). Those
+# are listed in docs/verification.md and run by the operator.
+#
+# ONE RUN PER CHANGE
+# ------------------
+# This used to be `push: branches: ["**"]` next to a bare `pull_request:`, which
+# fired the entire suite TWICE for every in-repo pull request — once for the
+# branch push and once for the merge ref. The two runs even had different
+# concurrency groups (`refs/heads/x` versus `refs/pull/N/merge`), so neither
+# cancelled the other and both went to completion.
+#
+# So: `push` covers the integration branches, `pull_request` covers everything
+# on its way to them, and the two do not overlap. A feature branch with no pull
+# request open gets no run — open one, or use `workflow_dispatch`. Every
+# workflow in this directory uses this same shape.
 
 on:
   push:
-    branches: ["**"]
+    branches: [main, dev]
   pull_request:
+    branches: [main, dev]
   workflow_dispatch:
+
+# Read-only by default. Nothing here publishes, comments or tags; a job that
+# needs more should ask for it by name rather than inherit a write token.
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -32,6 +51,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          # Per suite, not shared. Without this the three matrix legs compute
+          # one cache key from every requirements.txt in the repo, so a change
+          # to jarvis-browser's dependencies invalidates jarvis-core's cache.
+          cache-dependency-path: ${{ matrix.suite.dir }}/requirements.txt
 
       - name: Install dependencies
         working-directory: ${{ matrix.suite.dir }}
@@ -54,7 +77,7 @@ jobs:
         run: python -m pytest ${{ matrix.suite.paths }} -q --timeout=120 --timeout-method=signal
 
   legacy-suites:
-    name: python · tools/orchestrator/sandbox/evals
+    name: python · orchestrator/sandbox/evals
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -63,11 +86,25 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install --upgrade pip && python -m pip install pytest pytest-asyncio pytest-timeout fastapi httpx pyyaml
+          cache-dependency-path: jarvis-orchestrator/requirements.txt
+      # From the orchestrator's own requirements rather than a hand-written
+      # `fastapi httpx pyyaml`, which pinned nothing and drifted the moment the
+      # service pinned anything: CI was testing whatever versions pip felt like
+      # that morning, against a service that ships exact pins.
+      - name: Install
+        run: |
+          set -eu
+          python -m pip install --upgrade pip
+          python -m pip install -r jarvis-orchestrator/requirements.txt
+          python -m pip install pytest pytest-asyncio pytest-timeout pyyaml
       - run: python -m pytest jarvis-orchestrator/tests jarvis-sandbox/tests -q --timeout=120 --timeout-method=signal
-      - name: Routing eval (runs from its own dir for imports)
+      # BOTH evals. `test_resolution.py` — does "the kitchen lamp" find the
+      # kitchen lamp — has a make target, is listed in the README, and was
+      # never run by CI: only the routing eval was. It is the one that catches
+      # a matcher regression, which is the failure a user notices first.
+      - name: Evals (run from their own dir for imports)
         working-directory: evals
-        run: python -m pytest test_routing.py -q --timeout=120 --timeout-method=signal
+        run: python -m pytest test_routing.py test_resolution.py -q --timeout=120 --timeout-method=signal
 
   android-specs:
     name: android · executable specs
@@ -115,6 +152,15 @@ jobs:
         working-directory: jarvis-web
         run: npm test
 
+      # The one check that drives the real client over a real socket against the
+      # mock backend, measuring the pipeline end to end. `make test-web` has run
+      # it since it was written; CI never did, so the contract between
+      # `pipeline.ts` and jarvis-core's event vocabulary was only ever checked
+      # on somebody's laptop.
+      - name: Pipeline smoke over a real socket
+        working-directory: jarvis-web
+        run: node ../tests/web/smoke.test.mjs
+
       - name: Install Playwright chromium
         working-directory: jarvis-web
         run: npx playwright install --with-deps chromium
@@ -130,6 +176,24 @@ jobs:
           path: jarvis-web/playwright-report
           retention-days: 7
 
+  lint:
+    name: lint · ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # Pinned, because a linter that changes its mind between two runs of the
+      # same commit turns a green branch red for reasons nobody pushed.
+      - run: python -m pip install "ruff==0.16.3"
+      # The ruleset is defect-only and is argued for in ruff.toml: undefined
+      # names, dead imports and locals, mutable default arguments, closures
+      # that capture a loop variable. No formatting, no line length, no import
+      # order — the eight real findings this turned up on its first run would
+      # have been invisible under a thousand lines of style noise.
+      - run: ruff check .
+
   static:
     name: static checks
     runs-on: ubuntu-latest
@@ -138,7 +202,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: python -m pip install pyyaml
+      - run: python -m pip install pyyaml pytest pytest-timeout
+
+      # 145 assertions about the workflow files themselves — the shell each
+      # block will really be run by, which artifacts upload on failure, whether
+      # the compose job covers every service in the stack. They existed, they
+      # ran in milliseconds, and nothing in CI ever executed them: `testing/`
+      # was not named by any job. A broken `script:` block was therefore caught
+      # only in CI, tens of minutes into an emulator boot, as a bare exit code.
+      - name: Workflow contract
+        run: python -m pytest testing/e2e/test_ci_workflow_contract.py -q --timeout=120
 
       - name: Shell scripts parse
         run: |
@@ -220,48 +293,11 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      - name: Workflow files are valid (no duplicate keys)
-        run: |
-          python - <<'PY'
-          import sys, pathlib, yaml
-
-          # A duplicate mapping key is legal YAML (last wins) but makes GitHub
-          # reject a workflow outright — it then runs ZERO jobs and names the
-          # run after the file, which looks like a mysterious failure. A plain
-          # yaml.safe_load cannot catch it, so fail loudly on duplicates here.
-          class StrictLoader(yaml.SafeLoader):
-              pass
-
-          def no_duplicates(loader, node, deep=False):
-              mapping = {}
-              for key_node, value_node in node.value:
-                  key = loader.construct_object(key_node, deep=deep)
-                  if key in mapping:
-                      raise yaml.constructor.ConstructorError(
-                          None, None, f"duplicate key {key!r}", key_node.start_mark
-                      )
-                  mapping[key] = loader.construct_object(value_node, deep=deep)
-              return mapping
-
-          StrictLoader.add_constructor(
-              yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_duplicates
-          )
-
-          bad = []
-          for p in sorted(pathlib.Path(".github/workflows").glob("*.y*ml")):
-              try:
-                  doc = yaml.load(p.read_text(), Loader=StrictLoader)
-              except Exception as e:
-                  bad.append(f"{p}: {e}")
-                  continue
-              if not doc or "jobs" not in doc:
-                  bad.append(f"{p}: no jobs block")
-              # `on` parses as the boolean True in YAML 1.1
-              if True not in doc and "on" not in doc:
-                  bad.append(f"{p}: no trigger block")
-          print("\n".join(bad) if bad else "workflow files OK")
-          sys.exit(1 if bad else 0)
-          PY
+      # The duplicate-key check that used to be inlined here is now
+      # `test_a_workflow_has_no_duplicate_keys_and_declares_jobs_and_a_trigger`
+      # in the workflow-contract suite above — same assertion, next to the
+      # 144 others about these files, instead of a second copy that had to
+      # be kept in step with it by hand.
 
       - name: Compose files are valid
         run: |

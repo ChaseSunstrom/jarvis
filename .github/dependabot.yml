@@ -1,0 +1,57 @@
+# Dependency updates, opened against `dev` rather than `main`.
+#
+# `main` is the release branch and takes changes by fast-forward from `dev`
+# only; a bot opening pull requests straight at it would be the one thing that
+# routinely bypasses the integration branch.
+#
+# Monthly, not weekly. This is a self-hosted assistant with a small, pinned
+# dependency set — five python packages and a SvelteKit toolchain — and a
+# weekly cadence on that produces more pull requests than changes.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: monthly }
+    target-branch: dev
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: npm
+    directory: "/jarvis-web"
+    schedule: { interval: monthly }
+    target-branch: dev
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "web"
+    groups:
+      # One pull request for the toolchain rather than six. Svelte, Vite and
+      # the adapter move together and are only ever tested together.
+      svelte-toolchain:
+        patterns: ["svelte*", "@sveltejs/*", "vite", "vitest", "typescript"]
+
+  - package-ecosystem: pip
+    directory: "/jarvis-core"
+    schedule: { interval: monthly }
+    target-branch: dev
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "core"
+
+  - package-ecosystem: pip
+    directory: "/jarvis-orchestrator"
+    schedule: { interval: monthly }
+    target-branch: dev
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "orchestrator"
+
+  - package-ecosystem: gradle
+    directory: "/android-app"
+    schedule: { interval: monthly }
+    target-branch: dev
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "android"

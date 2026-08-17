@@ -20,13 +20,18 @@ name: Build jarvis-desktop
 # script. That is the first thing in this repo that proves a user who types
 # `pip install jarvis_desktop-*.whl` gets a working `jarvis-desktop` command.
 
+# Triggers match ci.yml — see that file's header for why `push` and
+# `pull_request` are scoped to the integration branches rather than overlapping.
 on:
   workflow_dispatch:
   push:
-    branches: ["**"]
-    paths:
+    branches: [main, dev]
+    paths: &paths
       - "jarvis-desktop/**"
       - ".github/workflows/desktop-dist.yml"
+  pull_request:
+    branches: [main, dev]
+    paths: *paths
   release:
     types: [published]
 

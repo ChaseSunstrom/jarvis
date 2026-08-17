@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from jarvis.core import Jarvis  # noqa: E402
 from jarvis.integrations.companion import (  # noqa: E402
     CompanionManager,
-    async_setup,
 )
 from jarvis.presence import (  # noqa: E402
     NEEDS_ANSWER,
