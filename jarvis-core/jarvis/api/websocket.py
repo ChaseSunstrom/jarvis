@@ -675,6 +675,27 @@ class WebSocketHandler:
             context=self._context(),
         )
 
+    # conversation history — what the console's chat mode lists and reopens
+    async def _cmd_conversation_list(self, msg: dict[str, Any]) -> Any:
+        return common.conversation_list_payload(self.jarvis)
+
+    async def _cmd_conversation_get(self, msg: dict[str, Any]) -> Any:
+        return common.conversation_get_payload(
+            self.jarvis, str(msg.get("conversation_id") or "")
+        )
+
+    async def _cmd_conversation_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_delete_conversation(
+            self.jarvis, str(msg.get("conversation_id") or "")
+        )
+
+    async def _cmd_conversation_rename(self, msg: dict[str, Any]) -> Any:
+        return await common.async_rename_conversation(
+            self.jarvis,
+            str(msg.get("conversation_id") or ""),
+            str(msg.get("title") or ""),
+        )
+
     async def _cmd_approve(self, msg: dict[str, Any]) -> Any:
         return await common.async_approve(
             self.jarvis,
@@ -1003,6 +1024,10 @@ WebSocketHandler._HANDLERS = {
     "fire_event": WebSocketHandler._cmd_fire_event,
     "call_service": WebSocketHandler._cmd_call_service,
     "conversation/process": WebSocketHandler._cmd_conversation_process,
+    "jarvis/conversation/list": WebSocketHandler._cmd_conversation_list,
+    "jarvis/conversation/get": WebSocketHandler._cmd_conversation_get,
+    "jarvis/conversation/delete": WebSocketHandler._cmd_conversation_delete,
+    "jarvis/conversation/rename": WebSocketHandler._cmd_conversation_rename,
     "jarvis/approve": WebSocketHandler._cmd_approve,
     "config/entity_registry/list": WebSocketHandler._cmd_entity_list,
     "config/entity_registry/update": WebSocketHandler._cmd_entity_update,

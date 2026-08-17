@@ -10,6 +10,8 @@
 // The transport is injected as a `send` function and incoming frames are fed to
 // `handleMessage()`, so the whole class is unit-testable in plain Node.
 
+import * as conversations from './conversations';
+
 export type SendFn = (data: string) => void;
 
 /** A state object as `get_states` / `state_changed` report it. */
@@ -96,6 +98,45 @@ export interface PendingApproval {
 	 * write that sentence.
 	 */
 	tainted?: boolean;
+}
+
+/** A row in the chat sidebar: enough to list a conversation, not to read it. */
+export interface ConversationSummary {
+	id: string;
+	title: string;
+	created: number;
+	last_active: number;
+	/** How many turns it holds, user and assistant counted separately. */
+	turns: number;
+	/** The last thing said in it, bounded. */
+	preview: string;
+}
+
+/** One stored tool call. The tool's *result* is never kept — only its verdict. */
+export interface ArchivedToolCall {
+	name: string;
+	arguments?: Record<string, unknown>;
+	status?: string | null;
+	ok?: boolean;
+	error?: string | null;
+}
+
+export interface ArchivedTurn {
+	role: 'user' | 'assistant';
+	content: string;
+	timestamp?: number;
+	/** Only on an assistant turn, and only when the model reasons out loud. */
+	thinking?: string;
+	tool_calls?: ArchivedToolCall[];
+}
+
+/** A past conversation, as `jarvis/conversation/get` returns it. */
+export interface ArchivedConversation {
+	id: string;
+	title: string;
+	created: number;
+	last_active: number;
+	turns: ArchivedTurn[];
 }
 
 /** One long-lived access token. Never carries the secret. */
@@ -624,6 +665,36 @@ export class JarvisClient {
 			? result
 			: (result?.response ?? result?.result ?? result?.requests ?? []);
 		return Array.isArray(list) ? list : [];
+	}
+
+	// --- conversation history -----------------------------------------------
+	//
+	// Delegated to `$lib/conversations` rather than written out here, because
+	// `PipelineClient` needs the same four commands — the HUD holds one of
+	// those and opening a second socket to draw a sidebar would be absurd. The
+	// wire strings live in one file so a rename cannot leave chat mode working
+	// on one surface and 404ing on the other.
+	private readonly send_ = <T,>(payload: Record<string, any>): Promise<T> =>
+		this.command<T>(payload);
+
+	/** Past conversations, most recent first. Summaries only. */
+	listConversations(): Promise<ConversationSummary[]> {
+		return conversations.listConversations(this.send_);
+	}
+
+	/** One conversation in full, with each turn's reasoning and tool calls. */
+	getConversation(conversationId: string): Promise<ArchivedConversation | null> {
+		return conversations.getConversation(this.send_, conversationId);
+	}
+
+	/** Forget it, in the model's memory and in the archive alike. */
+	deleteConversation(conversationId: string): Promise<boolean> {
+		return conversations.deleteConversation(this.send_, conversationId);
+	}
+
+	/** A name of your own, instead of the conversation's first sentence. */
+	renameConversation(conversationId: string, title: string): Promise<boolean> {
+		return conversations.renameConversation(this.send_, conversationId, title);
 	}
 
 	// --- settings ----------------------------------------------------------

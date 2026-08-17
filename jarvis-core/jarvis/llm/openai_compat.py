@@ -176,12 +176,16 @@ class OpenAICompatStream(ChatStream):
         http = self._client.http
         url = self._client.endpoint(CHAT_PATH)
         try:
-            async with http.stream("POST", url, json=self._payload) as response:
+            async with http.stream(
+                "POST", url, json=self._payload, headers=self._client.request_headers()
+            ) as response:
                 if response.status_code >= 400:
                     body = (await response.aread()).decode("utf-8", "replace")
-                    raise OllamaError(
-                        f"{self._client.label} returned {response.status_code} "
-                        f"for {url}: {body[:400]}"
+                    raise self._client._http_error(
+                        response.status_code,
+                        url,
+                        body,
+                        response.headers.get("retry-after"),
                     )
                 async for line in response.aiter_lines():
                     line = line.strip()
@@ -217,15 +221,19 @@ class OpenAICompatStream(ChatStream):
         http = self._client.http
         url = self._client.endpoint(CHAT_PATH)
         try:
-            response = await http.post(url, json=self._payload)
+            response = await http.post(
+                url, json=self._payload, headers=self._client.request_headers()
+            )
         except httpx.HTTPError as exc:
             raise OllamaError(
                 f"could not reach {self._client.label} at {url}: {exc}"
             ) from exc
         if response.status_code >= 400:
-            raise OllamaError(
-                f"{self._client.label} returned {response.status_code} for {url}: "
-                f"{response.text[:400]}"
+            raise self._client._http_error(
+                response.status_code,
+                url,
+                response.text,
+                response.headers.get("retry-after"),
             )
         try:
             chunk = response.json()
@@ -274,6 +282,7 @@ class OpenAICompatStream(ChatStream):
         reasoning = delta.get("reasoning_content") or delta.get("reasoning")
         if isinstance(reasoning, str) and reasoning:
             self._result.thinking += reasoning
+            self._emit_thinking(reasoning)
 
         self._tools.absorb(delta.get("tool_calls"))
 
@@ -314,16 +323,34 @@ class OpenAICompatClient:
             self.label = label
         merged = dict(headers or {})
         if api_key:
-            # Servers started without `--api-key` ignore it; vLLM behind one
-            # requires it. Sending it unconditionally costs nothing.
+            # Servers started without `--api-key` ignore it; vLLM and LiteLLM
+            # behind one require it. Sending it unconditionally costs nothing.
             merged.setdefault("Authorization", f"Bearer {api_key}")
+        #: Sent with every request this client makes, and **not** installed on
+        #: the `AsyncClient`.
+        #:
+        #: This is the difference between `api_key` working and being silently
+        #: ignored. The llm integration always injects a shared `AsyncClient`
+        #: (one connection pool for the model server and every YAML/authored
+        #: HTTP tool), so `client or httpx.AsyncClient(headers=...)` took the
+        #: injected one and dropped the headers on the floor — a LiteLLM with a
+        #: master key answered 401 and nothing said why.
+        #:
+        #: Per-request is also the only *correct* place for it. Putting a proxy
+        #: key on the shared client would send it to every third-party endpoint
+        #: an authored tool can reach, which is a credential leak the model
+        #: chooses the destination of.
+        self._headers: dict[str, str] = merged
         self._owns_client = client is None
         self._http = client or httpx.AsyncClient(
             transport=transport,
             timeout=httpx.Timeout(timeout),
-            headers=merged or None,
             follow_redirects=True,
         )
+        #: Filled in by `list_models`. `settings.py` reads it to offer a model
+        #: dropdown, and read an attribute that existed nowhere until now — so
+        #: the dropdown was reliably empty.
+        self.known_models: list[str] = []
 
     # --- plumbing ---------------------------------------------------------
     @property
@@ -332,6 +359,32 @@ class OpenAICompatClient:
 
     def endpoint(self, path: str) -> str:
         return f"{self.url}{path}"
+
+    def request_headers(self, extra: dict[str, str] | None = None) -> dict[str, str] | None:
+        """Headers for one request to the model server. See `self._headers`."""
+        merged = dict(self._headers)
+        if extra:
+            merged.update(extra)
+        return merged or None
+
+    def _http_error(self, status: int, url: str, body: str, retry_after: Any = None) -> OllamaError:
+        """A failure the retry logic can reason about.
+
+        A proxy answers with real HTTP semantics and the difference matters:
+        429 with a `Retry-After` is "come back in nine seconds", 401 is "your
+        key is wrong" and retrying it is pure latency, 502 is the upstream
+        model flapping and is worth another go. Without the status on the
+        error, `_Round.stream` treated all three identically.
+        """
+        error = OllamaError(f"{self.label} returned {status} for {url}: {body[:400]}")
+        error.status = status
+        try:
+            error.retry_after = float(retry_after) if retry_after else 0.0
+        except (TypeError, ValueError):
+            # `Retry-After` may also be an HTTP date. Not worth parsing: the
+            # fixed backoff is a fine answer and a wrong parse is worse.
+            error.retry_after = 0.0
+        return error
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -366,18 +419,78 @@ class OpenAICompatClient:
             payload["tool_choice"] = "auto"
         payload.update(_translate_options(options))
         if format is not None:
-            payload.update(_translate_format(format))
+            # Merged, not `update`d. Both translators can produce `extra_body`,
+            # and a plain update let the format's copy replace the options' one
+            # — so asking for guided decoding silently dropped every passthrough
+            # option the config had set.
+            extra = _translate_format(format)
+            body = extra.pop("extra_body", None)
+            payload.update(extra)
+            if body:
+                payload.setdefault("extra_body", {}).update(body)
         return OpenAICompatStream(self, payload)
+
+    # --- the tool loop's wire shape ---------------------------------------
+    def assistant_message(self, result: ChatResult) -> dict[str, Any]:
+        """The model's own turn, replayed to continue a tool loop.
+
+        Three differences from Ollama's shape, each of which a strict server
+        rejects: `type: "function"` is required, `arguments` is a JSON *string*
+        rather than an object, and every call needs an `id` that the tool
+        result can point back at.
+
+        This is the difference between multi-tool turns working and not through
+        a proxy. vLLM and Ollama's own `/v1` are lenient about all three;
+        LiteLLM translating to Anthropic or Bedrock is not, and rejects a
+        `tool_use` block with no matching `tool_result` — so round two of every
+        tool turn failed with a 400 that named none of this.
+        """
+        message: dict[str, Any] = {
+            "role": result.role or "assistant",
+            "content": result.content or "",
+        }
+        if not result.tool_calls:
+            return message
+        parts: list[dict[str, Any]] = []
+        for index, call in enumerate(result.tool_calls):
+            # Backfilled onto the call itself, so `tool_message` below names the
+            # same id. A server that omitted ids would otherwise get a result
+            # pointing at a call it never announced.
+            if not call.id:
+                call.id = f"call_{index}"
+            parts.append(
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments or {}, ensure_ascii=False),
+                    },
+                }
+            )
+        message["tool_calls"] = parts
+        return message
+
+    def tool_message(self, call: ToolCall, content: str) -> dict[str, Any]:
+        """One tool's result, addressed to the call that asked for it."""
+        return {
+            "role": "tool",
+            "tool_call_id": call.id or "",
+            "name": call.name,
+            "content": content,
+        }
 
     async def list_models(self) -> list[str]:
         """Model ids the server is serving."""
         url = self.endpoint(MODELS_PATH)
         try:
-            response = await self._http.get(url)
+            response = await self._http.get(url, headers=self.request_headers())
         except httpx.HTTPError as exc:
             raise OllamaError(f"could not reach {self.label} at {url}: {exc}") from exc
         if response.status_code >= 400:
-            raise OllamaError(f"{self.label} returned {response.status_code} for {url}")
+            # With the body: a LiteLLM budget or key failure says which in the
+            # payload, and a bare "returned 401" is a support ticket.
+            raise self._http_error(response.status_code, url, response.text)
         try:
             payload = response.json()
         except (json.JSONDecodeError, ValueError) as exc:
@@ -389,6 +502,7 @@ class OpenAICompatClient:
                 out.append(str(entry["id"]))
             elif isinstance(entry, str):
                 out.append(entry)
+        self.known_models = out
         return out
 
     async def is_available(self) -> bool:
@@ -413,15 +527,14 @@ class OpenAICompatClient:
         url = self.endpoint(EMBEDDINGS_PATH)
         try:
             response = await self._http.post(
-                url, json={"model": model or self.model, "input": wanted}
+                url,
+                json={"model": model or self.model, "input": wanted},
+                headers=self.request_headers(),
             )
         except httpx.HTTPError as exc:
             raise OllamaError(f"could not reach {self.label} at {url}: {exc}") from exc
         if response.status_code >= 400:
-            body = response.text[:400]
-            raise OllamaError(
-                f"{self.label} returned {response.status_code} for {url}: {body}"
-            )
+            raise self._http_error(response.status_code, url, response.text)
         try:
             payload = response.json()
         except (json.JSONDecodeError, ValueError) as exc:
@@ -470,11 +583,26 @@ def normalise_base_url(url: str) -> str:
     also commonly written without it in a config file. Guessing wrong produces
     a 404 that reads like the server being down, so the guess is made once,
     here, rather than by each caller.
+
+    Two shapes beyond the obvious one, because both are what people actually
+    paste and both used to end in that same unexplained 404:
+
+    * **A full endpoint** — `http://litellm:4000/v1/chat/completions`, copied
+      out of a README. Appending nothing and then `/chat/completions` again
+      gives `/v1/chat/completions/chat/completions`.
+    * **A different case** — `/V1`. The tail check was case-sensitive, so this
+      became `/V1/v1`.
     """
     text = str(url or DEFAULT_URL).rstrip("/")
     if not text:
         return DEFAULT_URL
-    tail = text.rsplit("/", 1)[-1]
-    if tail in ("v1", "openai") or "/v1/" in text:
+    lowered = text.lower()
+    for suffix in (CHAT_PATH, MODELS_PATH, EMBEDDINGS_PATH):
+        if lowered.endswith(suffix):
+            text = text[: -len(suffix)].rstrip("/")
+            lowered = text.lower()
+            break
+    tail = lowered.rsplit("/", 1)[-1]
+    if tail in ("v1", "openai") or "/v1/" in f"{lowered}/":
         return text
     return f"{text}/v1"

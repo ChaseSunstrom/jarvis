@@ -467,6 +467,45 @@ async def tool_delete(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/conversation/list")
+async def conversation_list(request: Request) -> dict[str, Any]:
+    """Past conversations, most recent first. Summaries only."""
+    return common.conversation_list_payload(get_jarvis(request))
+
+
+@api_router.get("/conversation/{conversation_id}")
+async def conversation_get(request: Request, conversation_id: str) -> dict[str, Any]:
+    """One past conversation in full, with its reasoning and tool rows."""
+    try:
+        return common.conversation_get_payload(get_jarvis(request), conversation_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/conversation/delete")
+async def conversation_delete(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_delete_conversation(
+            get_jarvis(request), str(body.get("conversation_id") or "")
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/conversation/rename")
+async def conversation_rename(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_rename_conversation(
+            get_jarvis(request),
+            str(body.get("conversation_id") or ""),
+            str(body.get("title") or ""),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.post("/pair/new")
 async def pair_new(request: Request) -> dict[str, Any]:
     """Mint a pairing code for the console to draw as a QR.

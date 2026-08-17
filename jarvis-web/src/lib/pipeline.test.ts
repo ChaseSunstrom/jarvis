@@ -44,7 +44,10 @@ describe('PipelineClient', () => {
 			onError: vi.fn(),
 			onReady: vi.fn(),
 			onRunEnd: vi.fn(),
-			onEvent: vi.fn()
+			onEvent: vi.fn(),
+			onToolStart: vi.fn(),
+			onToolEnd: vi.fn(),
+			onThinking: vi.fn()
 		};
 		const client = new PipelineClient((d) => sent.push(d), cb);
 		return { client, cb, sent };
@@ -227,5 +230,85 @@ describe('PipelineClient', () => {
 		);
 		expect(cb.onError).toHaveBeenCalledWith('stt-no-text-recognized', 'no speech');
 		expect(cb.onState).toHaveBeenCalledWith('idle');
+	});
+
+	// --- showing the working ------------------------------------------------
+	it('reports tool calls starting and finishing', () => {
+		const { client, cb } = setup();
+		const runId = client.startTextRun('lights on');
+		client.handleMessage(
+			event(runId, 'intent-tool-start', {
+				name: 'turn_on',
+				arguments: { name: 'lab' },
+				round: 1,
+				index: 0,
+				total: 2
+			})
+		);
+		expect(cb.onToolStart).toHaveBeenCalledWith(
+			expect.objectContaining({ name: 'turn_on', round: 1, index: 0, total: 2 })
+		);
+
+		client.handleMessage(
+			event(runId, 'intent-tool-end', {
+				name: 'turn_on',
+				round: 1,
+				index: 0,
+				ok: true,
+				duration_ms: 12
+			})
+		);
+		expect(cb.onToolEnd).toHaveBeenCalledWith(
+			expect.objectContaining({ name: 'turn_on', ok: true, duration_ms: 12 })
+		);
+	});
+
+	it('leaves `ok` undefined on a start event', () => {
+		// `ok` on a start would have to be a guess, and a row that renders a
+		// guess as a tick is the one thing these events exist to prevent.
+		const { client, cb } = setup();
+		const runId = client.startTextRun('go');
+		client.handleMessage(event(runId, 'intent-tool-start', { name: 't' }));
+		expect(cb.onToolStart.mock.calls[0][0].ok).toBeUndefined();
+	});
+
+	it('defaults a sparse tool payload rather than rendering undefined', () => {
+		const { client, cb } = setup();
+		const runId = client.startTextRun('go');
+		client.handleMessage(event(runId, 'intent-tool-end', {}));
+		expect(cb.onToolEnd).toHaveBeenCalledWith(
+			expect.objectContaining({ name: 'tool', total: 1, index: 0, arguments: {} })
+		);
+	});
+
+	it('delivers reasoning on its own channel, never as a text delta', () => {
+		// The claim the TTS and the HUD readout both depend on.
+		const { client, cb } = setup();
+		const runId = client.startTextRun('hm');
+		client.handleMessage(event(runId, 'intent-thinking', { delta: 'weighing it up' }));
+		expect(cb.onThinking).toHaveBeenCalledWith('weighing it up');
+		expect(cb.onDelta).not.toHaveBeenCalled();
+	});
+
+	it('ignores an empty reasoning frame', () => {
+		const { client, cb } = setup();
+		const runId = client.startTextRun('hm');
+		client.handleMessage(event(runId, 'intent-thinking', { delta: '' }));
+		expect(cb.onThinking).not.toHaveBeenCalled();
+	});
+
+	it('stops at intent when the caller does not want the reply spoken', () => {
+		// Not "synthesise and discard": a chat message nobody is going to hear
+		// should not spend a Piper round trip on being spoken.
+		const { client, sent } = setup();
+		client.startTextRun('quietly please', { speak: false });
+		expect(JSON.parse(sent[0] as string).end_stage).toBe('intent');
+
+		client.startTextRun('out loud please', { speak: true });
+		expect(JSON.parse(sent[1] as string).end_stage).toBe('tts');
+
+		// Unset keeps the behaviour the HUD has always had.
+		client.startTextRun('as before');
+		expect(JSON.parse(sent[2] as string).end_stage).toBe('tts');
 	});
 });

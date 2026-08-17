@@ -516,6 +516,79 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	/** @type {Set<{socket: any, id: number, eventType: string|null}>} */
 	const subscriptions = new Set();
 
+	/**
+	 * The conversation archive, as jarvis-core keeps one.
+	 *
+	 * Shared across sockets and for the life of the process, which is the
+	 * property the chat sidebar depends on: a conversation had on one page load
+	 * has to still be listed on the next. Seeded with one so the history list is
+	 * never empty on first paint — an empty sidebar and a broken sidebar look
+	 * identical, and only one of them is worth failing a test over.
+	 * @type {Map<string, {id: string, title: string, created: number, last_active: number, turns: any[]}>}
+	 */
+	const conversationStore = new Map([
+		[
+			'conv-mock-earlier',
+			{
+				id: 'conv-mock-earlier',
+				title: 'is the back door shut?',
+				created: 1_750_000_000,
+				last_active: 1_750_000_100,
+				turns: [
+					{ role: 'user', content: 'is the back door shut?', timestamp: 1_750_000_000 },
+					{
+						role: 'assistant',
+						content: 'It is, Sir.',
+						timestamp: 1_750_000_100,
+						thinking: 'binary_sensor.back_door reads off',
+						tool_calls: [
+							{ name: 'get_state', arguments: { name: 'back door' }, ok: true, status: 'ok' }
+						]
+					}
+				]
+			}
+		]
+	]);
+
+	/** Append one finished exchange, exactly as `ConversationArchive.record` does. */
+	function recordTurn(conversationId, userText, assistantText) {
+		const now = Math.floor(Date.now() / 1000);
+		let stored = conversationStore.get(conversationId);
+		if (!stored) {
+			stored = {
+				id: conversationId,
+				title: String(userText || 'New conversation').slice(0, 80),
+				created: now,
+				last_active: now,
+				turns: []
+			};
+			conversationStore.set(conversationId, stored);
+		}
+		stored.last_active = now;
+		stored.turns.push({ role: 'user', content: String(userText), timestamp: now });
+		stored.turns.push({
+			role: 'assistant',
+			content: String(assistantText),
+			timestamp: now,
+			thinking: 'the lab strip, then confirm',
+			tool_calls: [{ name: 'turn_on', arguments: { name: 'lab lights' }, ok: true, status: 'ok' }]
+		});
+	}
+
+	/** Summary rows, newest first — no message bodies, as the real one does. */
+	function conversationList() {
+		return [...conversationStore.values()]
+			.sort((a, b) => b.last_active - a.last_active)
+			.map((c) => ({
+				id: c.id,
+				title: c.title || 'New conversation',
+				created: c.created,
+				last_active: c.last_active,
+				turns: c.turns.length,
+				preview: String(c.turns[c.turns.length - 1]?.content ?? '').slice(0, 160)
+			}));
+	}
+
 	const broadcast = (eventType, data) => {
 		const event = {
 			event_type: eventType,
@@ -743,6 +816,52 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				})
 			);
 
+		/**
+		 * The intent stage, in the order a real turn produces it: the model
+		 * thinks, calls a tool, reads the result, then speaks.
+		 *
+		 * The reasoning and tool events are here because a chat client renders
+		 * them INLINE and in order — a mock that only replayed text deltas would
+		 * let a client that put the tool row after the answer pass.
+		 */
+		async function runIntent(r, text) {
+			event(r.id, 'intent-start', { engine: 'conversation' });
+			await sleep(10);
+			event(r.id, 'intent-thinking', { delta: 'the lab strip, then confirm' });
+			await sleep(10);
+			event(r.id, 'intent-tool-start', {
+				name: 'turn_on',
+				arguments: { name: 'lab lights' },
+				round: 1,
+				index: 0,
+				total: 1
+			});
+			await sleep(15);
+			event(r.id, 'intent-tool-end', {
+				name: 'turn_on',
+				round: 1,
+				index: 0,
+				total: 1,
+				ok: true,
+				status: 'ok',
+				error: null,
+				duration_ms: 15
+			});
+			for (const delta of DELTAS) {
+				await sleep(25);
+				event(r.id, 'intent-progress', { chat_log_delta: { content: delta } });
+			}
+			await sleep(15);
+			const conversationId = r.conversationId ?? 'conv-mock-1';
+			recordTurn(conversationId, text, RESPONSE);
+			event(r.id, 'intent-end', {
+				intent_output: {
+					conversation_id: conversationId,
+					response: { speech: { plain: { speech: RESPONSE } } }
+				}
+			});
+		}
+
 		async function finishRun(r) {
 			if (r.done) return;
 			r.done = true;
@@ -751,22 +870,28 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			await sleep(20);
 			event(r.id, 'stt-end', { stt_output: { text: TRANSCRIPT } });
 			await sleep(15);
-			event(r.id, 'intent-start', { engine: 'conversation' });
-			for (const delta of DELTAS) {
-				await sleep(25);
-				event(r.id, 'intent-progress', { chat_log_delta: { content: delta } });
-			}
-			await sleep(15);
-			event(r.id, 'intent-end', {
-				intent_output: {
-					conversation_id: 'conv-mock-1',
-					response: { speech: { plain: { speech: RESPONSE } } }
-				}
-			});
+			await runIntent(r, TRANSCRIPT);
 			await sleep(10);
 			event(r.id, 'tts-start', { engine: 'tts.piper' });
 			await sleep(20);
 			event(r.id, 'tts-end', { tts_output: { url: TTS_PATH, mime_type: 'audio/wav' } });
+			await sleep(10);
+			event(r.id, 'run-end', {});
+			run = null;
+		}
+
+		/** A typed turn: no audio, and `end_stage` decides whether it speaks. */
+		async function runText(r, text, speaks) {
+			if (r.done) return;
+			r.done = true;
+			await sleep(10);
+			await runIntent(r, text);
+			if (speaks) {
+				await sleep(10);
+				event(r.id, 'tts-start', { engine: 'tts.piper' });
+				await sleep(20);
+				event(r.id, 'tts-end', { tts_output: { url: TTS_PATH, mime_type: 'audio/wav' } });
+			}
 			await sleep(10);
 			event(r.id, 'run-end', {});
 			run = null;
@@ -1390,16 +1515,87 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 					);
 					break;
 				case 'assist_pipeline/run': {
-					run = { id: msg.id, handlerId: 1, audioBytes: 0, done: false };
+					const typed = msg.input?.text;
+					run = {
+						id: msg.id,
+						handlerId: 1,
+						audioBytes: 0,
+						done: false,
+						conversationId: msg.conversation_id || 'conv-mock-1'
+					};
 					socket.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
 					event(msg.id, 'run-start', {
 						pipeline: msg.pipeline ?? 'pipe-other',
 						runner_data: { stt_binary_handler_id: run.handlerId, timeout: 300 }
 					});
+					if (typed) {
+						// A text run: no stt stage at all, and nothing to wait for
+						// — there is no end-of-audio frame coming.
+						void runText(run, String(typed), msg.end_stage !== 'intent');
+						break;
+					}
 					event(msg.id, 'stt-start', {
 						engine: 'stt.whisper',
 						metadata: { sample_rate: msg.input?.sample_rate ?? 16000 }
 					});
+					break;
+				}
+				case 'jarvis/conversation/list':
+					socket.send(
+						JSON.stringify({
+							id: msg.id,
+							type: 'result',
+							success: true,
+							result: { conversations: conversationList() }
+						})
+					);
+					break;
+				case 'jarvis/conversation/get': {
+					const stored = conversationStore.get(msg.conversation_id);
+					if (!stored) {
+						socket.send(
+							JSON.stringify({
+								id: msg.id,
+								type: 'result',
+								success: false,
+								error: { code: 'not_found', message: 'no such conversation' }
+							})
+						);
+						break;
+					}
+					socket.send(
+						JSON.stringify({
+							id: msg.id,
+							type: 'result',
+							success: true,
+							result: { conversation: stored }
+						})
+					);
+					break;
+				}
+				case 'jarvis/conversation/delete': {
+					const gone = conversationStore.delete(msg.conversation_id);
+					socket.send(
+						JSON.stringify({
+							id: msg.id,
+							type: 'result',
+							success: true,
+							result: { deleted: gone }
+						})
+					);
+					break;
+				}
+				case 'jarvis/conversation/rename': {
+					const stored = conversationStore.get(msg.conversation_id);
+					if (stored) stored.title = String(msg.title ?? '');
+					socket.send(
+						JSON.stringify({
+							id: msg.id,
+							type: 'result',
+							success: true,
+							result: { renamed: Boolean(stored) }
+						})
+					);
 					break;
 				}
 				default:

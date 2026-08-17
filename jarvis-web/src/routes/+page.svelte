@@ -5,8 +5,28 @@
 	import { Player } from '$lib/audio/playback';
 	import { EnergyVAD } from '$lib/wake';
 	import Orb from '$lib/components/Orb.svelte';
+	import ChatPanel from '$lib/components/ChatPanel.svelte';
 	import { accentFor } from '$lib/tokens';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
+	import {
+		assistantPlaceholder,
+		fromArchive,
+		settled,
+		userMessage,
+		withDelta,
+		withError,
+		withFinal,
+		withThinking,
+		withToolEnd,
+		withToolStart,
+		type ChatMessage
+	} from '$lib/chat';
+	import {
+		deleteConversation,
+		getConversation,
+		listConversations
+	} from '$lib/conversations';
+	import type { ConversationSummary } from '$lib/jarvisClient';
 
 	// `turnState` rather than `state`: a variable called `state` in a component
 	// makes `$state` ambiguous to the tooling — svelte-check reads it as the
@@ -33,6 +53,36 @@
 	/** What is in the type-instead box, and whether it is mid-send. */
 	let draft = $state('');
 	let sending = $state(false);
+
+	/*
+	 * --- chat mode ---------------------------------------------------------
+	 *
+	 * The same assistant, read instead of heard. It is a MODE on this page and
+	 * not a route of its own, for one reason: both modes need the one socket,
+	 * the one PipelineClient and the one microphone, and a route boundary would
+	 * tear all three down on every switch — which would mean a turn in flight
+	 * dies because somebody wanted to read the answer rather than hear it.
+	 *
+	 * So the toggle swaps the markup and nothing else. Everything below feeds
+	 * both surfaces from the same callbacks.
+	 */
+	const MODE_KEY = 'jarvis.mode';
+	let chatMode = $state(false);
+	let messages = $state<ChatMessage[]>([]);
+	let conversations = $state<ConversationSummary[]>([]);
+	let historyError = $state('');
+	/** The conversation the transcript on screen belongs to. */
+	let openConversationId = $state<string | null>(null);
+	/**
+	 * Whether a typed question is also answered out loud.
+	 *
+	 * Off by default and remembered. A console left open in a bedroom that
+	 * reads every reply to the room is not a feature, and the person typing is
+	 * by definition looking at the screen. Spoken questions are always answered
+	 * out loud whatever this says — that path never comes through here.
+	 */
+	const SPEAK_KEY = 'jarvis.chat.speak';
+	let speakReplies = $state(false);
 
 	let ws: WebSocket | null = null;
 	let client: PipelineClient | null = null;
@@ -103,6 +153,12 @@
 						transcript = text;
 						lat.stt = performance.now() - tAudioEnd;
 						latText = fmtLat();
+						// A SPOKEN turn's question only exists once it has been
+						// transcribed, so this is where it joins the transcript.
+						// A typed one was added when it was sent — see sendText.
+						if (text) {
+							messages = [...messages, userMessage(text), assistantPlaceholder()];
+						}
 					},
 					onDelta: (d) => {
 						if (lat.firstDelta == null) {
@@ -110,9 +166,20 @@
 							latText = fmtLat();
 						}
 						response += d;
+						messages = withDelta(messages, d);
 					},
 					onResponse: (text) => {
 						if (text) response = text;
+						messages = withFinal(messages, text);
+					},
+					onToolStart: (call) => {
+						messages = withToolStart(messages, call);
+					},
+					onToolEnd: (call) => {
+						messages = withToolEnd(messages, call);
+					},
+					onThinking: (delta) => {
+						messages = withThinking(messages, delta);
 					},
 					onEvent: (ev) => {
 						if (ev.type === 'tts-start') {
@@ -137,11 +204,22 @@
 							turnState = 'idle';
 							statusMsg = 'idle';
 						}
+						messages = settled(messages);
+						// The conversation id only exists once the backend has
+						// answered, so this is the first moment the sidebar can
+						// show the turn that just happened — and the moment the
+						// title, taken from the first thing said, is decided.
+						openConversationId = client?.conversationId ?? openConversationId;
+						void refreshHistory();
 					},
 					onError: (code, message) => {
 						errorMsg = `${code}: ${message}`;
 						capturing = false;
 						statusMsg = 'error';
+						// On the message rather than only in the HUD's error line:
+						// by the time a second question has been asked, a banner is
+						// about neither of them.
+						messages = withError(messages, code, message);
 					}
 				}
 			);
@@ -231,8 +309,7 @@
 	 * later: `startTextRun` sets `start_stage: 'intent'`, so the answer still
 	 * streams back and is still spoken.
 	 */
-	async function sendText(): Promise<void> {
-		const text = draft.trim();
+	async function sendText(text = draft.trim()): Promise<void> {
 		if (!text || sending) return;
 		sending = true;
 		errorMsg = '';
@@ -243,10 +320,16 @@
 		response = '';
 		lat = {};
 		latText = '';
+		// Both messages up front, before the socket work: the placeholder is
+		// where the tool rows and the reasoning land, and a turn that spends
+		// nine seconds in tool calls with nothing on screen reads as a page
+		// that has stopped working.
+		messages = [...messages, userMessage(text), assistantPlaceholder()];
 		try {
 			await connectWs();
 		} catch {
 			errorMsg = 'cannot reach server websocket';
+			messages = withError(messages, 'offline', 'cannot reach the server');
 			sending = false;
 			return;
 		}
@@ -260,10 +343,100 @@
 		// The same baseline the spoken path measures from: the moment there is
 		// nothing left for the human to do and the wait begins.
 		tAudioEnd = performance.now();
-		client?.startTextRun(text, { pipeline: pipelineId });
+		client?.startTextRun(text, {
+			pipeline: pipelineId,
+			conversationId: openConversationId,
+			// In chat mode the toggle decides. Outside it the HUD has always
+			// spoken its replies, and that stays true.
+			speak: chatMode ? speakReplies : true
+		});
 		draft = '';
 		statusMsg = 'processing';
 		sending = false;
+	}
+
+	// --- chat mode: history --------------------------------------------------
+	/**
+	 * Reload the conversation list.
+	 *
+	 * Only in chat mode: the sidebar is the only thing that reads it, and the
+	 * orb should not spend a round trip per turn maintaining a list nobody is
+	 * looking at. An older jarvis-core answers `unknown_command`, which is a
+	 * missing feature and not an error worth a banner — the sidebar just says
+	 * so and everything else works.
+	 */
+	async function refreshHistory(): Promise<void> {
+		if (!chatMode || !client) return;
+		try {
+			conversations = await listConversations((p) => client!.command(p));
+			historyError = '';
+		} catch (e) {
+			conversations = [];
+			historyError =
+				(e as { code?: string })?.code === 'unknown_command'
+					? 'This jarvis-core does not keep conversation history.'
+					: 'Could not load past conversations.';
+		}
+	}
+
+	/** Open a past conversation: its transcript on screen, its id on the wire. */
+	async function openConversation(id: string): Promise<void> {
+		if (!client) return;
+		try {
+			const conversation = await getConversation((p) => client!.command(p), id);
+			messages = fromArchive(conversation);
+			openConversationId = id;
+			// So the next turn continues THIS conversation rather than whichever
+			// one the client last ran.
+			client.conversationId = id;
+			transcript = '';
+			response = '';
+			errorMsg = '';
+		} catch {
+			historyError = 'Could not open that conversation.';
+		}
+	}
+
+	function newConversation(): void {
+		messages = [];
+		openConversationId = null;
+		if (client) client.conversationId = null;
+		transcript = '';
+		response = '';
+		errorMsg = '';
+	}
+
+	async function forgetConversation(id: string): Promise<void> {
+		if (!client) return;
+		try {
+			await deleteConversation((p) => client!.command(p), id);
+		} catch {
+			historyError = 'Could not forget that conversation.';
+			return;
+		}
+		// Clear the view too if it was the one being read; leaving a transcript
+		// on screen under an id the server has forgotten would resume nothing.
+		if (openConversationId === id) newConversation();
+		await refreshHistory();
+	}
+
+	function toggleChatMode(): void {
+		chatMode = !chatMode;
+		try {
+			localStorage.setItem(MODE_KEY, chatMode ? 'chat' : 'orb');
+		} catch {
+			// Private mode. The toggle still works for this page.
+		}
+		if (chatMode) void refreshHistory();
+	}
+
+	function toggleSpeakReplies(): void {
+		speakReplies = !speakReplies;
+		try {
+			localStorage.setItem(SPEAK_KEY, speakReplies ? '1' : '0');
+		} catch {
+			/* not worth a message */
+		}
 	}
 
 	function markAudioEnd(): void {
@@ -360,11 +533,18 @@
 	}
 
 	onMount(() => {
-		e2eMode = new URLSearchParams(location.search).has('e2e');
+		const params = new URLSearchParams(location.search);
+		e2eMode = params.has('e2e');
 		try {
 			muted = localStorage.getItem(MUTE_KEY) === '1';
+			// `?mode=chat` wins over the remembered choice, so a link can open
+			// straight into chat and the e2e suite can reach it without a click.
+			const wanted = params.get('mode') ?? localStorage.getItem(MODE_KEY);
+			chatMode = wanted === 'chat';
+			speakReplies = localStorage.getItem(SPEAK_KEY) === '1';
 		} catch {
 			muted = false;
+			chatMode = params.get('mode') === 'chat';
 		}
 		fetch('/api/config')
 			.then((r) => r.json())
@@ -373,12 +553,18 @@
 		connectWs()
 			.then(() => {
 				statusMsg = 'idle';
+				// The sidebar's first fill. After a socket, because the commands
+				// go down it, and only in chat mode — see refreshHistory.
+				void refreshHistory();
 				// Headless Chromium has no microphone, so the VAD that starts
 				// every turn in real use never fires and the suite would wait
 				// forever for a transcript. This is the one thing ?e2e=1 has to
 				// stand in for now that there is no button to click: the turn
 				// itself, its audio and its end are all the real code paths.
-				if (e2eMode) void startInteraction();
+				//
+				// Not in chat mode: there the suite types, which is the real
+				// entry point for that surface and needs no stand-in.
+				if (e2eMode && !chatMode) void startInteraction();
 			})
 			.catch(() => (statusMsg = 'disconnected'));
 
@@ -431,6 +617,44 @@
 	});
 </script>
 
+<!--
+  The mode switch, outside both surfaces so it survives the swap and sits in
+  the same place in either. Fixed rather than in each header: it is the one
+  control that is about the page rather than about the conversation.
+-->
+<button
+	type="button"
+	class="mode-toggle"
+	data-testid="mode-toggle"
+	data-mode={chatMode ? 'chat' : 'orb'}
+	aria-pressed={chatMode}
+	aria-label={chatMode ? 'Switch to the voice orb' : 'Switch to text chat'}
+	title={chatMode ? 'Voice orb' : 'Text chat'}
+	onclick={toggleChatMode}
+>
+	{chatMode ? '◉ ORB' : '▤ CHAT'}
+</button>
+
+{#if chatMode}
+	<ChatPanel
+		{messages}
+		{conversations}
+		conversationId={openConversationId}
+		{historyError}
+		busy={sending || turnState === 'thinking'}
+		{turnState}
+		{muted}
+		{micLabel}
+		{orbLevel}
+		speak={speakReplies}
+		onSend={(text) => void sendText(text)}
+		onNew={newConversation}
+		onOpen={(id) => void openConversation(id)}
+		onDelete={(id) => void forgetConversation(id)}
+		onToggleMute={() => void toggleMute()}
+		onToggleSpeak={toggleSpeakReplies}
+	/>
+{:else}
 <main class="hud" style="--accent: {accent}" data-state={turnState}>
 	<div class="jv-grid" aria-hidden="true"></div>
 	<span class="jv-bracket tl" aria-hidden="true"></span>
@@ -537,8 +761,40 @@
 		</div>
 	</footer>
 </main>
+{/if}
 
 <style>
+	/* --- the mode switch --- */
+	.mode-toggle {
+		position: fixed;
+		top: 14px;
+		right: 14px;
+		z-index: 6;
+		padding: 0.3rem 0.9rem;
+		border: 1px solid var(--jv-line);
+		border-radius: var(--jv-radius-pill);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-chrome);
+		color: var(--jv-accent);
+		background: rgba(4, 12, 18, 0.6);
+		backdrop-filter: blur(2px);
+		cursor: pointer;
+		transition:
+			color var(--jv-dur-fast) var(--jv-ease-out),
+			border-color var(--jv-dur-fast) var(--jv-ease-out),
+			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.mode-toggle:hover {
+		color: var(--jv-text-bright);
+		border-color: var(--jv-accent);
+		box-shadow: var(--jv-glow-md);
+	}
+	.mode-toggle:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: var(--jv-focus-offset);
+	}
+
 	/*
 	 * The HUD's one liberty with the design system: `--accent` is a *live*
 	 * colour that tracks the pipeline state (see STATE_ACCENT in $lib/tokens),

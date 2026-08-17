@@ -22,11 +22,12 @@ the action has *not* happened.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..bus import Context
 from ..state import split_entity_id
+from .history import ConversationArchive
 from .memory import ConversationStore
 from .ollama import DEFAULT_MODEL, ChatResult, OllamaClient, OllamaError
 from .tools import (
@@ -41,6 +43,7 @@ from .tools import (
     EVENT_TOOL_STARTED,
     ToolRegistry,
     _area_name,
+    _bounded,
     _friendly_name,
     build_candidates,
     truncate,
@@ -153,6 +156,31 @@ def _summary_value(value: object) -> str:
     return text
 
 
+#: The turn-event vocabulary handed to `converse(on_event=...)`.
+#:
+#: Deliberately not the bus event names: these are *this turn's* events, already
+#: correlated to the caller, and a surface that reads them does not have to
+#: filter a house-wide broadcast to find the calls its own question caused.
+#: `voice/pipeline.py` re-emits them onto a run's event stream under the same
+#: names, so a websocket client sees them interleaved with its text deltas.
+TURN_EVENT_TOOL_START = "tool-start"
+TURN_EVENT_TOOL_END = "tool-end"
+TURN_EVENT_THINKING = "thinking"
+
+#: Reasoning kept on a `ConversationResult`. A model that thinks for nine
+#: paragraphs before saying "yes, Sir" is normal, and the whole of it would
+#: otherwise sit in the conversation archive and every event queue behind it.
+MAX_THINKING_CHARS = 8000
+
+#: Ceiling on a retry wait, however long the server asked for.
+#:
+#: `Retry-After` is a value a remote proxy chooses, and a rate limiter under
+#: load will happily name several minutes. Somebody standing in front of the
+#: orb waiting for an answer needs a reply or an apology, not a four-minute
+#: silence that is technically correct.
+MAX_RETRY_DELAY = 30.0
+
+
 @dataclass(slots=True)
 class ConversationResult:
     text: str = ""
@@ -160,6 +188,9 @@ class ConversationResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     rounds: int = 0
     error: str | None = None
+    #: What the model reasoned before answering, if it reasons out loud and
+    #: anything asked to keep it. Never spoken and never in `text`.
+    thinking: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -168,6 +199,7 @@ class ConversationResult:
             "tool_calls": self.tool_calls,
             "rounds": self.rounds,
             "error": self.error,
+            "thinking": self.thinking,
         }
 
     def as_conversation_response(self, language: str = "en") -> dict[str, Any]:
@@ -184,14 +216,24 @@ class ConversationResult:
 
 
 class ThinkStripper:
-    """Drops ``<think>...</think>`` from a token stream, tag-splits and all."""
+    """Drops ``<think>...</think>`` from a token stream, tag-splits and all.
+
+    The dropped text is not thrown away if somebody asked for it. ``on_thinking``
+    receives each slice as it is removed, which is what lets a chat surface draw
+    the reasoning in a collapsed block while the model is still producing it —
+    the alternative is showing it in the *answer*, which is what this class
+    exists to prevent, or showing it after the turn, by which time nobody cares.
+    Reasoning still never reaches the returned text, so the TTS never says it
+    and the HUD never renders it as speech.
+    """
 
     OPEN = "<think>"
     CLOSE = "</think>"
 
-    def __init__(self) -> None:
+    def __init__(self, on_thinking: Callable[[str], None] | None = None) -> None:
         self._buffer = ""
         self._inside = False
+        self.on_thinking = on_thinking
 
     @staticmethod
     def _partial_tail(text: str, tag: str) -> int:
@@ -200,6 +242,15 @@ class ThinkStripper:
             if text.endswith(tag[:size]):
                 return size
         return 0
+
+    def _thought(self, text: str) -> None:
+        listener = self.on_thinking
+        if listener is None or not text:
+            return
+        try:
+            listener(text)
+        except Exception:  # pragma: no cover - a listener is never load-bearing
+            _LOGGER.debug("A reasoning listener raised; ignoring", exc_info=True)
 
     def feed(self, delta: str) -> str:
         if not delta:
@@ -211,8 +262,14 @@ class ThinkStripper:
                 index = self._buffer.find(self.CLOSE)
                 if index == -1:
                     keep = self._partial_tail(self._buffer, self.CLOSE)
+                    # Everything before a possible partial close tag is settled
+                    # reasoning: it cannot turn into anything else later.
+                    self._thought(
+                        self._buffer[: len(self._buffer) - keep] if keep else self._buffer
+                    )
                     self._buffer = self._buffer[len(self._buffer) - keep :] if keep else ""
                     break
+                self._thought(self._buffer[:index])
                 self._buffer = self._buffer[index + len(self.CLOSE) :]
                 self._inside = False
                 continue
@@ -254,6 +311,7 @@ class ConversationAgent:
         language: str = "en",
         summary_limit: int = DEFAULT_SUMMARY_LIMIT,
         think: bool | None = None,
+        archive: ConversationArchive | None = None,
     ) -> None:
         self.jarvis = jarvis
         self.client = client
@@ -261,6 +319,10 @@ class ConversationAgent:
         self.model = model or DEFAULT_MODEL
         self.max_tool_rounds = max(1, int(max_tool_rounds or DEFAULT_MAX_TOOL_ROUNDS))
         self.memory = memory or ConversationStore()
+        #: The durable half of the memory. `self.memory` is what the model is
+        #: told and is deliberately forgetful; this is what a person can scroll
+        #: back through. See `llm/history.py` for why they are not one store.
+        self.archive = archive if archive is not None else ConversationArchive()
         self.options = dict(options or {})
         self.language = language
         self.summary_limit = summary_limit
@@ -403,10 +465,24 @@ class ConversationAgent:
 
     # --- conversation -----------------------------------------------------
     async def converse(
-        self, text: str, conversation_id: str | None = None
+        self,
+        text: str,
+        conversation_id: str | None = None,
+        on_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> AsyncIterator[str]:
-        """Run one turn, yielding text deltas as the model produces them."""
-        conversation = self.memory.get_or_create(conversation_id)
+        """Run one turn, yielding text deltas as the model produces them.
+
+        ``on_event`` is this turn's side channel: tool calls as they start and
+        finish, and reasoning as it is produced. Everything it reports is also
+        fired on the bus, but the bus is the whole house — a client watching it
+        cannot tell which calls its own question caused, because the events
+        carry no conversation. This one is called only for this turn, so a chat
+        surface can put a tool row in the right message.
+
+        Synchronous by contract, and called from inside the streaming loop: an
+        implementation that blocks delays the reply. Queue, do not await.
+        """
+        conversation = self._reopen(conversation_id)
         result = ConversationResult(conversation_id=conversation.id)
         self.last_conversation_id = conversation.id
 
@@ -436,6 +512,16 @@ class ConversationAgent:
         context = Context(origin="llm")
         pieces: list[str] = []
 
+        emit = self._turn_emitter(on_event)
+
+        def _on_thinking(delta: str) -> None:
+            # Capped as it accumulates rather than at the end: an unbounded
+            # reasoning block would otherwise sit in memory whole before
+            # anything got the chance to trim it.
+            if len(result.thinking) < MAX_THINKING_CHARS:
+                result.thinking += delta[: MAX_THINKING_CHARS - len(result.thinking)]
+            emit(TURN_EVENT_THINKING, {"delta": delta})
+
         try:
             try:
                 # aclosing so that closing *this* generator — barge-in, a
@@ -443,7 +529,9 @@ class ConversationAgent:
                 # the way down to the open /api/chat response instead of
                 # waiting on async-generator finalisation.
                 async with aclosing(
-                    self._run_rounds(messages, schema, context, result)
+                    self._run_rounds(
+                        messages, schema, context, result, emit, _on_thinking
+                    )
                 ) as rounds:
                     async for delta in rounds:
                         pieces.append(delta)
@@ -460,6 +548,55 @@ class ConversationAgent:
             # user just had.
             result.text = "".join(pieces).strip()
             self._finish(conversation.id, result, user_text=message)
+
+    @staticmethod
+    def _turn_emitter(
+        on_event: Callable[[str, dict[str, Any]], None] | None,
+    ) -> Callable[[str, dict[str, Any]], None]:
+        """``on_event``, made safe to call from anywhere in the turn.
+
+        A caller's listener is not allowed to end a conversation: it is a
+        surface drawing a progress row, and a chat console with a rendering bug
+        must not be able to stop the house answering. Returns a no-op when
+        nobody is listening, so the call sites need no branch.
+        """
+        if on_event is None:
+            return lambda event_type, data: None
+
+        def _emit(event_type: str, data: dict[str, Any]) -> None:
+            try:
+                on_event(event_type, data)
+            except Exception:  # pragma: no cover - a listener is never load-bearing
+                _LOGGER.debug("A turn listener raised on %s", event_type, exc_info=True)
+
+        return _emit
+
+    def _reopen(self, conversation_id: str | None):
+        """The live conversation for this id, restored from the archive if the
+        TTL has already forgotten it.
+
+        Clicking a three-day-old conversation in the console and typing into it
+        should continue *that* conversation. Without this it silently starts a
+        new one under the old id: `ConversationStore` purged it hours ago, so
+        `get_or_create` hands back an empty shell and the model is told nothing
+        about the thing the user is plainly looking at.
+
+        Only the tail is restored — `ConversationStore.max_turns` worth — so a
+        year-long conversation costs the same context window as a fresh one.
+        """
+        conversation = self.memory.get_or_create(conversation_id)
+        if conversation.turns or not conversation_id:
+            return conversation
+        limit = self.memory.max_turns if self.memory.max_turns > 0 else 0
+        for message in self.archive.messages(conversation_id, limit=limit):
+            conversation.add(message["role"], message["content"])
+        if conversation.turns:
+            _LOGGER.debug(
+                "Reopened conversation %s with %d archived turn(s)",
+                conversation_id,
+                len(conversation.turns),
+            )
+        return conversation
 
     async def _semantic_hits(self, message: str) -> dict[str, float]:
         """`{note_id: similarity}` from the memory store, or `{}`.
@@ -485,10 +622,13 @@ class ConversationAgent:
         schema: Sequence[dict[str, Any]],
         context: Context,
         result: ConversationResult,
+        emit: Callable[[str, dict[str, Any]], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> AsyncIterator[str]:
+        emit = emit or self._turn_emitter(None)
         for round_index in range(self.max_tool_rounds):
             result.rounds = round_index + 1
-            chat = _Round(self, messages, schema or None, context, result)
+            chat = _Round(self, messages, schema or None, context, result, emit, on_thinking)
             async with aclosing(chat.stream()) as deltas:
                 async for delta in deltas:
                     yield delta
@@ -498,7 +638,7 @@ class ConversationAgent:
         # Rounds exhausted and the model still wants tools: take them away and
         # make it answer with what it already has.
         result.rounds += 1
-        final = _Round(self, messages, None, context, result)
+        final = _Round(self, messages, None, context, result, emit, on_thinking)
         async with aclosing(final.stream()) as deltas:
             async for delta in deltas:
                 yield delta
@@ -509,8 +649,10 @@ class ConversationAgent:
         messages: list[dict[str, Any]],
         context: Context,
         result: ConversationResult,
+        emit: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
-        messages.append(chat_result.as_assistant_message())
+        emit = emit or self._turn_emitter(None)
+        messages.append(self._assistant_message(chat_result))
         total = len(chat_result.tool_calls)
         for index, call in enumerate(chat_result.tool_calls):
             _LOGGER.debug("Tool call: %s(%s)", call.name, call.arguments)
@@ -518,21 +660,25 @@ class ConversationAgent:
             # takes nine seconds should be visible for nine seconds, not
             # reported once it is over.
             started = time.monotonic()
-            self.tools.announce(
-                EVENT_TOOL_STARTED,
+            # Bounded here rather than only inside `announce`, because both
+            # copies go to a surface. `arguments` is a value the MODEL chose
+            # the size of: a tool called with a megabyte of text would
+            # otherwise be pushed whole down one websocket per turn listener,
+            # to be drawn as a row that shows about forty characters.
+            starting = _bounded(
                 {
                     "name": call.name,
                     "arguments": call.arguments,
                     "round": result.rounds,
                     "index": index,
                     "total": total,
-                },
-                context,
+                }
             )
+            self.tools.announce(EVENT_TOOL_STARTED, starting, context)
+            emit(TURN_EVENT_TOOL_START, starting)
             output = await self.tools.call(call.name, call.arguments, context=context)
             status = output.get("status") if isinstance(output, dict) else None
-            self.tools.announce(
-                EVENT_TOOL_FINISHED,
+            finishing = _bounded(
                 {
                     "name": call.name,
                     "round": result.rounds,
@@ -543,38 +689,61 @@ class ConversationAgent:
                     # showed it as a tick would be lying about the house.
                     "ok": status not in ("error", "denied"),
                     "status": status,
+                    # A tool's own message, so bounded for the same reason the
+                    # arguments are.
                     "error": output.get("error") if isinstance(output, dict) else None,
                     "duration_ms": int((time.monotonic() - started) * 1000),
-                },
-                context,
+                }
             )
+            self.tools.announce(EVENT_TOOL_FINISHED, finishing, context)
+            emit(TURN_EVENT_TOOL_END, finishing)
             result.tool_calls.append(
                 {"name": call.name, "arguments": call.arguments, "result": output}
             )
-            messages.append(
-                {
-                    "role": "tool",
-                    "name": call.name,
-                    "tool_name": call.name,
-                    # Capped. `truncate` was written for exactly this and was
-                    # only ever applied inside `build_yaml_tool`, so a YAML
-                    # tool's HTTP response was bounded while every BUILT-IN
-                    # tool's result went into the context window whole. The
-                    # marker `truncate` appends says how much was dropped, so
-                    # the model reads a shortened result as shortened rather
-                    # than as the whole answer.
-                    "content": truncate(_dumps(output)),
-                }
-            )
+            # Capped. `truncate` was written for exactly this and was only ever
+            # applied inside `build_yaml_tool`, so a YAML tool's HTTP response
+            # was bounded while every BUILT-IN tool's result went into the
+            # context window whole. The marker `truncate` appends says how much
+            # was dropped, so the model reads a shortened result as shortened
+            # rather than as the whole answer.
+            messages.append(self._tool_message(call, truncate(_dumps(output))))
+
+    # --- the tool loop's wire shape ---------------------------------------
+    #
+    # Asked of the client rather than decided here, because the two wires
+    # disagree in ways a strict server cares about: OpenAI wants
+    # `type: "function"`, `arguments` as a JSON string and a `tool_call_id` on
+    # every result; Ollama wants none of those and matches on the tool's name.
+    # Duck-typed so a test's stub client — of which there are many, and none of
+    # which knew about this — keeps working on the shape it always produced.
+    def _assistant_message(self, result: ChatResult) -> dict[str, Any]:
+        build = getattr(self.client, "assistant_message", None)
+        if callable(build):
+            return build(result)
+        return result.as_assistant_message()
+
+    def _tool_message(self, call: Any, content: str) -> dict[str, Any]:
+        build = getattr(self.client, "tool_message", None)
+        if callable(build):
+            return build(call, content)
+        return {
+            "role": "tool",
+            "name": call.name,
+            "tool_name": call.name,
+            "content": content,
+        }
 
     # --- convenience ------------------------------------------------------
     async def process(
-        self, text: str, conversation_id: str | None = None
+        self,
+        text: str,
+        conversation_id: str | None = None,
+        on_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> ConversationResult:
         """Non-streaming turn — what `conversation.process` calls."""
         conversation = self.memory.get_or_create(conversation_id)
         parts: list[str] = []
-        async for delta in self.converse(text, conversation.id):
+        async for delta in self.converse(text, conversation.id, on_event):
             parts.append(delta)
         result = self.last_result
         if result.conversation_id != conversation.id:  # defensive under concurrency
@@ -595,6 +764,20 @@ class ConversationAgent:
             conversation.add("user", user_text)
             if result.text:
                 conversation.add("assistant", result.text)
+            # The durable copy, which outlives both the TTL and the process.
+            # Recorded from the same branch as the live one so the two cannot
+            # disagree about whether a turn happened, and after it so a failure
+            # here cannot cost the model its context.
+            try:
+                self.archive.record(
+                    conversation_id,
+                    user_text=user_text,
+                    assistant_text=result.text,
+                    tool_calls=result.tool_calls,
+                    thinking=result.thinking,
+                )
+            except Exception:  # pragma: no cover - history is never load-bearing
+                _LOGGER.exception("Could not archive conversation %s", conversation_id)
         self.last_result = result
         self.last_response = result.text
         self.last_conversation_id = conversation_id
@@ -610,12 +793,16 @@ class _Round:
         schema: Sequence[dict[str, Any]] | None,
         context: Context,
         result: ConversationResult,
+        emit: Callable[[str, dict[str, Any]], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> None:
         self._agent = agent
         self._messages = messages
         self._schema = schema
         self._context = context
         self._result = result
+        self._emit = emit or agent._turn_emitter(None)
+        self._on_thinking = on_thinking
         self.pending_tool_calls = False
 
     def __aiter__(self) -> AsyncIterator[str]:
@@ -643,7 +830,12 @@ class _Round:
         attempts = max(1, agent.max_attempts)
         for attempt in range(attempts):
             emitted = 0
-            stripper = ThinkStripper()
+            # Two wires, two shapes of reasoning, one listener. qwen3 on either
+            # transport puts `<think>` inline, which the stripper removes;
+            # vLLM and Ollama's native API put it in a field of its own, which
+            # the client pushes. Both land on `_on_thinking`, so a surface sees
+            # one kind of event whatever the deployment is running.
+            stripper = ThinkStripper(self._on_thinking)
             stream = agent.client.chat(
                 model=agent.model,
                 messages=self._messages,
@@ -661,6 +853,13 @@ class _Round:
                 # install that has not set `llm: think:` gets.
                 think=agent.think,
             )
+            # Set rather than passed: `chat()` is the client's public contract
+            # and both implementations share it, so a new keyword there would
+            # have to be added to every backend and every test double. Suppressed
+            # for the same reason — a stand-in stream that will not take the
+            # attribute simply reports no reasoning, which is what it had.
+            with contextlib.suppress(AttributeError):
+                stream.on_thinking = self._on_thinking
             try:
                 async for delta in stream:
                     visible = stripper.feed(delta)
@@ -675,7 +874,11 @@ class _Round:
                 if chat_result.tool_calls and self._schema is not None:
                     self.pending_tool_calls = True
                     await agent._execute_tool_calls(
-                        chat_result, self._messages, self._context, self._result
+                        chat_result,
+                        self._messages,
+                        self._context,
+                        self._result,
+                        self._emit,
                     )
                 elif chat_result.tool_calls:
                     # Tools were withdrawn for this round; a call now is the
@@ -686,10 +889,21 @@ class _Round:
                         len(chat_result.tool_calls),
                     )
                 return
-            except OllamaError:
+            except OllamaError as err:
                 if emitted or attempt == attempts - 1:
                     raise
-                delay = agent.retry_backoff * (2**attempt)
+                # A 4xx will fail the same way forever. Through a proxy these
+                # are the common failures — a wrong key, an exhausted budget, a
+                # model name the router does not know — and retrying one only
+                # doubles how long the user waits for the same apology. 408 and
+                # 429 are the exceptions: both explicitly mean "again, later".
+                status = getattr(err, "status", 0)
+                if 400 <= status < 500 and status not in (408, 429):
+                    raise
+                # A server that says when to come back is telling the truth; a
+                # dropped socket says nothing, and the backoff is right there.
+                delay = getattr(err, "retry_after", 0.0) or agent.retry_backoff * (2**attempt)
+                delay = min(delay, MAX_RETRY_DELAY)
                 _LOGGER.warning(
                     "The model server failed before saying anything; retrying "
                     "in %.1fs (attempt %d of %d)",

@@ -41,6 +41,7 @@ import math
 import secrets
 import time
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -65,6 +66,21 @@ EVENT_STT_END = "stt-end"
 EVENT_INTENT_START = "intent-start"
 EVENT_INTENT_PROGRESS = "intent-progress"
 EVENT_INTENT_END = "intent-end"
+#: What the turn is doing between `intent-start` and `intent-end`, for a
+#: surface that shows the working rather than only the answer.
+#:
+#: These carry the SAME payloads as the `jarvis_tool_started` /
+#: `jarvis_tool_finished` bus events and are not a replacement for them: the bus
+#: is the house-wide broadcast every subscriber sees, and these are scoped to
+#: one run on one socket. A chat client needs the second kind — with only the
+#: bus it cannot tell which of two concurrent turns a tool row belongs to, and
+#: putting somebody else's `unlock_door` in your transcript is not a cosmetic
+#: mistake.
+EVENT_INTENT_TOOL_START = "intent-tool-start"
+EVENT_INTENT_TOOL_END = "intent-tool-end"
+#: A slice of the model's reasoning. Never part of `intent-progress`, because
+#: that is the text the TTS speaks and the HUD renders as the reply.
+EVENT_INTENT_THINKING = "intent-thinking"
 EVENT_TTS_START = "tts-start"
 EVENT_TTS_END = "tts-end"
 EVENT_ERROR = "error"
@@ -112,6 +128,27 @@ DEFAULT_VAD_SILENCE_MS = 900
 #: quality one — a client that streams for an hour must not grow the process by
 #: an hour of PCM.
 MAX_VERIFY_BYTES = 16000 * 2 * 20
+
+#: Turn events buffered between two ticks of the intent loop.
+#:
+#: Reasoning arrives token by token, so this fills fastest when a model is
+#: thinking hard — which is also when the client most wants to see something.
+#: Consecutive reasoning slices are coalesced into one frame on the way out
+#: (see `_drain_turn_events`), so in practice the queue holds tool events and a
+#: few hundred characters of thought, not one entry per token.
+MAX_QUEUED_TURN_EVENTS = 512
+
+#: How much reasoning goes out in one frame. A thousand characters is a
+#: paragraph — enough that the collapsed block on the client grows visibly,
+#: small enough that no single frame is worth chunking.
+MAX_THINKING_FRAME_CHARS = 1000
+
+#: Agent turn-event name -> the pipeline event it is re-emitted as.
+_TURN_EVENT_NAMES = {
+    "tool-start": EVENT_INTENT_TOOL_START,
+    "tool-end": EVENT_INTENT_TOOL_END,
+    "thinking": EVENT_INTENT_THINKING,
+}
 
 _HANDLER_IDS = itertools.count(1)
 
@@ -271,6 +308,18 @@ class PipelineRun:
         self.speaker_verdict: Any = None
 
         self._event_cb: Callable[[str, dict[str, Any]], Any] | None = None
+        #: Turn events the agent reported, waiting to be emitted.
+        #:
+        #: The agent calls back synchronously from inside its own streaming
+        #: loop — it has to, or reporting a tool call would mean awaiting the
+        #: socket in the middle of a model response — and `_emit` is a
+        #: coroutine. This is the seam between the two: the callback appends,
+        #: and the intent loop drains on every tick. Bounded because a runaway
+        #: reasoning block must not be able to grow the process; the oldest go
+        #: first, since a surface that has fallen behind wants the recent ones.
+        self._turn_events: deque[tuple[str, dict[str, Any]]] = deque(
+            maxlen=MAX_QUEUED_TURN_EVENTS
+        )
         self._audio_ms = 0.0
         #: The turn's audio, kept only while a gate is active and only up to
         #: :data:`MAX_VERIFY_BYTES`. Nothing is written to disk and it is
@@ -608,6 +657,13 @@ class PipelineRun:
         reply = ""
         try:
             async for delta in self._converse_deltas(text):
+                # Drained on every tick, not only when there is text: a turn
+                # that spends nine seconds in tool calls produces no content
+                # delta at all, and a queue only flushed alongside one would
+                # hold the whole toolchain back until the model started
+                # speaking — which is exactly the interval the rows exist to
+                # narrate.
+                await self._drain_turn_events()
                 if not delta:
                     continue
                 reply += delta
@@ -619,6 +675,12 @@ class PipelineRun:
             raise
         except Exception as err:
             raise PipelineError("intent-failed", str(err) or type(err).__name__) from err
+        finally:
+            # Whatever the agent reported after the last delta — the tail of a
+            # tool round, the close of a reasoning block — still belongs to this
+            # turn, and on an error path it is the most informative thing there
+            # is.
+            await self._drain_turn_events()
 
         await self._emit(
             EVENT_INTENT_END,
@@ -770,17 +832,67 @@ class PipelineRun:
             params = inspect.signature(self.converse).parameters
         except (TypeError, ValueError):  # builtins, C callables
             return self.converse(text, self.conversation_id)
+        takes_var_kw = any(p.kind is p.VAR_KEYWORD for p in params.values())
+        # `on_event` is strictly opt-in. Every conversation agent this has ever
+        # been handed — the service bridge, the no-agent stand-in, a test's
+        # two-line coroutine — takes two arguments, and passing a third would
+        # break all of them for a feature only the real agent implements.
+        wants_events = "on_event" in params or takes_var_kw
         positional = [
             p
             for p in params.values()
             if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
         ]
         takes_var = any(p.kind is p.VAR_POSITIONAL for p in params.values())
+        if wants_events:
+            return self.converse(text, self.conversation_id, on_event=self._on_turn_event)
         if len(positional) >= 2 or takes_var:
             return self.converse(text, self.conversation_id)
         if "conversation_id" in params:
             return self.converse(text, conversation_id=self.conversation_id)
         return self.converse(text)
+
+    # --- turn events (tool calls and reasoning) ---------------------------
+    def _on_turn_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """The agent reporting something mid-turn. Synchronous and cheap.
+
+        Runs inside the model's streaming loop, so it does exactly one thing:
+        put the event where the intent loop will find it. Anything slower here
+        is latency between a token and the user hearing it.
+        """
+        name = _TURN_EVENT_NAMES.get(event_type)
+        if name is None:
+            return
+        self._turn_events.append((name, data if isinstance(data, dict) else {}))
+
+    async def _drain_turn_events(self) -> None:
+        """Emit everything the agent has reported since the last tick.
+
+        Consecutive reasoning slices are merged, because they arrive one token
+        at a time: a frame per token would put thousands of websocket writes
+        between "thinking" and "answered", and the client concatenates them
+        into one block anyway. Tool events are never merged — each is a
+        distinct row with its own identity.
+        """
+        pending: str = ""
+        while self._turn_events:
+            name, data = self._turn_events.popleft()
+            if name == EVENT_INTENT_THINKING:
+                pending += str(data.get("delta") or "")
+                if len(pending) < MAX_THINKING_FRAME_CHARS:
+                    continue
+                await self._emit(EVENT_INTENT_THINKING, {"delta": pending})
+                pending = ""
+                continue
+            if pending:
+                # Order is the point: reasoning that preceded a tool call has to
+                # reach the client before the row for that call, or the
+                # transcript reads as though it decided first and thought after.
+                await self._emit(EVENT_INTENT_THINKING, {"delta": pending})
+                pending = ""
+            await self._emit(name, data)
+        if pending:
+            await self._emit(EVENT_INTENT_THINKING, {"delta": pending})
 
     # --- events -----------------------------------------------------------
     async def _emit(self, event_type: str, data: dict[str, Any]) -> None:

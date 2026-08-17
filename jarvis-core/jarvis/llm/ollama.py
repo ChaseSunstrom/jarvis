@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
@@ -44,7 +44,22 @@ GENERATE_PATH = "/api/generate"
 
 
 class OllamaError(RuntimeError):
-    """Ollama returned an error, or spoke something that wasn't JSON."""
+    """The model server returned an error, or spoke something that wasn't JSON.
+
+    Carries the HTTP status when there was one, so a caller can tell apart the
+    three failures that look identical in the message: a 401 that will fail the
+    same way forever, a 429 that is asking to be retried later, and a 502 from
+    an upstream model that is merely flapping. `retry_after` is the server's own
+    `Retry-After`, in seconds, or 0 when it did not say.
+
+    Both default to 0, which reads as "no HTTP status" — a connection that never
+    got that far — and keeps every existing `raise OllamaError(...)` valid.
+    """
+
+    #: HTTP status, or 0 for a transport-level failure.
+    status: int = 0
+    #: Seconds the server asked us to wait, or 0.0.
+    retry_after: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +177,16 @@ class ChatStream:
         self._done = False
         self._started = False
         self._gen: AsyncIterator[str] | None = None
+        #: Called with each slice of the model's reasoning as it arrives.
+        #:
+        #: Reasoning cannot be delivered by iterating the stream, because the
+        #: iterator only ticks on a *content* delta and a model that is thinking
+        #: is producing no content at all — the chunks land in
+        #: `ChatResult.thinking` and the consumer's `async for` never runs.
+        #: A surface that wants to show reasoning while it happens (rather than
+        #: after the turn) has to be pushed to. Set it after construction; the
+        #: default is nobody listening, which costs one `is None`.
+        self.on_thinking: Callable[[str], None] | None = None
 
     # --- interface --------------------------------------------------------
     def __aiter__(self) -> AsyncIterator[str]:
@@ -204,6 +229,20 @@ class ChatStream:
             async for _ in self:
                 pass
         return self._result
+
+    def _emit_thinking(self, delta: str) -> None:
+        """Push one slice of reasoning at whoever asked for it.
+
+        Exception-safe: a surface that throws while drawing a thought must not
+        take down the turn it was watching.
+        """
+        listener = self.on_thinking
+        if listener is None or not delta:
+            return
+        try:
+            listener(delta)
+        except Exception:  # pragma: no cover - a listener is never load-bearing
+            _LOGGER.debug("A reasoning listener raised; ignoring", exc_info=True)
 
     # --- transport --------------------------------------------------------
     async def _run(self) -> AsyncIterator[str]:
@@ -289,6 +328,7 @@ class ChatStream:
         thinking = message.get("thinking")
         if isinstance(thinking, str) and thinking:
             self._result.thinking += thinking
+            self._emit_thinking(thinking)
 
         for call in parse_tool_calls(message):
             self._result.tool_calls.append(call)
@@ -328,6 +368,11 @@ class OllamaClient:
             follow_redirects=True,
         )
 
+        #: Filled in by `list_models`; read by `settings.py` to offer a model
+        #: dropdown. It read this attribute before either client defined it, so
+        #: the dropdown was reliably empty.
+        self.known_models: list[str] = []
+
     # --- plumbing ---------------------------------------------------------
     @property
     def http(self) -> httpx.AsyncClient:
@@ -339,6 +384,25 @@ class OllamaClient:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._http.aclose()
+
+    # --- the tool loop's wire shape ---------------------------------------
+    def assistant_message(self, result: ChatResult) -> dict[str, Any]:
+        """The model's own turn, replayed to continue a tool loop.
+
+        Paired with `tool_message` so the agent never has to know which wire it
+        is on — the OpenAI client overrides both with the shape a strict server
+        (or a proxy translating to Anthropic) demands.
+        """
+        return result.as_assistant_message()
+
+    def tool_message(self, call: ToolCall, content: str) -> dict[str, Any]:
+        """One tool's result. Ollama matches on `name`, not on a call id."""
+        return {
+            "role": "tool",
+            "name": call.name,
+            "tool_name": call.name,
+            "content": content,
+        }
 
     # --- api --------------------------------------------------------------
     def chat(
@@ -398,6 +462,7 @@ class OllamaClient:
                     out.append(str(name))
             elif isinstance(entry, str):
                 out.append(entry)
+        self.known_models = out
         return out
 
     async def is_available(self) -> bool:

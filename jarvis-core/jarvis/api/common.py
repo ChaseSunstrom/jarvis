@@ -490,6 +490,85 @@ def companion_list_payload(jarvis: "Jarvis", include_actions: bool = True) -> li
         return []
 
 
+# --- conversation history -----------------------------------------------------
+#: Where the `llm` integration leaves its conversation archive. Read by name
+#: rather than imported, so the API layer still works in a build with no
+#: assistant configured — the same way `llm_tools` is reached above.
+DATA_HISTORY = "llm_history"
+
+
+def _conversation_archive(jarvis: "Jarvis") -> Any:
+    archive = jarvis.data.get(DATA_HISTORY)
+    if archive is None:
+        raise ApiError(
+            "not_found",
+            "the assistant is not configured, so it has kept no conversations",
+            404,
+        )
+    return archive
+
+
+def conversation_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Past conversations as summary rows, most recent first.
+
+    Summaries only — no message bodies. The chat console lists a hundred of
+    these on load and opens one, and shipping every transcript to draw a
+    sidebar would put megabytes on the socket to render a list of titles.
+    """
+    archive = jarvis.data.get(DATA_HISTORY)
+    if archive is None:
+        return {"conversations": []}
+    return {"conversations": archive.listing()}
+
+
+def conversation_get_payload(jarvis: "Jarvis", conversation_id: str) -> dict[str, Any]:
+    """One conversation in full: every turn, with reasoning and tool rows."""
+    conversation = _conversation_archive(jarvis).get(str(conversation_id or ""))
+    if conversation is None:
+        raise ApiError("not_found", f"no conversation {conversation_id!r}", 404)
+    return {"conversation": conversation.as_dict()}
+
+
+async def async_delete_conversation(
+    jarvis: "Jarvis", conversation_id: str
+) -> dict[str, Any]:
+    """Forget one conversation, in both stores.
+
+    Through the service rather than the archive directly, so the live
+    conversation the model may still be holding goes with it — see
+    `llm.clear_conversation`. A delete that left the model's copy would mean
+    the next message on that id resumed a conversation the user had just
+    removed from their history.
+    """
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id:
+        raise ApiError("invalid_format", "which conversation?", 400)
+    if not jarvis.services.has_service(LLM_DOMAIN, "clear_conversation"):
+        raise ApiError("not_found", "the assistant is not configured", 404)
+    result = await jarvis.services.async_call(
+        LLM_DOMAIN,
+        "clear_conversation",
+        {"conversation_id": conversation_id},
+        blocking=True,
+        return_response=True,
+    )
+    return {"deleted": bool((result or {}).get("cleared"))}
+
+
+async def async_rename_conversation(
+    jarvis: "Jarvis", conversation_id: str, title: str
+) -> dict[str, Any]:
+    """Give a conversation a name instead of its first sentence."""
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id:
+        raise ApiError("invalid_format", "which conversation?", 400)
+    if not str(title or "").strip():
+        raise ApiError("invalid_format", "a conversation needs a non-empty title", 400)
+    if not _conversation_archive(jarvis).rename(conversation_id, str(title)):
+        raise ApiError("not_found", f"no conversation {conversation_id!r}", 404)
+    return {"renamed": True, "conversation_id": conversation_id, "title": str(title)}
+
+
 # --- tools --------------------------------------------------------------------
 def _tool_registry(jarvis: "Jarvis") -> Any:
     registry = jarvis.data.get("llm_tools")

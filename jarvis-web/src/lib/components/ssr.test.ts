@@ -20,8 +20,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'svelte/server';
 import Approvals from './Approvals.svelte';
+import ChatMessage from './ChatMessage.svelte';
+import ChatPanel from './ChatPanel.svelte';
 import Pairing from './Pairing.svelte';
 import ToolActivity from './ToolActivity.svelte';
+import { assistantPlaceholder, userMessage } from '$lib/chat';
+
+const noop = () => {};
 
 /** Server-render `component` and report every timer it started while doing so. */
 function timersArmedBy(component: any, props: Record<string, unknown> = {}): number {
@@ -53,5 +58,70 @@ describe('server rendering', () => {
 	it('renders the pairing panel’s markup, which is the point of doing it at all', () => {
 		const { body } = render(Pairing);
 		expect(body).toContain('data-testid="pairing"');
+	});
+
+	// --- chat mode ----------------------------------------------------------
+	// It server-renders because `/` does, and a mode remembered in localStorage
+	// means the FIRST paint of a chat-mode reload is this markup. Anything that
+	// touched `window` or armed a timer here would take the whole page down
+	// during SSR, on the one route that has to work.
+	it('arms no timers in the chat surfaces', () => {
+		expect(
+			timersArmedBy(ChatPanel, {
+				messages: [],
+				onSend: noop,
+				onNew: noop,
+				onOpen: noop,
+				onDelete: noop,
+				onToggleMute: noop,
+				onToggleSpeak: noop
+			})
+		).toBe(0);
+	});
+
+	it('renders a transcript on the server, tool rows and reasoning included', () => {
+		const answer = {
+			...assistantPlaceholder(),
+			content: 'Done, Sir.',
+			thinking: 'the lab strip',
+			pending: false,
+			tools: [
+				{
+					key: 'k',
+					name: 'turn_on',
+					arguments: { name: 'lab' },
+					state: 'ok' as const,
+					durationMs: 12
+				}
+			]
+		};
+
+		const { body } = render(ChatMessage, { props: { message: answer } });
+
+		expect(body).toContain('Done, Sir.');
+		expect(body).toContain('turn_on');
+		// Present in the markup but inside a closed <details>: reasoning is
+		// available to read and never presented as the answer.
+		expect(body).toContain('the lab strip');
+		expect(body).not.toContain('<details open');
+	});
+
+	it('renders the empty state and the composer with no conversation', () => {
+		const { body } = render(ChatPanel, {
+			props: {
+				messages: [userMessage('hello')],
+				onSend: noop,
+				onNew: noop,
+				onOpen: noop,
+				onDelete: noop,
+				onToggleMute: noop,
+				onToggleSpeak: noop
+			}
+		});
+
+		expect(body).toContain('data-testid="chat-input"');
+		expect(body).toContain('data-testid="chat-send"');
+		expect(body).toContain('data-testid="chat-mic"');
+		expect(body).toContain('hello');
 	});
 });

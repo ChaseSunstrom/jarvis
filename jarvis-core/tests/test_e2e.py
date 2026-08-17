@@ -609,6 +609,11 @@ async def test_voice_round_trip_from_pcm_to_a_light_that_is_really_on(house):
 
     # --- the pipeline contract the HUD, satellites and phone parse ---------
     assert run.error is None, run.error and run.error.message
+    # `intent-tool-start`/`intent-tool-end` bracket the real `turn_on` call —
+    # this run is the tool path, so their absence would mean the chat console's
+    # rows had quietly stopped being fed. They sit before the first
+    # `intent-progress` because the model calls the tool, reads the result and
+    # only then says anything.
     assert run.event_types == [
         "run-start",
         "stt-start",
@@ -616,6 +621,8 @@ async def test_voice_round_trip_from_pcm_to_a_light_that_is_really_on(house):
         "stt-vad-end",
         "stt-end",
         "intent-start",
+        "intent-tool-start",
+        "intent-tool-end",
         "intent-progress",
         "intent-progress",
         "intent-end",
@@ -623,6 +630,13 @@ async def test_voice_round_trip_from_pcm_to_a_light_that_is_really_on(house):
         "tts-end",
         "run-end",
     ]
+
+    # The rows say what ran and that it worked — the two things a surface
+    # drawing them has to get right.
+    tool_events = [e for e in run.events if e.type.startswith("intent-tool-")]
+    assert [e.data["name"] for e in tool_events] == ["turn_on", "turn_on"]
+    assert tool_events[1].data["ok"] is True
+    assert tool_events[1].data["duration_ms"] >= 0
 
     events = {event.type: event.data for event in run.events}
     assert events["run-start"]["language"] == "en"
@@ -787,12 +801,17 @@ def test_the_pipeline_and_service_calls_over_the_websocket_api(config_dir):
                 events = read_until(ws, "run-end")
                 types = [event["type"] for event in events]
                 assert "error" not in types
+                # The tool rows reach a real websocket client, in order, on the
+                # same subscription as the text — which is the whole point of
+                # putting them on the run instead of only on the bus.
                 assert types == [
                     "stt-start",
                     "stt-vad-start",
                     "stt-vad-end",
                     "stt-end",
                     "intent-start",
+                    "intent-tool-start",
+                    "intent-tool-end",
                     "intent-progress",
                     "intent-progress",
                     "intent-end",

@@ -13,6 +13,21 @@ export interface PipelineEvent {
 	timestamp?: string;
 }
 
+/** One tool call, as `intent-tool-start` / `intent-tool-end` report it. */
+export interface ToolCallEvent {
+	name: string;
+	arguments?: Record<string, unknown>;
+	/** Which tool round, and this call's place in it. */
+	round?: number;
+	index?: number;
+	total?: number;
+	/** Only on the end event. False for a tool that answered `status: error`. */
+	ok?: boolean;
+	status?: string | null;
+	error?: string | null;
+	duration_ms?: number;
+}
+
 export interface PipelineCallbacks {
 	/** Coarse state for the orb: idle / listening / thinking / speaking. */
 	onState?: (state: PipelineState) => void;
@@ -22,6 +37,23 @@ export interface PipelineCallbacks {
 	onDelta?: (delta: string) => void;
 	/** Full response text from intent-end. */
 	onResponse?: (text: string) => void;
+	/**
+	 * A tool call starting. Fired BEFORE the call runs, so a tool that takes
+	 * nine seconds is visible for nine seconds rather than reported once it is
+	 * over.
+	 */
+	onToolStart?: (call: ToolCallEvent) => void;
+	/** The same call finishing, with `ok`, `error` and how long it took. */
+	onToolEnd?: (call: ToolCallEvent) => void;
+	/**
+	 * A slice of the model's reasoning.
+	 *
+	 * Never part of `onDelta`: that is the text the TTS speaks and the HUD
+	 * renders as the reply, and a model's deliberation is neither. Coalesced
+	 * server-side into paragraphs, so this fires a handful of times per turn
+	 * rather than once per token.
+	 */
+	onThinking?: (delta: string) => void;
 	/** TTS media path from tts-end (data.tts_output.url). */
 	onTtsUrl?: (url: string) => void;
 	/** Pipeline error event (data.code, data.message). */
@@ -55,6 +87,31 @@ export function endFrame(handlerId: number): Uint8Array {
 	return new Uint8Array([handlerId & 0xff]);
 }
 
+/**
+ * One tool event's payload, typed and defaulted.
+ *
+ * An older jarvis-core does not send these at all, and nothing here may assume
+ * a field is present: `name` is the only one a row genuinely needs, and a
+ * missing `total` renders as "1 of 1" rather than "1 of undefined".
+ */
+export function toolCall(data: any): ToolCallEvent {
+	const raw = (data ?? {}) as Record<string, any>;
+	return {
+		name: String(raw.name ?? 'tool'),
+		arguments:
+			raw.arguments && typeof raw.arguments === 'object' ? raw.arguments : {},
+		round: Number(raw.round ?? 0),
+		index: Number(raw.index ?? 0),
+		total: Number(raw.total ?? 1),
+		// `ok` is only meaningful on the end event, and `undefined` there means
+		// "still running" — which is why this is not defaulted to true.
+		ok: typeof raw.ok === 'boolean' ? raw.ok : undefined,
+		status: raw.status ?? null,
+		error: raw.error ?? null,
+		duration_ms: Number(raw.duration_ms ?? 0)
+	};
+}
+
 interface Pending {
 	resolve: (result: any) => void;
 	reject: (err: Error) => void;
@@ -64,6 +121,15 @@ export interface RunOptions {
 	pipeline?: string | null;
 	conversationId?: string | null;
 	sampleRate?: number;
+	/**
+	 * Whether the reply should also be spoken. Text runs only.
+	 *
+	 * A question asked out loud is answered out loud; a question typed into a
+	 * chat window usually should not be, or a console left open in a bedroom
+	 * reads its replies to the room. The caller knows which it is, so the
+	 * caller decides — see `startTextRun`.
+	 */
+	speak?: boolean;
 }
 
 export class PipelineClient {
@@ -178,7 +244,10 @@ export class PipelineClient {
 			id,
 			type: 'assist_pipeline/run',
 			start_stage: 'intent',
-			end_stage: 'tts',
+			// Stopping at `intent` skips synthesis entirely rather than
+			// synthesising and discarding it — a chat message that is not going
+			// to be spoken should not spend a Piper round trip on being spoken.
+			end_stage: opts.speak === false ? 'intent' : 'tts',
 			input: { text },
 			conversation_id: opts.conversationId !== undefined ? opts.conversationId : this.conversationId
 		};
@@ -233,6 +302,19 @@ export class PipelineClient {
 			case 'intent-progress': {
 				const delta = ev.data?.chat_log_delta?.content;
 				if (typeof delta === 'string' && delta.length > 0) this.cb.onDelta?.(delta);
+				break;
+			}
+			case 'intent-tool-start': {
+				this.cb.onToolStart?.(toolCall(ev.data));
+				break;
+			}
+			case 'intent-tool-end': {
+				this.cb.onToolEnd?.(toolCall(ev.data));
+				break;
+			}
+			case 'intent-thinking': {
+				const delta = ev.data?.delta;
+				if (typeof delta === 'string' && delta.length > 0) this.cb.onThinking?.(delta);
 				break;
 			}
 			case 'intent-end': {

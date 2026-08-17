@@ -76,7 +76,11 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `call_service` | `domain`, `service`, `service_data`, optional `target` and `return_response`; result carries `context` and `changed_states` |
 | `subscribe_events` / `unsubscribe_events` | bus events, optionally filtered by `event_type`; unsubscribe takes `subscription: <the subscribe id>` |
 | `fire_event` | put an event on the bus |
-| `conversation/process` | one text turn through the conversation agent |
+| `conversation/process` | one text turn through the conversation agent. Non-streaming — for a chat surface that wants deltas, tool rows and reasoning as they happen, use `assist_pipeline/run` with `start_stage: "intent"` (below) |
+| `jarvis/conversation/list` | past conversations, most recent first: `{conversations: [{id, title, created, last_active, turns, preview}]}`. Summaries only, no message bodies |
+| `jarvis/conversation/get` | `conversation_id`; one conversation in full, including each turn's `thinking` and `tool_calls`. A tool's *result* is not stored — only its name, arguments and whether it worked |
+| `jarvis/conversation/delete` | `conversation_id`; forgets it in both the model's memory and the archive |
+| `jarvis/conversation/rename` | `conversation_id`, `title`; a name of your own instead of the first sentence |
 | `jarvis/approve` | resolve a Tier-3 approval the safety gate is holding |
 | `config/entity_registry/list` · `/update` | rename, re-area, hide, or set `exposed` on an entity |
 | `config/device_registry/list` · `/update` | device names and area assignment |
@@ -122,8 +126,9 @@ server  {"id": 3, "type": "event", "event": {"type": "run-start", "data": {
 client  <binary>  0x01 + Int16LE PCM     one chunk of 16 kHz mono audio
 client  <binary>  0x01                   lone handler-id byte = end of audio
 server  ... stt-start, stt-vad-start, stt-vad-end, stt-end, intent-start,
-            intent-progress (streaming deltas), intent-end, tts-start,
-            tts-end, run-end
+            intent-tool-start / intent-tool-end / intent-thinking (as they
+            happen), intent-progress (streaming deltas), intent-end,
+            tts-start, tts-end, run-end
 ```
 
 Two details clients get wrong: the binary prefix byte is the
@@ -133,6 +138,44 @@ arrive under the **run's** message id, so a client must route by id.
 `tts-end` carries `{"tts_output": {"url": "/api/tts_proxy/<token>.wav",
 "mime_type": "audio/wav"}}`. That path is open — the token in it is the secret —
 so a client can fetch it without a bearer header, though sending one is fine.
+
+### Text runs
+
+The same command with no audio: pass the words in `input.text` and start at
+`intent`. This is what the console's chat mode uses, and it is a *pipeline run*
+rather than `conversation/process` because only a run streams.
+
+```
+client  {"id": 4, "type": "assist_pipeline/run", "start_stage": "intent",
+         "end_stage": "intent", "input": {"text": "is the back door shut?"},
+         "conversation_id": "<or null for a new one>"}
+server  ... run-start, intent-start, intent-progress …, intent-end, run-end
+```
+
+`end_stage: "tts"` instead speaks the reply as well, which is how the chat mode
+answers out loud when the user asked out loud. There is no audio to send, so
+the binary handler id in `run-start` goes unused.
+
+### Showing the working
+
+Three events narrate what a turn is *doing*, for a surface that wants more than
+a spinner. All three are scoped to the run, so a client with two turns in
+flight can tell them apart:
+
+| Event | Data |
+| --- | --- |
+| `intent-tool-start` | `{name, arguments, round, index, total}` — fired **before** the call runs, so a nine-second tool is visible for nine seconds |
+| `intent-tool-end` | `{name, round, index, total, ok, status, error, duration_ms}`. `ok` is false for a tool that answered `{"status": "error"}` as well as one that threw |
+| `intent-thinking` | `{delta}` — a slice of the model's reasoning. Consecutive slices are coalesced server-side, so this is paragraphs and not tokens |
+
+Reasoning never appears in `intent-progress`: that is the text the TTS speaks
+and the HUD renders as the reply, and a model's deliberation is neither.
+
+The same tool payloads are also on the bus as `jarvis_tool_started` /
+`jarvis_tool_finished` for anything watching the house as a whole. Use the bus
+for a global activity indicator and the run events for a transcript — the bus
+events carry no conversation, so they cannot tell you which turn a call
+belonged to.
 
 ## The clients
 

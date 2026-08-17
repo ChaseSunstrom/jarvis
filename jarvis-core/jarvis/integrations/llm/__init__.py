@@ -57,11 +57,16 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ...llm.agent import DEFAULT_MAX_TOOL_ROUNDS, ConversationAgent
+from ...llm.history import (
+    DEFAULT_MAX_CONVERSATIONS,
+    ConversationArchive,
+)
 from ...llm.memory import (
     DEFAULT_MAX_TURNS,
     DEFAULT_TTL,
     ConversationStore,
 )
+from ...store import Store
 from ...llm.ollama import DEFAULT_MODEL, DEFAULT_TIMEOUT, DEFAULT_URL, OllamaClient
 from ...llm.openai_compat import OpenAICompatClient
 from ...llm.authored_tools import get_authored_tools
@@ -97,6 +102,11 @@ CONVERSATION_DOMAIN = "conversation"
 DATA_TRANSPORT = "llm_transport"
 DATA_CLIENT = "llm_client"
 DATA_TOOLS = "llm_tools"
+#: Where the conversation archive lands in `jarvis.data`, and its file name
+#: under `<config>/.storage/`. The API layer reads the first without importing
+#: this module, the way every other registry is reached.
+DATA_HISTORY = "llm_history"
+HISTORY_STORE_KEY = "conversations"
 
 AGENT_ID = "jarvis"
 
@@ -183,16 +193,57 @@ def _tristate(value: Any) -> bool | None:
     return None
 
 
+def _scalar(value: Any) -> str:
+    """A YAML scalar with the `!env_var NAME ""` artefact stripped.
+
+    `config.py` keeps an `!env_var` default token verbatim, so an unset variable
+    written with an empty-string default arrives here as the two *characters*
+    `""` rather than as an empty string. Passed through, that becomes
+    `Authorization: Bearer ""` — a 401 from the proxy with a config file that
+    looks entirely correct.
+    """
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    return text
+
+
+def _header_map(raw: Any) -> dict[str, str] | None:
+    """`llm: headers:` — whatever else the proxy in front wants.
+
+    LiteLLM routes on `x-litellm-tags`, some deployments want a tenant or an
+    organisation id, and none of that is worth a config key each. Values go
+    through `_scalar` for the same env-var reason the key does.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out = {str(key): _scalar(value) for key, value in raw.items() if _scalar(value)}
+    return out or None
+
+
 def _detect_backend(url: str) -> str:
     """Which wire a url is asking for, when nobody said.
 
-    A url ending in `/v1` is unambiguous — Ollama's native API has no such
+    A url with `/v1` in it is unambiguous — Ollama's native API has no such
     path, and every OpenAI-compatible server serves exactly that. Anything else
     defaults to `ollama`, so an existing install that never heard of this
     setting keeps the behaviour it had.
+
+    Matched anywhere in the path and case-insensitively, to agree with
+    `normalise_base_url`: that function accepted `/v1` anywhere while this one
+    looked only at the final segment, so `http://litellm:4000/v1/chat/completions`
+    was normalised as OpenAI and then dispatched to Ollama's `/api/chat`.
+
+    A bare `http://host:4000` still reads as Ollama. That is deliberate and is
+    the only safe default — every existing install writes its Ollama url that
+    way — so a LiteLLM on a bare port needs either `/v1` on the url or an
+    explicit `backend: openai`. Both are in `docs/openai-compat.md`.
     """
-    tail = str(url or "").rstrip("/").rsplit("/", 1)[-1]
-    return "openai" if tail in ("v1", "openai") else "ollama"
+    text = str(url or "").rstrip("/").lower()
+    tail = text.rsplit("/", 1)[-1]
+    if tail in ("v1", "openai") or "/v1/" in f"{text}/":
+        return "openai"
+    return "ollama"
 
 
 def _build_model_client(
@@ -222,14 +273,20 @@ def _build_model_client(
         backend = _detect_backend(url)
 
     if backend == "openai":
-        _LOGGER.info("LLM backend: OpenAI-compatible at %s", url)
+        api_key = _scalar(options.get("api_key"))
+        _LOGGER.info(
+            "LLM backend: OpenAI-compatible at %s (api key %s)",
+            url,
+            "set" if api_key else "not set",
+        )
         return OpenAICompatClient(
             url=url,
             model=model,
             timeout=timeout,
             client=client,
-            api_key=options.get("api_key") or None,
-            label=str(options.get("backend_name") or "the model server"),
+            api_key=api_key or None,
+            headers=_header_map(options.get("headers")),
+            label=_scalar(options.get("backend_name")) or "the model server",
         )
 
     _LOGGER.info("LLM backend: Ollama at %s", url)
@@ -240,6 +297,11 @@ def _build_model_client(
         client=client,
         keep_alive=options.get("keep_alive"),
     )
+
+
+#: Public alias. `integrations/vision` builds its own model client and had no
+#: way to honour `backend:`/`api_key:` without duplicating the logic above.
+build_model_client = _build_model_client
 
 
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
@@ -290,6 +352,24 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         ttl=float(conversation_options.get("ttl") or DEFAULT_TTL),
     )
 
+    # The durable half. `history: false` turns it off for anyone who would
+    # rather nothing was written down — the console's chat mode then has no
+    # past conversations to list, and everything else works exactly as before.
+    archive = ConversationArchive(
+        store=(
+            Store(jarvis.config_dir, HISTORY_STORE_KEY)
+            if conversation_options.get("history", True)
+            else None
+        ),
+        max_conversations=int(
+            conversation_options.get("history_limit") or DEFAULT_MAX_CONVERSATIONS
+        ),
+        scheduler=jarvis.async_create_task,
+    )
+    restored = await archive.async_load()
+    if restored:
+        _LOGGER.info("Restored %d archived conversation(s)", restored)
+
     agent = ConversationAgent(
         jarvis,
         ollama,
@@ -304,15 +384,22 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         # Unset leaves the model's own default alone, which is what every
         # install had before this key existed.
         think=_tristate(options.get("think")),
+        archive=archive,
     )
 
     jarvis.data[DOMAIN] = agent
     jarvis.data[DATA_TOOLS] = registry
+    jarvis.data[DATA_HISTORY] = archive
 
     _register_services(jarvis, agent, registry)
     _bridge_questions_to_the_phone(jarvis, registry)
 
     async def _shutdown() -> None:
+        # Flushed before the client goes: `schedule_save` is fire-and-forget,
+        # so a turn that finished in the last moments of the process has a
+        # queued save that the loop will never get round to running.
+        if archive.dirty:
+            await archive.async_save()
         await ollama.aclose()
         if jarvis.data.get(DATA_CLIENT) is client and not client.is_closed:
             await client.aclose()
@@ -321,7 +408,31 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     _LOGGER.info(
         "LLM agent ready: model=%s url=%s tools=%d", model, url, len(registry.tools)
     )
+    # A reachability probe, in the background so a model server that is still
+    # starting does not hold up boot. It does two jobs: it fills
+    # `client.known_models`, which the settings page reads to offer a model
+    # dropdown and which was empty on every install because nothing ever called
+    # `list_models`; and it puts one clear line in the log when the model
+    # server cannot be reached, which is the single most common way this
+    # install is misconfigured and previously produced no output at all until
+    # somebody spoke to it.
+    jarvis.async_create_task(_probe_model_server(ollama, url))
     return True
+
+
+async def _probe_model_server(client: Any, url: str) -> None:
+    """Warm the model list and say plainly if the server is not there."""
+    try:
+        models = await client.list_models()
+    except Exception as err:
+        _LOGGER.warning(
+            "Could not reach the model server at %s: %s. Jarvis will start, but "
+            "every turn will fail until it is reachable.",
+            url,
+            err,
+        )
+        return
+    _LOGGER.info("Model server at %s is serving %d model(s)", url, len(models))
 
 
 def _bridge_questions_to_the_phone(jarvis: "Jarvis", registry: ToolRegistry) -> None:
@@ -473,8 +584,14 @@ def _register_services(
     async def handle_clear(call: ServiceCall) -> dict[str, Any]:
         conversation_id = call.get("conversation_id")
         if conversation_id:
-            return {"cleared": agent.memory.remove(str(conversation_id))}
+            # Both halves, or "delete" would remove a conversation from the
+            # model's memory and leave it sitting in the console's history list
+            # — which is the opposite of what anybody pressing delete means.
+            live = agent.memory.remove(str(conversation_id))
+            archived = agent.archive.remove(str(conversation_id))
+            return {"cleared": live or archived}
         agent.memory.clear()
+        agent.archive.clear()
         return {"cleared": True}
 
     jarvis.services.register(
@@ -483,6 +600,50 @@ def _register_services(
         handle_clear,
         description="Forget one conversation, or all of them.",
         fields={"conversation_id": {"description": "Leave empty to clear everything."}},
+        supports_response=True,
+    )
+
+    async def handle_list_conversations(call: ServiceCall) -> dict[str, Any]:
+        return {"conversations": agent.archive.listing()}
+
+    jarvis.services.register(
+        DOMAIN,
+        "list_conversations",
+        handle_list_conversations,
+        description="Past conversations, most recent first (summaries only).",
+        supports_response=True,
+    )
+
+    async def handle_get_conversation(call: ServiceCall) -> dict[str, Any]:
+        conversation = agent.archive.get(str(call.get("conversation_id") or ""))
+        return {"conversation": conversation.as_dict() if conversation else None}
+
+    jarvis.services.register(
+        DOMAIN,
+        "get_conversation",
+        handle_get_conversation,
+        description="One past conversation in full, with its tool calls.",
+        fields={
+            "conversation_id": {"description": "Which conversation.", "required": True}
+        },
+        supports_response=True,
+    )
+
+    async def handle_rename_conversation(call: ServiceCall) -> dict[str, Any]:
+        renamed = agent.archive.rename(
+            str(call.get("conversation_id") or ""), str(call.get("title") or "")
+        )
+        return {"renamed": renamed}
+
+    jarvis.services.register(
+        DOMAIN,
+        "rename_conversation",
+        handle_rename_conversation,
+        description="Give a past conversation a name of your own.",
+        fields={
+            "conversation_id": {"description": "Which conversation.", "required": True},
+            "title": {"description": "The new name.", "required": True},
+        },
         supports_response=True,
     )
 
