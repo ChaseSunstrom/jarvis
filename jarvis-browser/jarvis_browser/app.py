@@ -50,7 +50,12 @@ from .safety import (
     sanitize_untrusted,
     strip_url_credentials,
 )
-from .search import SearchFailed, SearchNotConfigured, SearxngSearcher
+from .search import (
+    AgentSearchSearcher,
+    SearchFailed,
+    SearchNotConfigured,
+    SearxngSearcher,
+)
 from .sessions import SessionError, SessionManager
 
 log = logging.getLogger("jarvis.browser")
@@ -179,7 +184,25 @@ def create_app(
             act_allowlist=s.act_allowlist,
         )
         if app.state.searcher is None:
-            app.state.searcher = SearxngSearcher(s.searxng_url)
+            # AgentSearch wins when it is configured, because configuring it is
+            # a deliberate act and it is strictly the richer path. It is not a
+            # fallback chain: if it is set and down, /search fails saying so
+            # rather than quietly reverting to the bare SearXNG behind it and
+            # returning results that are missing everything AgentSearch was
+            # chosen for.
+            if s.agent_search_url:
+                app.state.searcher = AgentSearchSearcher(
+                    s.agent_search_url,
+                    token=s.agent_search_token,
+                    strategy=s.agent_search_strategy,
+                )
+                log.info(
+                    "search: AgentSearch at %s%s",
+                    s.agent_search_url,
+                    f" (strategy {s.agent_search_strategy})" if s.agent_search_strategy else "",
+                )
+            else:
+                app.state.searcher = SearxngSearcher(s.searxng_url)
         if app.state.robots_fetch is None:
             app.state.robots_fetch = _make_robots_fetch(s)
         # Nothing else ever reaps: SessionManager.reap ran only inside

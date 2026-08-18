@@ -101,6 +101,17 @@ class Settings:
     # back to a cloud engine: this stack is private by design.
     searxng_url: str = ""
 
+    # AgentSearch, which WRAPS SearXNG rather than replacing it: it still needs
+    # a reachable SearXNG behind it, and adds deduplication, scoring, content
+    # extraction and prompt-injection scrubbing in front. Set this and it
+    # becomes the search path; leave it empty and the direct SearXNG one is
+    # used exactly as before. Default port 3939.
+    agent_search_url: str = ""
+    agent_search_token: str = ""
+    # One of AgentSearch's named modes (general, code, academic, news, private,
+    # reference, community). Empty uses its plain /search.
+    agent_search_strategy: str = ""
+
     # --- domain policy ----------------------------------------------------
     # allowlist empty => any non-blocked public host may be READ.
     allowlist: tuple[str, ...] = ()
@@ -169,6 +180,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         api_token=e.str("JARVIS_BROWSER_TOKEN"),
         approval_secret=e.str("BROWSER_APPROVAL_SECRET"),
         searxng_url=e.str("SEARXNG_URL").rstrip("/"),
+        agent_search_url=e.str("AGENT_SEARCH_URL").rstrip("/"),
+        agent_search_token=e.str("AGENT_SEARCH_TOKEN"),
+        agent_search_strategy=e.str("AGENT_SEARCH_STRATEGY"),
         allowlist=e.list("BROWSER_ALLOWLIST"),
         denylist=e.list("BROWSER_DENYLIST"),
         act_allowlist=e.list("BROWSER_ACT_ALLOWLIST"),

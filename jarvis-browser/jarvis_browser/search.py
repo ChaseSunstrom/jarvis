@@ -135,8 +135,14 @@ def _dedupe_key(url: str) -> str:
     return f"{parts.scheme.lower()}://{parts.netloc.lower()}{path}?{parts.query}"
 
 
-def parse_searxng(payload: object, limit: int) -> list[SearchResult]:
-    """Normalise a SearXNG JSON body. Every field in it is untrusted text.
+def parse_results(payload: object, limit: int) -> list[SearchResult]:
+    """Normalise a search JSON body. Every field in it is untrusted text.
+
+    Used for SearXNG *and* AgentSearch. Not a coincidence and not luck:
+    AgentSearch wraps SearXNG and answers `{"results": [...]}` with rows
+    carrying `title`, `url` and `snippet`, and this reader already accepted
+    `snippet` because a couple of SearXNG's own engines emit it. Two readers
+    would be two places for a hostile field to be forgotten.
 
     Tolerant on the way in (engines disagree about which keys they fill, and
     a broken one emits rows with no URL at all), strict on the way out: what
@@ -190,6 +196,11 @@ def parse_searxng(payload: object, limit: int) -> list[SearchResult]:
             )
         )
     return out
+
+
+#: The previous name. Kept so an out-of-tree importer does not break on an
+#: upgrade whose whole content is "this also parses AgentSearch".
+parse_searxng = parse_results
 
 
 class SearxngSearcher:
@@ -322,4 +333,169 @@ class SearxngSearcher:
             # otherwise invisible from the outside.
             log.info("searxng: unresponsive engines %s", unresponsive[:10])
 
-        return parse_searxng(payload, limit)
+        return parse_results(payload, limit)
+
+
+class AgentSearchSearcher:
+    """Calls an AgentSearch instance's ``GET /search``.
+
+    AgentSearch does not REPLACE SearXNG, it wraps it: the container still
+    needs a reachable SearXNG behind it, and its own `SEARXNG_URL` is what
+    points at one. What it adds in front is the part an agent otherwise has to
+    do itself — cross-engine deduplication and scoring, content extraction,
+    paywall detection and prompt-injection scrubbing — in one call.
+
+    So this is a second SEARCH PROVIDER, not a migration. Pointing
+    `AGENT_SEARCH_URL` at it makes it the one `/search` uses; leaving it unset
+    keeps the direct SearXNG path exactly as it was. Both are LAN services the
+    operator configured, so both are exempt from the SSRF host block for the
+    same reason.
+
+    ## The response shape, and why this reader is forgiving about it
+
+    Upstream documents the endpoints but not the body: the README shows result
+    rows being read as `title`, `url` and `snippet`, and names `results` and
+    `meta.engine_attempts`, and stops there. Rather than pin a schema that is
+    not published, this accepts what :func:`parse_results` already accepts —
+    which covers `snippet` and `content` both — and additionally tolerates a
+    bare top-level list, because an undocumented envelope is exactly the thing
+    that changes between two releases.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token: str = "",
+        strategy: str = "",
+        timeout: float = DEFAULT_TIMEOUT,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        client: httpx.AsyncClient | None = None,
+    ):
+        self.base_url = (base_url or "").rstrip("/")
+        self.token = (token or "").strip()
+        # One of AgentSearch's named modes (general, code, academic, news,
+        # private, reference, community). Empty means plain `/search`.
+        self.strategy = (strategy or "").strip().lower()
+        self.timeout = float(timeout)
+        self.connect_timeout = min(float(connect_timeout), self.timeout)
+        self._client = client
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url)
+
+    @property
+    def path(self) -> str:
+        return "/search/strategy" if self.strategy else "/search"
+
+    def params(self, query: str, limit: int) -> dict[str, str]:
+        """The query string sent to AgentSearch. Public so tests can assert it."""
+        params = {"q": query, "count": str(limit)}
+        if self.strategy:
+            params["strategy"] = self.strategy
+        return params
+
+    def headers(self) -> dict[str, str]:
+        # Only when there is one. AgentSearch's bearer token is optional, and
+        # sending `Authorization: Bearer ` to an instance that has none
+        # configured is a header it has to decide about for no reason.
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
+    async def __call__(self, query: str, limit: int) -> list[SearchResult]:
+        if not self.configured:
+            raise SearchNotConfigured(
+                "AGENT_SEARCH_URL is not configured. jarvis-browser will not "
+                "fall back to a cloud search engine; point AGENT_SEARCH_URL at "
+                "your AgentSearch instance (default port 3939), or unset it and "
+                "use SEARXNG_URL directly."
+            )
+        query = (query or "").strip()
+        if not query:
+            raise SearchFailed("empty search query")
+        limit = max(0, min(int(limit or 0), MAX_LIMIT))
+        if limit == 0:
+            return []
+
+        timeout = httpx.Timeout(self.timeout, connect=self.connect_timeout)
+        client = self._client
+        owns = client is None
+        if client is None:
+            client = httpx.AsyncClient(timeout=timeout, follow_redirects=False)
+        try:
+            resp = await client.get(
+                f"{self.base_url}{self.path}",
+                params=self.params(query, limit),
+                headers=self.headers(),
+                timeout=timeout,
+            )
+        except httpx.TimeoutException as exc:
+            # AgentSearch fetches and reads the pages it finds, so a slow call
+            # is expected behaviour rather than a sick service — say which
+            # timeout was hit so the fix is "raise it", not "restart it".
+            raise SearchFailed(
+                f"AgentSearch at {self.base_url} timed out after {self.timeout:g}s "
+                f"({type(exc).__name__}). It fetches and extracts page content, "
+                "so it is slower than a bare SearXNG query; raise "
+                "BROWSER_SEARCH_TIMEOUT if this is a deep search."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise SearchFailed(
+                f"AgentSearch unreachable at {self.base_url}: {type(exc).__name__}. "
+                "No cloud search engine is used as a fallback."
+            ) from exc
+        finally:
+            if owns:
+                await client.aclose()
+
+        return self._parse_response(resp, limit)
+
+    def _parse_response(self, resp: httpx.Response, limit: int) -> list[SearchResult]:
+        if resp.status_code in (401, 403):
+            raise SearchFailed(
+                f"AgentSearch returned HTTP {resp.status_code}. It is running "
+                "with AGENT_SEARCH_TOKEN set; put the same value in "
+                "AGENT_SEARCH_TOKEN for jarvis-browser."
+            )
+        if resp.status_code == 429:
+            raise SearchFailed(
+                "AgentSearch returned HTTP 429 (rate limited). Its own "
+                "RATE_LIMIT defaults to 60 requests a minute."
+            )
+        if resp.status_code == 502:
+            # The one failure whose cause is behind AgentSearch rather than in
+            # it, and the one an operator will otherwise chase in the wrong
+            # container.
+            raise SearchFailed(
+                "AgentSearch returned HTTP 502 — it could not reach the SearXNG "
+                "behind it. AgentSearch wraps SearXNG rather than replacing it, "
+                "so that instance still has to be up with JSON output enabled."
+            )
+        if resp.status_code != 200:
+            raise SearchFailed(f"AgentSearch returned HTTP {resp.status_code}.")
+
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise SearchFailed(
+                "AgentSearch returned a non-JSON body."
+            ) from exc
+
+        # A bare list is tolerated because the envelope is not documented.
+        if isinstance(payload, list):
+            payload = {"results": payload}
+        if not isinstance(payload, dict):
+            raise SearchFailed(
+                f"AgentSearch returned {type(payload).__name__} at the top level; "
+                "expected a JSON object."
+            )
+
+        attempts = (payload.get("meta") or {}).get("engine_attempts") if isinstance(
+            payload.get("meta"), dict
+        ) else None
+        if isinstance(attempts, list) and attempts:
+            failed = [a for a in attempts if isinstance(a, dict) and a.get("error")]
+            if failed:
+                log.info("agent-search: %d engine attempt(s) errored", len(failed))
+
+        return parse_results(payload, limit)

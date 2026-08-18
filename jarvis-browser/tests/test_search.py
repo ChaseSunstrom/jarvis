@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jarvis_browser.search import (  # noqa: E402
     MAX_LIMIT,
+    AgentSearchSearcher,
     SearchFailed,
     SearchNotConfigured,
     SearxngSearcher,
@@ -440,3 +441,117 @@ def test_case_sensitive_paths_are_not_collapsed():
     assert [r.url for r in parse_searxng(payload, 10)] == [
         "https://a.example/Downloads", "https://a.example/downloads",
     ]
+
+
+# --- AgentSearch, which wraps SearXNG rather than replacing it ---------------
+
+def _agent_client(handler):
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.asyncio
+async def test_agent_search_sends_the_query_the_count_and_the_token():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"results": []})
+
+    searcher = AgentSearchSearcher(
+        "http://agent-search:3939", token="s3cret", client=_agent_client(handler)
+    )
+    await searcher("kettle", 5)
+    assert "http://agent-search:3939/search?" in seen["url"]
+    assert "q=kettle" in seen["url"]
+    assert "count=5" in seen["url"]
+    assert seen["auth"] == "Bearer s3cret"
+
+
+@pytest.mark.asyncio
+async def test_agent_search_sends_no_authorization_when_there_is_no_token():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"results": []})
+
+    searcher = AgentSearchSearcher("http://a:3939", client=_agent_client(handler))
+    await searcher("x", 3)
+    assert seen["auth"] is None
+
+
+@pytest.mark.asyncio
+async def test_agent_search_uses_the_strategy_endpoint_when_one_is_named():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = str(request.url.query)
+        return httpx.Response(200, json={"results": []})
+
+    searcher = AgentSearchSearcher(
+        "http://a:3939", strategy="code", client=_agent_client(handler)
+    )
+    await searcher("asyncio gather", 3)
+    assert seen["path"] == "/search/strategy"
+    assert "strategy=code" in seen["query"]
+
+
+@pytest.mark.asyncio
+async def test_agent_search_reads_snippet_rows():
+    """Its documented row shape is title/url/snippet."""
+    payload = {
+        "results": [
+            {"title": "Kettle", "url": "https://example.com/k", "snippet": "boils water"},
+        ],
+        "meta": {"engine_attempts": [{"source": "duckduckgo", "error": None}]},
+    }
+    searcher = AgentSearchSearcher(
+        "http://a:3939", client=_agent_client(lambda r: httpx.Response(200, json=payload))
+    )
+    results = await searcher("kettle", 5)
+    assert [r.url for r in results] == ["https://example.com/k"]
+    assert results[0].snippet == "boils water"
+
+
+@pytest.mark.asyncio
+async def test_agent_search_tolerates_a_bare_list():
+    """The envelope is not documented upstream, so it must not be assumed."""
+    rows = [{"title": "A", "url": "https://example.com/a", "snippet": "s"}]
+    searcher = AgentSearchSearcher(
+        "http://a:3939", client=_agent_client(lambda r: httpx.Response(200, json=rows))
+    )
+    assert [r.url for r in await searcher("q", 5)] == ["https://example.com/a"]
+
+
+@pytest.mark.asyncio
+async def test_agent_search_says_which_container_is_wrong_on_a_502():
+    """The failure an operator would otherwise chase in the wrong place."""
+    searcher = AgentSearchSearcher(
+        "http://a:3939", client=_agent_client(lambda r: httpx.Response(502, text="no upstream"))
+    )
+    with pytest.raises(SearchFailed, match="wraps SearXNG rather than replacing it"):
+        await searcher("q", 5)
+
+
+@pytest.mark.asyncio
+async def test_agent_search_names_the_token_setting_on_a_401():
+    searcher = AgentSearchSearcher(
+        "http://a:3939", client=_agent_client(lambda r: httpx.Response(401))
+    )
+    with pytest.raises(SearchFailed, match="AGENT_SEARCH_TOKEN"):
+        await searcher("q", 5)
+
+
+@pytest.mark.asyncio
+async def test_agent_search_never_falls_back_to_a_cloud_engine():
+    searcher = AgentSearchSearcher("")
+    with pytest.raises(SearchNotConfigured, match="AGENT_SEARCH_URL"):
+        await searcher("q", 5)
+
+
+def test_the_shared_parser_still_answers_to_its_old_name():
+    from jarvis_browser import search as search_module
+
+    assert search_module.parse_searxng is search_module.parse_results

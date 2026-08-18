@@ -299,6 +299,17 @@ services:
       # Where /search proxies to. Unset => /search 503s with an explanation
       # and never reaches for a cloud engine.
       - SEARXNG_URL=${SEARXNG_URL:-http://127.0.0.1:8888}
+      # AgentSearch, if you run it. It WRAPS SearXNG rather than replacing it
+      # — it still needs the instance above to be up — and adds cross-engine
+      # deduplication, scoring, content extraction and prompt-injection
+      # scrubbing in front. Set it and /search uses it; leave it empty and the
+      # direct SearXNG path is unchanged. Default port 3939.
+      - AGENT_SEARCH_URL=${AGENT_SEARCH_URL:-}
+      # Only if you started AgentSearch with AGENT_SEARCH_TOKEN set.
+      - AGENT_SEARCH_TOKEN=${AGENT_SEARCH_TOKEN:-}
+      # general | code | academic | news | private | reference | community.
+      # Empty uses its plain /search.
+      - AGENT_SEARCH_STRATEGY=${AGENT_SEARCH_STRATEGY:-}
       # Domains where clicking and typing are permitted. Empty means every
       # domain is refused, which is the correct default — reading a page is
       # one thing, acting on it is another.
