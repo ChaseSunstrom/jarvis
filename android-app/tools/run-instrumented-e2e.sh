@@ -272,7 +272,14 @@ adb shell dumpsys package ai.jarvis.app > artifacts/dumpsys-package.txt 2>&1 || 
 #
 # `JarvisTestRule.starting()` logs `=== class#method ===` for every test, so the
 # window is exact: from the failing test's own marker to the next test's.
+DIGEST=artifacts/failure-digest.txt
 if [ "${status}" != "0" ] && [ -s artifacts/logcat.txt ]; then
+  # Written to a file as well as printed. By the time this step ends, three
+  # artifact uploads and an eighty-line harness tail sit between here and the
+  # bottom of the job log, so the one section worth reading is ~350 lines deep —
+  # far enough that fetching "the tail of the log" reliably misses it. The last
+  # step of the job prints this file back out; see `.github/workflows/e2e.yml`.
+  {
   echo "----- what the app logged during each failing test -----"
   if command -v python3 >/dev/null 2>&1; then
     python3 - "${FAILURES}" artifacts/logcat.txt "${API_LEVEL}" <<'PY' || true
@@ -339,6 +346,7 @@ PY
     grep -E '[VDIWEF]/Jarvis' artifacts/logcat.txt | tail -n 200 || true
   fi
   echo "-------------------------------------------------------------------------"
+  } 2>&1 | tee "${DIGEST}"
 fi
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

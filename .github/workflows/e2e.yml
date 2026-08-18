@@ -454,9 +454,35 @@ jobs:
             android-app/artifacts/dumpsys-package.txt
             android-app/artifacts/gradle-connected.log
             android-app/artifacts/failing-tests.txt
+            android-app/artifacts/failure-digest.txt
             testing/artifacts/**
           if-no-files-found: warn
           retention-days: 14
+
+      # THE LAST THING IN THE JOB LOG, on purpose.
+      #
+      # The emulator step already prints this, ~350 lines before the end —
+      # behind three artifact uploads, each of which dumps thirty lines of
+      # environment, and an eighty-line harness tail. That is far enough down
+      # that reading "the tail of the log" misses it every time, which is not a
+      # theoretical complaint: it cost three separate fetches to find one
+      # stack trace while diagnosing CompanionAskTest.
+      #
+      # So the digest is repeated here, where `tail` finds it first. It is the
+      # same file the emulator step wrote, not a second implementation that
+      # could drift from it.
+      - name: The failure, last (so a log tail finds it)
+        if: failure()
+        run: |
+          set -u
+          digest="$GITHUB_WORKSPACE/android-app/artifacts/failure-digest.txt"
+          if [ -s "$digest" ]; then
+            cat "$digest"
+          else
+            echo "No failure digest was written. The suite failed before it could"
+            echo "run — a build error, or an emulator that never booted. The"
+            echo "::error:: annotation above says which."
+          fi
 
       # The emulator step writes the real summary itself, because only it knows
       # how many screenshots came off the device — and it drops a marker file
