@@ -471,6 +471,51 @@ web:
   act_allowlist: []
 
 # ---------------------------------------------------------------------------
+# MCP — anybody else's tools, inside Jarvis.
+# ---------------------------------------------------------------------------
+# Model Context Protocol servers. Each one Jarvis can reach lends it their
+# tools, registered as `mcp_<server>_<tool>` so nothing a server offers can
+# shadow a built-in. Servers can also be added from the console at runtime;
+# those live in `.storage/mcp_servers.json` and are the only ones the console
+# may edit — anything written here is yours, and a web request is refused.
+#
+# Everything a server returns is FENCED and marks the turn untrusted, exactly
+# like a web page: it is somebody else's text and it must not be able to pick
+# an action.
+mcp:
+  # The tier every server's tools register at unless it says otherwise.
+  # 1 = run it and answer, 2 = confirm first, 3 = never without a human yes.
+  # Two by default, and deliberately: an MCP tool is third-party code with side
+  # effects nothing in this process can see.
+  default_tier: 2
+
+  # ##  READ THIS BEFORE SETTING IT TO TRUE  ##
+  #
+  # An `http` server is a URL Jarvis fetches. A `stdio` server is a PROGRAM
+  # JARVIS STARTS — `npx -y some-package` — running as this user, with this
+  # user's filesystem, network and token. That is what most published MCP
+  # servers are, and it is a real capability, so it is supported.
+  #
+  # It is off here, and this file is the only place it can be turned on. No API
+  # call, no console button and no model tool can set it, which is what stops a
+  # prompt injection or a stolen browser session turning a Jarvis that reads
+  # URLs into a Jarvis that runs commands. With it on, the console may add
+  # stdio servers freely — you have said so in the one place a request cannot
+  # reach.
+  allow_stdio: false
+
+  servers: []
+  # - name: nextcloud                 # becomes part of every tool's name
+  #   url: http://127.0.0.1:9100/mcp
+  #   token: !env_var NEXTCLOUD_MCP_TOKEN ""
+  #   tier: 2
+  #
+  # - name: files                     # only with allow_stdio: true above
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/srv/share"]
+  #   tier: 3                         # it can write; ask every time
+
+# ---------------------------------------------------------------------------
 # Research — a question, several searches, and the pages actually read.
 # ---------------------------------------------------------------------------
 # The `deep_research` tool and the `research.run` service. A run plans several

@@ -695,6 +695,19 @@ class WebSocketHandler:
     async def _cmd_task_clear_finished(self, msg: dict[str, Any]) -> Any:
         return await common.async_clear_finished_tasks(self.jarvis)
 
+    async def _cmd_mcp_list(self, msg: dict[str, Any]) -> Any:
+        return common.mcp_list_payload(self.jarvis)
+
+    async def _cmd_mcp_add(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_add_mcp_server(self.jarvis, payload)
+
+    async def _cmd_mcp_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_mcp_server(self.jarvis, str(msg.get("name") or ""))
+
+    async def _cmd_mcp_reconnect(self, msg: dict[str, Any]) -> Any:
+        return await common.async_reconnect_mcp(self.jarvis, str(msg.get("name") or ""))
+
     async def _cmd_conversation_list(self, msg: dict[str, Any]) -> Any:
         return common.conversation_list_payload(self.jarvis)
 
@@ -1052,6 +1065,14 @@ WebSocketHandler._HANDLERS = {
     "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
     "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,
     "jarvis/tasks/clear_finished": WebSocketHandler._cmd_task_clear_finished,
+    # Reading and managing MCP servers. There is no command to turn
+    # `allow_stdio` on — see api/common.py: that is the line between fetching a
+    # URL and starting a program, and configuration.yaml is the only side of it
+    # a request cannot reach.
+    "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
+    "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,
+    "jarvis/mcp/remove": WebSocketHandler._cmd_mcp_remove,
+    "jarvis/mcp/reconnect": WebSocketHandler._cmd_mcp_reconnect,
     "jarvis/conversation/list": WebSocketHandler._cmd_conversation_list,
     "jarvis/conversation/get": WebSocketHandler._cmd_conversation_get,
     "jarvis/conversation/delete": WebSocketHandler._cmd_conversation_delete,

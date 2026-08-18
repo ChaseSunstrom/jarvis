@@ -1147,3 +1147,69 @@ async def async_cancel_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
             "be running"
         ),
     }
+
+
+# --- MCP servers -------------------------------------------------------------
+#
+# Read, add, remove, reconnect. What is deliberately NOT here is a way to turn
+# `allow_stdio` on: that is the line between "Jarvis fetches a URL" and "Jarvis
+# starts a program", and it is set in configuration.yaml precisely so that no
+# request — from a browser, a phone, a model or a forged one — can cross it.
+
+
+def _mcp(jarvis: "Jarvis") -> Any:
+    from ..integrations.mcp import get_manager
+
+    manager = get_manager(jarvis)
+    if manager is None:
+        raise ApiError("unavailable", "this server has no MCP integration", 503)
+    return manager
+
+
+def mcp_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    manager = _mcp(jarvis)
+    return {
+        "servers": manager.listing(),
+        # So the console can say WHY the stdio fields are disabled rather than
+        # merely refusing the form after it is filled in.
+        "allow_stdio": manager.allow_stdio,
+        "default_tier": manager.default_tier,
+    }
+
+
+async def async_add_mcp_server(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    from ..integrations.mcp import async_add_server
+
+    result = await async_add_server(_mcp(jarvis), data or {})
+    if result.get("status") == "error":
+        raise ApiError("invalid_format", str(result.get("error") or "could not add it"), 400)
+    return result
+
+
+async def async_remove_mcp_server(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    from ..integrations.mcp import async_remove_server
+
+    result = await async_remove_server(_mcp(jarvis), str(name or ""))
+    if result.get("status") == "error":
+        raise ApiError("not_found", str(result.get("error") or "no such server"), 404)
+    return result
+
+
+async def async_reconnect_mcp(jarvis: "Jarvis", name: str = "") -> dict[str, Any]:
+    """Bring a server back, or all of them, and refresh what they offer.
+
+    The refresh is the point as much as the reconnect: a server that gained a
+    tool since Jarvis started is invisible until something asks it again.
+    """
+    manager = _mcp(jarvis)
+    from ..integrations.mcp.catalog import safe_server_name
+
+    key = safe_server_name(name)
+    if not key:
+        await manager.async_connect_all()
+        return {"reconnected": "all", **mcp_list_payload(jarvis)}
+    spec = manager.servers.get(key)
+    if spec is None:
+        raise ApiError("not_found", f"no MCP server called {name!r}", 404)
+    connected = await manager.async_connect(spec)
+    return {"reconnected": key, "connected": connected, **mcp_list_payload(jarvis)}

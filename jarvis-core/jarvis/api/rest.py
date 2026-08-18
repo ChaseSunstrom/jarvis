@@ -556,6 +556,43 @@ async def task_clear_finished(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- MCP servers ------------------------------------------------------------
+@api_router.get("/mcp/servers")
+async def mcp_servers(request: Request) -> dict[str, Any]:
+    try:
+        return common.mcp_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/mcp/servers")
+async def mcp_server_add(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_add_mcp_server(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/mcp/servers/{name}")
+async def mcp_server_remove(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return await common.async_remove_mcp_server(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/mcp/reconnect")
+async def mcp_reconnect(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_reconnect_mcp(
+            get_jarvis(request), str(body.get("name") or "")
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.post("/pair/new")
 async def pair_new(request: Request) -> dict[str, Any]:
     """Mint a pairing code for the console to draw as a QR.

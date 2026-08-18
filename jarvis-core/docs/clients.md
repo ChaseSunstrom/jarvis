@@ -86,6 +86,10 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/tasks/cancel` | `task_id`; **asks** the worker to stop. The registry is a record, not a scheduler — it cannot reach into the coroutine — so the reply carries `cancelled` and a `note` saying a worker that does not check may still be running |
 | `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
 | `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |
+| `jarvis/mcp/list` | every configured MCP server, its tools, and whether it is up: `{servers: [...], allow_stdio, default_tier}`. Never carries a server's token |
+| `jarvis/mcp/add` | `name` plus either `url` (+ optional `token`) or, when the operator has allowed it, `command`/`args`. Adds the server, connects, and registers its tools as `mcp_<server>_<tool>` |
+| `jarvis/mcp/remove` | `name`; forgets a console-added server and unregisters its tools. A server defined in `configuration.yaml` is refused — edit the file |
+| `jarvis/mcp/reconnect` | `name`, or omit for all; reconnects and re-reads the tool list, which is how a server that gained a tool becomes visible |
 | `jarvis/approve` | resolve a Tier-3 approval the safety gate is holding |
 | `config/entity_registry/list` · `/update` | rename, re-area, hide, or set `exposed` on an entity |
 | `config/device_registry/list` · `/update` | device names and area assignment |
@@ -104,6 +108,13 @@ Every command above is in `_HANDLERS` in `jarvis/api/websocket.py`, and
 `test_packaging.py::test_every_websocket_command_is_documented` asserts the two
 sets are equal in both directions — so a command added without a row here, or a
 row for a command that no longer exists, fails the build.
+
+**There is no command to allow stdio MCP servers, and there will not be.** An
+`http` MCP server is a URL jarvis-core fetches; a `stdio` one is a **program
+jarvis-core starts**, as its own user. That switch is `mcp: allow_stdio: true`
+in `configuration.yaml` — a file, edited by a person with shell access — so no
+request, forged or otherwise, can turn a Jarvis that reads URLs into a Jarvis
+that runs commands. With it on, `jarvis/mcp/add` will accept a `command`.
 
 **Versioning rule.** A client that gets `unknown_command` back MUST hide the
 feature rather than surface an error, and never fail open. That is what lets a
