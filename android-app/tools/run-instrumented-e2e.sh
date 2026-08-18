@@ -249,41 +249,94 @@ adb logcat -d -v time > artifacts/logcat.txt 2>&1 || true
 adb logcat -b crash -d -v time > artifacts/logcat-crash.txt 2>&1 || true
 adb shell dumpsys package ai.jarvis.app > artifacts/dumpsys-package.txt 2>&1 || true
 
-# WHAT THE APP SAID, in the job log rather than only in an artifact.
+# WHAT THE APP SAID DURING THE TEST THAT FAILED, in the job log.
 #
 # A failing instrumented test reports the assertion and nothing else: the log
 # above says "timed out waiting for 2 jarvis_message_result frames" and leaves
 # every reason it could have happened equally open. The app narrates itself
 # under `Jarvis*` tags — which handler admitted the frame, whether a sender was
-# wired, whether the send came back false — and those lines decide it in one
-# read.
+# wired, whether the send came back false — and those lines decide it.
 #
-# They were already being captured, and only into `android-e2e-logs-api*`.
-# Downloading a CI artifact needs credentials and a browser, which is exactly
-# what whoever is reading a red build from a terminal, a phone or an automated
-# session does not have. The artifact is still the complete record; this is the
-# part that answers the question, printed where the failure is.
+# They were already captured, and only into `android-e2e-logs-api*`. Downloading
+# a CI artifact needs credentials and a browser, which is what whoever is
+# reading a red build from a terminal, a phone or an automated session does not
+# have. The artifact is still the complete record; this is the part that answers
+# the question, printed where the failure is.
 #
-# Bounded on purpose: a full run of 42 tests narrates a few thousand lines, and
-# a dump that buries the job log is the same problem in the other direction. If
-# the cap bites, say so — a silent truncation reads as "that is all there was".
+# WINDOWED ON THE FAILING TEST, not tailed. The first version of this printed
+# the last 800 Jarvis-tagged lines, which sounds equivalent and is not: tests
+# run in class-name order, so a failure in CompanionAskTest — C, near the front
+# — is the first thing a tail throws away. Run 32091666250 proved it, printing
+# a clean dump of SettingsPersistenceTest while the two failures it was added
+# to explain scrolled off the top.
+#
+# `JarvisTestRule.starting()` logs `=== class#method ===` for every test, so the
+# window is exact: from the failing test's own marker to the next test's.
 if [ "${status}" != "0" ] && [ -s artifacts/logcat.txt ]; then
-  APP_LOG_LINES=800
-  echo "----- what the app logged (Jarvis* tags, last ${APP_LOG_LINES} lines) -----"
-  # `-v time` puts the tag after the level letter: `08-18 01:12:03.123 I/Tag(  pid):`.
-  # `grep -c` already prints 0 when it matches nothing; it just exits 1 while
-  # doing it. An `|| echo 0` here appends a SECOND line, and the count becomes
-  # the two-line string "0\n0" — which is neither equal to 0 nor an integer, so
-  # the no-matches branch is skipped and the comparison below dies with
-  # "integer expression expected". Take grep's own count and swallow the status.
-  app_total="$(grep -c -E '[VDIWEF]/Jarvis' artifacts/logcat.txt 2>/dev/null || true)"
-  if [ -z "${app_total}" ] || [ "${app_total}" = "0" ]; then
-    echo "(no Jarvis-tagged lines at all — the app never ran, or the buffer wrapped)"
+  echo "----- what the app logged during each failing test -----"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${FAILURES}" artifacts/logcat.txt "${API_LEVEL}" <<'PY' || true
+import re, sys
+
+failures_path, logcat_path, api_level = sys.argv[1], sys.argv[2], sys.argv[3]
+PER_TEST_CAP = 400
+
+try:
+    failing = open(failures_path, encoding="utf-8", errors="replace").read()
+except OSError:
+    failing = ""
+try:
+    lines = open(logcat_path, encoding="utf-8", errors="replace").read().splitlines()
+except OSError:
+    lines = []
+
+# `ai.jarvis.app.CompanionAskTest > aMethodName[emulator-5554 - 11] FAILED`
+tests = re.findall(r"^(ai\.jarvis\.app\.[\w.$]+)\s+>\s+([\w$]+)", failing, re.M)
+seen, ordered = set(), []
+for cls, method in tests:
+    if (cls, method) not in seen:
+        seen.add((cls, method))
+        ordered.append((cls, method))
+
+if not ordered:
+    print("(no failing test names were parsed from %s; nothing to window on)" % failures_path)
+    sys.exit(0)
+
+# Every per-test marker, in order, so a window ends where the next test begins.
+marker = re.compile(r"=== (ai\.jarvis\.app\.[\w.$]+)#([\w$]+) ===")
+marks = [(i, m.group(1), m.group(2))
+         for i, line in enumerate(lines)
+         for m in [marker.search(line)] if m]
+
+for cls, method in ordered:
+    print("")
+    print("=== %s#%s ===" % (cls, method))
+    at = next((k for k, (_, c, mm) in enumerate(marks) if c == cls and mm == method), None)
+    if at is None:
+        print("  (no `=== %s#%s ===` marker in the logcat — the test never started,"
+              % (cls, method))
+        print("   or the buffer wrapped before it. Full log: artifact android-e2e-logs-api%s)"
+              % api_level)
+        continue
+    begin = marks[at][0]
+    stop = marks[at + 1][0] if at + 1 < len(marks) else len(lines)
+    window = lines[begin:stop]
+    # The app's own narration plus the rule's, which carries the failure and its
+    # stack. Everything else in the window is the platform talking to itself.
+    kept = [ln for ln in window if re.search(r"[VDIWEF]/Jarvis", ln)]
+    if not kept:
+        print("  (the test ran but logged nothing under a Jarvis tag)")
+        continue
+    if len(kept) > PER_TEST_CAP:
+        print("  (%d lines; showing the last %d — the rest are in artifact "
+              "android-e2e-logs-api%s)" % (len(kept), PER_TEST_CAP, api_level))
+        kept = kept[-PER_TEST_CAP:]
+    for ln in kept:
+        print("  " + ln)
+PY
   else
-    if [ "${app_total}" -gt "${APP_LOG_LINES}" ]; then
-      echo "(${app_total} lines total; the earlier $((app_total - APP_LOG_LINES)) are in artifact android-e2e-logs-api${API_LEVEL})"
-    fi
-    grep -E '[VDIWEF]/Jarvis' artifacts/logcat.txt | tail -n "${APP_LOG_LINES}"
+    echo "(python3 is not on PATH; falling back to the tail of the app log)"
+    grep -E '[VDIWEF]/Jarvis' artifacts/logcat.txt | tail -n 200 || true
   fi
   echo "-------------------------------------------------------------------------"
 fi

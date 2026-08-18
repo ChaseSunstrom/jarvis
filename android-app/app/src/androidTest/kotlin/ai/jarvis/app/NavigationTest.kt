@@ -17,6 +17,7 @@ import ai.jarvis.app.ui.SystemCheckActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiObject2
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -279,7 +280,39 @@ class NavigationTest {
      * helper then works across an activity boundary.
      */
     private fun tap(label: String) {
-        locate(label).click()
+        // Re-locate on a stale handle, rather than reporting the app broke.
+        //
+        // `locate()` returns a UiObject2 that wraps one AccessibilityNodeInfo.
+        // If the screen re-renders between finding it and clicking it, that node
+        // is gone and `click()` throws StaleObjectException — which is what run
+        // 32091666250 hit on `homePhoneButtonOpensThePhonesOwnSettings`, tapping
+        // a tab on a Settings screen that was still settling. Nothing was wrong
+        // with the app: the button existed before and after, just not as the
+        // same node.
+        //
+        // Retrying cannot double-tap. The stack shows where it throws:
+        //
+        //     at UiObject2.getAccessibilityNodeInfo(UiObject2.java:1018)
+        //     at UiObject2.click(UiObject2.java:516)
+        //
+        // `click()` resolves the node to compute its bounds BEFORE dispatching
+        // any gesture, so a throw from there means no touch was sent. A retry
+        // that found a fresh node is the first tap, not a second one.
+        //
+        // Bounded, and the last attempt is left to throw: a label that is
+        // genuinely never clickable must still fail, and fail as itself rather
+        // than as a timeout.
+        var attempt = 0
+        while (true) {
+            try {
+                locate(label).click()
+                return
+            } catch (stale: StaleObjectException) {
+                attempt += 1
+                if (attempt >= STALE_RETRIES) throw stale
+                Device.ui.waitForIdle(IDLE_MS)
+            }
+        }
     }
 
     /**
@@ -412,5 +445,15 @@ class NavigationTest {
 
         const val MAX_BACK_PRESSES = 4
         const val IDLE_MS = 3_000L
+
+        /**
+         * How many times [tap] will re-find a label whose node went stale.
+         *
+         * Three, because staleness comes from the screen settling and a screen
+         * that is still re-rendering after two idle waits is a real defect, not
+         * a race. Higher would turn "this button is never stable" into a slow
+         * pass.
+         */
+        const val STALE_RETRIES = 3
     }
 }
