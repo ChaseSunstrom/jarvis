@@ -6,6 +6,7 @@
 	import { EnergyVAD } from '$lib/wake';
 	import Orb from '$lib/components/Orb.svelte';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
+	import ModeToggle from '$lib/components/ModeToggle.svelte';
 	import { accentFor } from '$lib/tokens';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 	import {
@@ -250,12 +251,21 @@
 					// half a phrase from before the mute when it comes back.
 					vad.reset();
 				} else if (!capturing && turnState === 'idle') {
-					if (vad.feed(r) === 'speech-start') void startInteraction();
+					// The orb listens to the room; chat mode does not.
+					//
+					// Standing in front of the orb, an always-on VAD is the whole
+					// point — you speak and it answers. In front of a keyboard it is
+					// the opposite: every remark made in the room becomes a turn, and
+					// each one lands in the transcript and the history sidebar as
+					// though it had been asked. Chat mode takes voice on the button
+					// instead, so speech is still a first-class way in and only ever
+					// when it was meant.
+					if (!chatMode && vad.feed(r) === 'speech-start') void startInteraction();
 				} else if (capturing) {
 					if (vad.feed(r) === 'speech-end') stopCapture();
 				}
 				// Barge-in: user speaks over TTS -> kill playback, new run.
-				if (!muted && turnState === 'speaking' && bargeVad.feed(r) === 'speech-start') {
+				if (!muted && !chatMode && turnState === 'speaking' && bargeVad.feed(r) === 'speech-start') {
 					console.log('[jarvis] barge-in');
 					player.stopAll();
 					void startInteraction();
@@ -296,7 +306,12 @@
 		}
 		capturing = true;
 		statusMsg = 'listening';
-		client?.startRun({ pipeline: pipelineId });
+		// The conversation on screen, explicitly — not whichever one the client
+		// last happened to run. Without this a spoken turn used `client
+		// .conversationId`, which is null after "new conversation" and after any
+		// reconnect, so the backend minted a fresh id and the answer appeared in
+		// a NEW row in the sidebar while the user was looking at an old one.
+		client?.startRun({ pipeline: pipelineId, conversationId: openConversationId });
 		if (e2eMode) setTimeout(() => stopCapture(), 1500);
 	}
 
@@ -418,6 +433,43 @@
 		// on screen under an id the server has forgotten would resume nothing.
 		if (openConversationId === id) newConversation();
 		await refreshHistory();
+	}
+
+	/**
+	 * Chat mode's microphone: press, speak, and it stops when you do.
+	 *
+	 * The orb's mic is a mute switch over an always-on VAD. That is right in
+	 * front of the orb and wrong in front of a keyboard, so here the same
+	 * hardware is driven the other way round: nothing is captured until this is
+	 * pressed, and the VAD's job is only to notice when the sentence has ended.
+	 *
+	 * Nothing leaves the browser in between — `MicCapture.onChunk` sends only
+	 * while `capturing` — so the button is the privacy boundary as well as the
+	 * control, and chat mode needs no separate mute.
+	 */
+	async function toggleVoiceTurn(): Promise<void> {
+		if (capturing) {
+			stopCapture();
+			return;
+		}
+		// A press is consent to listen, so it also lifts a mute left over from
+		// the orb — otherwise the button would appear to do nothing.
+		if (muted) {
+			muted = false;
+			try {
+				localStorage.setItem(MUTE_KEY, '0');
+			} catch {
+				/* private mode; the unmute still holds for this page */
+			}
+		}
+		try {
+			await ensureMic();
+			micError = '';
+		} catch (e) {
+			micError = micTrouble(e);
+			return;
+		}
+		await startInteraction();
 	}
 
 	function toggleChatMode(): void {
@@ -617,24 +669,6 @@
 	});
 </script>
 
-<!--
-  The mode switch, outside both surfaces so it survives the swap and sits in
-  the same place in either. Fixed rather than in each header: it is the one
-  control that is about the page rather than about the conversation.
--->
-<button
-	type="button"
-	class="mode-toggle"
-	data-testid="mode-toggle"
-	data-mode={chatMode ? 'chat' : 'orb'}
-	aria-pressed={chatMode}
-	aria-label={chatMode ? 'Switch to the voice orb' : 'Switch to text chat'}
-	title={chatMode ? 'Voice orb' : 'Text chat'}
-	onclick={toggleChatMode}
->
-	{chatMode ? '◉ ORB' : '▤ CHAT'}
-</button>
-
 {#if chatMode}
 	<ChatPanel
 		{messages}
@@ -646,13 +680,16 @@
 		{muted}
 		{micLabel}
 		{orbLevel}
+		{capturing}
+		{accent}
 		speak={speakReplies}
 		onSend={(text) => void sendText(text)}
 		onNew={newConversation}
 		onOpen={(id) => void openConversation(id)}
 		onDelete={(id) => void forgetConversation(id)}
-		onToggleMute={() => void toggleMute()}
+		onVoice={() => void toggleVoiceTurn()}
 		onToggleSpeak={toggleSpeakReplies}
+		onToggleMode={toggleChatMode}
 	/>
 {:else}
 <main class="hud" style="--accent: {accent}" data-state={turnState}>
@@ -672,7 +709,10 @@
 				<span class="dot {turnState}" class:off={!online} aria-hidden="true"></span>
 				{stateLabel}
 			</span>
-			<span class="clock" aria-label="Local time">{clock}</span>
+			<div class="sysrow">
+				<ModeToggle chat={chatMode} onToggle={toggleChatMode} />
+				<span class="clock" aria-label="Local time">{clock}</span>
+			</div>
 		</div>
 	</header>
 
@@ -764,35 +804,10 @@
 {/if}
 
 <style>
-	/* --- the mode switch --- */
-	.mode-toggle {
-		position: fixed;
-		top: 14px;
-		right: 14px;
-		z-index: 6;
-		padding: 0.3rem 0.9rem;
-		border: 1px solid var(--jv-line);
-		border-radius: var(--jv-radius-pill);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-chrome);
-		color: var(--jv-accent);
-		background: rgba(4, 12, 18, 0.6);
-		backdrop-filter: blur(2px);
-		cursor: pointer;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
-			border-color var(--jv-dur-fast) var(--jv-ease-out),
-			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
-	}
-	.mode-toggle:hover {
-		color: var(--jv-text-bright);
-		border-color: var(--jv-accent);
-		box-shadow: var(--jv-glow-md);
-	}
-	.mode-toggle:focus-visible {
-		outline: var(--jv-focus-outline);
-		outline-offset: var(--jv-focus-offset);
+	.sysrow {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-2);
 	}
 
 	/*

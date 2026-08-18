@@ -107,18 +107,62 @@ test("past conversations are listed, reopened and forgotten", async ({ page }) =
   await expect(earlier).toHaveCount(0, { timeout: 10_000 });
 });
 
-test("the microphone is still live in chat mode", async ({ page }) => {
-  // The requirement in one test: switching to typing is not "stop listening".
+test("voice is available in chat mode, and only on request", async ({ page }) => {
+  // Two halves of the same requirement. Switching to typing is not "stop
+  // listening to me" — the button is right there. But chat mode must not
+  // transcribe the room: an always-on VAD at a keyboard turns every remark
+  // made nearby into a turn, and each one into a row in the history sidebar.
   await page.goto("/?mode=chat");
   const mic = page.getByTestId("chat-mic");
   await expect(mic).toBeVisible({ timeout: 10_000 });
   await expect(mic).toHaveAttribute("aria-pressed", "false");
-  await expect(mic).toContainText("MIC");
+  await expect(mic).toContainText("SPEAK");
 
-  // And the mute is a real kill switch here too.
-  await mic.click();
-  await expect(mic).toHaveAttribute("aria-pressed", "true");
-  await expect(mic).toContainText("MUTED");
+  // Nothing has been asked, so nothing is in the transcript and nothing has
+  // been filed. Headless Chromium has no microphone, which is exactly the
+  // ambient case: the page must sit still rather than start a turn.
+  await expect(page.getByTestId("chat-empty")).toBeVisible();
+  await page.waitForTimeout(1500);
+  await expect(page.getByTestId("chat-message")).toHaveCount(0);
+});
+
+test("the mode toggle does not sit on top of the corner controls", async ({
+  page,
+}) => {
+  // It used to be one `position: fixed` button in the top-right, which is
+  // where the HUD keeps its status readout and clock and where chat mode keeps
+  // the speak toggle — so it covered both, and being fixed it ate their clicks.
+  await page.goto("/");
+  const toggle = page.getByTestId("mode-toggle");
+  const status = page.getByTestId("status");
+  await expect(toggle).toBeVisible({ timeout: 10_000 });
+
+  const overlaps = async () => {
+    const a = await toggle.boundingBox();
+    const b = await status.boundingBox();
+    if (!a || !b) throw new Error("a control has no box");
+    return (
+      a.x < b.x + b.width && b.x < a.x + a.width &&
+      a.y < b.y + b.height && b.y < a.y + a.height
+    );
+  };
+  expect(await overlaps(), "the switch covers the HUD status readout").toBe(false);
+
+  // ...and the same in chat mode, against the control it shares a row with.
+  await toggle.click();
+  const speak = page.getByTestId("chat-speak");
+  await expect(speak).toBeVisible();
+  const t = await toggle.boundingBox();
+  const sp = await speak.boundingBox();
+  if (!t || !sp) throw new Error("a control has no box");
+  expect(
+    t.x < sp.x + sp.width && sp.x < t.x + t.width &&
+      t.y < sp.y + sp.height && sp.y < t.y + t.height,
+    "the switch covers the speak toggle",
+  ).toBe(false);
+  // Still clickable, which is what the overlap actually broke.
+  await speak.click();
+  await expect(speak).toHaveAttribute("aria-pressed", "true");
 });
 
 test("typed replies are silent by default and can be made to speak", async ({

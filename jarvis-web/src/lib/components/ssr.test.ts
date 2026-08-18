@@ -73,8 +73,9 @@ describe('server rendering', () => {
 				onNew: noop,
 				onOpen: noop,
 				onDelete: noop,
-				onToggleMute: noop,
-				onToggleSpeak: noop
+				onVoice: noop,
+				onToggleSpeak: noop,
+				onToggleMode: noop
 			})
 		).toBe(0);
 	});
@@ -114,8 +115,9 @@ describe('server rendering', () => {
 				onNew: noop,
 				onOpen: noop,
 				onDelete: noop,
-				onToggleMute: noop,
-				onToggleSpeak: noop
+				onVoice: noop,
+				onToggleSpeak: noop,
+				onToggleMode: noop
 			}
 		});
 

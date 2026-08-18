@@ -18,6 +18,7 @@
 	 */
 	import { onMount, tick } from 'svelte';
 	import ChatMessage from './ChatMessage.svelte';
+	import ModeToggle from './ModeToggle.svelte';
 	import Orb from './Orb.svelte';
 	import { relativeTime, type ChatMessage as Message } from '$lib/chat';
 	import type { ConversationSummary } from '$lib/jarvisClient';
@@ -34,12 +35,15 @@
 		micLabel = '',
 		orbLevel = 0,
 		speak = false,
+		capturing = false,
+		accent = '',
 		onSend,
 		onNew,
 		onOpen,
 		onDelete,
-		onToggleMute,
-		onToggleSpeak
+		onVoice,
+		onToggleSpeak,
+		onToggleMode
 	}: {
 		messages: Message[];
 		conversations?: ConversationSummary[];
@@ -51,12 +55,18 @@
 		micLabel?: string;
 		orbLevel?: number;
 		speak?: boolean;
+		/** True while this surface is recording a spoken question. */
+		capturing?: boolean;
+		/** The HUD's live state colour, so both surfaces move together. */
+		accent?: string;
 		onSend: (text: string) => void;
 		onNew: () => void;
 		onOpen: (id: string) => void;
 		onDelete: (id: string) => void;
-		onToggleMute: () => void;
+		/** Start (or stop) a spoken turn. Chat mode never listens unasked. */
+		onVoice: () => void;
 		onToggleSpeak: () => void;
+		onToggleMode: () => void;
 	} = $props();
 
 	let draft = $state('');
@@ -112,6 +122,12 @@
 		}
 	}
 
+	/** The button's tooltip: a real fault if there is one, else what it does. */
+	function micError(): string {
+		const trouble = micLabel && /BLOCKED|NO MICROPHONE|UNAVAILABLE/.test(micLabel);
+		return trouble ? micLabel : 'Press, speak, and pause when you are done';
+	}
+
 	function openAndClose(id: string): void {
 		onOpen(id);
 		sidebarOpen = false;
@@ -122,7 +138,19 @@
 	});
 </script>
 
-<section class="chat" data-testid="chat-panel">
+<section
+	class="chat"
+	data-testid="chat-panel"
+	data-state={turnState}
+	style={accent ? `--accent: ${accent}` : undefined}
+>
+	<!-- The same two pieces of chrome every other surface draws, so chat mode
+	     reads as part of the HUD rather than a plain document pasted over it:
+	     the faint scan grid, and the corner brackets. Both are shared utilities
+	     from chrome.css and inherit the live state accent. -->
+	<div class="jv-grid" aria-hidden="true"></div>
+	<span class="jv-bracket tl" aria-hidden="true"></span>
+	<span class="jv-bracket br" aria-hidden="true"></span>
 	<!-- Off-canvas below the breakpoint, docked above it. `inert` rather than
 	     `display: none` when hidden, so a closed drawer's links are not in the
 	     tab order on a phone. -->
@@ -210,11 +238,12 @@
 				class:on={speak}
 				data-testid="chat-speak"
 				aria-pressed={speak}
-				title="Whether typed questions are also answered out loud"
+				title="Whether replies are also spoken out loud"
 				onclick={onToggleSpeak}
 			>
 				{speak ? 'SPEAKS' : 'SILENT'}
 			</button>
+			<ModeToggle chat={true} onToggle={onToggleMode} />
 		</header>
 
 		<div
@@ -228,9 +257,11 @@
 		>
 			{#if !messages.length}
 				<div class="empty" data-testid="chat-empty">
+					<span class="empty-mark" aria-hidden="true"></span>
 					<p class="empty-head">Good evening.</p>
 					<p class="empty-sub">
-						Type below, or just speak — the microphone stays on in this mode.
+						Ask by typing, or hold the microphone to speak. Nothing is heard
+						until you press it.
 					</p>
 				</div>
 			{:else}
@@ -241,17 +272,25 @@
 		</div>
 
 		<form class="composer" onsubmit={submit}>
+			<!--
+			  Press to speak. The orb's button is a mute switch over an always-on
+			  VAD, which is right across a room and wrong at a keyboard; here the
+			  same hardware is driven the other way round. Nothing leaves the
+			  browser until this is pressed, so it is the privacy boundary too and
+			  chat mode needs no separate mute.
+			-->
 			<button
 				type="button"
 				class="mic"
-				class:muted
+				class:live={capturing}
 				data-testid="chat-mic"
-				aria-pressed={muted}
-				aria-label={muted ? 'Unmute the microphone' : 'Mute the microphone'}
-				title={micLabel}
-				onclick={onToggleMute}
+				aria-pressed={capturing}
+				aria-label={capturing ? 'Stop listening' : 'Speak instead of typing'}
+				title={micError()}
+				onclick={onVoice}
 			>
-				{muted ? 'MUTED' : 'MIC'}
+				<span class="mic-dot" aria-hidden="true"></span>
+				{capturing ? 'LISTENING' : 'SPEAK'}
 			</button>
 			<textarea
 				bind:this={composer}
@@ -276,13 +315,48 @@
 
 <style>
 	.chat {
+		/*
+		 * The accent is LIVE — it tracks the pipeline state exactly as the orb's
+		 * does, so a turn being thought about looks the same on both surfaces.
+		 * The line and dim tokens are re-derived from it, which is what lets the
+		 * shared .jv-* utilities pick the state colour up by inheritance.
+		 */
+		--accent: var(--jv-accent);
+		--line: color-mix(in srgb, var(--accent) 30%, transparent);
+		--line-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+		--jv-line: var(--line);
+		--jv-line-soft: var(--line-soft);
+		--jv-grid-mask: radial-gradient(ellipse 90% 70% at 50% 30%, #000 35%, transparent 92%);
+		--jv-bracket-size: clamp(18px, 2.6vw, 34px);
+		--jv-bracket-inset: 10px;
+
 		position: relative;
 		display: grid;
 		grid-template-columns: 17rem minmax(0, 1fr);
 		height: 100vh;
 		height: 100dvh;
 		min-height: 0;
-		background: var(--jv-bg);
+		font-family: var(--jv-font-body);
+		color: var(--jv-text);
+		background:
+			radial-gradient(
+				ellipse 60% 45% at 78% 0%,
+				color-mix(in srgb, var(--accent) 10%, transparent),
+				transparent 72%
+			),
+			var(--jv-bg);
+		transition: background var(--jv-dur-slow) ease;
+	}
+	/* The chrome sits behind everything and takes no clicks. */
+	.chat > :global(.jv-grid),
+	.chat > :global(.jv-bracket) {
+		position: absolute;
+		pointer-events: none;
+	}
+	.past,
+	.thread {
+		position: relative;
+		z-index: 1;
 	}
 
 	/* --- past conversations --- */
@@ -370,7 +444,7 @@
 		white-space: nowrap;
 	}
 	li.current .row-title {
-		color: var(--jv-accent);
+		color: var(--accent);
 	}
 	.row-meta {
 		grid-area: meta;
@@ -431,18 +505,12 @@
 		align-items: center;
 		gap: var(--jv-space-3);
 		padding: var(--jv-space-3) var(--jv-space-4);
-		/*
-		 * Room for the mode switch.
-		 *
-		 * That button is `position: fixed` in the top-right — it belongs to the
-		 * page rather than to either surface, so it has to survive the swap —
-		 * and this header's own last control sits in exactly the same place.
-		 * Without the reservation the two overlap and the switch, being fixed
-		 * and therefore on top, silently eats every click meant for the chip
-		 * underneath it.
-		 */
-		padding-right: 8rem;
-		border-bottom: 1px solid var(--jv-line-hair);
+		border-bottom: 1px solid var(--line-soft);
+		background: linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent) 6%, transparent),
+			transparent
+		);
 	}
 	.mini-orb {
 		width: 2rem;
@@ -472,6 +540,10 @@
 		cursor: pointer;
 		white-space: nowrap;
 	}
+	.chip:hover {
+		color: var(--accent);
+		border-color: var(--line);
+	}
 	.chip.on {
 		color: var(--jv-gold);
 		border-color: color-mix(in srgb, var(--jv-gold) 40%, transparent);
@@ -499,6 +571,17 @@
 		margin: auto;
 		text-align: center;
 		max-width: 28rem;
+	}
+	.empty-mark {
+		display: block;
+		width: 34px;
+		height: 34px;
+		margin: 0 auto var(--jv-space-4);
+		border: 1px solid var(--line);
+		border-radius: 50%;
+		box-shadow:
+			0 0 18px color-mix(in srgb, var(--accent) 30%, transparent),
+			inset 0 0 12px color-mix(in srgb, var(--accent) 22%, transparent);
 	}
 	.empty-head {
 		margin: 0 0 var(--jv-space-2);
@@ -577,19 +660,49 @@
 		cursor: default;
 	}
 	.mic {
-		color: var(--jv-accent);
-		background: var(--jv-wash);
-		border: 1px solid var(--jv-line);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		color: var(--jv-text-dim);
+		background: transparent;
+		border: 1px solid var(--line-soft);
 	}
 	.mic:hover {
-		background: var(--jv-wash-strong);
+		color: var(--accent);
+		border-color: var(--line);
+		background: var(--jv-wash);
 	}
-	/* Muted has to be legible without reading the word: this is the kill
-	   switch, and "am I being listened to" is not a question to squint at. */
-	.mic.muted {
-		color: var(--jv-text-faint);
-		background: transparent;
-		border-color: color-mix(in srgb, var(--jv-text-faint) 40%, transparent);
+	.mic-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: currentColor;
+		opacity: 0.55;
+	}
+	/*
+	 * Recording has to be unmistakable without reading the word. This is the
+	 * only state in which audio leaves the browser, so it is the one thing on
+	 * this surface that gets the danger colour and a pulse.
+	 */
+	.mic.live {
+		color: var(--jv-danger-text);
+		border-color: color-mix(in srgb, var(--jv-danger) 55%, transparent);
+		background: color-mix(in srgb, var(--jv-danger) 12%, transparent);
+	}
+	.mic.live .mic-dot {
+		background: var(--jv-danger);
+		opacity: 1;
+		box-shadow: 0 0 8px var(--jv-danger);
+		animation: mic-live 1.1s ease-in-out infinite;
+	}
+	@keyframes mic-live {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.3;
+		}
 	}
 
 	@media (max-width: 800px) {
@@ -618,8 +731,12 @@
 		.scroll {
 			scroll-behavior: auto;
 		}
-		.past {
+		.past,
+		.chat {
 			transition: none;
+		}
+		.mic.live .mic-dot {
+			animation: none;
 		}
 	}
 </style>
