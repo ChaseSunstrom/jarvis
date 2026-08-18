@@ -11,6 +11,9 @@
 //     call_service (which really mutates state and pushes state_changed),
 //     subscribe_events / unsubscribe_events and the three registries
 //   - the task registry: jarvis/tasks/{list,get,cancel,delete,clear_finished},
+//   - MCP servers: jarvis/mcp/{list,add,remove,reconnect}, including the two
+//     refusals the console depends on (no stdio without the file's say-so,
+//     and config-authored servers are read-only)
 //     with the three jarvis_task_* events every move fires
 // and serves a real WAV file at /api/tts_proxy/test.mp3 over HTTP
 // (Authorization: Bearer <token> required).
@@ -704,6 +707,52 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			.sort((a, b) => b.created - a.created)
 			.map(taskDict);
 
+	/**
+	 * MCP servers, as jarvis-core keeps them.
+	 *
+	 * Modelled rather than stubbed because the console's panel turns on two
+	 * server-side rules that a stub would quietly satisfy: `allow_stdio` is
+	 * read-only over the wire, and a server that came from configuration.yaml
+	 * refuses to be edited or removed by a request. Both are refusals, and a
+	 * mock that agreed with every request could not test a refusal.
+	 *
+	 * @type {Map<string, any>}
+	 */
+	const mcpServers = new Map([
+		[
+			"house",
+			{
+				name: "house",
+				transport: "http",
+				url: "http://127.0.0.1:9100/mcp",
+				command: "",
+				args: [],
+				tier: 2,
+				enabled: true,
+				// From the file. The console may look and reconnect, never edit.
+				editable: false,
+				has_token: true,
+				connected: true,
+				error: "",
+				tools: [
+					{
+						name: "mcp_house_read_note",
+						remote_name: "read_note",
+						description: "[from the MCP server 'house'] Read one note.",
+					},
+				],
+			},
+		],
+	]);
+	/** Read only from the mock's own "config"; no frame may set it. */
+	let mcpAllowStdio = false;
+
+	const mcpListing = () => ({
+		servers: [...mcpServers.values()].map((s) => ({ ...s, tool_count: s.tools.length })),
+		allow_stdio: mcpAllowStdio,
+		default_tier: 2,
+	});
+
 	/** Run a service against every targeted entity; returns changed states. */
 	const callService = (domain, service, data) => {
 		world.calls.push({ domain, service, data, at: nowIso() });
@@ -1260,6 +1309,121 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 							}, 60);
 						}, index * 40);
 					});
+					break;
+				}
+
+				// --- MCP -----------------------------------------------------
+				case 'jarvis/mcp/list':
+					ok(msg.id, mcpListing());
+					break;
+
+				case 'jarvis/mcp/add': {
+					const name = String(msg.name || '')
+						.trim()
+						.toLowerCase()
+						.replace(/[^a-z0-9_]+/g, '_')
+						.replace(/^_+|_+$/g, '');
+					if (!name) {
+						fail(msg.id, 'invalid_format', 'an MCP server needs a name');
+						break;
+					}
+					const held = mcpServers.get(name);
+					if (held && !held.editable) {
+						fail(
+							msg.id,
+							'invalid_format',
+							`'${name}' is defined in configuration.yaml; edit it there`
+						);
+						break;
+					}
+					const stdio = msg.transport === 'stdio' || (!msg.url && msg.command);
+					// The refusal the whole panel is arranged around. Note that
+					// `msg.allow_stdio` is not consulted: a frame cannot turn it on.
+					if (stdio && !mcpAllowStdio) {
+						fail(
+							msg.id,
+							'invalid_format',
+							'a stdio server starts a program on the Jarvis host. Set `mcp: allow_stdio: true` in configuration.yaml first'
+						);
+						break;
+					}
+					if (!stdio && !msg.url) {
+						fail(msg.id, 'invalid_format', 'an http MCP server needs a url');
+						break;
+					}
+					const tier = Math.min(3, Math.max(1, Number(msg.tier) || 2));
+					mcpServers.set(name, {
+						name,
+						transport: stdio ? 'stdio' : 'http',
+						url: String(msg.url || ''),
+						command: String(msg.command || ''),
+						args: Array.isArray(msg.args) ? msg.args.map(String) : [],
+						tier,
+						enabled: true,
+						editable: true,
+						has_token: Boolean(msg.token),
+						connected: true,
+						error: '',
+						tools: [
+							{
+								name: `mcp_${name}_search`,
+								remote_name: 'search',
+								description: `[from the MCP server '${name}'] Search it.`,
+							},
+						],
+					});
+					ok(msg.id, { status: 'ok', name, connected: true, ...mcpListing() });
+					break;
+				}
+
+				case 'jarvis/mcp/remove': {
+					const target = mcpServers.get(String(msg.name || ''));
+					if (!target) {
+						fail(msg.id, 'not_found', `no MCP server called '${msg.name}'`);
+						break;
+					}
+					if (!target.editable) {
+						fail(
+							msg.id,
+							'not_found',
+							`'${target.name}' comes from configuration.yaml; remove it there`
+						);
+						break;
+					}
+					mcpServers.delete(target.name);
+					ok(msg.id, { status: 'ok', removed: target.name, ...mcpListing() });
+					break;
+				}
+
+				case 'jarvis/mcp/reconnect': {
+					const one = msg.name ? mcpServers.get(String(msg.name)) : null;
+					if (msg.name && !one) {
+						fail(msg.id, 'not_found', `no MCP server called '${msg.name}'`);
+						break;
+					}
+					for (const s of one ? [one] : mcpServers.values()) {
+						s.connected = true;
+						s.error = '';
+					}
+					ok(msg.id, { reconnected: msg.name || 'all', ...mcpListing() });
+					break;
+				}
+
+				/** Let a test say what an operator put in configuration.yaml. */
+				case 'jarvis/test/mcp_allow_stdio':
+					mcpAllowStdio = Boolean(msg.allow);
+					ok(msg.id, { allow_stdio: mcpAllowStdio });
+					break;
+
+				/** And make one look like it has fallen over. */
+				case 'jarvis/test/mcp_break': {
+					const target = mcpServers.get(String(msg.name || ''));
+					if (target) {
+						target.connected = false;
+						target.error = String(msg.error || 'no route to host');
+						target.tools = [];
+					}
+					ok(msg.id, mcpListing());
 					break;
 				}
 

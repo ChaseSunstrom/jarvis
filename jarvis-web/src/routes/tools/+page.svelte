@@ -4,6 +4,7 @@
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
+	import McpServers from '$lib/components/McpServers.svelte';
 	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import {
@@ -23,7 +24,11 @@
 		type ToolForm
 	} from '$lib/toolDraft';
 
-	let conn: Connection | null = null;
+	// `$state`, unlike the other management pages: this one PASSES the
+	// connection to a child. Left as a plain `let`, `<McpServers>` would be
+	// handed the null it was born with and would never load — svelte-check
+	// says so, and it is right.
+	let conn = $state<Connection | null>(null);
 	let status = $state('connecting');
 	let err = $state('');
 	let hint = $state('');
@@ -516,6 +521,11 @@
 		</section>
 	{/if}
 {/if}
+
+<!-- Beside the tool editor rather than on its own page: "a tool the assistant
+     may call" is one idea, and an MCP server is the way you get a hundred of
+     them at once. -->
+<McpServers {conn} />
 
 <section class="panel">
 	<div class="panel-head">

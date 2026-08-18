@@ -12,6 +12,7 @@
 
 import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
+import type { McpServer } from './mcpDraft';
 
 export type SendFn = (data: string) => void;
 
@@ -245,6 +246,17 @@ export interface DeviceRegistryEntry {
 	area_id?: string | null;
 	platform?: string | null;
 	disabled?: boolean;
+}
+
+/** What `jarvis/mcp/list` and the three write commands all answer with. */
+export interface McpListing {
+	servers: McpServer[];
+	/**
+	 * Whether jarvis-core will start a program for a stdio server. Read-only
+	 * here by design — see the methods below.
+	 */
+	allow_stdio: boolean;
+	default_tier: number;
 }
 
 export interface BusEvent {
@@ -696,6 +708,34 @@ export class JarvisClient {
 	/** A name of your own, instead of the conversation's first sentence. */
 	renameConversation(conversationId: string, title: string): Promise<boolean> {
 		return conversations.renameConversation(this.send_, conversationId, title);
+	}
+
+	// --- MCP servers ---------------------------------------------------------
+	//
+	// Read, add, remove, reconnect. There is deliberately no way to turn
+	// `allow_stdio` on from here: that is the line between jarvis-core fetching
+	// a URL and jarvis-core starting a program, and it lives in
+	// configuration.yaml so that no request can cross it. `listMcpServers`
+	// reports the flag so this console can explain the closed fields rather
+	// than submitting a form the server will refuse.
+
+	listMcpServers(): Promise<McpListing> {
+		return this.command<McpListing>({ type: 'jarvis/mcp/list' });
+	}
+
+	addMcpServer(payload: Record<string, unknown>): Promise<McpListing> {
+		return this.command<McpListing>({ type: 'jarvis/mcp/add', ...payload });
+	}
+
+	removeMcpServer(name: string): Promise<McpListing> {
+		return this.command<McpListing>({ type: 'jarvis/mcp/remove', name });
+	}
+
+	/** One server, or all of them. Re-reads the tool list, which is the point. */
+	reconnectMcp(name = ''): Promise<McpListing> {
+		const payload: Record<string, any> = { type: 'jarvis/mcp/reconnect' };
+		if (name) payload.name = name;
+		return this.command<McpListing>(payload);
 	}
 
 	// --- tasks ---------------------------------------------------------------
