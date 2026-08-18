@@ -1,12 +1,31 @@
 import { relaySpeakerWrite } from '$lib/server/speakerRelay';
+import { SESSION_COOKIE, sessionValid } from '$lib/server/consoleAuth';
 import type { RequestHandler } from './$types';
 
 // Add one voice sample to the owner's profile.
 //
-// The phone's microphone, relayed to jarvis-core under the PHONE's token — see
-// `$lib/server/speakerRelay`. This route deliberately never touches the
-// server-held admin token: enrolling changes whose voice Jarvis answers, and
-// doing that on the strength of "you could reach this port" would be the
-// opposite of the feature.
-export const POST: RequestHandler = async ({ request }) =>
-	relaySpeakerWrite(request, globalThis.fetch, 'enrol');
+// TWO callers, two credentials, one rule. The rule is that enrolment is
+// authorised by something the caller HOLDS — never by the fact that they could
+// reach this port, because teaching Jarvis a new owner on the strength of
+// reachability is the opposite of what the feature is for.
+//
+//   the phone    its own Jarvis token, relayed unchanged. jarvis-core stays the
+//                single authority on tokens and this stays a pipe.
+//   the console  the console password, which is already the door in front of
+//                the pairing secret and in front of DELETE on this same
+//                profile. Enrolling and deleting both change whose voice
+//                Jarvis answers.
+//
+// The console used to be refused here, and the comment on the sibling route
+// gave two reasons: the phone has the microphone, and a second enrolment
+// surface is a second place for the prompt list to drift. The first is a
+// preference. The second stopped being true — the phrases live in jarvis-core
+// and arrive in the status payload, so both surfaces read the same list from
+// the same place and cannot drift.
+export const POST: RequestHandler = async ({ request, cookies }) =>
+	relaySpeakerWrite(
+		request,
+		globalThis.fetch,
+		'enrol',
+		sessionValid(cookies.get(SESSION_COOKIE))
+	);

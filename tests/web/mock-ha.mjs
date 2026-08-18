@@ -394,6 +394,18 @@ export function makeWorld() {
 	};
 }
 
+// The enrolment phrases jarvis-core serves, kept here so the console panel has
+// a real list to render. Chosen upstream to move pitch and length — see
+// `jarvis-core/jarvis/voice/speaker.py` for why a profile built from five
+// similar-sounding sentences rejects its own owner.
+const PROMPTS = [
+	'Good evening, Jarvis. Bring the house up, would you?',
+	'What is on my calendar tomorrow morning?',
+	'Lock the front door and turn everything off.',
+	'One, two, three, four, five, six, seven, eight, nine, ten.',
+	'It has been a long day and I would like the lights low, please.'
+];
+
 const SERVICES = {
 	light: {
 		turn_on: { description: 'Turn on a light.', fields: { brightness: {} }, supports_response: false },
@@ -672,6 +684,51 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 		// voiceprint vectors, because that is the claim the console panel's
 		// e2e case asserts. A mock that helpfully included them would make the
 		// test pass on a lie.
+		// Adding a sample. Real jarvis-core takes a WAV or raw 16 kHz mono PCM
+		// and answers with the profile's new state; it refuses a sample with too
+		// little speech in it, and the refusal text is written for a person to
+		// act on, so the mock refuses on the same axis rather than always
+		// accepting. A mock that accepted anything would let the panel's
+		// error-handling rot.
+		if (url.pathname === '/api/voice/speaker/enrol' && req.method === 'POST') {
+			if (req.headers.authorization !== `Bearer ${token}`) {
+				res.writeHead(401, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ detail: 'unauthorized' }));
+				return;
+			}
+			// Callback style, matching the two body readers already in this file:
+			// the handler is not async, and making it so to read one request
+			// would change how every other route is scheduled.
+			let received = 0;
+			req.on('data', (chunk) => (received += chunk.length));
+			req.on('end', () => {
+				// 16-bit samples at 16 kHz: 32000 bytes is one second, so this is
+				// a fifth of a second — the "you tapped it" case.
+				if (received < 6400) {
+					res.writeHead(400, { 'content-type': 'application/json' });
+					res.end(
+						JSON.stringify({
+							detail: 'not enough speech in that sample to enrol from — say the whole phrase'
+						})
+					);
+					return;
+				}
+				world.enrolledSamples = (world.enrolledSamples ?? 0) + 1;
+				world.voiceprintDeleted = false;
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(
+					JSON.stringify({
+						enrolled: true,
+						samples: 5 + world.enrolledSamples,
+						min_samples: 3,
+						max_samples: 20,
+						prompts: PROMPTS
+					})
+				);
+			});
+			return;
+		}
+
 		if (url.pathname === '/api/voice/speaker') {
 			if (req.headers.authorization !== `Bearer ${token}`) {
 				res.writeHead(401);
@@ -689,7 +746,7 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				JSON.stringify(
 					world.voiceprintDeleted
 						? { enrolled: false, samples: 0, mode: 'observe', active: false,
-							min_samples: 3, max_samples: 20 }
+							min_samples: 3, max_samples: 20, prompts: PROMPTS }
 						: {
 								enrolled: true,
 								samples: 5,
@@ -711,7 +768,13 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 								threshold_measured: true,
 								label: 'owner',
 								embedder: 'jarvis-mfcc-v1',
-								prompts: ['Good evening, Jarvis.', 'What is on my calendar tomorrow?']
+								// jarvis-core's own ENROLMENT_PROMPTS, not an abbreviation of
+								// them. The console's enrolment panel renders this list
+								// rather than carrying a copy, which is the entire argument
+								// for letting a browser enrol at all — two surfaces, one
+								// list, no drift. Shortening them here would let a panel
+								// that DID hard-code its own phrases pass.
+								prompts: PROMPTS
 							}
 				)
 			);

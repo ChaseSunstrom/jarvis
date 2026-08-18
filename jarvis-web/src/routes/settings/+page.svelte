@@ -1,4 +1,5 @@
 <script lang="ts">
+	import EnrolVoice from '$lib/components/EnrolVoice.svelte';
 	import Pairing from '$lib/components/Pairing.svelte';
 	import Reconnect from '$lib/components/Reconnect.svelte';
 	import { onMount } from 'svelte';
@@ -64,11 +65,18 @@
 	/**
 	 * Whose voice Jarvis answers, as the server reports it.
 	 *
-	 * Read-only here plus a delete, deliberately. Enrolment needs a microphone
-	 * and five spoken phrases, and the phone is where the person and the
-	 * microphone already are; a second enrolment surface would be a second
-	 * place for the prompt list to drift out of step. See
-	 * `docs/voice-identity.md`.
+	 * This was read-only plus a delete, on the reasoning that the phone has the
+	 * microphone and that a second enrolment surface would be a second place
+	 * for the prompt list to drift. The first is a preference and browsers have
+	 * microphones too; the second stopped being true — the phrases live in
+	 * jarvis-core and arrive in this very payload as `prompts`, so both
+	 * surfaces read one list from one place. See `docs/voice-identity.md`.
+	 *
+	 * What actually kept enrolment off this page was the credential: the relay
+	 * demands the caller's own Jarvis token and refuses to fall back to the
+	 * admin one, and a browser holds neither. It now also accepts an unlocked
+	 * console session, which is the same door already in front of the pairing
+	 * secret and in front of FORGET below.
 	 *
 	 * The payload never contains the voiceprint — counts, scores and timestamps
 	 * only — so "is somebody enrolled" cannot also answer "what do they sound
@@ -533,6 +541,8 @@
 			</div>
 		{/if}
 
+		<EnrolVoice status={speaker} onDone={loadSpeaker} />
+
 		<div class="row">
 			<span class="name"><b>Forget this voice</b><span class="eid">deletes the voiceprint</span></span>
 			<button
@@ -549,8 +559,8 @@
 		{/if}
 
 		<p class="muted">
-			Enrol from the phone — <b>Settings → Whose voice</b> — because that is where the
-			microphone is. Whether Jarvis <i>refuses</i> other voices is
+			Enrol here or from the phone; both read the same phrases from the server, and
+			samples add up rather than replacing each other. Whether Jarvis <i>refuses</i> other voices is
 			<code>voice: speaker: mode</code> in <code>configuration.yaml</code>, and the honest
 			order is enrol, leave it in <code>observe</code> for a few days, read the scores, then
 			<code>enforce</code>. It stops a guest, a television and a stranger at the window; it

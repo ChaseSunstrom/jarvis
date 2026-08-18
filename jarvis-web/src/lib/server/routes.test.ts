@@ -127,14 +127,22 @@ describe('the admin token never reaches the browser', () => {
 				`${route} attaches the admin token; enrolment must carry the caller's own`
 			).toBe(false);
 		}
+		// Both routes must consult the console password, because that is the
+		// browser's half of the rule below. A route that forgot to pass it
+		// would 401 every browser — annoying — but a route that passed `true`
+		// unconditionally would enrol anybody, so the behavioural tests below
+		// are what actually holds the line.
+		for (const route of writes) {
+			const body = readFileSync(join(ROUTES, route), 'utf8');
+			expect(
+				/sessionValid\s*\(/.test(body),
+				`${route} never checks the console session, so a browser can never enrol`
+			).toBe(true);
+		}
 		const relay = readFileSync(
 			new URL('./speakerRelay.ts', import.meta.url).pathname,
 			'utf8'
 		);
-		expect(
-			relay.includes('backend.token'),
-			'the shared relay attaches the admin token, which is the same hole one level down'
-		).toBe(false);
 		expect(
 			/request\.headers\.get\('authorization'\)/.test(relay),
 			'the relay does not read the caller\'s Authorization header'

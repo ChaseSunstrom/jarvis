@@ -1725,3 +1725,73 @@ test("the console drops its own nav when the Android app is framing it", async (
   await expect(normal.getByTestId("hud-link")).toBeVisible();
   await plain.close();
 });
+
+/**
+ * Enrolling a voice from the browser.
+ *
+ * This page could always see the profile and delete it; creating one was the
+ * gap, and the reason was a credential rather than a capability — the enrol
+ * relay demands the caller's own Jarvis token and a browser has none. It now
+ * also accepts an unlocked console session.
+ *
+ * Two things are worth asserting and they are different in kind. That the
+ * phrases come from the SERVER is a correctness claim: the whole argument for a
+ * second enrolment surface is that both read one list from one place, so a list
+ * hard-coded in the component would quietly undo it. That an unauthenticated
+ * browser is REFUSED is the security claim, and it is asserted the same way its
+ * sibling above asserts FORGET — without unlocking, because the unlock limiter
+ * is server-side and shared, and a test that depends on suite order is a test
+ * that breaks when somebody moves one.
+ */
+test("the console offers enrolment, reading its phrases from the server", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+  const panel = page.getByTestId("voice-identity");
+  await expect(panel).toBeVisible();
+
+  await page.getByTestId("enrol-start").click();
+
+  // The phrases the mock serves in `prompts`, which mirror jarvis-core's
+  // ENROLMENT_PROMPTS. Asserting the TEXT, so a component that shipped its own
+  // copy would have to reproduce the server's list exactly to pass — at which
+  // point it is the same list.
+  await expect(page.getByTestId("enrol-record-0")).toBeVisible();
+  await expect(panel).toContainText("Good evening, Jarvis. Bring the house up, would you?");
+  await expect(panel).toContainText("One, two, three, four, five, six, seven, eight, nine, ten.");
+
+  // A real progress bar, not a decorative div: it has to be announceable.
+  const bar = page.getByTestId("enrol-progress");
+  await expect(bar).toHaveAttribute("role", "progressbar");
+  await expect(bar).toHaveAttribute("aria-valuenow", "0");
+
+  // Against the SERVER's minimum, not the length of the list.
+  await expect(page.getByTestId("enrol-remaining")).toContainText("3 more phrases");
+});
+
+test("enrolling from a locked console is refused, and says how to unlock it", async ({
+  page,
+  context,
+}) => {
+  // The fake microphone chromium is launched with produces a tone, so this
+  // records real audio and really posts it — the refusal comes from the
+  // relay, not from there being nothing to send.
+  await context.grantPermissions(["microphone"]);
+  await page.goto("/settings");
+  await page.getByTestId("enrol-start").click();
+  await page.getByTestId("enrol-record-0").click();
+  await expect(page.getByTestId("enrol-stop-0")).toBeVisible();
+  // Long enough to clear the client-side "that was a tap" guard, so what is
+  // being tested is the server's answer rather than ours.
+  await page.waitForTimeout(1200);
+  await page.getByTestId("enrol-stop-0").click();
+
+  // The relay's own words, which name BOTH credentials — better than the
+  // component's fallback, and the reason the component prefers the server's
+  // message to its own.
+  await expect(page.getByTestId("enrol-detail-0")).toContainText(
+    /needs the phone.s own Jarvis token, or the console password/i,
+  );
+  // And the phrase stays retryable rather than being consumed by the failure.
+  await expect(page.getByTestId("enrol-record-0")).toHaveText("RETRY");
+});

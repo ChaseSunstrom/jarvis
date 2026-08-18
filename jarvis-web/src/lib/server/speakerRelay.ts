@@ -37,34 +37,71 @@ import { resolveBackend, backendProblem } from './backend';
 export async function relaySpeakerWrite(
 	request: Request,
 	fetcher: typeof globalThis.fetch,
-	path: 'enrol' | 'verify'
+	path: 'enrol' | 'verify',
+	/**
+	 * True when the caller unlocked the console with its password.
+	 *
+	 * The SECOND accepted credential, added so enrolment can happen in a
+	 * browser. It does not soften the rule above it; it satisfies the same one
+	 * by a different door.
+	 *
+	 * The rule is that enrolment must be authorised by something the caller
+	 * HOLDS, never by the fact that they could reach this port — teaching
+	 * Jarvis a new owner on the strength of reachability is the opposite of
+	 * what the feature is for. A phone holds a Jarvis token. A browser holds
+	 * nothing, and never will: the admin token is server-side by design and
+	 * handing it to the page would undo the whole relay. So the browser's
+	 * credential is the console password, which is already the door in front
+	 * of the pairing secret and in front of DELETE on this very profile —
+	 * `api/voice/speaker/+server.ts` says deleting needs it "because it
+	 * disables the gate". Enrolling changes the same gate.
+	 *
+	 * Passed in rather than read here because cookies belong to the route.
+	 */
+	consoleUnlocked = false
 ): Promise<Response> {
 	const backend = resolveBackend(process.env);
 	const problem = backendProblem(backend);
 	if (problem) throw error(500, problem);
 
-	// The caller's own credential, or nothing. No fallback to the admin token:
-	// a missing header here must fail, not quietly succeed with more authority
-	// than the caller had.
+	// The caller's own credential, or nothing. No fallback to the admin token
+	// for an unauthenticated caller: a missing credential must fail, not
+	// quietly succeed with more authority than the caller had.
 	const presented = request.headers.get('authorization');
-	if (!presented || !/^Bearer\s+\S/i.test(presented)) {
-		throw error(401, 'enrolling a voice needs the phone’s own Jarvis token');
+	const hasToken = !!presented && /^Bearer\s+\S/i.test(presented);
+	if (!hasToken && !consoleUnlocked) {
+		throw error(
+			401,
+			'enrolling a voice needs the phone’s own Jarvis token, or the console password'
+		);
 	}
+	// A caller who presented a token is relayed under it, unchanged, even when
+	// they also hold a console session. Downgrading a specific credential to a
+	// blanket one would make the phone's identity invisible to jarvis-core.
+	const authorization = hasToken ? presented! : `Bearer ${backend.token}`;
 
 	const body = await request.arrayBuffer();
 	if (body.byteLength === 0) throw error(400, 'no audio in the request');
 
-	const upstream = await fetcher(`${backend.url.replace(/\/+$/, '')}/api/voice/speaker/${path}`, {
-		method: 'POST',
-		headers: {
-			Authorization: presented,
-			'Content-Type': request.headers.get('content-type') ?? 'application/octet-stream'
-		},
-		body,
-		// A 30x must not move this request — or the caller's token — to another
-		// host. Same guard as every other proxy in this directory.
-		redirect: 'error'
-	}).catch(() => null);
+	// jarvis-core reads `rate` and `width` from the query string, and dropping
+	// them meant every caller silently got the 16 kHz/16-bit defaults. That is
+	// what both clients send, so nothing was broken — but a relay that discards
+	// half the request is a trap for the first caller who needs the other half.
+	const search = new URL(request.url).search;
+	const upstream = await fetcher(
+		`${backend.url.replace(/\/+$/, '')}/api/voice/speaker/${path}${search}`,
+		{
+			method: 'POST',
+			headers: {
+				Authorization: authorization,
+				'Content-Type': request.headers.get('content-type') ?? 'application/octet-stream'
+			},
+			body,
+			// A 30x must not move this request — or the caller's token — to
+			// another host. Same guard as every other proxy in this directory.
+			redirect: 'error'
+		}
+	).catch(() => null);
 
 	if (!upstream) throw error(502, 'the Jarvis server could not be reached');
 
