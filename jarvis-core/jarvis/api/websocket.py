@@ -695,6 +695,21 @@ class WebSocketHandler:
     async def _cmd_task_clear_finished(self, msg: dict[str, Any]) -> Any:
         return await common.async_clear_finished_tasks(self.jarvis)
 
+    async def _cmd_schedule_list(self, msg: dict[str, Any]) -> Any:
+        return common.schedule_list_payload(self.jarvis)
+
+    async def _cmd_schedule_add(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_add_scheduled(self.jarvis, payload)
+
+    async def _cmd_schedule_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_scheduled(self.jarvis, str(msg.get("job_id") or ""))
+
+    async def _cmd_schedule_enabled(self, msg: dict[str, Any]) -> Any:
+        return await common.async_enable_scheduled(
+            self.jarvis, str(msg.get("job_id") or ""), bool(msg.get("enabled", True))
+        )
+
     async def _cmd_mcp_list(self, msg: dict[str, Any]) -> Any:
         return common.mcp_list_payload(self.jarvis)
 
@@ -1069,6 +1084,10 @@ WebSocketHandler._HANDLERS = {
     # `allow_stdio` on — see api/common.py: that is the line between fetching a
     # URL and starting a program, and configuration.yaml is the only side of it
     # a request cannot reach.
+    "jarvis/schedule/list": WebSocketHandler._cmd_schedule_list,
+    "jarvis/schedule/add": WebSocketHandler._cmd_schedule_add,
+    "jarvis/schedule/remove": WebSocketHandler._cmd_schedule_remove,
+    "jarvis/schedule/enabled": WebSocketHandler._cmd_schedule_enabled,
     "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
     "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,
     "jarvis/mcp/remove": WebSocketHandler._cmd_mcp_remove,

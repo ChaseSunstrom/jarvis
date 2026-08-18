@@ -556,6 +556,43 @@ async def task_clear_finished(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- scheduled jobs ---------------------------------------------------------
+@api_router.get("/schedule")
+async def schedule_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.schedule_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/schedule")
+async def schedule_add(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_add_scheduled(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/schedule/{job_id}")
+async def schedule_remove(request: Request, job_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_remove_scheduled(get_jarvis(request), job_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/schedule/{job_id}/enabled")
+async def schedule_enabled(request: Request, job_id: str) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_enable_scheduled(
+            get_jarvis(request), job_id, bool(body.get("enabled", True))
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 # --- MCP servers ------------------------------------------------------------
 @api_router.get("/mcp/servers")
 async def mcp_servers(request: Request) -> dict[str, Any]:

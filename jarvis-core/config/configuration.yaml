@@ -471,6 +471,49 @@ web:
   act_allowlist: []
 
 # ---------------------------------------------------------------------------
+# Schedule — reminders, and work put off until later.
+# ---------------------------------------------------------------------------
+# Next to `automation:` rather than instead of it. An automation is the right
+# tool for "every evening, if it is dark, turn the hall light on". This is for
+# the three things it is not: ONE-SHOT ("remind me at seven"), SPEAKABLE (the
+# assistant can create one mid-sentence), and VISIBLE — every firing mints a
+# task, so a scheduled research run shows the same progress bar on the console
+# and the phone as anything else.
+#
+# Three kinds. `notify` says something; `research` starts a deep-research run;
+# `service` calls a service and goes through the SAME approval gate an
+# automation does, so a scheduled `lock.unlock` is held for a human exactly as
+# a scheduled automation would be. Without that, "schedule it" would be the way
+# round every Tier-3 control here.
+#
+# The assistant may create `notify` and `research` jobs. It may NOT create
+# `service` jobs: a tool that schedules arbitrary actions launders a prompt
+# injection through a delay, arriving with no turn to attribute it to.
+schedule:
+  # How late a ONE-SHOT may be and still run, when Jarvis was off at the time.
+  # Six hours covers a reboot, a power cut and a container rebuild. It does not
+  # cover "yesterday" — a reminder to take the bins out, delivered at three in
+  # the morning, is worse than not delivered, and the missed one is recorded
+  # rather than silently dropped.
+  #
+  # A RECURRING job never replays a backlog whatever this says: it skips to its
+  # next occurrence and counts what it missed.
+  grace_seconds: 21600
+
+  jobs: []
+  # - id: morning_brief
+  #   title: Morning brief
+  #   kind: notify
+  #   when: {mode: daily, at: "07:30"}
+  #   message: Good morning.
+  #
+  # - id: weekly_reading
+  #   title: What happened in local politics
+  #   kind: research
+  #   when: {mode: weekly, at: "18:00", days: [sun]}
+  #   question: What changed in the council's planning decisions this week?
+
+# ---------------------------------------------------------------------------
 # Files — notes, documents, and whatever cloud you point it at.
 # ---------------------------------------------------------------------------
 # `list_files`, `read_file`, `search_files` and `write_file`, over places you

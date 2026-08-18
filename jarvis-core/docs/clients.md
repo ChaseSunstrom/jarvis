@@ -86,6 +86,10 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/tasks/cancel` | `task_id`; **asks** the worker to stop. The registry is a record, not a scheduler — it cannot reach into the coroutine — so the reply carries `cancelled` and a `note` saying a worker that does not check may still be running |
 | `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
 | `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |
+| `jarvis/schedule/list` | every scheduled job, soonest first, with when each next runs and what it last did |
+| `jarvis/schedule/add` | `kind` (`notify`/`research`/`service`) plus a `when` — `{mode: once, at: <iso>}`, `{mode: daily, at: "HH:MM"}`, `{mode: weekly, at, days}` or `{mode: every, minutes}`. Every firing mints a task, so it shows on the same progress surfaces as everything else |
+| `jarvis/schedule/remove` | `job_id`; a job from `configuration.yaml` is refused — edit the file |
+| `jarvis/schedule/enabled` | `job_id`, `enabled`; turn one off without forgetting it |
 | `jarvis/mcp/list` | every configured MCP server, its tools, and whether it is up: `{servers: [...], allow_stdio, default_tier}`. Never carries a server's token |
 | `jarvis/mcp/add` | `name` plus either `url` (+ optional `token`) or, when the operator has allowed it, `command`/`args`. Adds the server, connects, and registers its tools as `mcp_<server>_<tool>` |
 | `jarvis/mcp/remove` | `name`; forgets a console-added server and unregisters its tools. A server defined in `configuration.yaml` is refused — edit the file |

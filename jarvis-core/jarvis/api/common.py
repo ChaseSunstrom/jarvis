@@ -1213,3 +1213,48 @@ async def async_reconnect_mcp(jarvis: "Jarvis", name: str = "") -> dict[str, Any
         raise ApiError("not_found", f"no MCP server called {name!r}", 404)
     connected = await manager.async_connect(spec)
     return {"reconnected": key, "connected": connected, **mcp_list_payload(jarvis)}
+
+
+# --- scheduled jobs ----------------------------------------------------------
+
+
+def _schedule(jarvis: "Jarvis") -> Any:
+    from ..integrations.schedule import get_manager
+
+    manager = get_manager(jarvis)
+    if manager is None:
+        raise ApiError("unavailable", "this server has no scheduler", 503)
+    return manager
+
+
+def schedule_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    return {"jobs": _schedule(jarvis).listing()}
+
+
+async def async_add_scheduled(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Add a job from an authenticated caller.
+
+    `allow_service=True`, unlike the model's tool. A request that reached here
+    carried a bearer token; a tool call may have been shaped by a web page the
+    model read, which is why the two doors are different widths.
+    """
+    result = await _schedule(jarvis).async_add(data or {}, allow_service=True)
+    if result.get("status") == "error":
+        raise ApiError("invalid_format", str(result.get("error") or "could not add it"), 400)
+    return result
+
+
+async def async_remove_scheduled(jarvis: "Jarvis", job_id: str) -> dict[str, Any]:
+    result = await _schedule(jarvis).async_remove(str(job_id or ""))
+    if result.get("status") == "error":
+        raise ApiError("not_found", str(result.get("error") or "no such job"), 404)
+    return result
+
+
+async def async_enable_scheduled(
+    jarvis: "Jarvis", job_id: str, enabled: bool
+) -> dict[str, Any]:
+    result = await _schedule(jarvis).async_set_enabled(str(job_id or ""), enabled)
+    if result.get("status") == "error":
+        raise ApiError("not_found", str(result.get("error") or "no such job"), 404)
+    return result
