@@ -295,7 +295,13 @@
 <svelte:head><title>Jarvis · Devices</title></svelte:head>
 
 <h1>DEVICES</h1>
-<p class="lede">
+<!-- `data-redialling` is not decoration: the RECONNECT banner disappears the
+     moment the new socket starts dialling, which is three steps before the rows
+     are live again — `connect()` still has to load the states, load the
+     companions and re-subscribe. Between those two instants the page looks
+     recovered and is not. Nothing else on the page says so, so this does, and
+     the e2e suite waits on it before trusting a row. -->
+<p class="lede" data-testid="devices-lede" data-redialling={redialling}>
 	{total} entit{total === 1 ? 'y' : 'ies'} · live over websocket · link {status}
 </p>
 

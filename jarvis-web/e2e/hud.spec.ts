@@ -299,10 +299,85 @@ test('the orb stops moving when the reader has asked for reduced motion', async 
 
 	// The direct measurement: no frames at all in the window.
 	expect(await frames(), 'the orb is still drawing frames').toBe(before);
-	// And the pixels agree, which also covers anything drawn outside the loop.
 	expect(await orb.boundingBox(), 'the page moved under the orb').toEqual(boxBefore);
-	expect(Buffer.compare(first, second), 'the orb is still animating').toBe(0);
+
+	// And the pixels agree, which also covers anything drawn outside the loop.
+	//
+	// MEASURED, not byte-compared. This was `Buffer.compare(first, second) === 0`
+	// and it went red intermittently — deep in a full run, never on its own —
+	// with the frame counter above passing in the same breath. The orb had drawn
+	// exactly one frame and drawn nothing since; the DOM over that spot was
+	// static; the box had not moved. What differed was 49 pixels of 175142
+	// (0.03%) in one 6x9 block on the rim, where a multisampled buffer gets
+	// resolved. Byte-exactness of a software-rasterised composite is not
+	// something the product promises, so the assertion was failing on a
+	// property nobody implements.
+	//
+	// The tolerance is not a guess, it is the gap between two measurements.
+	// An orb that is actually animating differs by 67% of its pixels over a
+	// SINGLE 16ms frame — 117984 of them, the smallest real animation this can
+	// be asked to catch. The resolve noise is 49. The threshold sits at 1%,
+	// which is 35x the noise and 67x below one frame of movement; there is no
+	// value in between that either measurement comes near. A second draw path
+	// outside the loop repaints the orb, not a rim tile, so it lands on the
+	// far side of that gap with everything else.
+	const changed = await pixelsChanged(page, first, second);
+	expect(
+		changed.fraction,
+		`the orb is still animating: ${changed.differing} of ${changed.total} pixels ` +
+			`changed (${(changed.fraction * 100).toFixed(3)}%) with no new frame drawn`
+	).toBeLessThan(0.01);
 });
+
+/**
+ * Fraction of pixels that differ between two PNGs.
+ *
+ * Decoded in the page rather than by a node PNG library, so this costs no
+ * dependency: the browser under test already has `createImageBitmap` and a 2D
+ * context, and the images came from it in the first place.
+ */
+async function pixelsChanged(
+	page: import('@playwright/test').Page,
+	a: Buffer,
+	b: Buffer
+): Promise<{ differing: number; total: number; fraction: number }> {
+	const result = await page.evaluate(
+		async ([aB64, bB64]) => {
+			const load = async (b64: string) => {
+				const bin = atob(b64);
+				const bytes = new Uint8Array(bin.length);
+				for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+				const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+				const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+				const ctx = canvas.getContext('2d');
+				if (!ctx) throw new Error('no 2d context to decode the screenshots with');
+				ctx.drawImage(bmp, 0, 0);
+				return { data: ctx.getImageData(0, 0, bmp.width, bmp.height).data, w: bmp.width, h: bmp.height };
+			};
+			const A = await load(aB64);
+			const B = await load(bB64);
+			// Different sizes means the canvas resized under us, which is a real
+			// failure and not something to average away.
+			if (A.w !== B.w || A.h !== B.h) return { differing: -1, total: 0 };
+			let differing = 0;
+			for (let i = 0; i < A.data.length; i += 4) {
+				if (
+					A.data[i] !== B.data[i] ||
+					A.data[i + 1] !== B.data[i + 1] ||
+					A.data[i + 2] !== B.data[i + 2] ||
+					A.data[i + 3] !== B.data[i + 3]
+				) {
+					differing++;
+				}
+			}
+			return { differing, total: A.w * A.h };
+		},
+		[a.toString('base64'), b.toString('base64')] as [string, string]
+	);
+
+	expect(result.differing, 'the orb canvas changed size between the two captures').not.toBe(-1);
+	return { ...result, fraction: result.differing / result.total };
+}
 
 test('the orb does move when nobody has asked it not to', async ({ page }) => {
 	// The other half of the pair: reduced motion must be the reason it stopped,

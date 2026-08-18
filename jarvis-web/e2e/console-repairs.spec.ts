@@ -36,6 +36,21 @@ test('a dropped socket can be reconnected without reloading the tab', async ({ p
 	await page.getByTestId('reconnect').click();
 	await expect(dropped).toHaveCount(0, { timeout: 15_000 });
 
+	// The banner going is NOT the page being live, and treating it as such is
+	// what made this test flake. `down` is `status === 'closed' || 'error'`, so
+	// the notice unmounts the instant the replacement socket starts dialling —
+	// while `connect()` has still to load the states, load the companions and
+	// re-subscribe to state_changed. Toggling in that window sends a service
+	// call whose event arrives before there is a subscription to hear it, so the
+	// pill never moves and the assertion below times out on a page that had
+	// reconnected perfectly well.
+	//
+	// `redialling` spans all three steps and is only cleared in `connect()`'s
+	// `finally`, which is the first moment the rows can be trusted.
+	await expect(page.getByTestId('devices-lede')).toHaveAttribute('data-redialling', 'false', {
+		timeout: 15_000
+	});
+
 	// Not merely reconnected: reloaded and re-subscribed, so what is on screen is
 	// live again. A toggle round-trips over the new socket.
 	const pill = page.getByTestId('state-light.lab_lights');
