@@ -212,6 +212,7 @@ The full model is [`docs/security.md`](docs/security.md).
 | [`docs/cross-device.md`](docs/cross-device.md) | one conversation across phone, desktop and HUD |
 | [`docs/voice-identity.md`](docs/voice-identity.md) | answering only your voice: how it works, what it is worth, how to tune it |
 | [`docs/wake-word-training.md`](docs/wake-word-training.md) | training `hey_jarvis` |
+| [`jarvis-core/docs/code.md`](jarvis-core/docs/code.md) | Jarvis Code: what a coding job may and may not do |
 | [`jarvis-core/docs/openai-compat.md`](jarvis-core/docs/openai-compat.md) | running Jarvis on LiteLLM, vLLM, llama.cpp, LM Studio, TGI or SGLang instead of Ollama |
 | [`jarvis-core/docs/`](jarvis-core/docs/) | configuration, integrations, voice, search, clients, migrating from HA |
 

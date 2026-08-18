@@ -138,6 +138,13 @@ GATED_SERVICES = frozenset(
         # (Tier 3). The tool asks every time; without this the SERVICE would be
         # the way round it, and "overwrite the note" is a loss with no undo.
         "files.write",
+        # Starts a Jarvis Code job, which edits files in a real repository on
+        # a branch of its own and runs that repository's checks. Tool form:
+        # `code_task` (Tier 3). `code.repositories` and `code.result` are its
+        # ungated neighbours and read nothing but what the operator configured
+        # and what a finished job produced — which is exactly the shape this
+        # set exists for, and why it names calls rather than the domain.
+        "code.run",
     }
 )
 

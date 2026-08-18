@@ -18,7 +18,7 @@
  */
 
 export type Mode = 'once' | 'daily' | 'weekly' | 'every';
-export type JobKind = 'notify' | 'research' | 'service';
+export type JobKind = 'notify' | 'research' | 'service' | 'code';
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
@@ -54,6 +54,9 @@ export interface ScheduleForm {
 	question: string;
 	/** For `service`, as `domain.service`. */
 	service: string;
+	/** For `code`: which repository, and what to change in it. */
+	repo: string;
+	instruction: string;
 	mode: Mode;
 	/** `once`: a `<input type=date>` value. */
 	date: string;
@@ -74,6 +77,8 @@ export function blankScheduleForm(): ScheduleForm {
 		message: '',
 		question: '',
 		service: '',
+		repo: '',
+		instruction: '',
 		mode: 'once',
 		date: '',
 		time: '',
@@ -110,6 +115,22 @@ export function parseScheduleForm(form: ScheduleForm): ScheduleResult {
 			return { ok: false, error: 'What should it find out?', field: 'question' };
 		}
 		payload.question = form.question.trim();
+	} else if (form.kind === 'code') {
+		if (!form.repo.trim()) {
+			return { ok: false, error: 'Which repository?', field: 'repo' };
+		}
+		if (form.instruction.trim().length < 8) {
+			// The same bound as the Code page's own START, and for the same
+			// reason: a scheduled job cannot ask what you meant either, and it
+			// will be running while you are asleep.
+			return {
+				ok: false,
+				error: 'Say a bit more — the job cannot ask you what you meant.',
+				field: 'instruction'
+			};
+		}
+		payload.repo = form.repo.trim();
+		payload.instruction = form.instruction.trim();
 	} else {
 		const service = form.service.trim();
 		if (!/^[a-z0-9_]+\.[a-z0-9_]+$/i.test(service)) {

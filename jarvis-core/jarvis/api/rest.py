@@ -593,6 +593,32 @@ async def schedule_enabled(request: Request, job_id: str) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- Jarvis Code ------------------------------------------------------------
+@api_router.get("/code")
+async def code_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.code_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/jobs")
+async def code_start(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_start_code_job(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/code/jobs/{task_id}")
+async def code_result(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return common.code_result_payload(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 # --- MCP servers ------------------------------------------------------------
 @api_router.get("/mcp/servers")
 async def mcp_servers(request: Request) -> dict[str, Any]:

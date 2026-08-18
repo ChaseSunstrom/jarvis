@@ -710,6 +710,47 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			.map(taskDict);
 
 	/**
+	 * Jarvis Code.
+	 *
+	 * Two repositories, one writable and one not, because the read-only case is
+	 * the one the page has to say something about before somebody types an
+	 * instruction into it.
+	 *
+	 * A job here is a real task in `taskStore` with `kind: 'code'`, so the Code
+	 * page and the task dock are looking at the same record — which is the
+	 * property worth testing, and one a separate job store would quietly break.
+	 */
+	const codeRepos = [
+		{
+			name: 'jarvis',
+			path: '/srv/jarvis',
+			description: 'the assistant itself',
+			checks: ['pytest -q', 'ruff check .'],
+			writable: true
+		},
+		{
+			name: 'notes',
+			path: '/srv/notes',
+			description: 'a wiki nobody should be editing by machine',
+			checks: [],
+			writable: false
+		}
+	];
+	let codeSandboxed = false;
+	/** task id -> the finished job's diff, checks and trail. */
+	const codeResults = new Map();
+
+	const codeDiff = `diff --git a/src/app.py b/src/app.py
+index 1234567..89abcde 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,2 @@
+ def handle():
+-    return 1
++    return 2
+`;
+
+	/**
 	 * Scheduled jobs.
 	 *
 	 * `describes` is written HERE rather than by the console, because that is
@@ -1382,12 +1423,22 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 						fail(msg.id, 'invalid_format', 'a service looks like light.turn_on');
 						break;
 					}
+					if (msg.kind === 'code' && !(msg.repo && msg.instruction)) {
+						fail(msg.id, 'invalid_format', 'a coding job needs a repository and an instruction');
+						break;
+					}
 					const id = `job-${++schedSeq}`;
 					const job = {
 						id,
 						title:
 							String(msg.title || '') ||
-							String(msg.message || msg.question || msg.service || 'scheduled job'),
+							String(
+								msg.message ||
+									msg.question ||
+									msg.service ||
+									(msg.repo ? `${msg.repo}: ${msg.instruction}` : '') ||
+									'scheduled job'
+							),
 						kind: String(msg.kind || 'notify'),
 						when: {
 							mode: when.mode,
@@ -1582,6 +1633,116 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 						target.tools = [];
 					}
 					ok(msg.id, mcpListing());
+					break;
+				}
+
+				// --- Jarvis Code ---------------------------------------------
+				case 'jarvis/code/list':
+					ok(msg.id, {
+						repositories: codeRepos,
+						jobs: taskListing({ kind: 'code' }),
+						sandboxed: codeSandboxed
+					});
+					break;
+
+				case 'jarvis/code/start': {
+					const repo = codeRepos.find((r) => r.name === String(msg.repo ?? ''));
+					if (!repo) {
+						fail(msg.id, 'invalid_format', `there is no repository called ${msg.repo}`);
+						break;
+					}
+					const instruction = String(msg.instruction ?? '').trim();
+					if (!instruction) {
+						fail(msg.id, 'invalid_format', 'I need to know what to change.');
+						break;
+					}
+					const plan = ['read the handler', 'change it', 'run the checks'];
+					const task = addTask({
+						kind: 'code',
+						title: `${repo.name}: ${instruction}`,
+						// The real integration starts with one step and grows the
+						// plan into it, which is what makes the bar honest. The
+						// mock does the same so the console is drawing the same
+						// shape it will see in production.
+						steps: [{ title: 'plan the work', status: 'queued', detail: '' }],
+						open_ended: true,
+						detail: 'planning'
+					});
+					ok(msg.id, { task_id: task.id, title: task.title, task: taskDict(task) });
+
+					if (msg.hold) break;
+					const tick = Number(msg.tick_ms) || 100;
+					setTimeout(() => {
+						const live = taskStore.get(task.id);
+						if (!live || TASK_TERMINAL.includes(live.status)) return;
+						live.steps[0].status = 'done';
+						for (const title of [...plan, 'write it up']) {
+							live.steps.push({ title, status: 'queued', detail: '' });
+						}
+						updateTask(task.id, { status: 'running', open_ended: false, detail: 'working' });
+
+						let at = 1;
+						const advance = () => {
+							const now = taskStore.get(task.id);
+							if (!now || TASK_TERMINAL.includes(now.status)) return;
+							if (at > 1) now.steps[at - 1].status = 'done';
+							if (at >= now.steps.length) {
+								codeResults.set(task.id, {
+									repo: repo.name,
+									instruction,
+									branch: `jarvis/20260101-${task.id}`,
+									plan,
+									files_changed: repo.writable ? ['src/app.py'] : [],
+									diff_stat: ' src/app.py | 2 +-',
+									diff: repo.writable ? codeDiff : '',
+									checks: repo.checks.map((command, i) => ({
+										command,
+										ok: i === 0,
+										output: i === 0 ? 'ok' : 'one failure'
+									})),
+									trail: [
+										{ tool: 'read_file', args: 'path=src/app.py', outcome: 'read 2 lines' },
+										{ tool: 'edit_file', args: 'path=src/app.py', outcome: 'edited' }
+									],
+									summary: 'changed the handler to return 2',
+									rounds: 3
+								});
+								updateTask(task.id, {
+									status: 'done',
+									detail: `jarvis/20260101-${task.id}`,
+									result: `jarvis/20260101-${task.id} · 1 file changed · 1/2 checks passed`
+								});
+								return;
+							}
+							now.steps[at].status = 'running';
+							updateTask(task.id, {});
+							at += 1;
+							setTimeout(advance, tick);
+						};
+						setTimeout(advance, tick);
+					}, tick);
+					break;
+				}
+
+				case 'jarvis/code/result': {
+					const found = codeResults.get(String(msg.task_id ?? ''));
+					if (!found) {
+						fail(msg.id, 'not_found', 'no finished coding job with that id');
+						break;
+					}
+					ok(msg.id, found);
+					break;
+				}
+
+				// Put the mock back to a known state, and let a test see the
+				// sandboxed wording without a second mock process.
+				case 'jarvis/test/code_reset': {
+					codeResults.clear();
+					codeSandboxed = Boolean(msg.sandboxed);
+					for (const task of [...taskStore.values()]) {
+						if (task.kind === 'code') removeTask(task.id);
+					}
+					ok(msg.id, { sandboxed: codeSandboxed });
 					break;
 				}
 

@@ -81,11 +81,14 @@ DATA_MANAGER = "manager"
 KIND_NOTIFY = "notify"
 KIND_RESEARCH = "research"
 KIND_SERVICE = "service"
-KINDS = (KIND_NOTIFY, KIND_RESEARCH, KIND_SERVICE)
+KIND_CODE = "code"
+KINDS = (KIND_NOTIFY, KIND_RESEARCH, KIND_SERVICE, KIND_CODE)
 
-#: Kinds the MODEL may schedule. `service` is deliberately absent: a tool that
-#: schedules arbitrary service calls launders a prompt injection through a
-#: delay, arriving with no turn to attribute it to.
+#: Kinds the MODEL may schedule. `service` and `code` are deliberately absent:
+#: a tool that schedules arbitrary service calls launders a prompt injection
+#: through a delay, arriving with no turn to attribute it to — and a coding job
+#: is the same shape with a repository on the end of it. Starting one directly
+#: is Tier 3 and asks a human; scheduling one must not be the way round that.
 MODEL_KINDS = (KIND_NOTIFY, KIND_RESEARCH)
 
 MAX_JOBS = 200
@@ -107,7 +110,7 @@ class Job:
     kind: str = KIND_NOTIFY
     when: When = field(default_factory=When)
     #: `notify`: the message. `research`: the question. `service`: domain,
-    #: service and data.
+    #: service and data. `code`: the repository and the instruction.
     payload: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     #: Epoch seconds. None once a spent one-shot has nowhere left to go.
@@ -153,6 +156,8 @@ def job_from_dict(raw: Any, *, editable: bool = True) -> Job | None:
         kind = (
             KIND_SERVICE
             if raw.get("service")
+            else KIND_CODE
+            if raw.get("repo") and raw.get("instruction")
             else KIND_RESEARCH
             if raw.get("question")
             else KIND_NOTIFY
@@ -163,6 +168,13 @@ def job_from_dict(raw: Any, *, editable: bool = True) -> Job | None:
     elif kind == KIND_RESEARCH:
         payload["question"] = str(raw.get("question") or raw.get("message") or "")[:MAX_MESSAGE]
         if not payload["question"]:
+            return None
+    elif kind == KIND_CODE:
+        payload["repo"] = str(raw.get("repo") or raw.get("repository") or "").strip()[:200]
+        payload["instruction"] = str(
+            raw.get("instruction") or raw.get("message") or ""
+        )[:MAX_MESSAGE]
+        if not payload["repo"] or not payload["instruction"]:
             return None
     else:
         service = str(raw.get("service") or "")
@@ -177,6 +189,11 @@ def job_from_dict(raw: Any, *, editable: bool = True) -> Job | None:
             payload.get("question")
             or payload.get("message")
             or payload.get("service")
+            or (
+                f"{payload['repo']}: {payload['instruction']}"
+                if payload.get("repo")
+                else ""
+            )
             or "scheduled job"
         )[:MAX_TITLE]
 
@@ -461,6 +478,8 @@ class ScheduleManager:
             return await self._notify(job)
         if job.kind == KIND_RESEARCH:
             return await self._research(job)
+        if job.kind == KIND_CODE:
+            return await self._code(job)
         return await self._service(job)
 
     async def _notify(self, job: Job) -> str:
@@ -488,6 +507,27 @@ class ScheduleManager:
         # The research run is its own task with its own progress. This one's
         # job was to start it, and saying which one keeps the two connected.
         return f"research started (task {started.id})"
+
+    async def _code(self, job: Job) -> str:
+        """Start a Jarvis Code job.
+
+        Not through `code.run`, which is gated: this job was written by an
+        authenticated caller or by configuration.yaml — the same authority the
+        console's own START button carries — and holding it for a second yes at
+        three in the morning is a reminder nobody is awake to answer. The model
+        cannot create one of these at all; see `MODEL_KINDS`.
+        """
+        from ..code import async_start
+
+        started = await async_start(
+            self.jarvis,
+            str(job.payload.get("repo") or ""),
+            str(job.payload.get("instruction") or ""),
+            source="schedule",
+        )
+        if isinstance(started, str):
+            raise RuntimeError(started)
+        return f"coding job started (task {started.id})"
 
     async def _service(self, job: Job) -> str:
         """Call a service — through the same gate an automation goes through.
@@ -544,12 +584,13 @@ class ScheduleManager:
         job = job_from_dict(data, editable=True)
         if job is None:
             return {"status": "error", "error": "that is not a schedule I can read"}
-        if job.kind == KIND_SERVICE and not allow_service:
+        if job.kind not in MODEL_KINDS and not allow_service:
+            what = "a service call" if job.kind == KIND_SERVICE else "a coding job"
             return {
                 "status": "error",
                 "error": (
-                    "scheduling a service call is not something the assistant may "
-                    "do. Add it in configuration.yaml or from the console."
+                    f"scheduling {what} is not something the assistant may do. "
+                    "Add it in configuration.yaml or from the console."
                 ),
             }
         if len(self.jobs) >= MAX_JOBS and job.id not in self.jobs:
@@ -649,7 +690,7 @@ def _register_services(jarvis: "Jarvis", manager: ScheduleManager) -> None:
 
     for name, handler, description in (
         ("list", handle_list, "Every scheduled job, soonest first."),
-        ("add", handle_add, "Schedule a reminder, a research run or a service call."),
+        ("add", handle_add, "Schedule a reminder, a research run, a coding job or a service call."),
         ("remove", handle_remove, "Forget a scheduled job."),
         ("enable", handle_enable, "Turn a scheduled job on or off."),
     ):

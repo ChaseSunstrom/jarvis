@@ -150,6 +150,54 @@ describe('what each kind needs', () => {
 		expect(parseScheduleForm({ ...base, service: 'light.turn_on' }).ok).toBe(true);
 	});
 
+	it('a coding job needs a repository and an instruction', () => {
+		const base = {
+			...blankScheduleForm(),
+			kind: 'code' as const,
+			mode: 'daily' as const,
+			time: '07:00'
+		};
+		const noRepo = parseScheduleForm({ ...base, instruction: 'add the null check' });
+		expect(noRepo.ok).toBe(false);
+		if (!noRepo.ok) expect(noRepo.field).toBe('repo');
+
+		const noInstruction = parseScheduleForm({ ...base, repo: 'jarvis' });
+		expect(noInstruction.ok).toBe(false);
+		if (!noInstruction.ok) expect(noInstruction.field).toBe('instruction');
+	});
+
+	it('refuses a scheduled instruction too short to act on', () => {
+		// Same bound as the Code page's own START, and more important here:
+		// this one runs while you are asleep.
+		const result = parseScheduleForm({
+			...blankScheduleForm(),
+			kind: 'code' as const,
+			mode: 'daily' as const,
+			time: '07:00',
+			repo: 'jarvis',
+			instruction: 'fix it'
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toContain('bit more');
+	});
+
+	it('sends a coding job as a repo and an instruction', () => {
+		const result = parseScheduleForm({
+			...blankScheduleForm(),
+			kind: 'code' as const,
+			mode: 'daily' as const,
+			time: '07:00',
+			repo: 'jarvis',
+			instruction: 'add the missing null check to the handler'
+		});
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.payload.kind).toBe('code');
+			expect(result.payload.repo).toBe('jarvis');
+			expect(result.payload.instruction).toContain('null check');
+		}
+	});
+
 	it('defaults to a reminder that runs once', () => {
 		expect(blankScheduleForm().kind).toBe('notify');
 		expect(blankScheduleForm().mode).toBe('once');

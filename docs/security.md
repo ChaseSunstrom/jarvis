@@ -36,7 +36,7 @@ Policy is enforced on the device, outside the model. A server may only ever
 |---|---|---|
 | 1 direct | lights, covers, climate, `get_user_context`, `web_search`, `web_fetch`, tier-1 `*.tool.yaml` | none (safe / idempotent) |
 | 2 background | `run_background_task`, `delegate_to_agents`, `code_task` | none, but runs outside the turn and reports back |
-| 3 approval | unlock, notify, `execute_command`, `apply_code_task`, tier-3 `*.tool.yaml` | **human approval, enforced in code** |
+| 3 approval | unlock, notify, `execute_command`, `apply_code_task`, `write_file`, `start_coding_job`, tier-3 `*.tool.yaml` | **human approval, enforced in code** |
 
 Two things escalate automatically, and neither consults the model:
 

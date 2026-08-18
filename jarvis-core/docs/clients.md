@@ -87,9 +87,12 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
 | `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |
 | `jarvis/schedule/list` | every scheduled job, soonest first, with when each next runs and what it last did |
-| `jarvis/schedule/add` | `kind` (`notify`/`research`/`service`) plus a `when` — `{mode: once, at: <iso>}`, `{mode: daily, at: "HH:MM"}`, `{mode: weekly, at, days}` or `{mode: every, minutes}`. Every firing mints a task, so it shows on the same progress surfaces as everything else |
+| `jarvis/schedule/add` | `kind` (`notify`/`research`/`code`/`service`) plus a `when` — `{mode: once, at: <iso>}`, `{mode: daily, at: "HH:MM"}`, `{mode: weekly, at, days}` or `{mode: every, minutes}`. Every firing mints a task, so it shows on the same progress surfaces as everything else |
 | `jarvis/schedule/remove` | `job_id`; a job from `configuration.yaml` is refused — edit the file |
 | `jarvis/schedule/enabled` | `job_id`, `enabled`; turn one off without forgetting it |
+| `jarvis/code/list` | Jarvis Code: `{repositories: [...], jobs: [...], sandboxed}`. `jobs` is the task list filtered to `kind: code`, so a page can draw both halves from one request |
+| `jarvis/code/start` | `repo`, `instruction`; starts a coding job and returns its `task_id`. The job runs on a branch of its own and reports through the task list, so its progress is the same bar as everything else. Not approval-gated — the request carried a bearer token, whereas the model's `code_task` tool is Tier 3 |
+| `jarvis/code/result` | `task_id`; the branch, the diff, the checks and the tool trail from one finished job |
 | `jarvis/mcp/list` | every configured MCP server, its tools, and whether it is up: `{servers: [...], allow_stdio, default_tier}`. Never carries a server's token |
 | `jarvis/mcp/add` | `name` plus either `url` (+ optional `token`) or, when the operator has allowed it, `command`/`args`. Adds the server, connects, and registers its tools as `mcp_<server>_<tool>` |
 | `jarvis/mcp/remove` | `name`; forgets a console-added server and unregisters its tools. A server defined in `configuration.yaml` is refused — edit the file |

@@ -710,6 +710,16 @@ class WebSocketHandler:
             self.jarvis, str(msg.get("job_id") or ""), bool(msg.get("enabled", True))
         )
 
+    async def _cmd_code_list(self, msg: dict[str, Any]) -> Any:
+        return common.code_list_payload(self.jarvis)
+
+    async def _cmd_code_start(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_start_code_job(self.jarvis, payload)
+
+    async def _cmd_code_result(self, msg: dict[str, Any]) -> Any:
+        return common.code_result_payload(self.jarvis, str(msg.get("task_id") or ""))
+
     async def _cmd_mcp_list(self, msg: dict[str, Any]) -> Any:
         return common.mcp_list_payload(self.jarvis)
 
@@ -1088,6 +1098,12 @@ WebSocketHandler._HANDLERS = {
     "jarvis/schedule/add": WebSocketHandler._cmd_schedule_add,
     "jarvis/schedule/remove": WebSocketHandler._cmd_schedule_remove,
     "jarvis/schedule/enabled": WebSocketHandler._cmd_schedule_enabled,
+    # Jarvis Code. Starting a job IS a client command, unlike minting a bare
+    # task: a coding job has a worker behind it, so the record it creates is
+    # one something is driving.
+    "jarvis/code/list": WebSocketHandler._cmd_code_list,
+    "jarvis/code/start": WebSocketHandler._cmd_code_start,
+    "jarvis/code/result": WebSocketHandler._cmd_code_result,
     "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
     "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,
     "jarvis/mcp/remove": WebSocketHandler._cmd_mcp_remove,

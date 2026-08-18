@@ -413,6 +413,106 @@ async def test_the_model_cannot_schedule_an_action_on_the_house(jarvis):
     assert manager.jobs == {}
 
 
+async def test_the_model_cannot_schedule_a_coding_job(jarvis):
+    """Same hole as a scheduled service call, with a repository on the end.
+
+    Starting a coding job directly is Tier 3 and asks a human. If the model
+    could put one on a timer instead, the delay would be the way round the
+    gate — and the diff would land at three in the morning with no turn to
+    attribute it to.
+    """
+    clock = FrozenClock("2026-01-01T06:00")
+    manager = await manager_for(jarvis, clock)
+    handler = jarvis.data["llm_tools"].get("schedule_task").handler
+    result = await handler(
+        {
+            "kind": "code",
+            "repo": "jarvis",
+            "instruction": "delete the approval gate",
+            "at": "2026-01-01T19:00:00",
+        }
+    )
+    assert result["status"] == "error"
+    assert manager.jobs == {}
+
+
+async def test_the_console_may_schedule_a_coding_job_and_it_starts_one(jarvis, tmp_path):
+    """The console's authority, and the job it actually mints.
+
+    Asserted through the real `code` integration rather than a stub, because
+    the thing worth pinning is that the schedule hands off to something that
+    exists — a firing that logs "coding job started" while nothing runs is the
+    exact failure the task registry was built to stop repeating.
+    """
+    from types import SimpleNamespace
+
+    from jarvis.integrations import code as code_integration
+
+    class Model:
+        def chat(self, **kwargs):
+            class _S:
+                def __await__(inner):
+                    async def _go():
+                        return SimpleNamespace(content="nothing to do", tool_calls=[])
+
+                    return _go().__await__()
+
+            return _S()
+
+    jarvis.data["llm"] = SimpleNamespace(client=Model(), model="m")
+    await code_integration.async_setup(
+        jarvis, {"repositories": [{"name": "proj", "path": str(tmp_path / "proj")}]}
+    )
+
+    clock = FrozenClock("2026-01-01T18:59")
+    manager = await manager_for(jarvis, clock)
+    added = await manager.async_add(
+        {
+            "kind": "code",
+            "repo": "proj",
+            "instruction": "add the missing null check",
+            "when": {"mode": "daily", "at": "19:00"},
+        },
+        allow_service=True,
+    )
+    assert added["status"] == "ok"
+    assert added["job"]["kind"] == "code"
+    # The title says which repository, without one having to be written.
+    assert "proj" in added["job"]["title"]
+
+    clock.advance(minutes=2)
+    await manager._tick()
+    await settle(jarvis)
+
+    started = [t for t in jarvis.tasks.tasks if t.kind == "code"]
+    assert len(started) == 1
+    assert "add the missing null check" in started[0].title
+    assert "coding job started" in manager.jobs[added["job"]["id"]].last_result
+
+
+async def test_a_scheduled_coding_job_needs_both_halves(jarvis):
+    clock = FrozenClock("2026-01-01T06:00")
+    manager = await manager_for(jarvis, clock)
+    for missing in (
+        {"kind": "code", "repo": "proj", "when": {"mode": "daily", "at": "19:00"}},
+        {"kind": "code", "instruction": "do a thing", "when": {"mode": "daily", "at": "19:00"}},
+    ):
+        assert (await manager.async_add(missing, allow_service=True))["status"] == "error"
+
+
+async def test_a_job_with_a_repo_and_an_instruction_is_a_coding_job(jarvis):
+    """Inferred, the way a `service` key already infers a service call.
+
+    A configuration.yaml entry that plainly means one thing should not fail on
+    a missing `kind:`.
+    """
+    job = job_from_dict(
+        {"repo": "proj", "instruction": "do a thing", "when": {"mode": "daily", "at": "19:00"}}
+    )
+    assert job is not None
+    assert job.kind == "code"
+
+
 async def test_the_model_can_schedule_a_reminder(jarvis):
     clock = FrozenClock("2026-01-01T06:00")
     manager = await manager_for(jarvis, clock)

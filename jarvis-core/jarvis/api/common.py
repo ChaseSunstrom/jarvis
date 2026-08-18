@@ -1215,6 +1215,59 @@ async def async_reconnect_mcp(jarvis: "Jarvis", name: str = "") -> dict[str, Any
     return {"reconnected": key, "connected": connected, **mcp_list_payload(jarvis)}
 
 
+# --- Jarvis Code -------------------------------------------------------------
+
+
+def _code(jarvis: "Jarvis") -> Any:
+    from ..integrations.code import get_config
+
+    cfg = get_config(jarvis)
+    if cfg is None:
+        raise ApiError("unavailable", "this server has no code integration", 503)
+    return cfg
+
+
+def code_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Repositories, jobs, and whether checks run behind a wrapper."""
+    from ..integrations.code import listing_payload
+
+    _code(jarvis)
+    return listing_payload(jarvis)
+
+
+def code_result_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    from ..integrations.code import result_payload
+
+    _code(jarvis)
+    found = result_payload(jarvis, str(task_id or ""))
+    if found is None:
+        raise ApiError("not_found", "no finished coding job with that id", 404)
+    return found
+
+
+async def async_start_code_job(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Start a coding job from an authenticated caller.
+
+    Not approval-gated, unlike the model's `code_task` tool. Same asymmetry and
+    same reason as `async_add_scheduled`: a request that reached here carried a
+    bearer token, whereas a tool call may have been shaped by a page the model
+    read.
+    """
+    from ..integrations.code import async_start
+
+    _code(jarvis)
+    payload = data or {}
+    started = await async_start(
+        jarvis,
+        str(payload.get("repo") or ""),
+        str(payload.get("instruction") or ""),
+        source=str(payload.get("source") or "console"),
+    )
+    if isinstance(started, str):
+        raise ApiError("invalid_format", started, 400)
+    return {"task_id": started.id, "title": started.title, "task": started.as_dict()}
+
+
 # --- scheduled jobs ----------------------------------------------------------
 
 

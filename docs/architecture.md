@@ -15,6 +15,7 @@ Desktop agent (Python)   ─┘        │
                                    ├─► get_user_context / run_background_task
                                    ├─► web_search / web_fetch ─► SearXNG, jarvis-browser
                                    ├─► deep_research ─► a task, several searches, cited
+                                   ├─► start_coding_job ─► a branch, a diff, your own checks
                                    ├─► delegate_to_agents ─► jarvis-orchestrator
                                    │                          └─► OpenCode ─► Ollama
                                    └─► execute_command ─► jarvis-sandbox (network: none)

@@ -14,6 +14,7 @@ import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import type { McpServer } from './mcpDraft';
 import type { ScheduledJob } from './schedule';
+import type { CodeListing, CodeResult } from './code';
 
 export type SendFn = (data: string) => void;
 
@@ -763,6 +764,32 @@ export class JarvisClient {
 		const payload: Record<string, any> = { type: 'jarvis/mcp/reconnect' };
 		if (name) payload.name = name;
 		return this.command<McpListing>(payload);
+	}
+
+	// --- Jarvis Code -----------------------------------------------------------
+	//
+	// Unlike a bare task, a coding job IS startable from here: there is a worker
+	// behind it, so the record it creates is one something is driving. The
+	// asymmetry that remains is with the MODEL — `code_task` is Tier 3 and asks
+	// a human first, because a tool call may have been shaped by a page the
+	// model read, whereas this request carried a bearer token.
+
+	listCode(): Promise<CodeListing> {
+		return this.command<CodeListing>({ type: 'jarvis/code/list' });
+	}
+
+	startCodeJob(repo: string, instruction: string): Promise<{ task_id: string; title: string }> {
+		return this.command({ type: 'jarvis/code/start', repo, instruction });
+	}
+
+	/** The branch, diff, checks and trail of a finished job. Null while it runs. */
+	async getCodeResult(taskId: string): Promise<CodeResult | null> {
+		try {
+			return await this.command<CodeResult>({ type: 'jarvis/code/result', task_id: taskId });
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return null;
+			throw err;
+		}
 	}
 
 	// --- tasks ---------------------------------------------------------------

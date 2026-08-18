@@ -140,6 +140,30 @@ test('a job can be paused and resumed without being forgotten', async ({ page })
 	await expect(row).toHaveAttribute('data-enabled', 'true', { timeout: 10_000 });
 });
 
+test('the console can schedule a coding job, which the assistant cannot', async ({ page }) => {
+	// The same asymmetry as a scheduled service call, and for a sharper reason:
+	// starting a coding job asks a human, so a timer must not be the way round
+	// that. jarvis-core enforces it; what is tested here is that the console
+	// offers the form at all, and sends both halves.
+	await openTasks(page);
+	await page.getByTestId('sched-new').click();
+	await page.getByTestId('sched-kind').selectOption('code');
+	await page.getByTestId('sched-repo').fill('jarvis');
+	await page.getByTestId('sched-instruction').fill('fix it');
+	await page.getByTestId('sched-save').click();
+	// Too short to act on, and it says so before anything is scheduled.
+	await expect(page.getByTestId('schedule-error')).toContainText('bit more');
+
+	await page.getByTestId('sched-instruction').fill('add the missing null check to the handler');
+	await page.getByTestId('sched-mode').selectOption('daily');
+	await page.locator('#sched-time').fill('03:00');
+	await page.getByTestId('sched-save').click();
+
+	const row = page.locator('[data-testid^="sched-row-"][data-kind="code"]').first();
+	await expect(row).toBeVisible({ timeout: 10_000 });
+	await expect(row).toContainText('jarvis: add the missing null check');
+});
+
 test('a job from the config file cannot be removed from here', async ({ page }) => {
 	await openTasks(page);
 	await expect(page.getByTestId('sched-row-brief')).toBeVisible();

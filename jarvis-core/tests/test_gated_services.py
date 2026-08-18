@@ -145,6 +145,9 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     "apply_code_task": "orchestrator.code_apply",
     "web_browse": "web.browse",
     "write_file": "files.write",
+    # Jarvis Code. Edits a real repository — on its own branch, but on the
+    # operator's disk — and runs that repository's check commands.
+    "start_coding_job": "code.run",
     # --- no service form: the tool is the only door ----------------------
     # Registry-level tools with no `services.register` counterpart. An
     # automation cannot call these at all.

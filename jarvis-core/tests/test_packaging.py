@@ -1644,6 +1644,7 @@ DOC_FILES = (
     "voice.md",
     "security.md",
     "migrating-from-ha.md",
+    "code.md",
 )
 
 
@@ -1687,7 +1688,9 @@ def test_documented_python_compiles(name: str) -> None:
         ast.parse(block)
 
 
-@pytest.mark.parametrize("name", ("configuration.md", "migrating-from-ha.md", "voice.md"))
+@pytest.mark.parametrize(
+    "name", ("configuration.md", "migrating-from-ha.md", "voice.md", "code.md")
+)
 def test_documented_yaml_parses(name: str) -> None:
     for block in _code_blocks((DOCS / name).read_text(encoding="utf-8"), "yaml"):
         yaml.load(block, Loader=_PermissiveLoader)

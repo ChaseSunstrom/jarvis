@@ -207,6 +207,7 @@
 				<select id="sched-kind" bind:value={form.kind} data-testid="sched-kind">
 					<option value="notify">Say something</option>
 					<option value="research">Research a question</option>
+					<option value="code">Run a coding job</option>
 					<option value="service">Call a service</option>
 				</select>
 
@@ -216,6 +217,20 @@
 				{:else if form.kind === 'research'}
 					<label for="sched-question">Question</label>
 					<input id="sched-question" type="text" bind:value={form.question} />
+				{:else if form.kind === 'code'}
+					<label for="sched-repo">Repository</label>
+					<input id="sched-repo" type="text" bind:value={form.repo} data-testid="sched-repo" />
+					<label for="sched-instruction">What to change</label>
+					<input
+						id="sched-instruction"
+						type="text"
+						bind:value={form.instruction}
+						data-testid="sched-instruction"
+					/>
+					<p class="hint">
+						Runs on a branch of its own and leaves you a diff. The assistant cannot schedule one of
+						these — starting a coding job asks a human, and a timer must not be the way round that.
+					</p>
 				{:else}
 					<label for="sched-service">Service</label>
 					<input id="sched-service" type="text" bind:value={form.service} placeholder="light.turn_on" />
