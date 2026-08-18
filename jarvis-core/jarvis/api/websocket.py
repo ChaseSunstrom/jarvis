@@ -676,6 +676,25 @@ class WebSocketHandler:
         )
 
     # conversation history — what the console's chat mode lists and reopens
+    async def _cmd_task_list(self, msg: dict[str, Any]) -> Any:
+        return common.task_list_payload(
+            self.jarvis,
+            kind=str(msg.get("kind") or "") or None,
+            active_only=bool(msg.get("active")),
+        )
+
+    async def _cmd_task_get(self, msg: dict[str, Any]) -> Any:
+        return common.task_get_payload(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_task_cancel(self, msg: dict[str, Any]) -> Any:
+        return await common.async_cancel_task(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_task_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_delete_task(self.jarvis, str(msg.get("task_id") or ""))
+
+    async def _cmd_task_clear_finished(self, msg: dict[str, Any]) -> Any:
+        return await common.async_clear_finished_tasks(self.jarvis)
+
     async def _cmd_conversation_list(self, msg: dict[str, Any]) -> Any:
         return common.conversation_list_payload(self.jarvis)
 
@@ -1024,6 +1043,15 @@ WebSocketHandler._HANDLERS = {
     "fire_event": WebSocketHandler._cmd_fire_event,
     "call_service": WebSocketHandler._cmd_call_service,
     "conversation/process": WebSocketHandler._cmd_conversation_process,
+    # Reading and forgetting only. Creating a task is deliberately not a
+    # client command — see api/common.py: a task nothing is driving is the
+    # empty seam this registry exists to close, and a client-minted one would
+    # put that hole back one level out.
+    "jarvis/tasks/list": WebSocketHandler._cmd_task_list,
+    "jarvis/tasks/get": WebSocketHandler._cmd_task_get,
+    "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
+    "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,
+    "jarvis/tasks/clear_finished": WebSocketHandler._cmd_task_clear_finished,
     "jarvis/conversation/list": WebSocketHandler._cmd_conversation_list,
     "jarvis/conversation/get": WebSocketHandler._cmd_conversation_get,
     "jarvis/conversation/delete": WebSocketHandler._cmd_conversation_delete,

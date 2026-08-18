@@ -506,6 +506,56 @@ async def conversation_rename(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- tasks -----------------------------------------------------------------
+@api_router.get("/tasks")
+async def task_list(request: Request) -> dict[str, Any]:
+    """Every tracked job, newest first.
+
+    `?kind=research` filters; `?active=1` hides finished ones, which is what a
+    progress strip wants and a task page does not.
+    """
+    params = request.query_params
+    active = str(params.get("active") or "").strip().lower() in ("1", "true", "yes")
+    try:
+        return common.task_list_payload(
+            get_jarvis(request), kind=params.get("kind") or None, active_only=active
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/tasks/{task_id}")
+async def task_get(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return common.task_get_payload(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/tasks/{task_id}/cancel")
+async def task_cancel(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_cancel_task(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/tasks/{task_id}")
+async def task_delete(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_delete_task(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/tasks/clear_finished")
+async def task_clear_finished(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_clear_finished_tasks(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.post("/pair/new")
 async def pair_new(request: Request) -> dict[str, Any]:
     """Mint a pairing code for the console to draw as a QR.

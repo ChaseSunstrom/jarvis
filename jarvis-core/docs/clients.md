@@ -81,6 +81,11 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/conversation/get` | `conversation_id`; one conversation in full, including each turn's `thinking` and `tool_calls`. A tool's *result* is not stored — only its name, arguments and whether it worked |
 | `jarvis/conversation/delete` | `conversation_id`; forgets it in both the model's memory and the archive |
 | `jarvis/conversation/rename` | `conversation_id`, `title`; a name of your own instead of the first sentence |
+| `jarvis/tasks/list` | every tracked job, newest first: `{tasks: [...]}`. `kind` filters, `active: true` hides finished ones. Each row carries its own steps and a derived `fraction`, so a list of progress bars is one request rather than one per bar |
+| `jarvis/tasks/get` | `task_id`; one task in full |
+| `jarvis/tasks/cancel` | `task_id`; **asks** the worker to stop. The registry is a record, not a scheduler — it cannot reach into the coroutine — so the reply carries `cancelled` and a `note` saying a worker that does not check may still be running |
+| `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
+| `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |
 | `jarvis/approve` | resolve a Tier-3 approval the safety gate is holding |
 | `config/entity_registry/list` · `/update` | rename, re-area, hide, or set `exposed` on an entity |
 | `config/device_registry/list` · `/update` | device names and area assignment |

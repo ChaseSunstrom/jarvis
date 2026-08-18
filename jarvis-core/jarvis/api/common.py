@@ -1067,3 +1067,83 @@ async def async_dispatch_webhook(
     if inspect.isawaitable(result):
         result = await result
     return int(result or 0)
+
+
+# --- the task list ----------------------------------------------------------
+#
+# Read-only plus two destructive verbs, and no "create" on purpose. A task is
+# created by whatever is going to do the work — the assistant accepting a job,
+# a research run, a schedule firing — because a task nothing is driving is the
+# empty seam this registry was built to close. Letting a client mint one would
+# put that hole back, one level out.
+
+
+def _task_registry(jarvis: "Jarvis") -> Any:
+    registry = getattr(jarvis, "tasks", None)
+    if registry is None:
+        raise ApiError("unavailable", "this server has no task list", 503)
+    return registry
+
+
+def task_list_payload(
+    jarvis: "Jarvis", kind: str | None = None, active_only: bool = False
+) -> dict[str, Any]:
+    """Every tracked job, newest first.
+
+    Whole tasks rather than summaries, unlike the conversation list: a task is
+    a few hundred bytes and its steps ARE the interesting part — a list that
+    made you fetch each row to draw its progress bar would be one request per
+    visible task, on every update.
+    """
+    registry = _task_registry(jarvis)
+    return {"tasks": registry.listing(kind=kind, active_only=active_only)}
+
+
+def task_get_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    task = _task_registry(jarvis).get(str(task_id or ""))
+    if task is None:
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    return {"task": task.as_dict()}
+
+
+async def async_delete_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    """Forget one task. Does not stop it — see the note on cancel below."""
+    registry = _task_registry(jarvis)
+    if not await registry.async_remove(str(task_id or "")):
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    return {"removed": task_id}
+
+
+async def async_clear_finished_tasks(jarvis: "Jarvis") -> dict[str, Any]:
+    return {"removed": await _task_registry(jarvis).async_clear_finished()}
+
+
+async def async_cancel_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    """Ask for a task to stop, and be honest that asking is all this does.
+
+    The registry is a record, not a scheduler: nothing here can reach into the
+    coroutine doing the work. Marking a task `cancelled` is a REQUEST that the
+    worker is expected to notice, and a worker that ignores it will keep going
+    and keep reporting. Saying "cancelled" while the work continues would be
+    the same class of lie as the seam this registry replaced, so the payload
+    says which of the two happened.
+    """
+    registry = _task_registry(jarvis)
+    task = registry.get(str(task_id or ""))
+    if task is None:
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    if task.finished:
+        return {"task": task.as_dict(), "cancelled": False, "reason": "already finished"}
+    from ..tasks import STATUS_CANCELLED
+
+    updated = await registry.async_update(
+        task.id, status=STATUS_CANCELLED, detail="cancelled from a client"
+    )
+    return {
+        "task": updated.as_dict() if updated else task.as_dict(),
+        "cancelled": True,
+        "note": (
+            "marked cancelled; a worker that does not check for this may still "
+            "be running"
+        ),
+    }
