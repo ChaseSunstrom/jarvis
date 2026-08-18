@@ -5,6 +5,9 @@ import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.tasks.TaskBoard
+import ai.jarvis.app.tasks.TaskFrames
+import ai.jarvis.app.tasks.TaskWatch
 import ai.jarvis.app.companion.CompanionProtocol
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
@@ -554,6 +557,7 @@ class JarvisChannel(
         rememberActionCount(tierTable.size)
         startHeartbeat(current)
         flushEvents(current)
+        watchTasks(current)
         // A fresh session means a fresh DevicePresence on the server. Comparing
         // against the pre-reconnect snapshot would leave it on its defaults —
         // locked, screen off, never interacted — until something happened to
@@ -577,6 +581,34 @@ class JarvisChannel(
             JarvisConfig(appContext).lastActionCount = count
         } catch (t: Throwable) {
             Log.d(TAG, "could not record the action count", t)
+        }
+    }
+
+    /**
+     * Ask to be told about long work, once per connection.
+     *
+     * Subscriptions FIRST, then the listing. A task that moves between the two
+     * would otherwise be missed for the life of the connection, and
+     * [TaskBoard.replaceAll] keeps whichever version is newer — so doing it in
+     * this order costs nothing and closes the window.
+     *
+     * The listing exists because the interesting case is a run that started
+     * while the phone was asleep in a pocket. Events alone would show it only
+     * once it next moved, and a research run's last move may be its last.
+     *
+     * Failure is not handled and does not need to be. An older jarvis-core
+     * answers `unknown_command` and fires nothing, which leaves the overlay
+     * empty — exactly the behaviour before this existed.
+     */
+    private fun watchTasks(current: Session) {
+        for (event in TaskBoard.EVENTS) {
+            current.send(TaskFrames.subscribe(nextRequestId.getAndIncrement(), event))
+        }
+        scope.launch {
+            val result = request(TaskFrames.TYPE_LIST, TaskFrames.listArgs())
+            if (result != null && ChannelFrames.isSuccess(result)) {
+                TaskWatch.onListing(result.optJSONObject("result"))
+            }
         }
     }
 
@@ -752,6 +784,26 @@ class JarvisChannel(
             ChannelFrames.TYPE_RESULT -> onResult(current, msg)
 
             ChannelFrames.TYPE_DEVICE_COMMAND -> onDeviceCommand(current, msg)
+
+            ChannelFrames.TYPE_EVENT -> {
+                // Bus events this device subscribed to. Only the task ones are
+                // wanted; anything else was somebody else's subscription on a
+                // shared socket and is ignored rather than logged per frame.
+                //
+                // Guarded like `device_command`, and for a smaller version of
+                // the same reason. This frame paints a floating window over
+                // whatever the user is looking at, with a title and a line of
+                // text the sender chooses. Nothing here can be actioned — the
+                // overlay has one tap target and it opens this app — but an
+                // unauthenticated peer that can put words on somebody's screen
+                // is a phishing surface, and this socket has already been found
+                // once to accept a frame from before the handshake finished.
+                if (!current.authed || !current.registered) {
+                    Log.w(TAG, "an event arrived before the handshake finished; ignoring")
+                } else {
+                    TaskWatch.onEvent(msg)
+                }
+            }
 
             CompanionProtocol.TYPE_MESSAGE -> {
                 // Jarvis reaching the USER, not the user's phone. Deliberately

@@ -55,6 +55,7 @@ enum class ConsoleTab(
     AREAS("AREAS", "/areas"),
     AUTOMATIONS("AUTOMATIONS", "/automations"),
     TOOLS("TOOLS", "/tools"),
+    TASKS("TASKS", "/tasks"),
     SETTINGS("SETTINGS", "/settings");
 
     companion object {

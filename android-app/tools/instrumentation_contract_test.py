@@ -208,7 +208,11 @@ def expected_onscreen_literals() -> dict[str, tuple[set[str], set[str]]]:
 # a renamed DENY button: `automation/policy/ActionTier.kt` parses the wire word
 # "DENY", so a haystack of the WHOLE app would report the button as still
 # present after somebody renamed it to "REFUSE".
-UI_SUBPACKAGES = {"ui", "companion"}
+# `tasks` draws the floating progress chip, whose words ("waiting for you",
+# "it failed, and said no more than that") a person reads and an
+# instrumented test can wait for — TaskOverlay exposes `rootForTest` for
+# exactly that, the same seam AssistOverlay has.
+UI_SUBPACKAGES = {"ui", "companion", "tasks"}
 
 # Sub-packages whose strings a person DOES read, on a surface no instrumented
 # test can reach.

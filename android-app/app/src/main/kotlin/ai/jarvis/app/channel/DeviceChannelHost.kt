@@ -2,6 +2,9 @@ package ai.jarvis.app.channel
 
 import ai.jarvis.app.BuildConfig
 import ai.jarvis.app.automation.AutomationRuntime
+import ai.jarvis.app.tasks.TaskNotifier
+import ai.jarvis.app.tasks.TaskOverlay
+import ai.jarvis.app.tasks.TaskWatch
 import android.content.Context
 import android.util.Log
 
@@ -51,6 +54,17 @@ object DeviceChannelHost {
     @Volatile
     private var channel: JarvisChannel? = null
 
+    /**
+     * The floating chip, and the notification behind it.
+     *
+     * Both live here rather than in an Activity for the same reason the channel
+     * does: the case they exist for is a research run that starts while the
+     * phone is in a pocket, and an Activity is not running then. Neither draws
+     * anything until there is work to draw, so starting them costs a listener.
+     */
+    private var overlay: TaskOverlay? = null
+    private var unlistenTasks: (() -> Unit)? = null
+
     /** The live channel, for the settings screen's status readout. */
     fun channel(): JarvisChannel? = channel
 
@@ -89,7 +103,28 @@ object DeviceChannelHost {
             stop()
             return
         }
+        startTaskSurfaces(app)
         Log.i(TAG, "device channel started")
+    }
+
+    /**
+     * Show long work wherever the phone can.
+     *
+     * Two surfaces, deliberately not exclusive. The overlay is the good one and
+     * has two hard limits — it needs SYSTEM_ALERT_WINDOW, and it is never drawn
+     * above the keyguard — and both of them bite in exactly the situation this
+     * is for. The notification has neither limit. Running both means an OEM
+     * that suppresses overlays degrades to something rather than to nothing.
+     */
+    private fun startTaskSurfaces(app: Context) {
+        if (unlistenTasks != null) return
+        val chip = TaskOverlay(app)
+        overlay = chip
+        runCatching { chip.start() }
+            .onFailure { Log.w(TAG, "the task overlay would not start", it) }
+        unlistenTasks = TaskWatch.listen { rows ->
+            TaskNotifier.render(app, rows, TaskWatch.headline())
+        }
     }
 
     /** Close the socket and clear the seams. Safe when there is no channel. */
@@ -99,6 +134,13 @@ object DeviceChannelHost {
         channel = null
         AutomationRuntime.deviceEvents = null
         AutomationRuntime.askJarvis = null
+        unlistenTasks?.invoke()
+        unlistenTasks = null
+        overlay?.stop()
+        overlay = null
+        // The board is not cleared. It is the last true thing anybody knew, and
+        // a reconnect replaces it wholesale with a fresh listing.
+        TaskWatch.onDisconnected()
         runCatching { existing.stop() }
             .onFailure { Log.w(TAG, "device channel stop failed", it) }
     }
