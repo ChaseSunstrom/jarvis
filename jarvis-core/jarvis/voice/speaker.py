@@ -216,11 +216,33 @@ MIN_MEASURABLE_SAMPLES = MIN_ENROLMENT_SAMPLES + 1
 #: `tests/test_speaker.py` and `android-app/tools/voiceprint_parity_test.py`
 #: both assert the Kotlin copy still matches.
 ENROLMENT_PROMPTS: tuple[str, ...] = (
+    # Ten, not five, and the order matters: the first five are the set this
+    # shipped with, so an existing profile enrolled against them is still
+    # enrolled against the same phrases at the same indexes.
+    #
+    # The additions are not filler. The score is a per-dimension z against the
+    # spread of the enrolment set, so what the set has to contain is the RANGE
+    # of the owner's ordinary speech — a profile built from five level,
+    # similar-length sentences has a narrow spread, and every dimension is then
+    # a hair-trigger that rejects the owner for having a cold or standing
+    # further away. Each of these moves something specific:
+    #
+    #   question intonation, a rising contour the statements do not have;
+    #   a long sentence, for sustained vowels and breath;
+    #   a short clipped one, which is what most real commands actually are;
+    #   counting, for steady prosody with no semantic stress;
+    #   plosives and sibilants, which the spectral features respond to most;
+    #   a quiet-register line, because people ask for the lights low quietly.
     "Good evening, Jarvis. Bring the house up, would you?",
     "What is on my calendar tomorrow morning?",
     "Lock the front door and turn everything off.",
     "One, two, three, four, five, six, seven, eight, nine, ten.",
     "It has been a long day and I would like the lights low, please.",
+    "Is the garage still open?",
+    "Play something quiet in the kitchen and turn the hallway light down to about a third.",
+    "Stop.",
+    "Pack the parcels, book the taxi, and set a timer for fifty-five minutes.",
+    "Tell me the temperature upstairs, then remind me at six to close the blinds.",
 )
 
 #: Default accept threshold, in mean-squared-z. 4.0 is "two standard deviations
@@ -675,6 +697,21 @@ class VoiceProfile:
     embedder: str = "jarvis-mfcc-v1"
     created: float = field(default_factory=time.time)
     updated: float = field(default_factory=time.time)
+    #: How many leading samples were enrolled ON PURPOSE, by a person reading
+    #: the prompts. They are never evicted.
+    #:
+    #: This is what stops adaptation (:attr:`SpeakerGate.adapt`) from becoming a
+    #: way to walk the gate open. Eviction is oldest-first, so without anchors a
+    #: profile that keeps learning eventually contains no deliberately enrolled
+    #: sample at all — every one has been pushed out by a turn that merely
+    #: scored well. Each individual step is small, which is exactly why the end
+    #: state is reachable: this is template poisoning, and it does not need a
+    #: single suspicious event to happen.
+    #:
+    #: A profile written before adaptation existed has no anchor count, and
+    #: :meth:`from_dict` treats every sample in it as an anchor — everything
+    #: enrolled back then was enrolled deliberately.
+    anchors: int = 0
 
     _mean: tuple[float, ...] = field(default=(), repr=False)
     _std: tuple[float, ...] = field(default=(), repr=False)
@@ -701,25 +738,63 @@ class VoiceProfile:
                 raise SpeakerError(
                     f"enrolment vector has {len(vector)} dimensions, expected {EMBEDDING_DIMS}"
                 )
-        return cls(samples=vectors[-MAX_ENROLMENT_SAMPLES:], threshold=_sane_threshold(threshold), label=label)
+        kept = vectors[-MAX_ENROLMENT_SAMPLES:]
+        return cls(
+            samples=kept,
+            threshold=_sane_threshold(threshold),
+            label=label,
+            anchors=len(kept),
+        )
 
-    def add(self, embedding: Embedding | tuple[float, ...]) -> None:
+    def add(self, embedding: Embedding | tuple[float, ...], *, anchor: bool = True) -> None:
         """Add one more sample, keeping the most recent
         :data:`MAX_ENROLMENT_SAMPLES`.
 
         Oldest-out rather than a running average, because a running average
         cannot be un-done: one enrolment recorded while you had a cold would
         otherwise be in the profile permanently.
+
+        `anchor=False` is an ADAPTED sample — one the gate accepted confidently
+        during an ordinary turn, rather than one a person read from the prompt
+        list. Adapted samples are evicted first and anchors are never evicted,
+        so a profile that has been learning for a year still contains the
+        enrolment it started from. See :attr:`anchors`.
         """
         vector = _vector_of(embedding)
         if len(vector) != EMBEDDING_DIMS:
             raise SpeakerError(
                 f"vector has {len(vector)} dimensions, expected {EMBEDDING_DIMS}"
             )
-        self.samples.append(vector)
-        del self.samples[:-MAX_ENROLMENT_SAMPLES]
+        anchors = min(self.anchors, len(self.samples))
+        if anchor:
+            # Deliberate samples sit at the front, so the anchor block stays
+            # contiguous however many adapted ones are already present.
+            self.samples.insert(anchors, vector)
+            anchors += 1
+        else:
+            self.samples.append(vector)
+
+        # Trim the ADAPTED tail only. An anchor block at the cap means a
+        # profile that can no longer adapt, which is the correct outcome:
+        # deliberate enrolment outranks learning.
+        room = MAX_ENROLMENT_SAMPLES - anchors
+        if room <= 0:
+            del self.samples[anchors:]
+            anchors = min(anchors, MAX_ENROLMENT_SAMPLES)
+            del self.samples[MAX_ENROLMENT_SAMPLES:]
+        elif len(self.samples) - anchors > room:
+            # oldest adapted first
+            drop = len(self.samples) - anchors - room
+            del self.samples[anchors : anchors + drop]
+
+        self.anchors = anchors
         self.updated = time.time()
         self._recompute()
+
+    @property
+    def adapted_samples(self) -> int:
+        """Samples the gate learned by itself, rather than ones you read out."""
+        return max(0, len(self.samples) - min(self.anchors, len(self.samples)))
 
     @property
     def enrolled(self) -> bool:
@@ -948,6 +1023,7 @@ class VoiceProfile:
     def as_dict(self) -> dict[str, Any]:
         return {
             "samples": [list(vector) for vector in self.samples],
+            "anchors": self.anchors,
             "threshold": self.threshold,
             "label": self.label,
             "embedder": self.embedder,
@@ -967,6 +1043,10 @@ class VoiceProfile:
         return {
             "enrolled": self.enrolled,
             "samples": len(self.samples),
+            #: Split out so a screen can say "5 you read, 4 it learned" rather
+            #: than a single number that quietly grew.
+            "anchor_samples": min(self.anchors, len(self.samples)),
+            "adapted_samples": self.adapted_samples,
             "min_samples": MIN_ENROLMENT_SAMPLES,
             # What it takes to measure a threshold rather than inherit one. The
             # console and the phone both drew `suggested_threshold` as the
@@ -1019,6 +1099,17 @@ class VoiceProfile:
                 setattr(profile, key, float(payload.get(key) or time.time()))
             except (TypeError, ValueError):
                 pass
+        # A profile written before adaptation existed has no anchor count, and
+        # every sample in it was read off the prompt list by a person. Treating
+        # them as anchors is both true and the safe direction to be wrong in:
+        # the alternative makes an upgrade quietly turn the whole of somebody's
+        # deliberate enrolment into evictable material.
+        raw_anchors = payload.get("anchors")
+        try:
+            anchors = len(profile.samples) if raw_anchors is None else int(raw_anchors)
+        except (TypeError, ValueError):
+            anchors = len(profile.samples)
+        profile.anchors = max(0, min(anchors, len(profile.samples)))
         return profile
 
 
@@ -1070,6 +1161,44 @@ class SpeakerGate:
     #: human approval. Set it false if that trade is wrong for you.
     allow_unverifiable: bool = True
 
+    #: Keep learning the owner's voice from ordinary turns.
+    #:
+    #: OFF by default, and that is not timidity — it is that switching it on
+    #: changes what a biometric gate will accept tomorrow, and a default that
+    #: does that on upgrade is a default nobody consented to. One line of YAML
+    #: turns it on; `docs/voice-identity.md` says what it costs.
+    #:
+    #: What it buys: a profile enrolled once in a quiet room slowly stops
+    #: matching the same person in the kitchen with the extractor running, and
+    #: the failure looks like "Jarvis stopped answering me". Adapting from
+    #: confident matches tracks the microphone, the room and the voice as they
+    #: drift.
+    #:
+    #: What it risks, and what the three guards below are for: every adaptive
+    #: system can be walked. An impostor who scores just inside the threshold
+    #: gets added to the profile, moving it a little toward them, which lets
+    #: them in a little more easily next time. So —
+    adapt: bool = False
+    #: 1. **A much stricter bar than acceptance.** Adaptation requires a score
+    #:    at or under this FRACTION of the threshold, so a turn that merely
+    #:    scraped past teaches nothing. At the default an accepted-but-marginal
+    #:    turn at 0.9x threshold is ignored; only a turn deep inside the
+    #:    owner's own distribution counts.
+    adapt_margin: float = 0.5
+    #: 2. **A rate limit.** At most one adapted sample per this many seconds,
+    #:    so a burst of attempts cannot become a burst of learning. Ten minutes
+    #:    is far below the timescale of a cold or a new microphone and far
+    #:    above the timescale of somebody standing at the door trying voices.
+    adapt_min_interval: float = 600.0
+    #: 3. **Anchors**, on the profile itself: the samples a person deliberately
+    #:    enrolled are never evicted, so the profile can never consist entirely
+    #:    of what it taught itself. See :attr:`VoiceProfile.anchors`.
+
+    #: Set when :meth:`check` changed the profile, so the caller knows to
+    #: persist it. The caller clears it; this class never writes to disk.
+    profile_dirty: bool = False
+    _last_adapt: float = 0.0
+
     @property
     def enrolled(self) -> bool:
         return self.profile is not None and self.profile.enrolled
@@ -1080,10 +1209,60 @@ class SpeakerGate:
         return self.mode in (MODE_OBSERVE, MODE_ENFORCE) and self.enrolled
 
     def check(self, pcm: bytes, rate: int = DEFAULT_RATE, width: int = DEFAULT_WIDTH) -> Verdict:
-        """Verify one utterance. Blocking — call it in a thread."""
+        """Verify one utterance, and learn from it when that is safe.
+
+        Blocking — call it in a thread.
+        """
         if self.profile is None:
             return Verdict(False, math.inf, 0.0, 0.0, 0.0, "not-enrolled")
-        return self.profile.verify(embed(pcm, rate, width))
+        embedding = embed(pcm, rate, width)
+        verdict = self.profile.verify(embedding)
+        if self._should_adapt(verdict, embedding):
+            self.profile.add(embedding, anchor=False)
+            self._last_adapt = time.time()
+            self.profile_dirty = True
+            _LOGGER.info(
+                "speaker: learned from a turn scoring %.2f (threshold %.2f); "
+                "profile now %d enrolled + %d adapted",
+                verdict.score,
+                self.profile.threshold,
+                min(self.profile.anchors, len(self.profile.samples)),
+                self.profile.adapted_samples,
+            )
+        return verdict
+
+    def _should_adapt(self, verdict: Verdict, embedding: Any) -> bool:
+        """Every condition that has to hold before a turn may teach.
+
+        Written as one list on purpose. Each clause is a guard somebody could
+        reasonably think redundant, and the ones that look redundant are the
+        ones that matter: `accepted` alone admits a marginal impostor, and the
+        margin alone would admit them the moment the mode is `off` and nothing
+        is being enforced at all.
+        """
+        if not self.adapt or self.profile is None or embedding is None:
+            return False
+        # Never while the gate is doing nothing. In `off` there is no
+        # enforcement and nobody is watching the scores, so "it accepted this"
+        # carries no weight — and an unattended house would spend that mode
+        # quietly learning whoever talks in it.
+        if not self.active:
+            return False
+        if not verdict.accepted:
+            return False
+        # Deep inside the owner's distribution, not merely inside the gate.
+        if not math.isfinite(verdict.score):
+            return False
+        if verdict.score > self.profile.threshold * max(0.0, self.adapt_margin):
+            return False
+        # An utterance with no measurable pitch is refused as a MATCH by
+        # `verify`, so it cannot reach here — but it must never become an
+        # enrolment sample either, and saying so costs one line.
+        if not getattr(embedding, "has_pitch", False):
+            return False
+        if time.time() - self._last_adapt < max(0.0, self.adapt_min_interval):
+            return False
+        return True
 
     def blocks(self, verdict: Verdict) -> bool:
         """Whether this verdict stops the turn.

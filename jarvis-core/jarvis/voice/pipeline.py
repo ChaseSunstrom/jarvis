@@ -636,6 +636,11 @@ class PipelineRun:
             return None
 
         self.speaker_verdict = verdict
+        # `check` may have learned from this turn (see SpeakerGate.adapt). It
+        # deliberately does not write to disk — a verifier running in a worker
+        # thread has no business touching the store — so persisting is here,
+        # where there is an event loop and a Jarvis to save through.
+        await self._persist_adapted_profile()
         payload = verdict.as_dict() if hasattr(verdict, "as_dict") else {"verdict": str(verdict)}
         gate = self.speaker
         payload["mode"] = getattr(gate, "mode", "unknown")
@@ -657,6 +662,27 @@ class PipelineRun:
         if getattr(gate, "on_reject", "speak") != "speak":
             return ""
         return str(getattr(gate, "refusal", "") or "")
+
+    async def _persist_adapted_profile(self) -> None:
+        """Write the profile back if this turn changed it.
+
+        Best-effort on purpose. A store that would not write is a reason to log
+        and carry on, not a reason to fail a turn the speaker already passed:
+        the worst case is that the sample is learned again next time.
+        """
+        gate = self.speaker
+        if not getattr(gate, "profile_dirty", False):
+            return
+        gate.profile_dirty = False
+        profile = getattr(gate, "profile", None)
+        if profile is None or self.jarvis is None:
+            return
+        try:
+            from ..integrations.voice import async_save_profile
+
+            await async_save_profile(self.jarvis, profile)
+        except Exception:
+            _LOGGER.exception("Could not save the adapted voice profile")
 
     async def _run_intent(self, text: str) -> str:
         await self._emit(

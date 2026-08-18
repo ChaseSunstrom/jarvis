@@ -481,6 +481,9 @@ def _speaker_gate(config: dict[str, Any]) -> SpeakerGate:
         on_reject: speak     # speak (default) | silent
         refusal: "I'm sorry, I don't recognise that voice."
         allow_unverifiable: true
+        adapt: true          # keep learning your voice from ordinary turns
+        adapt_margin: 0.5    # only from turns scoring under half the threshold
+        adapt_min_interval: 600   # and at most one sample per ten minutes
     ```
 
     An unknown `mode` falls back to `off` with a loud log line rather than to
@@ -514,7 +517,51 @@ def _speaker_gate(config: dict[str, Any]) -> SpeakerGate:
         gate.refusal = DEFAULT_REFUSAL
     if "allow_unverifiable" in section:
         gate.allow_unverifiable = bool(section.get("allow_unverifiable"))
+
+    # Adaptation. Off unless asked for: it changes what the gate will accept
+    # tomorrow, and no upgrade should do that on somebody's behalf.
+    gate.adapt = bool(section.get("adapt", False))
+    gate.adapt_margin = _positive_float(
+        section, "adapt_margin", gate.adapt_margin, upper=1.0
+    )
+    gate.adapt_min_interval = _positive_float(
+        section, "adapt_min_interval", gate.adapt_min_interval
+    )
+    if gate.adapt and mode == MODE_OFF:
+        # Not an error — somebody may be staging the config — but it does
+        # nothing, and silence here reads as "adaptation is running".
+        _LOGGER.warning(
+            "voice: speaker: adapt is on but mode is 'off', so nothing is "
+            "verified and nothing will be learned. Set mode: observe first."
+        )
     return gate
+
+
+def _positive_float(
+    section: dict[str, Any], key: str, fallback: float, upper: float | None = None
+) -> float:
+    """A number from config, or the default with a line saying why.
+
+    A misread setting must not silently become 0 — `adapt_margin: "half"` would
+    otherwise turn into a margin nothing can satisfy, and the symptom is that
+    adaptation appears to be on and never happens.
+    """
+    if key not in section:
+        return fallback
+    try:
+        value = float(section[key])
+    except (TypeError, ValueError):
+        _LOGGER.warning(
+            "voice: speaker: %s: %r is not a number; using %s", key, section[key], fallback
+        )
+        return fallback
+    if value <= 0 or (upper is not None and value > upper):
+        limit = f"0 < x <= {upper}" if upper is not None else "x > 0"
+        _LOGGER.warning(
+            "voice: speaker: %s: %s is outside %s; using %s", key, value, limit, fallback
+        )
+        return fallback
+    return value
 
 
 async def async_load_profile(jarvis: "Jarvis", data: VoiceData) -> None:

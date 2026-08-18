@@ -632,3 +632,144 @@ def test_the_leave_one_out_guard_is_the_same_bar_verify_applies():
     assert "math.isfinite(score)" in source, (
         "nothing stops a non-finite verdict reaching a JSON response again"
     )
+
+
+# --- adaptive enrolment, and the attack it is shaped around ------------------
+#
+# "Keep learning my voice every time I speak" is the request, and the whole
+# difficulty is that the obvious implementation — add every accepted turn —
+# is template poisoning with extra steps. Each of these pins one guard.
+
+def _owner_gate(*, adapt=True, mode="enforce", threshold=None):
+    from jarvis.voice.speaker import SpeakerGate
+
+    profile = VoiceProfile.enrol([embed(pcm) for pcm in samples_for(OWNER, 5)])
+    if threshold is not None:
+        profile.threshold = threshold
+    else:
+        profile.threshold = max(profile.suggested_threshold(), DEFAULT_THRESHOLD)
+    gate = SpeakerGate(profile=profile, mode=mode)
+    gate.adapt = adapt
+    gate.adapt_min_interval = 0.0
+    return gate
+
+
+def test_enrolment_marks_its_own_samples_as_anchors():
+    profile = VoiceProfile.enrol([embed(pcm) for pcm in samples_for(OWNER, 5)])
+    assert profile.anchors == 5
+    assert profile.adapted_samples == 0
+
+
+def test_a_confident_turn_is_learned_from():
+    gate = _owner_gate()
+    before = len(gate.profile.samples)
+    verdict = gate.check(samples_for(OWNER, 6)[5], RATE, 2)
+    assert verdict.accepted, f"the owner was not accepted: {verdict.as_dict()}"
+    assert len(gate.profile.samples) == before + 1, "a confident turn taught nothing"
+    assert gate.profile.adapted_samples == 1
+    assert gate.profile_dirty, "the caller was never told to save the profile"
+
+
+def test_adaptation_is_off_unless_asked_for():
+    gate = _owner_gate(adapt=False)
+    before = len(gate.profile.samples)
+    gate.check(samples_for(OWNER, 6)[5], RATE, 2)
+    assert len(gate.profile.samples) == before
+    assert not gate.profile_dirty
+
+
+def test_a_turn_that_merely_scraped_past_teaches_nothing():
+    """The guard that separates adaptation from poisoning.
+
+    A threshold generous enough to accept an impostor's best attempt must not
+    also be generous enough to LEARN from it. Set the bar so the owner's own
+    utterance is accepted but sits above the margin, and nothing may be added.
+    """
+    gate = _owner_gate()
+    pcm = samples_for(OWNER, 6)[5]
+    probe = gate.profile.verify(embed(pcm, RATE, 2))
+    assert math.isfinite(probe.score)
+
+    # Accepted (threshold above the score), but not confidently: the score is
+    # above margin x threshold.
+    gate.profile.threshold = probe.score * 1.5
+    gate.adapt_margin = 0.5          # margin x threshold = 0.75 x score
+    gate._last_adapt = 0.0
+    before = len(gate.profile.samples)
+
+    verdict = gate.check(pcm, RATE, 2)
+    assert verdict.accepted, "the setup is wrong if this was refused"
+    assert len(gate.profile.samples) == before, (
+        "a turn that only just passed was added to the profile — that is the "
+        "step an impostor repeats to walk the gate open"
+    )
+
+
+def test_a_refused_turn_never_teaches():
+    gate = _owner_gate()
+    impostor = samples_for(IMPOSTORS[0], 1)[0]
+    before = len(gate.profile.samples)
+    verdict = gate.check(impostor, RATE, 2)
+    if verdict.accepted:
+        pytest.skip("this impostor is not separable at the measured threshold")
+    assert len(gate.profile.samples) == before
+
+
+def test_nothing_is_learned_while_the_gate_is_off():
+    """`off` means nobody is watching the scores, so acceptance means nothing."""
+    gate = _owner_gate(mode="off")
+    before = len(gate.profile.samples)
+    gate.check(samples_for(OWNER, 6)[5], RATE, 2)
+    assert len(gate.profile.samples) == before
+
+
+def test_the_rate_limit_holds_a_burst_to_one_sample():
+    gate = _owner_gate()
+    gate.adapt_min_interval = 600.0
+    gate._last_adapt = 0.0
+    before = len(gate.profile.samples)
+    for pcm in samples_for(OWNER, 9)[5:]:
+        gate.check(pcm, RATE, 2)
+    assert len(gate.profile.samples) == before + 1, (
+        "the rate limit let a burst of turns become a burst of learning"
+    )
+
+
+def test_deliberate_enrolment_survives_a_lifetime_of_adaptation():
+    """The anchor guarantee, driven past the cap.
+
+    Without anchors, oldest-out eviction means a profile that keeps learning
+    eventually contains not one sample a person actually read out.
+    """
+    profile = VoiceProfile.enrol([embed(pcm) for pcm in samples_for(OWNER, 5)])
+    originals = list(profile.samples)
+    for index in range(MAX_ENROLMENT_SAMPLES * 3):
+        vector = tuple(float(index + dim) for dim in range(EMBEDDING_DIMS))
+        profile.add(vector, anchor=False)
+
+    assert len(profile.samples) <= MAX_ENROLMENT_SAMPLES
+    assert profile.anchors == 5
+    for vector in originals:
+        assert vector in profile.samples, (
+            "an enrolled sample was evicted by adaptation; the profile can now "
+            "consist entirely of what it taught itself"
+        )
+
+
+def test_an_older_profile_treats_everything_in_it_as_deliberate():
+    """Upgrading must not turn somebody's enrolment into evictable material."""
+    legacy = {
+        "samples": [list(vec) for vec in _profile_of(5).samples],
+        "threshold": DEFAULT_THRESHOLD,
+    }
+    restored = VoiceProfile.from_dict(legacy)
+    assert restored.anchors == 5
+    assert restored.adapted_samples == 0
+
+
+def test_anchors_survive_a_save_and_load():
+    profile = VoiceProfile.enrol([embed(pcm) for pcm in samples_for(OWNER, 5)])
+    profile.add(tuple(0.5 for _ in range(EMBEDDING_DIMS)), anchor=False)
+    restored = VoiceProfile.from_dict(profile.as_dict())
+    assert restored.anchors == 5
+    assert restored.adapted_samples == 1
