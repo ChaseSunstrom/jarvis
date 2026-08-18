@@ -471,6 +471,45 @@ web:
   act_allowlist: []
 
 # ---------------------------------------------------------------------------
+# Files — notes, documents, and whatever cloud you point it at.
+# ---------------------------------------------------------------------------
+# `list_files`, `read_file`, `search_files` and `write_file`, over places you
+# name here. WebDAV rather than a Nextcloud client, because Nextcloud, ownCloud,
+# Synology, Seafile, Box and a plain Apache mod_dav all speak it — "my cloud"
+# is a protocol question, not a vendor one.
+#
+# Two things hold whatever you configure:
+#
+#   * a file's contents are UNTRUSTED and are fenced like a web page. A note in
+#     a shared folder is text somebody else wrote, and dropping a file into one
+#     must not be a way to put instructions in front of the model.
+#   * every path is checked against its place. The operator names the place;
+#     the MODEL supplies the path, and its input is shaped by what it has read.
+#
+# Nothing here is configured by default, so none of the tools can reach
+# anything until you add a place.
+files:
+  max_bytes: 200000       # of one file; the rest is not read
+
+  roots: []
+  # - name: notes                     # what you call it out loud
+  #   type: local
+  #   path: /srv/notes
+  #
+  # - name: cloud
+  #   type: webdav
+  #   # Nextcloud's per-user WebDAV root. Others differ; the pattern is the
+  #   # collection you would open in a file manager.
+  #   url: https://cloud.example.com/remote.php/dav/files/YOURNAME/
+  #   username: YOURNAME
+  #   # An app password, not your login. Nextcloud: Settings -> Security.
+  #   password: !env_var NEXTCLOUD_PASSWORD ""
+  #   # Read-only unless you say otherwise. Even then `write_file` is Tier 3
+  #   # and asks every time: this flag allows it at all, the tier is you
+  #   # seeing each one.
+  #   writable: false
+
+# ---------------------------------------------------------------------------
 # MCP — anybody else's tools, inside Jarvis.
 # ---------------------------------------------------------------------------
 # Model Context Protocol servers. Each one Jarvis can reach lends it their

@@ -134,6 +134,10 @@ GATED_SERVICES = frozenset(
         # service is held rather than re-deriving "is this a write" here, where
         # a wrong answer is silent.
         "web.browse",
+        # Writes a file into one of the user's places. Tool form: `write_file`
+        # (Tier 3). The tool asks every time; without this the SERVICE would be
+        # the way round it, and "overwrite the note" is a loss with no undo.
+        "files.write",
     }
 )
 
