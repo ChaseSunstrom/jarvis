@@ -260,15 +260,46 @@ test('the orb stops moving when the reader has asked for reduced motion', async 
 		'no WebGL here, so this proves nothing about the shader loop'
 	).toBe('CANVAS');
 
-	// Settle first. The orb draws its one frame at mount, and a web font landing
-	// after that reflows the rows around it — which moves the canvas by a
-	// fraction of a pixel and re-rasterises it, without anything having
-	// animated. The box check below is what tells the two apart.
-	await page.waitForTimeout(1200);
+	// Wait for the warm-up to finish, then measure FRAMES.
+	//
+	// This used to be a fixed 1.2 s settle followed by comparing two PNGs 700 ms
+	// apart, and it failed on CI while passing everywhere else. The settle was
+	// the problem: it is a magic number tuned on a machine with a GPU, and a
+	// cold runner compiling this shader on SwiftShader can still be drawing its
+	// FIRST frame when the stopwatch starts. Every draw advances `uTime` and the
+	// blob phases, so one late warm-up frame is byte-for-byte indistinguishable
+	// from an animation — the test could not tell "slow to start" from "never
+	// stopped".
+	//
+	// `data-frames` answers the actual question. A paused orb's count is
+	// constant however long the first frame took; an animating one climbs at
+	// display rate. Nothing here is weaker than before: a genuinely animating
+	// orb never settles, so `settle` exhausts its deadline and the strict
+	// comparisons below still run and still fail.
+	const frames = async () => Number(await orb.getAttribute('data-frames'));
+	const settle = async (deadlineMs = 15_000) => {
+		const until = Date.now() + deadlineMs;
+		let seen = await frames();
+		while (Date.now() < until) {
+			await page.waitForTimeout(250);
+			const now = await frames();
+			if (now === seen) return true;
+			seen = now;
+		}
+		return false;
+	};
+	expect(await settle(), 'the orb never stopped drawing').toBe(true);
+
+	const before = await frames();
+	expect(before, 'the orb never drew at all, so this proves nothing').toBeGreaterThan(0);
 	const boxBefore = await orb.boundingBox();
 	const first = await orb.screenshot();
 	await page.waitForTimeout(700);
 	const second = await orb.screenshot();
+
+	// The direct measurement: no frames at all in the window.
+	expect(await frames(), 'the orb is still drawing frames').toBe(before);
+	// And the pixels agree, which also covers anything drawn outside the loop.
 	expect(await orb.boundingBox(), 'the page moved under the orb').toEqual(boxBefore);
 	expect(Buffer.compare(first, second), 'the orb is still animating').toBe(0);
 });
@@ -281,9 +312,17 @@ test('the orb does move when nobody has asked it not to', async ({ page }) => {
 	await expect(orb).toBeVisible({ timeout: 10_000 });
 	expect(await orb.evaluate((el) => el.tagName)).toBe('CANVAS');
 
-	await page.waitForTimeout(1200);
+	// The counter-check, measured the same way, so the pair cannot both pass by
+	// the orb simply never drawing.
+	const frames = async () => Number(await orb.getAttribute('data-frames'));
+	await expect
+		.poll(frames, { timeout: 10_000, message: 'the orb never drew a frame' })
+		.toBeGreaterThan(0);
+
+	const before = await frames();
 	const first = await orb.screenshot();
 	await page.waitForTimeout(700);
 	const second = await orb.screenshot();
+	expect(await frames(), 'the orb stopped drawing on its own').toBeGreaterThan(before);
 	expect(Buffer.compare(first, second), 'the orb is not animating at all').not.toBe(0);
 });

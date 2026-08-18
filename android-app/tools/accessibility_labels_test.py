@@ -204,7 +204,18 @@ def test_a_tool_row_is_read_as_one_thing() -> None:
         "the tool-activity rows are unlabelled, so what Jarvis is touching is "
         "invisible to a screen reader"
     )
-    assert "isImportantForAccessibility = false" in src, (
+    # The property, not the predicate. `View.isImportantForAccessibility()` is a
+    # boolean GETTER with no setter, so Kotlin synthesises it as a read-only
+    # `val` and assigning to it does not compile — which is exactly how the
+    # release build broke while this spec went on passing, because it was
+    # asserting on text rather than on something buildable. The writable member
+    # is `importantForAccessibility: Int`.
+    assert "isImportantForAccessibility = " not in src, (
+        "assigning to `isImportantForAccessibility` does not compile — it is a "
+        "read-only val. Use `importantForAccessibility = "
+        "View.IMPORTANT_FOR_ACCESSIBILITY_NO`."
+    )
+    assert "importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO" in src, (
         "the row's three text fragments are still read separately: TalkBack "
         "says 'weather', 'kitchen', '412ms' as three unrelated things"
     )

@@ -259,10 +259,10 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
             // Read separately TalkBack says "weather", "kitchen", "412ms" as
             // three unrelated things.
             isFocusable = true
-            name.isImportantForAccessibility = false
-            args.isImportantForAccessibility = false
-            meta.isImportantForAccessibility = false
-            dot.isImportantForAccessibility = false
+            name.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            args.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            meta.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            dot.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
         fun bind(row: ToolRun.Row?) {

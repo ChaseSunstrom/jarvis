@@ -11,6 +11,18 @@
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let webglOk = $state(true);
+	/**
+	 * How many frames the shader has drawn, published on the canvas.
+	 *
+	 * "Is the orb animating" is a question about frames, and the e2e test used to
+	 * answer it by comparing two PNGs 700 ms apart after a fixed 1.2 s settle.
+	 * That is the right question measured the wrong way: every draw advances
+	 * `uTime` and the blob phases, so ONE late warm-up frame — a cold CI runner
+	 * compiling this shader on SwiftShader with no GPU — reads exactly like an
+	 * animation. Counting frames separates the two: a paused orb's count is
+	 * constant no matter how long it took to draw the first one.
+	 */
+	let frames = $state(0);
 	let smoothLevel = 0;
 	let smoothState = 0;
 
@@ -889,6 +901,7 @@ void main() {
 			gl.uniform1f(uBreath, breath);
 			gl.uniform1f(uDrift, drift);
 			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+			frames += 1;
 			if (!reduced) raf = requestAnimationFrame(draw);
 		};
 
@@ -918,7 +931,13 @@ void main() {
 </script>
 
 {#if webglOk}
-	<canvas bind:this={canvas} class="orb" data-testid="orb" data-state={orbState}></canvas>
+	<canvas
+		bind:this={canvas}
+		class="orb"
+		data-testid="orb"
+		data-state={orbState}
+		data-frames={frames}
+	></canvas>
 {:else}
 	<div
 		class="orb orb-fallback {orbState}"

@@ -395,7 +395,7 @@ KNOWN_SEAMS: list[tuple[str, str, str]] = [
     ),
     (
         "WakeListenWatch",
-        r"WakeListenWatch\(this, config\)",
+        r"WakeListenWatch\(this, config",
         "nothing gathers the signals the gate needs, so the gate has nothing "
         "to decide from even if something asks it",
     ),

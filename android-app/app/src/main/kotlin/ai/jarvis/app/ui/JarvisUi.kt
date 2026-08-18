@@ -468,7 +468,7 @@ object JarvisUi {
                 // "[ok]" and "[--]" are drawings, not words. TalkBack reads
                 // them as punctuation soup; the row's own description below
                 // says the same thing in English, so this stays silent.
-                isImportantForAccessibility = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
         )
 
@@ -500,7 +500,7 @@ object JarvisUi {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
                     typeface = Typeface.MONOSPACE
                     setPadding(dp(context, 8), 0, 0, 0)
-                    isImportantForAccessibility = false
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
             )
             setOnClickListener { onClick() }

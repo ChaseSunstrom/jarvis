@@ -234,7 +234,11 @@ class WakeWordService : Service(), AssistPipelineClient.Callbacks {
         super.onCreate()
         PromptPresence.addListener(promptListener)
         config = JarvisConfig(this)
-        listenWatch = WakeListenWatch(this, config) { decision -> onGateChanged(decision) }
+        // Named, not trailing. `onChanged` is not the last constructor
+        // parameter — the injectable clock is — and a trailing lambda always
+        // binds to the last one, so this silently offered the callback as
+        // `hourOfDay: () -> Int`.
+        listenWatch = WakeListenWatch(this, config, onChanged = { decision -> onGateChanged(decision) })
         calls = CallGuard(this) { inCall -> onCallChanged(inCall) }
     }
 
