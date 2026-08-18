@@ -58,6 +58,38 @@ class FakeJarvisServer(
     @Volatile
     private var socket: WebSocket? = null
 
+    /**
+     * The DEVICE CHANNEL socket, as distinct from the last one to connect.
+     *
+     * The app opens more than one socket to this server, and until this field
+     * existed the fake pushed every scripted frame down whichever had connected
+     * most recently. That is not a hypothetical: `CompanionAskActivity` calls
+     * `askAloud()` from `onCreate` for every MODE_ASK message, which builds a
+     * `CompanionVoiceClient` against the same `config.serverUrl` and dials
+     * immediately — so from the moment a question is on screen, [socket] points
+     * at the voice client, not at `JarvisChannel`.
+     *
+     * Frames the device SENDS were unaffected, which is what made this so hard
+     * to see: `JarvisChannel.sendFrame` writes to its own session socket and
+     * [received] is recorded across all connections, so the first
+     * `jarvis_message_result` arrived normally. Only frames the SERVER pushes
+     * went astray, and they went astray in silence — `WebSocket.send` returns a
+     * Boolean this class ignores, and `CompanionVoiceClient.onMessage` has no
+     * `jarvis_message` branch, so a redelivery aimed at the voice socket is
+     * swallowed with no error on either end.
+     *
+     * That is exactly how `CompanionAskTest`'s redelivery failed: the frame was
+     * "sent", never reached `CompanionMessageHandler.handle`, and so produced
+     * neither the replayed result nor a second question — the test then timed
+     * out after 45 s on a device that had done nothing wrong.
+     *
+     * `jarvis/device/register` identifies the channel unambiguously: it is the
+     * one frame only `JarvisChannel` sends, and it is re-sent on every
+     * reconnect, so this follows the channel rather than pinning a dead socket.
+     */
+    @Volatile
+    private var commandSocket: WebSocket? = null
+
     private val connectionCount = AtomicInteger(0)
 
     /** Set false to leave a registration unacknowledged, so the device stays un-READY. */
@@ -94,7 +126,9 @@ class FakeJarvisServer(
 
     override fun close() {
         runCatching { socket?.close(1000, "test over") }
+        runCatching { commandSocket?.close(1000, "test over") }
         socket = null
+        commandSocket = null
         runCatching { server.shutdown() }
     }
 
@@ -130,6 +164,11 @@ class FakeJarvisServer(
                 }
 
                 "jarvis/device/register" -> {
+                    // Whoever registers IS the device channel, from now until
+                    // the next registration. Recorded before the acknowledgement
+                    // check, because a deliberately unacknowledged registration
+                    // still identifies the socket.
+                    commandSocket = webSocket
                     if (!acknowledgeRegistration) return
                     send(
                         webSocket,
@@ -154,19 +193,35 @@ class FakeJarvisServer(
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             Log.i(TAG, "socket failed on the server side: ${t.javaClass.simpleName}: ${t.message}")
-            if (socket === webSocket) socket = null
+            forget(webSocket)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            forget(webSocket)
+        }
+
+        /**
+         * Drop a socket from both slots, and only if it is the one that went.
+         * The voice client closing must not blind the fake to the device
+         * channel, which is the mirror image of the bug [commandSocket] fixes.
+         */
+        private fun forget(webSocket: WebSocket) {
             if (socket === webSocket) socket = null
+            if (commandSocket === webSocket) commandSocket = null
         }
     }
 
     // --- sending ------------------------------------------------------------
 
-    /** Push a raw frame. Fails the test if there is no live socket. */
+    /**
+     * Push a raw frame to the device channel. Fails the test if there is none.
+     *
+     * The command socket, falling back to the most recent connection only
+     * before anything has registered — which is the window in which a test can
+     * legitimately script the handshake itself.
+     */
     fun send(frame: JSONObject) {
-        val live = socket ?: error(
+        val live = commandSocket ?: socket ?: error(
             "the fake server has no live socket; the device has not connected " +
                 "(or has disconnected). Frames sent so far: ${sent.size}"
         )
