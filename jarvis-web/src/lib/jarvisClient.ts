@@ -11,6 +11,7 @@
 // `handleMessage()`, so the whole class is unit-testable in plain Node.
 
 import * as conversations from './conversations';
+import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 
 export type SendFn = (data: string) => void;
 
@@ -695,6 +696,70 @@ export class JarvisClient {
 	/** A name of your own, instead of the conversation's first sentence. */
 	renameConversation(conversationId: string, title: string): Promise<boolean> {
 		return conversations.renameConversation(this.send_, conversationId, title);
+	}
+
+	// --- tasks ---------------------------------------------------------------
+	//
+	// Read plus two destructive verbs, and no create: jarvis-core mints a task
+	// from whatever is about to do the work, because a task nothing is driving
+	// is the empty seam the registry exists to close.
+	//
+	// The console keeps its list live from `jarvis_task_added/updated/removed`
+	// over `subscribeEvents`, so these are for the first paint and for acting on
+	// a row — not for polling.
+
+	/** Every tracked job, newest first. Whole tasks, steps included. */
+	async listTasks(opts: { kind?: string; active?: boolean } = {}): Promise<TaskRow[]> {
+		const payload: Record<string, any> = { type: 'jarvis/tasks/list' };
+		if (opts.kind) payload.kind = opts.kind;
+		if (opts.active) payload.active = true;
+		return toTaskList(await this.command(payload));
+	}
+
+	/** One task in full, or null if it has been forgotten. */
+	async getTask(taskId: string): Promise<TaskRow | null> {
+		try {
+			const result = await this.command<{ task?: unknown }>({
+				type: 'jarvis/tasks/get',
+				task_id: taskId
+			});
+			return toTaskRow(result?.task);
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return null;
+			throw err;
+		}
+	}
+
+	/**
+	 * Ask a task to stop — and it is an ASK.
+	 *
+	 * jarvis-core's registry is a record, not a scheduler: it cannot reach into
+	 * the coroutine doing the work. The reply carries `cancelled` and, when a
+	 * worker might not be checking, a `note` saying so. Both are passed straight
+	 * through, because a UI that shows "cancelled" over work that is still
+	 * running is the same lie one layer up.
+	 */
+	cancelTask(taskId: string): Promise<{ task?: unknown; cancelled: boolean; note?: string; reason?: string }> {
+		return this.command({ type: 'jarvis/tasks/cancel', task_id: taskId });
+	}
+
+	/** Forget one task. Does not stop it — see `cancelTask`. */
+	async deleteTask(taskId: string): Promise<boolean> {
+		try {
+			await this.command({ type: 'jarvis/tasks/delete', task_id: taskId });
+			return true;
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return false;
+			throw err;
+		}
+	}
+
+	/** Forget every finished task, leaving the live ones. Returns how many went. */
+	async clearFinishedTasks(): Promise<number> {
+		const result = await this.command<{ removed?: number }>({
+			type: 'jarvis/tasks/clear_finished'
+		});
+		return Number(result?.removed ?? 0) || 0;
 	}
 
 	// --- settings ----------------------------------------------------------

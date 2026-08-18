@@ -23,6 +23,8 @@ import Approvals from './Approvals.svelte';
 import ChatMessage from './ChatMessage.svelte';
 import ChatPanel from './ChatPanel.svelte';
 import Pairing from './Pairing.svelte';
+import TaskCard from './TaskCard.svelte';
+import TaskDock from './TaskDock.svelte';
 import ToolActivity from './ToolActivity.svelte';
 import { assistantPlaceholder, userMessage } from '$lib/chat';
 
@@ -53,6 +55,14 @@ describe('server rendering', () => {
 		// so a timer in either would be armed by every page of the app.
 		expect(timersArmedBy(Approvals, { conn: null })).toBe(0);
 		expect(timersArmedBy(ToolActivity, { conn: null })).toBe(0);
+	});
+
+	it('arms no timers in the task dock', () => {
+		// Third layout-level surface, and the one with a real timer on the
+		// client: it schedules a single wake-up for when a finished task should
+		// stop lingering. That lives in an `$effect`, which is exactly why it
+		// must not fire here — on the server there is no unmount to clear it.
+		expect(timersArmedBy(TaskDock, { conn: null })).toBe(0);
 	});
 
 	it('renders the pairing panel’s markup, which is the point of doing it at all', () => {
@@ -126,4 +136,56 @@ describe('server rendering', () => {
 		expect(body).toContain('data-testid="chat-mic"');
 		expect(body).toContain('hello');
 	});
+
+	// --- tasks ----------------------------------------------------------------
+	it('renders a task card, steps and all', () => {
+		const { body } = render(TaskCard, { props: { task: researchTask() } });
+		expect(body).toContain('Read twelve pages');
+		expect(body).toContain('RUNNING');
+		// Open by default while the task is running: "which step" is the
+		// question exactly then, and only then.
+		expect(body).toContain('reading page 4');
+	});
+
+	it('gives a determinate bar a number a screen reader can announce', () => {
+		const { body } = render(TaskCard, {
+			props: { task: { ...researchTask(), fraction: 0.25 } }
+		});
+		expect(body).toContain('aria-valuenow="25"');
+	});
+
+	it('gives an indeterminate bar no number at all', () => {
+		// ARIA's own rule, and the only way a reader says "busy" rather than
+		// reading out a figure nobody computed. `aria-valuenow="0"` here would
+		// announce a task that is working as one that has done nothing.
+		const { body } = render(TaskCard, {
+			props: { task: { ...researchTask(), fraction: null } }
+		});
+		expect(body).toContain('role="progressbar"');
+		expect(body).not.toContain('aria-valuenow');
+	});
 });
+
+function researchTask() {
+	return {
+		id: 't1',
+		kind: 'research',
+		title: 'Read twelve pages',
+		status: 'running' as const,
+		steps: [
+			{ title: 'search', status: 'done' as const },
+			{ title: 'read', status: 'running' as const, detail: 'reading page 4' }
+		],
+		detail: '',
+		result: '',
+		error: '',
+		created: 1000,
+		updated: 1000,
+		source: '',
+		open_ended: false,
+		fraction: 0.5,
+		done_steps: 1,
+		total_steps: 2,
+		finished: false
+	};
+}

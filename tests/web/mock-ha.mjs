@@ -10,6 +10,8 @@
 //   - the management commands: get_states, get_config, get_services,
 //     call_service (which really mutates state and pushes state_changed),
 //     subscribe_events / unsubscribe_events and the three registries
+//   - the task registry: jarvis/tasks/{list,get,cancel,delete,clear_finished},
+//     with the three jarvis_task_* events every move fires
 // and serves a real WAV file at /api/tts_proxy/test.mp3 over HTTP
 // (Authorization: Bearer <token> required).
 //
@@ -616,6 +618,92 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 		}
 	};
 
+	/**
+	 * The task registry, as jarvis-core keeps one.
+	 *
+	 * Modelled rather than stubbed, because the console's whole progress story
+	 * rides on two properties this has to reproduce faithfully:
+	 *
+	 *   1. `fraction` is `null` — not 0 — whenever a number would be a guess.
+	 *      A mock that always sent a number would make the indeterminate bar
+	 *      untestable and hide the exact bug it exists to prevent.
+	 *   2. Every move fires `jarvis_task_updated`. That is what makes a live bar
+	 *      possible without polling, and it is what an e2e test watches.
+	 *
+	 * @type {Map<string, any>}
+	 */
+	const taskStore = new Map();
+	let taskSeq = 0;
+
+	const TASK_TERMINAL = ['done', 'error', 'cancelled'];
+
+	const taskDict = (task) => {
+		const doneSteps = task.steps.filter((s) => TASK_TERMINAL.includes(s.status)).length;
+		const finished = TASK_TERMINAL.includes(task.status);
+		let fraction = null;
+		if (task.status === 'done') fraction = 1;
+		else if (task.steps.length && !task.open_ended) fraction = doneSteps / task.steps.length;
+		return {
+			...task,
+			steps: task.steps.map((s) => ({ ...s })),
+			fraction,
+			done_steps: doneSteps,
+			total_steps: task.steps.length,
+			finished
+		};
+	};
+
+	const addTask = (over = {}) => {
+		const id = over.id ?? `task-${++taskSeq}`;
+		const now = Date.now() / 1000;
+		const task = {
+			id,
+			kind: 'background',
+			title: 'A job',
+			status: 'queued',
+			steps: [],
+			detail: '',
+			result: '',
+			error: '',
+			source: '',
+			open_ended: false,
+			created: now,
+			updated: now,
+			...over
+		};
+		taskStore.set(id, task);
+		broadcast('jarvis_task_added', { task: taskDict(task) });
+		return task;
+	};
+
+	const updateTask = (id, changes = {}) => {
+		const task = taskStore.get(id);
+		if (!task) return null;
+		Object.assign(task, changes, { updated: Date.now() / 1000 });
+		// jarvis-core closes out every step when a task finishes, so a task
+		// never reports `done` above a step still `running`. The console draws
+		// what it is sent; a mock that skipped this would let a contradiction
+		// through that the real server cannot produce.
+		if (task.status === 'done') for (const step of task.steps) step.status = 'done';
+		broadcast('jarvis_task_updated', { task: taskDict(task) });
+		return task;
+	};
+
+	const removeTask = (id) => {
+		const task = taskStore.get(id);
+		if (!task) return false;
+		taskStore.delete(id);
+		broadcast('jarvis_task_removed', { task: taskDict(task) });
+		return true;
+	};
+
+	const taskListing = ({ kind, activeOnly } = {}) =>
+		[...taskStore.values()]
+			.filter((t) => (kind ? t.kind === kind : true))
+			.filter((t) => (activeOnly ? !TASK_TERMINAL.includes(t.status) : true))
+			.sort((a, b) => b.created - a.created)
+			.map(taskDict);
+
 	/** Run a service against every targeted entity; returns changed states. */
 	const callService = (domain, service, data) => {
 		world.calls.push({ domain, service, data, at: nowIso() });
@@ -1172,6 +1260,123 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 							}, 60);
 						}, index * 40);
 					});
+					break;
+				}
+
+				// --- tasks -------------------------------------------------
+				case 'jarvis/tasks/list':
+					ok(msg.id, {
+						tasks: taskListing({ kind: msg.kind || null, activeOnly: Boolean(msg.active) })
+					});
+					break;
+
+				case 'jarvis/tasks/get': {
+					const task = taskStore.get(String(msg.task_id ?? ''));
+					if (!task) {
+						fail(msg.id, 'not_found', `no task ${msg.task_id}`);
+						break;
+					}
+					ok(msg.id, { task: taskDict(task) });
+					break;
+				}
+
+				case 'jarvis/tasks/cancel': {
+					const task = taskStore.get(String(msg.task_id ?? ''));
+					if (!task) {
+						fail(msg.id, 'not_found', `no task ${msg.task_id}`);
+						break;
+					}
+					if (TASK_TERMINAL.includes(task.status)) {
+						ok(msg.id, { task: taskDict(task), cancelled: false, reason: 'already finished' });
+						break;
+					}
+					updateTask(task.id, { status: 'cancelled', detail: 'cancelled from a client' });
+					ok(msg.id, {
+						task: taskDict(taskStore.get(task.id)),
+						cancelled: true,
+						note: 'marked cancelled; a worker that does not check for this may still be running'
+					});
+					break;
+				}
+
+				case 'jarvis/tasks/delete': {
+					if (!removeTask(String(msg.task_id ?? ''))) {
+						fail(msg.id, 'not_found', `no task ${msg.task_id}`);
+						break;
+					}
+					ok(msg.id, { removed: msg.task_id });
+					break;
+				}
+
+				case 'jarvis/tasks/clear_finished': {
+					const gone = [...taskStore.values()].filter((t) => TASK_TERMINAL.includes(t.status));
+					for (const task of gone) removeTask(task.id);
+					ok(msg.id, { removed: gone.length });
+					break;
+				}
+
+				// Drive a task through its steps on demand, the way
+				// `jarvis/test/tool_run` drives a round of tool calls: the
+				// console's job is to draw whatever the registry reports, and a
+				// test should not have to wait for a real research run to
+				// decide to report something.
+				// Empty the registry. The e2e suite shares one mock process, so
+				// "there is nothing running" is only a testable claim if a test
+				// can get back to that state without depending on how long the
+				// previous test's job happened to take.
+				case 'jarvis/test/task_reset': {
+					const ids = [...taskStore.keys()];
+					for (const id of ids) removeTask(id);
+					ok(msg.id, { removed: ids.length });
+					break;
+				}
+
+				case 'jarvis/test/task_run': {
+					const task = addTask({
+						kind: msg.kind || 'research',
+						title: msg.title || 'Read twelve pages',
+						steps: (msg.steps || ['search', 'read', 'write up']).map((title) => ({
+							title,
+							status: 'queued',
+							detail: ''
+						})),
+						open_ended: Boolean(msg.open_ended)
+					});
+					ok(msg.id, { task_id: task.id });
+					if (msg.hold) break; // leave it queued for the test to act on
+
+					// `fail_at` is the step index that fails; `fail: true` without
+					// one fails on the SECOND step rather than the last. A task
+					// that failed on its final step has attempted every step, so
+					// `done_steps / total_steps` is 1.0 and its bar reads as
+					// complete — true, and useless for testing that a failure
+					// keeps the ground it covered.
+					const tick = Number(msg.tick_ms) || 120;
+					const failAt = Number.isInteger(msg.fail_at) ? msg.fail_at : msg.fail ? 1 : -1;
+					updateTask(task.id, { status: 'running' });
+
+					let at = 0;
+					const advance = () => {
+						const live = taskStore.get(task.id);
+						// A cancel or a delete from the console stops the reporting.
+						// A mock that ploughed on would make CANCEL look broken.
+						if (!live || TASK_TERMINAL.includes(live.status)) return;
+						if (at > 0) live.steps[at - 1].status = 'done';
+						if (at >= live.steps.length) {
+							updateTask(task.id, { status: 'done', result: 'all twelve read' });
+							return;
+						}
+						if (at === failAt) {
+							live.steps[at].status = 'error';
+							updateTask(task.id, { status: 'error', error: 'the model server refused' });
+							return;
+						}
+						live.steps[at].status = 'running';
+						updateTask(task.id, {});
+						at += 1;
+						setTimeout(advance, tick);
+					};
+					setTimeout(advance, tick);
 					break;
 				}
 

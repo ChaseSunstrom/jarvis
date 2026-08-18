@@ -48,12 +48,16 @@ export function isBareKey(e: KeyLike): boolean {
 	return !e.ctrlKey && !e.metaKey && !e.altKey;
 }
 
-/** `g`-prefixed navigation chords. `g a` is automations; areas takes `g r` (rooms). */
+/**
+ * `g`-prefixed navigation chords. `g a` is automations; areas takes `g r`
+ * (rooms) and tasks takes `g k` — `g t` was already tools.
+ */
 export const CHORDS: Readonly<Record<string, string>> = {
 	'g d': '/devices',
 	'g a': '/automations',
 	'g r': '/areas',
 	'g t': '/tools',
+	'g k': '/tasks',
 	'g s': '/settings',
 	'g h': '/'
 };

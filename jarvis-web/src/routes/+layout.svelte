@@ -12,6 +12,7 @@
 	import Toasts from '$lib/components/Toasts.svelte';
 	import Approvals from '$lib/components/Approvals.svelte';
 	import ToolActivity from '$lib/components/ToolActivity.svelte';
+	import TaskDock from '$lib/components/TaskDock.svelte';
 	import { ConsoleLink, statusLabel, type LinkSnapshot } from '$lib/consoleLink';
 	import { ChordTracker, isBareKey, isPaletteShortcut, isTypingTarget } from '$lib/shortcuts';
 	import { applyTextSize, readTextSize } from '$lib/textSize';
@@ -28,6 +29,7 @@
 		{ href: '/areas', label: 'AREAS', chord: 'g r' },
 		{ href: '/automations', label: 'AUTOMATIONS', chord: 'g a' },
 		{ href: '/tools', label: 'TOOLS', chord: 'g t' },
+		{ href: '/tasks', label: 'TASKS', chord: 'g k' },
 		{ href: '/settings', label: 'SETTINGS', chord: 'g s' }
 	];
 
@@ -140,6 +142,7 @@
 	<div class="jv-alerts" data-testid="hud-alerts">
 		<Approvals conn={approvalConn} />
 		<ToolActivity conn={approvalConn} />
+		<TaskDock conn={approvalConn} />
 	</div>
 	<a class="hud-console-link" href="/devices" data-testid="console-link">CONSOLE</a>
 {:else}
@@ -206,6 +209,10 @@
 			     while you navigate, so what it is doing has to be visible
 			     wherever you are. -->
 			<ToolActivity conn={approvalConn} />
+			<!-- And for the same reason again: a research run started from the
+			     HUD is still going three navigations later, and this is the only
+			     thing on any page that says so. -->
+			<TaskDock conn={approvalConn} />
 			{#key page.url.pathname}
 				<div class="jv-route" data-testid="route" data-route={page.url.pathname}>
 					{@render children()}

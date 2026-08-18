@@ -484,3 +484,91 @@ describe('pure helpers', () => {
 		).toBe(false);
 	});
 });
+
+describe('the task list', () => {
+	it('asks for every task, and reads whole rows back', async () => {
+		const { sent, client, reply } = setup();
+		const promise = client.listTasks();
+		expect(sent[0]).toEqual({ id: 1, type: 'jarvis/tasks/list' });
+		reply(1, {
+			tasks: [{ id: 'a', title: 'Research', status: 'running', fraction: 0.5, steps: [] }]
+		});
+		const tasks = await promise;
+		expect(tasks[0].fraction).toBe(0.5);
+	});
+
+	it('sends a filter only when there is one', async () => {
+		const { sent, client, reply } = setup();
+		void client.listTasks({ kind: 'research', active: true });
+		expect(sent[0]).toEqual({
+			id: 1,
+			type: 'jarvis/tasks/list',
+			kind: 'research',
+			active: true
+		});
+		reply(1, { tasks: [] });
+	});
+
+	it('survives a backend that answers with nothing usable', async () => {
+		const { client, reply } = setup();
+		const promise = client.listTasks();
+		reply(1, null);
+		await expect(promise).resolves.toEqual([]);
+	});
+
+	it('reads one task, and reports a forgotten one as null rather than throwing', async () => {
+		const { client, reply, fail } = setup();
+		const found = client.getTask('a');
+		reply(1, { task: { id: 'a', title: 'x' } });
+		expect((await found)?.id).toBe('a');
+
+		const missing = client.getTask('gone');
+		fail(2, 'not_found');
+		await expect(missing).resolves.toBeNull();
+	});
+
+	it('passes a cancel’s honesty straight through', async () => {
+		// jarvis-core says whether it actually cancelled and warns when a worker
+		// may still be running. Collapsing that to a boolean here would put the
+		// lie back one layer up.
+		const { client, reply } = setup();
+		const promise = client.cancelTask('a');
+		reply(1, { cancelled: true, note: 'a worker that does not check may still be running' });
+		const result = await promise;
+		expect(result.cancelled).toBe(true);
+		expect(result.note).toContain('still be running');
+	});
+
+	it('reports deleting a task that was already gone as false', async () => {
+		const { client, reply, fail } = setup();
+		const gone = client.deleteTask('nope');
+		fail(1, 'not_found');
+		await expect(gone).resolves.toBe(false);
+
+		const real = client.deleteTask('a');
+		reply(2, { removed: 'a' });
+		await expect(real).resolves.toBe(true);
+	});
+
+	it('still raises anything that is not a missing task', async () => {
+		const { client, fail } = setup();
+		const promise = client.deleteTask('a');
+		fail(1, 'unknown_error', 'the store is on fire');
+		await expect(promise).rejects.toBeInstanceOf(JarvisCommandError);
+	});
+
+	it('counts what clearing finished actually removed', async () => {
+		const { client, reply } = setup();
+		const promise = client.clearFinishedTasks();
+		reply(1, { removed: 4 });
+		await expect(promise).resolves.toBe(4);
+	});
+
+	it('lets an older backend hide the feature rather than error', async () => {
+		// The versioning rule in docs/clients.md: `unknown_command` means degrade.
+		const { client, fail } = setup();
+		const promise = client.listTasks();
+		fail(1, 'unknown_command');
+		await expect(promise).rejects.toBeInstanceOf(UnsupportedCommandError);
+	});
+});
