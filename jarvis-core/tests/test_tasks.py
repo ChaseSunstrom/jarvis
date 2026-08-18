@@ -285,3 +285,28 @@ def test_a_corrupt_record_is_skipped_rather_than_crashing_the_load():
     assert Task.from_dict({"title": "x"}) is None       # no id
     ok = Task.from_dict({"id": "a", "title": "t", "status": "nonsense"})
     assert ok is not None and ok.status == STATUS_QUEUED
+
+
+async def test_a_task_can_stop_being_open_ended_once_it_knows_its_own_size(jarvis):
+    """The transition a real worker makes, and the point of `open_ended`.
+
+    A research run does not know how many pages it will read until it has
+    searched. Until then a percentage is a guess; the moment the read list is
+    settled it is a fact, and the bar should say so rather than staying vague
+    for the whole run.
+    """
+    registry = _registry(jarvis)
+    task = await registry.async_add("Research", steps=["plan"], open_ended=True)
+    await registry.async_update(task.id, step=0, step_status=STATUS_DONE)
+    assert task.fraction is None
+
+    await registry.async_update(task.id, add_steps=["read a", "read b"], open_ended=False)
+    assert task.fraction == pytest.approx(1 / 3)
+
+
+async def test_a_task_that_finds_more_work_can_go_open_ended_again(jarvis):
+    registry = _registry(jarvis)
+    task = await registry.async_add("Crawl", steps=["a", "b"])
+    assert task.fraction == 0
+    await registry.async_update(task.id, open_ended=True)
+    assert task.fraction is None

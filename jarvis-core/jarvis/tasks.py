@@ -350,6 +350,7 @@ class TaskRegistry:
         step_status: str | None = None,
         step_detail: str | None = None,
         add_steps: Iterable[str] = (),
+        open_ended: bool | None = None,
     ) -> Task | None:
         task = self.get(task_id)
         if task is None:
@@ -365,6 +366,13 @@ class TaskRegistry:
                 task.steps[step].status = step_status
             if step_detail is not None:
                 task.steps[step].detail = _clip(step_detail, MAX_DETAIL_CHARS)
+
+        # A run that has finished discovering its work knows its own total, so
+        # a bar that was honestly indeterminate can become an honest number.
+        # The transition only runs one way in practice, but both are allowed:
+        # a crawl that finds more work to do is entitled to say so.
+        if open_ended is not None:
+            task.open_ended = bool(open_ended)
 
         if status is not None and status in STATUSES:
             task.status = status

@@ -471,6 +471,33 @@ web:
   act_allowlist: []
 
 # ---------------------------------------------------------------------------
+# Research — a question, several searches, and the pages actually read.
+# ---------------------------------------------------------------------------
+# The `deep_research` tool and the `research.run` service. A run plans several
+# searches from one question, reads the best pages through the `web` block
+# above, and writes up what they said with citations — reporting each step to
+# the task list, so the progress bar on the console is a fraction of real work
+# rather than a spinner.
+#
+# It needs `web` configured. With no SearXNG it fails saying so, the same way
+# `web.search` does, rather than reaching for a cloud engine.
+research:
+  max_queries: 4          # angles to search the question from (1-6)
+  max_sources: 8          # pages to actually read (1-12)
+  # Pages from any ONE site. The cap is the difference between a report and a
+  # single vendor's account of itself: one documentation site can hold the top
+  # twelve results for a technical question, and reading twelve of them looks
+  # thorough while being the opposite.
+  per_domain: 2
+  search_limit: 8         # results asked of each search
+
+  # A run costs one model call to plan, one per page read, and one to write up
+  # — so `max_sources` calls plus two. Naming a smaller, faster model here is
+  # often right: note-taking over one page is extraction, not conversation.
+  # Empty means the conversation model above.
+  model: ""
+
+# ---------------------------------------------------------------------------
 # Orchestrator — delegation, coding jobs, and the network-less sandbox.
 # ---------------------------------------------------------------------------
 # The front door to the `jarvis-orchestrator` service and, behind it,
