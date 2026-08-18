@@ -16,6 +16,7 @@ Desktop agent (Python)   ─┘        │
                                    ├─► entities, automations, scenes, scripts
                                    ├─► get_user_context · run_background_task
                                    ├─► web_search / web_fetch ─► SearXNG, jarvis-browser
+                                   ├─► deep_research ─► a task, several searches, cited
                                    ├─► delegate_to_agents ─► jarvis-orchestrator
                                    └─► execute_command    ─► jarvis-sandbox (network: none)
                             Wyoming: whisper 10300 · Piper 10200 · openWakeWord 10400

@@ -31,6 +31,9 @@ web:
 Everything they return is **fenced**. Nothing they return can start an action.
 Those two sentences are most of this document.
 
+There is a fifth tool built on the first two — see
+[Deep research](#deep-research) at the end.
+
 ---
 
 ## Enabling SearXNG
@@ -367,3 +370,52 @@ default. Add the domain to `BROWSER_ACT_ALLOWLIST` *and* `web: act_allowlist:`.
 **`web.fetch` returns 502s about the browser.** Chromium is missing from the
 image, or it cannot start its sandbox. `docker compose logs jarvis-browser`;
 see `../../jarvis-browser/README.md`.
+
+---
+
+## Deep research
+
+One question, several searches, and the pages actually read. `research.run` /
+`deep_research`, configured in the `research:` block and needing the `web:`
+block above to work at all.
+
+```yaml
+research:
+  max_queries: 4       # angles to search the question from
+  max_sources: 8       # pages to actually read
+  per_domain: 2        # from any one site
+  model: ""            # empty = the conversation model
+```
+
+A run plans queries from the question, searches each, dedupes and ranks what
+came back, reads the best pages, takes notes on each, and writes the answer up
+with numbered citations. It reports every one of those as a **step on a task**,
+so `/tasks` in the console shows a real fraction rather than a spinner — and it
+is `open_ended` until the searches say how many pages there are, because a
+percentage before then would be a guess.
+
+It returns a task id, **not an answer**: a run takes a minute or two, and the
+model is told to say it is under way and to invent nothing.
+
+Three things it will not do, each of which is a way this kind of feature fails
+while still producing a document that looks fine:
+
+* **Answer from its own training when it could read nothing.** No readable page
+  means no write-up call at all and a task that says why. An answer synthesised
+  from an empty note list is fluent, uncited and indistinguishable at a glance
+  from a researched one.
+* **Let one site be the report.** `per_domain` caps how many pages come from any
+  host. One vendor's documentation can hold the top twelve results for a
+  technical question, and reading twelve of them reads as thorough while being
+  the opposite.
+* **Cite a page nobody read.** Citations are checked against the pages that were
+  actually read; an invented number is struck to `[?]` rather than quietly
+  dropped, and pages that failed are listed under "Not used" with the reason.
+
+Cancelling from `/tasks` really stops it — the worker checks between every
+step, which is the thing the cancel endpoint warns a worker might not do.
+
+Nothing is remembered unless you ask (`remember: true`). A report is a synthesis
+of pages anyone can write, and long-term memory is read back into every later
+turn; when you do ask, the note is tagged `research` and `from-the-web` so it is
+visible for what it is.
