@@ -249,6 +249,45 @@ adb logcat -d -v time > artifacts/logcat.txt 2>&1 || true
 adb logcat -b crash -d -v time > artifacts/logcat-crash.txt 2>&1 || true
 adb shell dumpsys package ai.jarvis.app > artifacts/dumpsys-package.txt 2>&1 || true
 
+# WHAT THE APP SAID, in the job log rather than only in an artifact.
+#
+# A failing instrumented test reports the assertion and nothing else: the log
+# above says "timed out waiting for 2 jarvis_message_result frames" and leaves
+# every reason it could have happened equally open. The app narrates itself
+# under `Jarvis*` tags — which handler admitted the frame, whether a sender was
+# wired, whether the send came back false — and those lines decide it in one
+# read.
+#
+# They were already being captured, and only into `android-e2e-logs-api*`.
+# Downloading a CI artifact needs credentials and a browser, which is exactly
+# what whoever is reading a red build from a terminal, a phone or an automated
+# session does not have. The artifact is still the complete record; this is the
+# part that answers the question, printed where the failure is.
+#
+# Bounded on purpose: a full run of 42 tests narrates a few thousand lines, and
+# a dump that buries the job log is the same problem in the other direction. If
+# the cap bites, say so — a silent truncation reads as "that is all there was".
+if [ "${status}" != "0" ] && [ -s artifacts/logcat.txt ]; then
+  APP_LOG_LINES=800
+  echo "----- what the app logged (Jarvis* tags, last ${APP_LOG_LINES} lines) -----"
+  # `-v time` puts the tag after the level letter: `08-18 01:12:03.123 I/Tag(  pid):`.
+  # `grep -c` already prints 0 when it matches nothing; it just exits 1 while
+  # doing it. An `|| echo 0` here appends a SECOND line, and the count becomes
+  # the two-line string "0\n0" — which is neither equal to 0 nor an integer, so
+  # the no-matches branch is skipped and the comparison below dies with
+  # "integer expression expected". Take grep's own count and swallow the status.
+  app_total="$(grep -c -E '[VDIWEF]/Jarvis' artifacts/logcat.txt 2>/dev/null || true)"
+  if [ -z "${app_total}" ] || [ "${app_total}" = "0" ]; then
+    echo "(no Jarvis-tagged lines at all — the app never ran, or the buffer wrapped)"
+  else
+    if [ "${app_total}" -gt "${APP_LOG_LINES}" ]; then
+      echo "(${app_total} lines total; the earlier $((app_total - APP_LOG_LINES)) are in artifact android-e2e-logs-api${API_LEVEL})"
+    fi
+    grep -E '[VDIWEF]/Jarvis' artifacts/logcat.txt | tail -n "${APP_LOG_LINES}"
+  fi
+  echo "-------------------------------------------------------------------------"
+fi
+
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
     echo "### e2e · android emulator (API ${API_LEVEL})"
