@@ -399,5 +399,28 @@ test('the orb does move when nobody has asked it not to', async ({ page }) => {
 	await page.waitForTimeout(700);
 	const second = await orb.screenshot();
 	expect(await frames(), 'the orb stopped drawing on its own').toBeGreaterThan(before);
-	expect(Buffer.compare(first, second), 'the orb is not animating at all').not.toBe(0);
+
+	// Measured here too, and for a reason that only became visible once the
+	// noise floor was known. This was `Buffer.compare(first, second) !== 0` —
+	// satisfied by a SINGLE differing byte. The rim's multisample resolve
+	// supplies about 49 of them for free, so a shader that faithfully drew a
+	// frame every tick while rendering an identical picture — uTime unwired,
+	// the phases never integrated — would pass both assertions above and be
+	// reported as animating while visibly frozen. The frame counter cannot see
+	// that: it counts draws, not movement.
+	//
+	// The threshold is set from the adversarial case, not the quiet one. Pinning
+	// every uniform while leaving the loop running — draws counted, picture
+	// identical — still moves 3.1% of the pixels, because a live 60fps composite
+	// dithers where a paused one does not. A real animation moves 62-79% over
+	// this window and never less than 67% over a single frame. 10% sits in that
+	// gap with 20x clearance below and 6x above; the 0.03% floor the paused orb
+	// shows is not the number to size this against.
+	const changed = await pixelsChanged(page, first, second);
+	expect(
+		changed.fraction,
+		`the orb is drawing frames but not moving: only ${changed.differing} of ` +
+			`${changed.total} pixels changed (${(changed.fraction * 100).toFixed(3)}%), ` +
+			'which is the rim resolving, not an animation'
+	).toBeGreaterThan(0.1);
 });
