@@ -339,3 +339,85 @@ def test_fusion_reads_order_not_score():
 
 def test_fusing_nothing_with_nothing_is_nothing():
     assert fuse({}, {}) == []
+
+
+# --- the two wiring gaps ------------------------------------------------------
+#
+# Both are the same shape: the machinery is complete and correct, and something
+# never calls it. Neither produces an error, a warning or a wrong answer —
+# semantic recall simply quietly does less than it says it does, which is why
+# neither showed up in the tests above.
+
+async def test_a_note_added_now_is_searchable_now(jarvis):
+    """`_async_reindex` ran only from `async_load`.
+
+    So a note the model just wrote — which is the whole point of the `remember`
+    tool — had no vector until the process restarted. Keyword search still
+    found it, so the failure was invisible unless you asked for it in words the
+    note does not contain, which is exactly the case embeddings were added for.
+    """
+    embedder = FakeEmbedder()
+    store = await _store(jarvis, embedder)
+    await store.async_add("the good coffee is in the left cupboard")
+
+    hits = await store.async_semantic_ids("where do we keep the caffeine")
+    assert hits, (
+        "a note added during this process is not in the vector index; semantic "
+        "recall cannot see it until a restart"
+    )
+
+
+async def test_a_forgotten_note_stops_being_searchable_immediately(jarvis):
+    """The other direction of the same gap, and the one that matters more.
+
+    Being wholly deletable is a promise this integration makes in its own
+    docstring. A vector that outlives the note it came from is the one place
+    deletion did not reach.
+    """
+    embedder = FakeEmbedder()
+    store = await _store(jarvis, embedder)
+    result = await store.async_add("allergic to penicillin")
+    await store.async_semantic_ids("medicine")  # force the index to exist
+    entry_id = result["entry"]["id"]
+
+    await store.async_forget(entry_id=entry_id)
+    hits = await store.async_semantic_ids("medicine")
+    assert entry_id not in hits, (
+        "a forgotten note kept its vector; deletion has to reach the sidecar too"
+    )
+
+
+async def test_the_sidecar_is_read_back_instead_of_re_embedded_every_boot(jarvis):
+    """`VectorIndex.async_load` existed and nothing called it.
+
+    The sidecar's whole purpose is that embedding is the expensive part and the
+    result is durable. Never reading it back means every restart re-embeds the
+    entire store against the model server — slow on a Pi, and a burst of
+    requests at exactly the moment everything else is starting.
+    """
+    from jarvis.integrations.memory.vectors import STORAGE_KEY, VectorIndex
+    from jarvis.store import Store
+
+    first_embedder = FakeEmbedder()
+    disk = Store(jarvis.config_dir, STORAGE_KEY)
+    index = VectorIndex(client=first_embedder, store=disk)
+    store = MemoryStore(jarvis, vectors=index)
+    await store.async_load()
+    await store.async_add("the good coffee is in the left cupboard")
+    await store.async_add("allergic to penicillin")
+    embedded_first_time = len(first_embedder.seen)
+    assert embedded_first_time >= 2
+
+    # A restart: same notes on disk, same sidecar on disk, a fresh index.
+    second_embedder = FakeEmbedder()
+    reborn = VectorIndex(client=second_embedder, store=Store(jarvis.config_dir, STORAGE_KEY))
+    revived = MemoryStore(jarvis, vectors=reborn)
+    await revived.async_load()
+
+    documents = [t for t in second_embedder.seen if not t.startswith(QUERY_PREFIX)]
+    assert documents == [], (
+        f"re-embedded {len(documents)} note(s) that were already in the sidecar: "
+        f"{documents}. The sidecar is never read back."
+    )
+    # And it still answers, from the vectors it loaded rather than from nothing.
+    assert await revived.async_semantic_ids("where do we keep the caffeine")

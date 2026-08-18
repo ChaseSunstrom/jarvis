@@ -363,6 +363,13 @@ class MemoryStore:
                 loaded.append(entry)
         loaded.sort(key=lambda e: e.created)
         self.entries = loaded[-self.max_entries :]
+        # Read the sidecar BEFORE reconciling. Embedding is the expensive part
+        # and the sidecar exists precisely so it survives a restart — without
+        # this line `is_current` had nothing to compare against, so every boot
+        # re-embedded the entire store against the model server. Slow on a Pi,
+        # and a burst of requests at the moment everything else is starting.
+        if self.vectors is not None:
+            await self.vectors.async_load()
         await self._async_reindex()
 
     async def async_save(self) -> None:
@@ -454,6 +461,7 @@ class MemoryStore:
         self.purge_expired()
         self._trim()
         await self.async_save()
+        await self._async_reindex()
         self._fire("added", entry)
         result: dict[str, Any] = {"stored": True, "entry": entry.as_dict()}
         if removed:
@@ -490,6 +498,7 @@ class MemoryStore:
             removed = [e.as_dict() for e in self.entries]
             self.entries = []
             await self.async_save()
+            await self._async_reindex()
             self._fire("cleared", None)
             return {"forgotten": removed, "count": len(removed)}
 
@@ -499,6 +508,7 @@ class MemoryStore:
                 return {"forgotten": [], "count": 0, "reason": f"no memory with id {entry_id!r}"}
             self.entries.remove(entry)
             await self.async_save()
+            await self._async_reindex()
             self._fire("forgotten", entry)
             return {"forgotten": [entry.as_dict()], "count": 1}
 
@@ -523,6 +533,7 @@ class MemoryStore:
         for entry in matches:
             self.entries.remove(entry)
         await self.async_save()
+        await self._async_reindex()
         for entry in matches:
             self._fire("forgotten", entry)
         return {"forgotten": [e.as_dict() for e in matches], "count": len(matches)}
@@ -645,12 +656,25 @@ class MemoryStore:
     async def _async_reindex(self) -> None:
         """Bring the vector sidecar level with the notes, and drop the rest.
 
-        Runs on load, which is the one moment the two can be out of step: the
-        notes file is hand-editable, so a note may have changed text or stopped
-        existing while nothing was watching. Pruning matters as much as
-        indexing — a forgotten note whose vector survived would be the one
-        place deletion did not reach, and being wholly deletable is a promise
-        this integration makes in its own docstring.
+        Runs on load AND after every mutation. Load is the moment the two can
+        be out of step through no fault of ours — the notes file is
+        hand-editable, so a note may have changed text or stopped existing
+        while nothing was watching.
+
+        After a mutation it is not reconciliation, it is the point: this used
+        to run only on load, so a note the model had just written through
+        `remember` had no vector until the process restarted. Keyword search
+        still found it, which is exactly why nobody noticed — the note was
+        missing only from searches phrased in words it does not contain, which
+        is the one case embeddings were added for.
+
+        Cheap to call often: `is_current` is a hash comparison, so an unchanged
+        note costs nothing and only the new text is embedded.
+
+        Pruning matters as much as indexing — a forgotten note whose vector
+        survived would be the one place deletion did not reach, and being
+        wholly deletable is a promise this integration makes in its own
+        docstring.
         """
         if self.vectors is None:
             return
