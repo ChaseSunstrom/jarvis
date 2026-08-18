@@ -1390,3 +1390,36 @@ async def test_voice_data_info_reports_services(tmp_path, server):
     info = await jarvis.data["voice"].async_info()
     assert "asr" in info["stt"]
     assert "tts" not in info and "wake" not in info
+
+
+# --- a reply that is only whitespace must not be handed to Piper -------------
+#
+# Reported as "TTS returned no audio" against a Piper container that logged
+# `Ready` and was working moments earlier. Piper was fine. It had been asked to
+# synthesise "\n\n": a reasoning model whose entire turn was a thinking block
+# leaves the stripper whitespace to return, and `if not self.response_text` is
+# false for whitespace, so the empty-reply guard let it straight through.
+
+async def test_a_whitespace_only_reply_never_reaches_the_tts_service(tmp_path):
+    async def converse(text, conversation_id):
+        yield "\n"
+        yield "  \n"
+
+    tts = FakeTts()
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=tts, converse=converse)
+    await run.execute(await queue_of(sine_pcm(20)))
+    assert tts.calls == [], (
+        f"Piper was asked to say {tts.calls!r} — whitespace is nothing to say, "
+        "and asking produces the misleading 'returned no audio'"
+    )
+
+
+async def test_a_real_reply_still_reaches_the_tts_service(tmp_path):
+    """The guard must not have swallowed the ordinary case with it."""
+    async def converse(text, conversation_id):
+        yield "  Kitchen light on.  "
+
+    tts = FakeTts()
+    run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=tts, converse=converse)
+    await run.execute(await queue_of(sine_pcm(20)))
+    assert [call[0] for call in tts.calls] == ["  Kitchen light on.  "]

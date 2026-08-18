@@ -174,6 +174,18 @@ _EXPECTED_ERROR_NAMES = frozenset({
     "ConnectError", "ConnectTimeout", "ReadTimeout", "WriteTimeout",
     "PoolTimeout", "NetworkError", "TransportError", "ReadError", "WriteError",
     "RemoteProtocolError", "ClientConnectorError", "ServerDisconnectedError",
+    # A REACHABLE server answering the wrong thing belongs here too, and this
+    # is the half I missed the first time. `HTTPStatusError` is not a transport
+    # failure, so it took the `_LOGGER.exception` branch and printed twenty
+    # frames — every scan_interval, forever, because a URL that is wrong now is
+    # wrong on the next poll as well. A user pointing OLLAMA_URL at an
+    # OpenAI-compatible server got `GET /v1 -> 404` twice a minute, each with a
+    # full traceback, which is what buried their real log.
+    #
+    # The traceback was never the useful part: a status code is fully described
+    # by one line. The transition still logs at WARNING with that line, so a
+    # sensor going unavailable is still announced, once.
+    "HTTPStatusError", "HTTPError", "ClientResponseError",
 })
 
 

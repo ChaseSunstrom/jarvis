@@ -25,6 +25,7 @@
 # Loader syntax (Home Assistant compatible):
 #   !secret name                pull a value from secrets.yaml
 #   !env_var NAME default       read the environment, with a fallback
+#   !env_url NAME base /path    an env var's BASE url, plus a fixed path
 #   !include file.yaml          splice in another file
 #   !include_dir_named dir/     {filename-without-.yaml: contents}
 #   !include_dir_merge_list dir/   concatenate every list in a directory
@@ -542,7 +543,20 @@ rest:
   # Same OLLAMA_URL as the `llm:` block above — these two pointing at
   # different places is how you get an assistant that talks to a model while
   # reporting it offline.
-  - resource: !env_var OLLAMA_URL http://127.0.0.1:11434/api/ps
+  #
+  # `!env_url`, not `!env_var`: OLLAMA_URL is a BASE url (the `llm:` block
+  # requires that), and `/api/ps` has to be appended to it. Written with
+  # `!env_var` the path survived only in the default, so anyone who actually
+  # set the variable polled the base and got a 404 every thirty seconds —
+  # `GET http://host:9000/v1` against an OpenAI-compatible server, with a
+  # twenty-frame traceback each time.
+  #
+  # THIS SENSOR IS OLLAMA-ONLY. `/api/ps` ("which model is resident") has no
+  # OpenAI equivalent — `/v1/models` lists what a server *offers*, not what it
+  # has loaded. On LiteLLM, vLLM, llama-swap or llama.cpp, delete this block or
+  # point it at something your router actually serves; the assistant does not
+  # use it, it is a dashboard readout.
+  - resource: !env_url OLLAMA_URL http://127.0.0.1:11434 /api/ps
     scan_interval: 30
     method: GET
     sensor:

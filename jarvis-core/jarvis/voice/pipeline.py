@@ -447,8 +447,16 @@ class PipelineRun:
 
         if not self.runs_stage("tts"):
             return
-        if not self.response_text:
-            _LOGGER.debug("Pipeline %s: empty response, skipping TTS", self.run_id)
+        # `.strip()`, not just truthiness. A reasoning model whose whole turn is
+        # a thinking block leaves the stripper "\n\n" to return, and "\n\n" is
+        # truthy — so the guard below passed it to Piper, which synthesised
+        # nothing and closed, and the turn failed with the thoroughly misleading
+        # "TTS service returned no audio". The service was fine; it was asked to
+        # say nothing.
+        if not self.response_text.strip():
+            _LOGGER.debug(
+                "Pipeline %s: the reply was empty or whitespace, skipping TTS", self.run_id
+            )
             return
         await self._run_tts(self.response_text)
 

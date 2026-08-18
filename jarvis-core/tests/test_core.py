@@ -602,3 +602,91 @@ async def test_a_wrapped_connect_error_is_found_through_the_cause_chain(
     assert all(r.exc_info is None for r in records), (
         "an OSError one link down the cause chain was missed"
     )
+
+
+# --- !env_url: a base from the environment, plus a path that always applies ---
+#
+# `!env_var OLLAMA_URL http://127.0.0.1:11434/api/ps` reads as "the variable,
+# with /api/ps on the end", and does not mean that: the path exists only in the
+# DEFAULT. Setting the variable — which the `llm:` block requires you to, as a
+# base url — made the sensor poll the base instead. Against Ollama that is
+# `GET /` answering in plain text; against an OpenAI-compatible server it is
+# `GET /v1`, a 404 every scan_interval with a twenty-frame traceback each time.
+
+def _load(tmp_path, text):
+    from jarvis import config as config_module
+
+    cfg = tmp_path / "configuration.yaml"
+    cfg.write_text(text)
+    return config_module.load_yaml(cfg, tmp_path, {})
+
+
+def test_env_url_appends_its_path_to_a_value_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_TEST_BASE", "http://192.168.1.174:9000/v1")
+    loaded = _load(tmp_path, "resource: !env_url JARVIS_TEST_BASE http://127.0.0.1:11434 /api/ps\n")
+    assert loaded["resource"] == "http://192.168.1.174:9000/v1/api/ps"
+
+
+def test_env_url_appends_its_path_to_the_default_too(tmp_path, monkeypatch):
+    monkeypatch.delenv("JARVIS_TEST_BASE", raising=False)
+    loaded = _load(tmp_path, "resource: !env_url JARVIS_TEST_BASE http://127.0.0.1:11434 /api/ps\n")
+    assert loaded["resource"] == "http://127.0.0.1:11434/api/ps"
+
+
+def test_env_url_does_not_double_a_slash(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_TEST_BASE", "http://host:11434/")
+    loaded = _load(tmp_path, "resource: !env_url JARVIS_TEST_BASE http://127.0.0.1:11434 /api/ps\n")
+    assert loaded["resource"] == "http://host:11434/api/ps"
+
+
+def test_env_url_refuses_a_form_that_would_silently_drop_the_path(tmp_path):
+    with pytest.raises(ConfigError, match="NAME DEFAULT_BASE PATH"):
+        _load(tmp_path, "resource: !env_url JARVIS_TEST_BASE http://127.0.0.1:11434\n")
+
+
+def test_the_shipped_model_sensor_keeps_its_path_when_the_url_is_overridden(monkeypatch):
+    """The regression itself, asserted against the file that shipped it."""
+    from jarvis import config as config_module
+
+    monkeypatch.setenv("OLLAMA_URL", "http://192.168.1.174:9000/v1")
+    config_dir = Path(__file__).resolve().parents[1] / "config"
+    loaded = config_module.load_yaml(config_dir / "configuration.yaml", config_dir, {})
+    resources = [entry["resource"] for entry in loaded["rest"] if "resource" in entry]
+    assert "http://192.168.1.174:9000/v1/api/ps" in resources, resources
+    # The bare base is exactly what it used to poll, and what returned the 404.
+    assert "http://192.168.1.174:9000/v1" not in resources
+
+
+# A REACHABLE server answering the wrong thing is the same kind of news as an
+# unreachable one, and it used to be treated as a defect in this code. An
+# OLLAMA_URL pointing at an OpenAI-compatible server gave `GET /v1 -> 404`
+# every thirty seconds, each with a twenty-frame httpx traceback.
+
+async def test_an_http_status_error_is_reported_once_without_a_traceback(tmp_path, caplog):
+    import httpx
+
+    exc = httpx.HTTPStatusError(
+        "HTTP 404",
+        request=httpx.Request("GET", "http://192.168.1.174:9000/v1"),
+        response=httpx.Response(404),
+    )
+    entity, records = await _poll(tmp_path, exc, caplog, times=4)
+    assert entity.available is False
+    assert all(r.exc_info is None for r in records), (
+        "a 404 printed a traceback; the status line already says everything"
+    )
+    warnings = [r for r in records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, (
+        f"warned {len(warnings)} times for one persistently wrong URL; a URL "
+        "that is wrong now is wrong on the next poll too"
+    )
+    assert "404" in warnings[0].getMessage()
+
+
+async def test_a_real_defect_still_gets_its_traceback(tmp_path, caplog):
+    """The distinction has to keep cutting both ways, or this is just silence."""
+    entity, records = await _poll(tmp_path, ValueError("I wrote this wrong"), caplog)
+    assert entity.available is False
+    assert any(r.exc_info is not None for r in records), (
+        "a bug in our own code must still print where it happened"
+    )

@@ -462,7 +462,20 @@ class WyomingTtsClient(_WyomingClient):
                     break
 
         if not chunks:
-            raise WyomingError("TTS service returned no audio")
+            # Say what was asked for. "returned no audio" names the symptom and
+            # points at Piper, and the two causes that actually produce it are
+            # both on this side of the wire: an empty or whitespace-only string
+            # (nothing to synthesise), and a voice the service does not have
+            # loaded. Neither is visible from the old message, so the first
+            # thing anyone did with it was go and read Piper's logs, where
+            # everything looks healthy because it is.
+            asked = (text or "").strip()
+            detail = (
+                f"nothing to say (the text was {len(text or '')} characters of whitespace)"
+                if not asked
+                else f"voice={name or self.voice or 'default'!r}, {len(asked)} characters"
+            )
+            raise WyomingError(f"TTS service returned no audio: {detail}")
         return (
             b"".join(chunks),
             rate or FALLBACK_TTS_RATE,

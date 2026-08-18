@@ -278,7 +278,7 @@ jobs:
               pass
 
           # Jarvis/HA config tags are resolved at runtime, not by a linter.
-          for tag in ("!secret", "!env_var", "!include", "!include_dir_named",
+          for tag in ("!secret", "!env_var", "!env_url", "!include", "!include_dir_named",
                       "!include_dir_merge_named", "!include_dir_list",
                       "!include_dir_merge_list"):
               L.add_constructor(tag, lambda ldr, node: None)

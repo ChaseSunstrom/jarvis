@@ -58,6 +58,39 @@ def _env_var(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
     return value
 
 
+def _join_url(base: str, path: str) -> str:
+    """Join a base URL and a path without doubling or dropping the slash."""
+    return base.rstrip("/") + "/" + path.lstrip("/") if path else base.rstrip("/")
+
+
+def _env_url(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
+    """``!env_url NAME DEFAULT_BASE /path`` — an env var's BASE plus a fixed path.
+
+    `!env_var` substitutes the variable verbatim, which is right for a value and
+    wrong for a URL you need to extend. The shipped `rest:` sensor said
+
+        resource: !env_var OLLAMA_URL http://127.0.0.1:11434/api/ps
+
+    intending "OLLAMA_URL, with /api/ps on the end". It does not mean that. The
+    path lives only in the *default*, so the moment anyone sets OLLAMA_URL — and
+    the `llm:` block requires them to, as a base URL — the resource became the
+    bare base and the sensor polled the wrong endpoint forever. Against Ollama
+    that is `GET /` answering "Ollama is running" in plain text; against an
+    OpenAI-compatible server it is `GET /v1`, a 404 every scan_interval.
+
+    So the path is a separate argument and is always applied, whether the value
+    came from the environment or from the default.
+    """
+    args = str(loader.construct_scalar(node)).split()  # type: ignore[arg-type]
+    if len(args) < 3:
+        raise ConfigError(
+            "!env_url takes NAME DEFAULT_BASE PATH, e.g. "
+            "!env_url OLLAMA_URL http://127.0.0.1:11434 /api/ps"
+        )
+    name, default_base, path = args[0], args[1], args[2]
+    return _join_url(os.environ.get(name) or default_base, path)
+
+
 def _include(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
     return load_yaml(_rel(loader, node), loader.config_dir, loader.secrets)
 
@@ -98,6 +131,7 @@ def _include_dir_merge_list(loader: JarvisSafeLoader, node: yaml.Node) -> list[A
 for tag, fn in (
     ("!secret", _secret),
     ("!env_var", _env_var),
+    ("!env_url", _env_url),
     ("!include", _include),
     ("!include_dir_named", _include_dir_named),
     ("!include_dir_merge_named", _include_dir_merge_named),
@@ -169,6 +203,18 @@ class _ProvLoader(JarvisSafeLoader):
     """
 
     secrets: dict[str, Any] = {}
+
+
+def _prov_env_url(loader: "_ProvLoader", node: yaml.Node) -> Tagged:
+    args = str(loader.construct_scalar(node)).split()  # type: ignore[arg-type]
+    name = args[0] if args else ""
+    default = _join_url(args[1], args[2]) if len(args) > 2 else None
+    return Tagged(
+        tag="env_url",
+        env_var=name,
+        env_set=os.environ.get(name) is not None,
+        yaml_default=default,
+    )
 
 
 def _prov_env_var(loader: "_ProvLoader", node: yaml.Node) -> Tagged:
@@ -246,6 +292,7 @@ def _prov_include_dir_merge_list(loader: "_ProvLoader", node: yaml.Node) -> list
 # through exactly those tags, which is to say: through all of them.
 for _tag, _fn in (
     ("!env_var", _prov_env_var),
+    ("!env_url", _prov_env_url),
     ("!secret", _prov_secret),
     ("!include", _prov_include),
     ("!include_dir_named", _prov_include_dir_named),

@@ -65,6 +65,7 @@ def _passthrough(loader: yaml.Loader, node: yaml.Node) -> Any:
 for _tag in (
     "!secret",
     "!env_var",
+    "!env_url",
     "!include",
     "!include_dir_named",
     "!include_dir_merge_named",
@@ -1364,10 +1365,13 @@ def test_compose_passes_jarvis_core_every_env_var_its_config_reads(
         match.group(1)
         for line in text.splitlines()
         if not line.lstrip().startswith("#")          # the tag's own doc line
-        for match in [re.search(r"!env_var\s+([A-Z][A-Z0-9_]*)", line)]
+        # `!env_url` too, or a variable introduced through the newer tag is
+        # invisible to precisely the check that exists to catch a variable the
+        # compose file forgot to pass — the failure with no symptom.
+        for match in [re.search(r"!env_(?:var|url)\s+([A-Z][A-Z0-9_]*)", line)]
         if match
     }
-    assert wanted, "no !env_var in configuration.yaml — did this test go stale?"
+    assert wanted, "no !env_var/!env_url in configuration.yaml — did this test go stale?"
 
     passed = {
         str(entry).split("=", 1)[0]
