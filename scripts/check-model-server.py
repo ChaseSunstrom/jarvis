@@ -81,6 +81,18 @@ def from_config() -> dict:
     return block if isinstance(block, dict) else {}
 
 
+async def _speaks_openai(url: str, api_key: str, timeout: float) -> bool:
+    """Does `<url>/v1/models` answer? Cheap, and never raises."""
+    probe = OpenAICompatClient(url=url, timeout=min(timeout, 10.0), api_key=api_key or None)
+    try:
+        await probe.list_models()
+        return True
+    except Exception:
+        return False
+    finally:
+        await probe.aclose()
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("url", nargs="?", help="model server base url; default: from configuration.yaml")
@@ -112,20 +124,6 @@ async def main() -> int:
     # Ollama's /api/chat. A url written without /v1 is read as Ollama, so
     # Jarvis POSTs to a path the server has never heard of and reports the 404
     # as "could not reach the language model".
-    if backend == "ollama" and not args.backend and not cfg.get("backend"):
-        looks_openai = any(p in url for p in (":8080", ":4000", ":8000", ":1234"))
-        if looks_openai:
-            say(WARN, "this url was read as OLLAMA's native wire")
-            hint(
-                f"{url} has no /v1 in it, so Jarvis will POST to {url.rstrip('/')}/api/chat\n"
-                "— which llama-swap, LiteLLM and vLLM do not serve. Fix it with EITHER:\n"
-                f"    url: {url.rstrip('/')}/v1\n"
-                "  or\n"
-                "    backend: openai\n"
-                "in the `llm:` block of jarvis-core/config/configuration.yaml."
-            )
-            print()
-
     if backend == "openai":
         client = OpenAICompatClient(url=url, model=model, timeout=args.timeout,
                                     api_key=api_key or None)
@@ -154,8 +152,27 @@ async def main() -> int:
                 )
             elif "401" in text or "403" in text:
                 hint("The server wants a key. Set `api_key:` in the `llm:` block.")
-            elif "404" in text:
-                hint(f"Wrong path. Try url: {url.rstrip('/')}/v1 with backend: openai.")
+            elif "404" in text and backend == "ollama":
+                # Not a guess. If /v1/models answers on the same host, this IS
+                # an OpenAI-compatible server and the only thing wrong is that
+                # a url without /v1 is read as Ollama — which is the single
+                # most common way a llama-swap or LiteLLM install is pointed at
+                # Jarvis, and produces a 404 that reads like the server being
+                # down.
+                if await _speaks_openai(url, api_key, args.timeout):
+                    say(BAD, "this is an OpenAI-compatible server on the WRONG WIRE")
+                    hint(
+                        f"{url.rstrip('/')}/v1/models answered, but the url has no /v1\n"
+                        "in it, so Jarvis read it as Ollama and posted to\n"
+                        f"{url.rstrip('/')}/api/chat — which llama-swap does not serve.\n"
+                        "\nFix it with EITHER of these in the `llm:` block of\n"
+                        "jarvis-core/config/configuration.yaml:\n"
+                        f"    url: {url.rstrip('/')}/v1\n"
+                        "  or\n"
+                        "    backend: openai"
+                    )
+                else:
+                    hint(f"Wrong path. Try url: {url.rstrip('/')}/v1 with backend: openai.")
             return 1
 
         # --- 3. is the configured model one of them -----------------------

@@ -806,3 +806,31 @@ def test_the_label_appears_in_the_error_so_it_names_the_right_server():
         None,
     )
     assert client.label == "LiteLLM"
+
+
+def test_the_diagnostic_script_still_finds_what_it_imports():
+    """`scripts/check-model-server.py` is what somebody runs when Jarvis says it
+    cannot reach the language model, so it must not be the second thing that is
+    broken. It reaches into private helpers — `_detect_backend`, `_scalar` — and
+    a rename here would leave it failing on import at exactly the wrong moment.
+
+    Checked by name rather than by running it: the script needs a live server.
+    """
+    import ast
+    import importlib
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "check-model-server.py"
+    assert script.is_file(), "the diagnostic script has moved or been deleted"
+
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    wanted: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("jarvis"):
+            wanted.setdefault(node.module, set()).update(a.name for a in node.names)
+    assert wanted, "the script no longer imports jarvis-core at all"
+
+    for module_name, names in wanted.items():
+        module = importlib.import_module(module_name)
+        missing = sorted(n for n in names if not hasattr(module, n))
+        assert not missing, f"{module_name} no longer provides {missing}"
