@@ -16,10 +16,8 @@ name: End-to-end
 # failure. ci.yml's "static checks" job fails the build on duplicates; keep it
 # that way.
 
-# Push only, and only for the things this workflow can actually break. No
-# `pull_request:` trigger on purpose: with `branches: ["**"]` a PR inside this
-# repo would boot the emulator twice for one change, and half an hour of runner
-# time is not worth a duplicate result. Dispatch it by hand for a fork PR.
+# Only for the things this workflow can actually break — half an hour of runner
+# time per change is worth spending narrowly.
 #
 # `jarvis-core/**` is in the list even though it makes a server change pay for
 # an emulator run: catching a server change that breaks a real client is the

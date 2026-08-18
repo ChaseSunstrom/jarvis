@@ -167,6 +167,57 @@ TURN_EVENT_TOOL_START = "tool-start"
 TURN_EVENT_TOOL_END = "tool-end"
 TURN_EVENT_THINKING = "thinking"
 
+#: The one tool the agent serves itself rather than the registry.
+#:
+#: Reasoning is off by default (`llm: think: false`) and that is the right
+#: default: the persona is two sentences of dry wit, the tool loop does the real
+#: work, and on a spoken turn a paragraph of deliberation is silence the user
+#: sits through. But "off" is the wrong answer for the minority of turns that
+#: genuinely need working out, and the model is the only thing in the system
+#: that knows which turn it is looking at.
+#:
+#: So it can ask. Calling this raises reasoning for the REST OF THIS TURN and
+#: nothing else — the next question starts fast again. It is handled inside
+#: `_execute_tool_calls` rather than registered as a real tool because it acts
+#: on the turn rather than on the house: there is nothing for a tier to gate,
+#: no service to call, and a registry entry would put it in the console's tool
+#: list beside things that unlock doors.
+THINK_TOOL_NAME = "think_it_through"
+
+THINK_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": THINK_TOOL_NAME,
+        "description": (
+            "Reason step by step before answering, for this turn only. "
+            "Reasoning is normally off because it costs the person several "
+            "seconds of silence, so use this ONLY when the answer genuinely "
+            "has to be worked out: a plan with several dependent steps, an "
+            "ambiguous request you must resolve before acting, arithmetic, or "
+            "conflicting information to weigh. Do NOT use it for a greeting, a "
+            "device command, a state question, or anything you could answer "
+            "straight away. Once per turn at most; then answer as usual."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "why": {
+                    "type": "string",
+                    "description": "One short phrase naming what needs working out.",
+                }
+            },
+            "required": ["why"],
+        },
+    },
+}
+
+#: What the model is told after asking. Phrased as an instruction to proceed,
+#: because the failure mode is a model that calls this and then calls it again.
+THINK_GRANTED = (
+    "Reasoning is now on for the rest of this turn. Work the problem through, "
+    "then answer. Do not call this again."
+)
+
 #: Reasoning kept on a `ConversationResult`. A model that thinks for nine
 #: paragraphs before saying "yes, Sir" is normal, and the whole of it would
 #: otherwise sit in the conversation archive and every event queue behind it.
@@ -191,6 +242,9 @@ class ConversationResult:
     #: What the model reasoned before answering, if it reasons out loud and
     #: anything asked to keep it. Never spoken and never in `text`.
     thinking: str = ""
+    #: True when the model asked for reasoning on this turn. Also the flag the
+    #: remaining rounds read — see `THINK_TOOL_NAME`.
+    escalated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -200,6 +254,7 @@ class ConversationResult:
             "rounds": self.rounds,
             "error": self.error,
             "thinking": self.thinking,
+            "escalated": self.escalated,
         }
 
     def as_conversation_response(self, language: str = "en") -> dict[str, Any]:
@@ -312,6 +367,7 @@ class ConversationAgent:
         summary_limit: int = DEFAULT_SUMMARY_LIMIT,
         think: bool | None = None,
         archive: ConversationArchive | None = None,
+        allow_think_escalation: bool = True,
     ) -> None:
         self.jarvis = jarvis
         self.client = client
@@ -335,6 +391,13 @@ class ConversationAgent:
         #: its keep — authoring an automation, planning a delegation — and
         #: `None` leaves the model's own default alone.
         self.think = think
+        #: Whether the model may raise reasoning for a single turn itself.
+        #:
+        #: Only meaningful when reasoning is OFF — that is the configuration
+        #: this exists to rescue. `llm: allow_think_escalation: false` turns it
+        #: off for anyone who would rather the latency be predictable than the
+        #: hard turns be better.
+        self.can_escalate_think = bool(allow_think_escalation) and think is False
         #: How many times one round may be attempted, and the first backoff.
         #: Only ever used before a token has reached the user — see
         #: `_Round.stream`. Two attempts covers the overwhelmingly common case
@@ -508,7 +571,12 @@ class ConversationAgent:
             *conversation.messages(),
             {"role": "user", "content": message},
         ]
-        schema = self.tools.as_openai_schema()
+        schema = list(self.tools.as_openai_schema())
+        # Offered only when it can do something. With `think` already true or
+        # left at the model's default, escalating is a no-op — and a tool that
+        # does nothing is a tool the model wastes a round discovering.
+        if self.can_escalate_think:
+            schema.append(THINK_TOOL_SCHEMA)
         context = Context(origin="llm")
         pieces: list[str] = []
 
@@ -628,7 +696,14 @@ class ConversationAgent:
         emit = emit or self._turn_emitter(None)
         for round_index in range(self.max_tool_rounds):
             result.rounds = round_index + 1
-            chat = _Round(self, messages, schema or None, context, result, emit, on_thinking)
+            # Withdrawn once used. "Once per turn" is in the tool's description,
+            # and a description is a request; this is the part that holds.
+            offered = (
+                [t for t in schema if _tool_name(t) != THINK_TOOL_NAME]
+                if result.escalated
+                else schema
+            )
+            chat = _Round(self, messages, offered or None, context, result, emit, on_thinking)
             async with aclosing(chat.stream()) as deltas:
                 async for delta in deltas:
                     yield delta
@@ -656,6 +731,15 @@ class ConversationAgent:
         total = len(chat_result.tool_calls)
         for index, call in enumerate(chat_result.tool_calls):
             _LOGGER.debug("Tool call: %s(%s)", call.name, call.arguments)
+            if call.name == THINK_TOOL_NAME:
+                # Not dispatched to the registry: it acts on this turn, not on
+                # the house. Answered inline so the model sees a normal tool
+                # result and carries on in the same round budget.
+                result.escalated = True
+                why = str((call.arguments or {}).get("why") or "").strip()[:200]
+                _LOGGER.info("Reasoning raised for this turn: %s", why or "(no reason given)")
+                messages.append(self._tool_message(call, THINK_GRANTED))
+                continue
             # Announced BEFORE it runs, which is the whole point: a tool that
             # takes nine seconds should be visible for nine seconds, not
             # reported once it is over.
@@ -850,8 +934,9 @@ class _Round:
                 # the largest avoidable component of time-to-first-word.
                 #
                 # `None` leaves the model's own default alone, which is what an
-                # install that has not set `llm: think:` gets.
-                think=agent.think,
+                # install that has not set `llm: think:` gets. A turn the model
+                # asked to think about overrides it for its remaining rounds.
+                think=True if self._result.escalated else agent.think,
             )
             # Set rather than passed: `chat()` is the client's public contract
             # and both implementations share it, so a new keyword there would
@@ -916,6 +1001,16 @@ class _Round:
                 # Normal end, an error, or the consumer walking away: the
                 # upstream response gets closed either way.
                 await stream.aclose()
+
+
+def _tool_name(entry: Any) -> str:
+    """The function name out of an OpenAI tool-schema entry, or ""."""
+    if not isinstance(entry, dict):
+        return ""
+    function = entry.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name") or "")
+    return str(entry.get("name") or "")
 
 
 def _dumps(value: Any) -> str:

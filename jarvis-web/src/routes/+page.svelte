@@ -94,7 +94,10 @@
 	// nothing has gone wrong, including when nothing has been tried.
 	let micReady = $state(false);
 	const player = new Player();
-	const vad = new EnergyVAD();
+	// Re-made once /api/config answers, so an install can tune the end-of-speech
+	// pause without a rebuild. Constructed with the default up front because the
+	// microphone may open before that request lands.
+	let vad = new EnergyVAD();
 	const bargeVad = new EnergyVAD({ startThreshold: 0.06, minSpeechMs: 150 });
 
 	let pipelineName = 'Jarvis';
@@ -600,7 +603,13 @@
 		}
 		fetch('/api/config')
 			.then((r) => r.json())
-			.then((c) => (pipelineName = c.pipeline ?? 'Jarvis'))
+			.then((c) => {
+				pipelineName = c.pipeline ?? 'Jarvis';
+				const hangover = Number(c.hangoverMs);
+				if (Number.isFinite(hangover) && hangover > 0) {
+					vad = new EnergyVAD({ hangoverMs: hangover });
+				}
+			})
 			.catch(() => {});
 		connectWs()
 			.then(() => {

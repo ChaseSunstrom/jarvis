@@ -222,6 +222,18 @@ llm:
   # authoring an automation — which ask for it separately.
   think: false
 
+  # ...but the model may raise it for a single turn it judges needs working out.
+  #
+  # `think: false` is right for the overwhelming majority of turns and wrong for
+  # the few that are actually hard — a plan with dependent steps, an ambiguity
+  # to resolve, arithmetic — and the model is the only thing in the system that
+  # knows which turn it is looking at. So it can ask, once per turn, and the
+  # reasoning lasts only until that turn ends. The next question is fast again.
+  #
+  # Set this false if you would rather the latency be predictable than the hard
+  # turns be better. It does nothing unless `think:` above is false.
+  allow_think_escalation: true
+
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.
   max_tool_rounds: 5

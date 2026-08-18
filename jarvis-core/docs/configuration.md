@@ -185,6 +185,7 @@ llm:
 | `backend_name` | What error messages call the server. Defaults to "the model server". |
 | `persona_file` | Relative to the config directory. Defaults to `prompts/jarvis.txt` if that file exists. `persona:` sets the text inline instead. |
 | `think` | Whether to let the model reason before answering. Unset leaves the model's own default alone; `false` is what the shipped config sets, because on a spoken turn deliberation is silence the user hears. |
+| `allow_think_escalation` | With `think: false`, lets the model raise reasoning for a single turn it judges needs working out, once per turn, via a `think_it_through` tool the agent serves itself. Default true; only meaningful when `think` is false. |
 | `max_tool_rounds` | Tool-call rounds per turn. Higher chains more steps and multiplies worst-case latency by the same factor. |
 | `approval_ttl` | Seconds a Tier-3 approval request stays valid. Requests are single-use, so a model cannot replay one. |
 | `options` | Passed to Ollama verbatim. On the `openai` backend the keys with an equivalent are translated and the rest go through as `extra_body`; `num_ctx` is dropped, because on that wire the context length is a property of how the server was started. |

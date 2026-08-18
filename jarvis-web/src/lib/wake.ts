@@ -31,6 +31,26 @@ export interface VadOptions {
 }
 
 /**
+ * How long a pause has to last before the turn is considered over.
+ *
+ * This is the single biggest piece of dead air in a spoken turn, and it is pure
+ * waiting: the audio has stopped, the recogniser has not been told, and nothing
+ * is happening. It used to be 800 ms, which is *safe* — nobody is ever cut off
+ * — and safe here is expensive, because every turn pays it whether or not the
+ * speaker was about to continue.
+ *
+ * 550 ms is past the pauses people actually leave inside a sentence (a comma is
+ * 150-250 ms, drawing breath before a subordinate clause is 300-400 ms) and
+ * well short of the gap that means "your turn". It takes a quarter of a second
+ * off every single turn.
+ *
+ * Tunable per install rather than hard-coded, because rooms differ: `voice:
+ * hangover_ms:` in configuration.yaml reaches this through /api/config. Raise
+ * it if you are being cut off; lower it if you are waiting.
+ */
+export const DEFAULT_HANGOVER_MS = 550;
+
+/**
  * Simple energy VAD driven by RMS levels from the mic worklet
  * (called roughly every 40 ms).
  */
@@ -53,7 +73,7 @@ export class EnergyVAD {
 			startThreshold: opts.startThreshold ?? 0.002,
 			endThreshold: opts.endThreshold ?? 0.001,
 			minSpeechMs: opts.minSpeechMs ?? 120,
-			hangoverMs: opts.hangoverMs ?? 800
+			hangoverMs: opts.hangoverMs ?? DEFAULT_HANGOVER_MS
 		};
 	}
 

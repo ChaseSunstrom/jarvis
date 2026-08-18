@@ -385,6 +385,10 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         # install had before this key existed.
         think=_tristate(options.get("think")),
         archive=archive,
+        # With reasoning off, the model may still raise it for one turn it
+        # judges needs working out. Off makes the latency predictable at the
+        # cost of the hard turns; see `THINK_TOOL_NAME` in llm/agent.py.
+        allow_think_escalation=bool(options.get("allow_think_escalation", True)),
     )
 
     jarvis.data[DOMAIN] = agent

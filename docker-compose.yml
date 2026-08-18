@@ -90,6 +90,10 @@ services:
       - PORT=8199
       - JARVIS_PIPELINE=${JARVIS_PIPELINE:-Jarvis}
       - JARVIS_TTS_VOICE=${JARVIS_TTS_VOICE:-en_GB-alan-medium}
+      # How long a pause must last before a spoken turn is treated as over.
+      # The single biggest piece of dead air in a turn, and the one number that
+      # genuinely differs between rooms — so it is tunable without a rebuild.
+      - JARVIS_VAD_HANGOVER_MS=${JARVIS_VAD_HANGOVER_MS:-550}
       # --- the console's own two credentials --------------------------------
       # THE CONSOLE READS THESE. It did not receive them, and that is not a
       # missing nicety — it is why the pairing panel said no secret was held on

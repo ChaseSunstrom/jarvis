@@ -346,3 +346,150 @@ async def test_a_servers_retry_after_is_honoured_but_capped(jarvis):
         asyncio.sleep = real_sleep
 
     assert slept == [MAX_RETRY_DELAY]
+
+
+# ---------------------------------------------------------------------------
+# the model raising reasoning for one turn, when it judges it needs it
+# ---------------------------------------------------------------------------
+class _ScriptedClient:
+    """Answers a script, and remembers the `think` flag and tools of each request."""
+
+    def __init__(self, *scripts) -> None:
+        self.scripts = list(scripts)
+        self.think_flags: list[object] = []
+        self.schemas: list[list] = []
+
+    def chat(self, **kwargs):
+        self.think_flags.append(kwargs.get("think"))
+        self.schemas.append(list(kwargs.get("tools") or []))
+        return self.scripts.pop(0) if self.scripts else _TextStream("Very good, Sir.")
+
+
+class _ToolCallStream:
+    """A round in which the model asks for one tool and says nothing."""
+
+    def __init__(self, name: str, arguments: dict) -> None:
+        from jarvis.llm.ollama import ToolCall
+
+        from jarvis.llm.ollama import ChatResult
+
+        self.result = ChatResult(
+            content="",
+            role="assistant",
+            tool_calls=[ToolCall(name=name, arguments=arguments, id="c1")],
+        )
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        return
+        yield  # pragma: no cover - marks this a generator
+
+    async def aclose(self):
+        return None
+
+
+def _names(schema) -> set[str]:
+    return {t.get("function", {}).get("name") for t in schema}
+
+
+async def test_the_tool_is_offered_only_when_reasoning_is_off(jarvis):
+    """A tool that cannot change anything is a round wasted discovering it."""
+    from jarvis.llm.agent import THINK_TOOL_NAME
+
+    off = _agent(jarvis, _ScriptedClient())
+    off.think = False
+    off.can_escalate_think = True
+    on = _agent(jarvis, _ScriptedClient())
+    on.think = True
+    on.can_escalate_think = False
+
+    async for _ in off.converse("hello"):
+        pass
+    async for _ in on.converse("hello"):
+        pass
+
+    assert THINK_TOOL_NAME in _names(off.client.schemas[0])
+    assert THINK_TOOL_NAME not in _names(on.client.schemas[0])
+
+
+async def test_asking_turns_reasoning_on_for_the_rest_of_the_turn(jarvis):
+    from jarvis.llm.agent import THINK_TOOL_NAME
+
+    client = _ScriptedClient(
+        _ToolCallStream(THINK_TOOL_NAME, {"why": "three dependent steps"}),
+        _TextStream("Right away, Sir."),
+    )
+    agent = _agent(jarvis, client)
+    agent.think = False
+    agent.can_escalate_think = True
+
+    said = "".join([d async for d in agent.converse("plan my morning")])
+
+    assert said == "Right away, Sir."
+    # First round asked without reasoning; the second was granted it.
+    assert client.think_flags == [False, True]
+    assert agent.last_result.escalated is True
+
+
+async def test_it_cannot_be_asked_for_twice(jarvis):
+    """The description says once per turn. This is the part that holds."""
+    from jarvis.llm.agent import THINK_TOOL_NAME
+
+    client = _ScriptedClient(
+        _ToolCallStream(THINK_TOOL_NAME, {"why": "hard"}),
+        _TextStream("Done."),
+    )
+    agent = _agent(jarvis, client)
+    agent.think = False
+    agent.can_escalate_think = True
+
+    async for _ in agent.converse("hello"):
+        pass
+
+    assert THINK_TOOL_NAME in _names(client.schemas[0])
+    assert THINK_TOOL_NAME not in _names(client.schemas[1])
+
+
+async def test_the_request_never_reaches_the_tool_registry(jarvis):
+    """It acts on the turn, not on the house — so there is nothing to gate and
+    nothing for the console's tool list to show."""
+    from jarvis.llm.agent import THINK_TOOL_NAME
+
+    called: list[str] = []
+    agent = _agent(
+        jarvis,
+        _ScriptedClient(
+            _ToolCallStream(THINK_TOOL_NAME, {"why": "x"}), _TextStream("Done.")
+        ),
+    )
+    agent.think = False
+    agent.can_escalate_think = True
+
+    original = agent.tools.call
+
+    async def _spy(name, arguments, context=None):
+        called.append(name)
+        return await original(name, arguments, context=context)
+
+    agent.tools.call = _spy
+    async for _ in agent.converse("hello"):
+        pass
+
+    assert called == []
+    # ...and it is not in the registry either.
+    assert THINK_TOOL_NAME not in agent.tools.names()
+
+
+async def test_a_turn_that_never_asks_stays_fast(jarvis):
+    client = _ScriptedClient(_TextStream("Good evening, Sir."))
+    agent = _agent(jarvis, client)
+    agent.think = False
+    agent.can_escalate_think = True
+
+    async for _ in agent.converse("hello"):
+        pass
+
+    assert client.think_flags == [False]
+    assert agent.last_result.escalated is False
