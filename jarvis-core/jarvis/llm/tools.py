@@ -1937,11 +1937,46 @@ def register_builtin_tools(
     )
 
     # --- run_background_task (tier 2) -------------------------------------
+    #
+    # This used to be an empty seam, and the shape of the lie is worth keeping
+    # written down. It minted an id, fired `jarvis_background_task` at a bus
+    # with no listener anywhere in the repo, and returned "Accepted.
+    # Acknowledge briefly now; the result arrives later." Nothing ran. Nothing
+    # tracked it. No result ever arrived. The model was instructed to promise
+    # something the system could not do, and "I'll see to it, Sir" followed by
+    # permanent silence is indistinguishable from a crash.
+    #
+    # It now records a real task in `jarvis.tasks`, which is durable, has a
+    # status a person can read, and is what every surface's progress list
+    # renders. The event still fires, unchanged, for anything that was
+    # listening — nothing was, but breaking a published event to fix a
+    # different bug is its own mistake.
+    #
+    # What it STILL does not do is execute the work: there is no worker yet.
+    # So the honest answer to the model is "recorded", not "started", and the
+    # message says a person will see it rather than that a result is coming.
+    # Overstating this again would recreate the bug with more machinery.
     async def _run_background_task(args: dict[str, Any], context: Any) -> Any:
         description = str(args.get("description") or args.get("task") or "").strip()
         if not description:
             return {"status": "error", "error": "description is required"}
+
+        tasks = getattr(jarvis, "tasks", None)
         task_id = uuid.uuid4().hex[:12]
+        recorded = False
+        if tasks is not None:
+            try:
+                task = await tasks.async_add(
+                    description,
+                    kind="background",
+                    source="assistant",
+                    task_id=task_id,
+                )
+                task_id = task.id
+                recorded = True
+            except Exception:  # pragma: no cover - a store failure is not a turn failure
+                _LOGGER.exception("Could not record a background task")
+
         payload = {
             "task_id": task_id,
             "description": description,
@@ -1949,11 +1984,25 @@ def register_builtin_tools(
             "requested_at": time.time(),
         }
         registry._fire(EVENT_BACKGROUND_TASK, payload, context)
+
+        if not recorded:
+            # No registry: say so rather than accept work that vanishes.
+            return {
+                "status": "error",
+                "error": (
+                    "background tasks are not available on this server, so this "
+                    "was not recorded — tell the user you cannot take it on"
+                ),
+            }
         return {
-            "status": "started",
+            "status": "recorded",
             "task_id": task_id,
             "description": description,
-            "message": "Accepted. Acknowledge briefly now; the result arrives later.",
+            "message": (
+                "Noted on the task list, where the user can see it. Nothing is "
+                "running it yet, so do NOT tell them it is under way or that a "
+                "result is coming — say it has been written down."
+            ),
         }
 
     # --- automation_control -------------------------------------------------

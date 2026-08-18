@@ -598,14 +598,68 @@ async def test_run_background_task_returns_immediately_and_fires_an_event(tmp_pa
         "run_background_task", {"description": "Draft the quarterly report"}
     )
 
-    assert result["status"] == "started"
+    # "recorded", not "started". Nothing runs the work yet, and the previous
+    # word — with the message "the result arrives later" — is what made this an
+    # empty seam: the model promised a result the system could never produce.
+    assert result["status"] == "recorded"
     assert result["task_id"]
     assert seen and seen[0]["description"] == "Draft the quarterly report"
     assert seen[0]["task_id"] == result["task_id"]
     assert registry.get("run_background_task").tier == 2
 
+    # And it is on the durable list a person can actually see, which is the
+    # half that did not exist.
+    task = jarvis.tasks.get(result["task_id"])
+    assert task is not None, "the task was accepted and recorded nowhere"
+    assert task.title == "Draft the quarterly report"
+    assert task.kind == "background"
+    assert task.source == "assistant"
+
     missing = await registry.call("run_background_task", {})
     assert missing["status"] == "error"
+    await shutdown(jarvis)
+
+
+async def test_the_background_tool_does_not_claim_work_is_under_way(tmp_path):
+    """The exact wording is the fix, so it is the thing under test.
+
+    `run_background_task` records; nothing executes it. A message that implies
+    otherwise recreates the original bug with more machinery behind it — the
+    user is told to expect a result, and no result is coming.
+    """
+    jarvis, _ = await build_house(tmp_path)
+    registry = make_registry(jarvis)
+    result = await registry.call("run_background_task", {"description": "Wash the car"})
+
+    # The status word is the load-bearing part and what a caller branches on.
+    # "started" was the old lie.
+    assert result["status"] == "recorded"
+
+    # A blacklist of phrases is the wrong instrument here, and the first
+    # version of this test proved it: the message says "do NOT tell them it is
+    # under way", and a substring search cannot tell an instruction from its
+    # own negation. So assert what the message must DO — forbid the claim and
+    # say what actually happened — rather than which words it may not contain.
+    message = result["message"].lower()
+    assert "do not" in message or "don't" in message, (
+        f"the message forbids nothing: {message!r}"
+    )
+    assert "not" in message and "running" in message, message
+    assert "task list" in message or "written down" in message, (
+        f"the message never says what DID happen: {message!r}"
+    )
+    await shutdown(jarvis)
+
+
+async def test_a_server_with_no_task_list_refuses_the_work_instead_of_losing_it(tmp_path):
+    """Accepting work that vanishes is the failure this whole change is about."""
+    jarvis, _ = await build_house(tmp_path)
+    registry = make_registry(jarvis)
+    jarvis.tasks = None
+
+    result = await registry.call("run_background_task", {"description": "Anything"})
+    assert result["status"] == "error"
+    assert "cannot take it on" in result["error"]
     await shutdown(jarvis)
 
 

@@ -19,6 +19,7 @@ from .services import ServiceRegistry
 from .settings import SettingsOverlay
 from .state import StateMachine
 from .store import Store
+from .tasks import STORE_KEY as TASKS_STORE_KEY, TaskRegistry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +40,13 @@ class Jarvis:
         self.areas = AreaRegistry(self.bus, Store(self.config_dir, "area_registry"))
         self.devices = DeviceRegistry(self.bus, Store(self.config_dir, "device_registry"))
         self.entities = EntityRegistry(self.bus, Store(self.config_dir, "entity_registry"))
+        # Long work, on one list. Beside the registries rather than in `data`
+        # for the same reason `settings` is: four unrelated things report
+        # through it — a task the model accepted, a research job, something
+        # scheduled, a coding job — and none of them should have to import an
+        # integration to find it, nor be ordered after one that might not be
+        # configured.
+        self.tasks = TaskRegistry(self, Store(self.config_dir, TASKS_STORE_KEY))
         # An attribute beside the registries rather than a `data` key: the
         # reload services have to reach it without importing an integration,
         # and it has the same lifecycle as the rest of the core infrastructure.
@@ -116,6 +124,10 @@ class Jarvis:
     ) -> None:
         """Load registries and set up every configured integration."""
         await self.settings.async_load()
+        # Before the integrations, so anything that wants to record work at
+        # setup finds a loaded list — and so a task interrupted by the last
+        # shutdown is marked as such before a surface can read it half-loaded.
+        await self.tasks.async_load()
         # Rebinding the local on purpose — see async_install_config. Both the
         # areas loop below and async_setup_integrations must see the overlay.
         config = await self.async_install_config(config, package_provenance)
