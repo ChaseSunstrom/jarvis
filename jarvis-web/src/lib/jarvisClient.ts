@@ -13,6 +13,7 @@
 import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import type { McpServer } from './mcpDraft';
+import type { ScheduledJob } from './schedule';
 
 export type SendFn = (data: string) => void;
 
@@ -708,6 +709,32 @@ export class JarvisClient {
 	/** A name of your own, instead of the conversation's first sentence. */
 	renameConversation(conversationId: string, title: string): Promise<boolean> {
 		return conversations.renameConversation(this.send_, conversationId, title);
+	}
+
+	// --- scheduled jobs --------------------------------------------------------
+	//
+	// The console may schedule a service call; the model's own tool cannot. A
+	// request here carried a bearer token, whereas a tool call may have been
+	// shaped by a page the model read — so the two doors are different widths,
+	// and jarvis-core enforces that, not this file.
+
+	async listScheduled(): Promise<ScheduledJob[]> {
+		const result = await this.command<{ jobs?: ScheduledJob[] }>({
+			type: 'jarvis/schedule/list'
+		});
+		return result?.jobs ?? [];
+	}
+
+	addScheduled(payload: Record<string, unknown>): Promise<{ job: ScheduledJob }> {
+		return this.command({ type: 'jarvis/schedule/add', ...payload });
+	}
+
+	removeScheduled(jobId: string): Promise<{ removed: string }> {
+		return this.command({ type: 'jarvis/schedule/remove', job_id: jobId });
+	}
+
+	setScheduledEnabled(jobId: string, enabled: boolean): Promise<{ job: ScheduledJob }> {
+		return this.command({ type: 'jarvis/schedule/enabled', job_id: jobId, enabled });
 	}
 
 	// --- MCP servers ---------------------------------------------------------

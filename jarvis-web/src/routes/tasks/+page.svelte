@@ -13,6 +13,7 @@
 	import { page } from '$app/state';
 	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import ScheduledJobs from '$lib/components/ScheduledJobs.svelte';
 	import TaskCard from '$lib/components/TaskCard.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { isUnsupported, type Subscription } from '$lib/jarvisClient';
@@ -28,7 +29,9 @@
 		type TaskRow
 	} from '$lib/tasks';
 
-	let conn: Connection | null = null;
+	// `$state` because it is passed to a child — see the same note on the
+	// tools page, where svelte-check caught the version that was not.
+	let conn = $state<Connection | null>(null);
 	let status = $state('connecting');
 	let err = $state('');
 	let hint = $state('');
@@ -204,6 +207,12 @@
 </p>
 
 <Reconnect {status} busy={redialling} retry={connect} />
+
+<!-- Above the task list, not on a page of its own: a scheduled job and the
+     task it mints are the same thing at two moments, and putting them a
+     navigation apart makes "did my seven o'clock reminder run?" a two-page
+     question. -->
+<ScheduledJobs {conn} />
 
 {#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}

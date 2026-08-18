@@ -11,6 +11,8 @@
 //     call_service (which really mutates state and pushes state_changed),
 //     subscribe_events / unsubscribe_events and the three registries
 //   - the task registry: jarvis/tasks/{list,get,cancel,delete,clear_finished},
+//   - scheduled jobs: jarvis/schedule/{list,add,remove,enabled}, with the
+//     `describes` sentence written server-side as the real one writes it
 //   - MCP servers: jarvis/mcp/{list,add,remove,reconnect}, including the two
 //     refusals the console depends on (no stdio without the file's say-so,
 //     and config-authored servers are read-only)
@@ -708,6 +710,55 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			.map(taskDict);
 
 	/**
+	 * Scheduled jobs.
+	 *
+	 * `describes` is written HERE rather than by the console, because that is
+	 * how the real one works: jarvis-core owns the schedule arithmetic and sends
+	 * the sentence, precisely so two surfaces cannot disagree about what
+	 * "every day at 07:30" means. A mock that let the console compute it would
+	 * hide exactly that.
+	 *
+	 * @type {Map<string, any>}
+	 */
+	const scheduled = new Map([
+		[
+			"brief",
+			{
+				id: "brief",
+				title: "Morning brief",
+				kind: "notify",
+				when: { mode: "daily", at: "07:30", days: [], minutes: 0 },
+				describes: "every day at 07:30",
+				payload: { message: "Good morning." },
+				enabled: true,
+				next_at: Date.now() / 1000 + 3600,
+				last_at: 0,
+				last_result: "",
+				missed: 0,
+				created: 1,
+				source: "",
+				// From the file. The console may look; it may not edit.
+				editable: false,
+			},
+		],
+	]);
+	let schedSeq = 0;
+
+	const describeWhen = (when) => {
+		if (when.mode === "every") {
+			return when.minutes % 60 === 0
+				? `every ${when.minutes / 60} hour${when.minutes === 60 ? "" : "s"}`
+				: `every ${when.minutes} minutes`;
+		}
+		if (when.mode === "daily") return `every day at ${when.at}`;
+		if (when.mode === "weekly") {
+			const names = when.days.map((d) => d[0].toUpperCase() + d.slice(1)).join(", ");
+			return `${names} at ${when.at}`;
+		}
+		return `once, at ${when.at}`;
+	};
+
+	/**
 	 * MCP servers, as jarvis-core keeps them.
 	 *
 	 * Modelled rather than stubbed because the console's panel turns on two
@@ -1309,6 +1360,113 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 							}, 60);
 						}, index * 40);
 					});
+					break;
+				}
+
+				// --- scheduled jobs ------------------------------------------
+				case 'jarvis/schedule/list':
+					ok(msg.id, { jobs: [...scheduled.values()] });
+					break;
+
+				case 'jarvis/schedule/add': {
+					const when = msg.when || {};
+					if (!when.mode) {
+						fail(msg.id, 'invalid_format', 'that is not a schedule I can read');
+						break;
+					}
+					if (when.mode === 'once' && Date.parse(when.at) < Date.now()) {
+						fail(msg.id, 'invalid_format', 'that time has already passed');
+						break;
+					}
+					if (msg.kind === 'service' && !String(msg.service || '').includes('.')) {
+						fail(msg.id, 'invalid_format', 'a service looks like light.turn_on');
+						break;
+					}
+					const id = `job-${++schedSeq}`;
+					const job = {
+						id,
+						title:
+							String(msg.title || '') ||
+							String(msg.message || msg.question || msg.service || 'scheduled job'),
+						kind: String(msg.kind || 'notify'),
+						when: {
+							mode: when.mode,
+							at: String(when.at || ''),
+							days: when.days || [],
+							minutes: Number(when.minutes || 0),
+						},
+						describes: describeWhen(when),
+						payload: {},
+						enabled: true,
+						next_at: Date.now() / 1000 + 600,
+						last_at: 0,
+						last_result: '',
+						missed: 0,
+						created: Date.now() / 1000,
+						source: 'console',
+						editable: true,
+					};
+					scheduled.set(id, job);
+					ok(msg.id, { status: 'ok', job });
+					break;
+				}
+
+				case 'jarvis/schedule/remove': {
+					const job = scheduled.get(String(msg.job_id || ''));
+					if (!job) {
+						fail(msg.id, 'not_found', `no scheduled job '${msg.job_id}'`);
+						break;
+					}
+					if (!job.editable) {
+						fail(
+							msg.id,
+							'not_found',
+							`'${job.id}' comes from configuration.yaml; remove it there`
+						);
+						break;
+					}
+					scheduled.delete(job.id);
+					ok(msg.id, { status: 'ok', removed: job.id });
+					break;
+				}
+
+				case 'jarvis/schedule/enabled': {
+					const job = scheduled.get(String(msg.job_id || ''));
+					if (!job) {
+						fail(msg.id, 'not_found', `no scheduled job '${msg.job_id}'`);
+						break;
+					}
+					job.enabled = Boolean(msg.enabled);
+					job.next_at = job.enabled ? Date.now() / 1000 + 600 : null;
+					ok(msg.id, { status: 'ok', job });
+					break;
+				}
+
+				/**
+				 * Forget every console-added job, keeping the config-authored one.
+				 *
+				 * The suite shares one mock process, so a test that asserts "no job
+				 * matches" is only meaningful if it can get back to that state
+				 * deliberately rather than by running first.
+				 */
+				case 'jarvis/test/schedule_reset': {
+					for (const [id, job] of [...scheduled.entries()]) {
+						if (job.editable) scheduled.delete(id);
+					}
+					scheduled.get('brief').missed = 0;
+					scheduled.get('brief').last_result = '';
+					ok(msg.id, { jobs: [...scheduled.values()] });
+					break;
+				}
+
+				/** Make a job look like it missed a firing while Jarvis was off. */
+				case 'jarvis/test/schedule_missed': {
+					const job = scheduled.get(String(msg.job_id || ''));
+					if (job) {
+						job.missed = Number(msg.missed || 3);
+						job.last_result = String(msg.reason || 'missed while Jarvis was not running');
+					}
+					ok(msg.id, { jobs: [...scheduled.values()] });
 					break;
 				}
 
