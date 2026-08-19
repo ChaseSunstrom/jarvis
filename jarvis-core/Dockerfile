@@ -8,10 +8,17 @@
 FROM python:3.12-slim
 
 # --- system packages (best-effort by design) --------------------------------
-# The image needs NOTHING from apt to work: the healthcheck below uses stdlib
-# urllib, and every dependency in requirements.txt is a pure-Python wheel. This
-# step only buys two conveniences, so it is allowed to fail:
+# The PLATFORM needs nothing from apt: the healthcheck below uses stdlib
+# urllib, and every dependency in requirements.txt is a pure-Python wheel. So
+# this step is allowed to fail, and what it buys is:
 #
+#   git     REQUIRED by Jarvis Code, and by nothing else. Making a repository
+#           is `git init`, `git add`, `git commit`; a job's branch and diff are
+#           git as well. Without it the CODE tab says so in a sentence naming
+#           this package rather than raising an errno — see `GIT_MISSING` in
+#           integrations/code/workspace.py — and the rest of Jarvis is
+#           unaffected. That is why it sits in the best-effort block instead
+#           of failing a build for everyone who never opens that tab.
 #   tzdata  glibc needs it to resolve a named zone. Without it `TZ=Europe/London`
 #           silently degrades to UTC, which shifts time-of-day triggers and the
 #           sun integration. docker-compose.yml also bind-mounts the host's
@@ -29,15 +36,27 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
         /etc/apt/sources.list 2>/dev/null || true; \
     ( timeout 180 apt-get -o Acquire::ForceIPv4=true update \
       && timeout 180 apt-get -o Acquire::ForceIPv4=true install -y \
-           --no-install-recommends tzdata curl \
+           --no-install-recommends git tzdata curl \
       && rm -rf /var/lib/apt/lists/* ) \
-    || echo "WARN: apt failed/timed out. The image is fully functional; only named-timezone resolution (see the /etc/localtime mount in docker-compose.yml) and the curl debugging convenience are affected."
+    || echo "WARN: apt failed/timed out. The image is fully functional EXCEPT Jarvis Code, which needs git — the CODE tab will say so. Named-timezone resolution (see the /etc/localtime mount in docker-compose.yml) and the curl debugging convenience are also affected."; \
+    git --version || echo "WARN: no git in this image — Jarvis Code cannot create or clone repositories. Rebuild when apt is reachable."
 
+# Where Jarvis Code puts the repositories it creates.
+#
+# NOT the default `~/jarvis/workspaces`: `~` here is /home/jarvis, which is the
+# container's own writable layer, so every `docker compose up -d --build` would
+# take the repositories with it. /config is the bind mount that already holds
+# .storage/ and the recorder database — the one directory in this image whose
+# contents are supposed to outlive it.
+#
+# An explicit `code: workspace:` in configuration.yaml still wins; this is the
+# image's default, not a policy.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    JARVIS_CONFIG=/config
+    JARVIS_CONFIG=/config \
+    JARVIS_CODE_WORKSPACE=/config/workspaces
 
 WORKDIR /srv
 

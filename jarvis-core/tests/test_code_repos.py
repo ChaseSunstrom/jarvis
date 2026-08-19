@@ -455,6 +455,72 @@ async def test_the_refusal_names_the_setting_that_is_actually_wrong():
     assert "~/jarvis/workspaces" in why
 
 
+# ---------------------------------------------------------------------------
+# the container, where `~` is a lie
+# ---------------------------------------------------------------------------
+def test_an_env_var_can_move_the_default_workspace(monkeypatch):
+    """`~` inside an image is the container's own writable layer.
+
+    So the default would put repositories somewhere `docker compose up -d
+    --build` destroys — a data-loss bug wearing a sensible-looking path. The
+    Dockerfile sets this to `/config/workspaces`, the bind mount everything
+    else Jarvis persists already lives in.
+    """
+    from jarvis.integrations.code import ENV_WORKSPACE, CodeConfig
+
+    monkeypatch.setenv(ENV_WORKSPACE, "/config/workspaces")
+    assert CodeConfig.from_config({}).workspace == Path("/config/workspaces")
+
+
+def test_the_operators_own_setting_beats_the_images_default(monkeypatch):
+    """An image default is not a policy: `workspace:` in configuration.yaml is
+    a decision somebody made, and it wins."""
+    from jarvis.integrations.code import ENV_WORKSPACE, CodeConfig
+
+    monkeypatch.setenv(ENV_WORKSPACE, "/config/workspaces")
+    assert CodeConfig.from_config({"workspace": "~/mine"}).workspace == (
+        Path("~/mine").expanduser()
+    )
+    assert CodeConfig.from_config({"workspace": "off"}).workspace is None
+
+
+def test_an_empty_env_var_is_not_a_setting(monkeypatch):
+    """Compose passes `FOO=${FOO:-}` constantly; empty must mean unset."""
+    from jarvis.integrations.code import DEFAULT_WORKSPACE, ENV_WORKSPACE, CodeConfig
+
+    monkeypatch.setenv(ENV_WORKSPACE, "   ")
+    assert CodeConfig.from_config({}).workspace == Path(DEFAULT_WORKSPACE).expanduser()
+
+
+def test_the_image_installs_git_and_keeps_repositories_off_the_writable_layer():
+    """Two container facts that are invisible until somebody loses work.
+
+    Read out of the Dockerfile rather than trusted: the whole reason Jarvis
+    Code failed on a real install was that `git` was not in the image, and the
+    fix for THAT would have quietly introduced the second problem — a default
+    workspace under `~`, which a rebuild deletes.
+    """
+    dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
+    assert dockerfile.is_file(), dockerfile
+    text = dockerfile.read_text(encoding="utf-8")
+
+    assert "--no-install-recommends git" in text, "the image no longer installs git"
+    assert "JARVIS_CODE_WORKSPACE=/config/workspaces" in text, (
+        "repositories would land in the container's writable layer and be "
+        "destroyed by the next rebuild"
+    )
+
+
+def test_the_compose_file_makes_the_workspace_directory_writable():
+    """uid 10003 cannot chown a bind mount, so the init job has to make it."""
+    compose = Path(__file__).resolve().parents[1] / "docker-compose.yml"
+    assert compose.is_file(), compose
+    text = compose.read_text(encoding="utf-8")
+    assert "/config/workspaces" in text, (
+        "the config-init job does not create the workspace directory"
+    )
+
+
 def test_the_console_and_the_server_agree_about_names():
     """Two implementations of one rule, pinned together.
 

@@ -75,7 +75,8 @@ services:
     container_name: jarvis-config-init
     user: "0:0"
     command: >
-      sh -c "mkdir -p /config/.storage && chown -R 10003:10003 /config &&
+      sh -c "mkdir -p /config/.storage /config/workspaces &&
+             chown -R 10003:10003 /config &&
              echo 'config dir ready for uid 10003'"
     volumes:
       - ./config:/config
@@ -155,8 +156,15 @@ services:
         condition: service_completed_successfully
     volumes:
       # Your entire installation. Config in, and Jarvis writes .storage/
-      # (entity/device/area registries, access tokens) plus the recorder
-      # database back out. Back this directory up; nothing else here is state.
+      # (entity/device/area registries, access tokens), the recorder database
+      # and — since Jarvis Code — `workspaces/`, the repositories it creates
+      # and clones. Back this directory up; nothing else here is state.
+      #
+      # `workspaces/` is here and not under the container's `~` for a plain
+      # reason: `~` is the image's writable layer, so a rebuild would delete
+      # every repository Jarvis had made. The Dockerfile sets
+      # JARVIS_CODE_WORKSPACE=/config/workspaces to keep them on this side of
+      # the mount.
       - ./config:/config
       # Lets glibc resolve the named zone even when the image's best-effort
       # tzdata install was skipped (blocked apt mirror at build time).

@@ -87,7 +87,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shlex
+import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -133,6 +135,18 @@ DEFAULT_WORKSPACE = "~/jarvis/workspaces"
 #: `workspace:` values that mean "Jarvis may not create repositories at all".
 #: `false` (the YAML boolean) works too.
 WORKSPACE_OFF = frozenset({"off", "no", "none", "false", "disabled"})
+
+#: Overrides `DEFAULT_WORKSPACE` when the operator has not named a directory.
+#:
+#: It exists for the container. `~` inside an image is the container's own
+#: writable layer, so the default would put repositories somewhere `docker
+#: compose up -d --build` destroys — a data-loss bug wearing a sensible-looking
+#: path. The Dockerfile sets this to `/config/workspaces`, which is the bind
+#: mount everything else Jarvis persists already lives in.
+#:
+#: Below an explicit `workspace:` in configuration.yaml, which is the
+#: operator's own decision and wins over an image default.
+ENV_WORKSPACE = "JARVIS_CODE_WORKSPACE"
 
 
 
@@ -256,7 +270,9 @@ class CodeConfig:
             workspace = None
         else:
             text = str(raw_workspace or "").strip()
-            workspace = Path(text or DEFAULT_WORKSPACE).expanduser()
+            workspace = Path(
+                text or os.environ.get(ENV_WORKSPACE, "").strip() or DEFAULT_WORKSPACE
+            ).expanduser()
 
         return cls(
             repositories=repos,
@@ -338,6 +354,17 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
             await asyncio.gather(*runs, return_exceptions=True)
 
     jarvis.register_shutdown(_shutdown)
+    # Said at start-up, not when the first job fails. A server with no git is
+    # a server where every part of this integration is going to refuse, and
+    # the operator should learn that from the log they already read rather
+    # than from a coding job that got as far as a branch name.
+    if shutil.which("git") is None:
+        _LOGGER.warning(
+            "code: there is no `git` on this server's PATH, so Jarvis cannot "
+            "create, clone or work in a repository. Install it (`apt install "
+            "git`) and restart. In Docker, rebuild the image — the Dockerfile "
+            "installs it when apt is reachable."
+        )
     _LOGGER.info(
         "code ready: %d repositor%s (%d writable), %d environment(s)%s, "
         "workspace %s",

@@ -73,8 +73,10 @@ instructions in `config/examples/README.md`.
 ### Permissions
 
 `./config` is a bind mount, so the container cannot fix its ownership. Jarvis
-runs as uid 10003 and writes `.storage/` and the recorder database there. On
-`EACCES` at first start:
+runs as uid 10003 and writes `.storage/`, the recorder database and
+`workspaces/` (the repositories Jarvis Code makes) there. All three are state:
+back the directory up, and note that a repository Jarvis created is not stored
+anywhere else. On `EACCES` at first start:
 
 ```bash
 sudo chown -R 10003:10003 ./config

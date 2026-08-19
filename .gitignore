@@ -41,3 +41,11 @@ secrets.yaml
 *.db
 *.db-wal
 *.db-shm
+
+# Repositories Jarvis Code creates and clones. They live beside `.storage/` so
+# that a container keeps them across rebuilds (see jarvis-core/Dockerfile), and
+# they are somebody's actual work — but they are also git repositories of their
+# own, and committing one into this one is a nested checkout nobody wants.
+# Back the directory up; do not track it.
+config/workspaces/
+jarvis-core/config/workspaces/

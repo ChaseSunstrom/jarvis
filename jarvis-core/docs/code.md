@@ -45,6 +45,39 @@ machine without it gets a sentence naming the package to install rather than
 an errno — and a creation that fails for any reason removes what it made, so
 the name is still free on the next attempt.
 
+### In Docker
+
+Three things differ, and two of them were bugs waiting to happen.
+
+**git is in the image.** The Dockerfile installs it alongside tzdata and curl.
+That step is best-effort by design — a blocked apt mirror must not fail a
+build for everyone who never opens the CODE tab — so if it is skipped, the
+image logs a warning, jarvis-core logs another at start-up, and the tab says
+which package to install. Rebuild when apt is reachable.
+
+**Repositories live in `/config/workspaces`, not under `~`.** `~` inside the
+container is the image's own writable layer, so the default would have put
+them somewhere `docker compose up -d --build` destroys. `/config` is the bind
+mount that already holds `.storage/` and the recorder database. The Dockerfile
+sets `JARVIS_CODE_WORKSPACE=/config/workspaces`; an explicit `workspace:` in
+your configuration.yaml still wins. **Back up `config/workspaces` along with
+the rest of `config/`** — a repository Jarvis made is not stored anywhere else.
+
+**Environments do not work in the container, on purpose.** They need a Docker
+daemon, and jarvis-core's container has no docker socket and no docker CLI —
+a job with an `environment:` reports "docker is not installed on this server"
+rather than failing obscurely. Everything else in Jarvis Code works: reading,
+editing, searching, the branch, the diff.
+
+Mounting `/var/run/docker.sock` into jarvis-core is what would enable them,
+and it is not the default and should not be casually made one: a container
+that can talk to the daemon can start another container that mounts the host's
+root filesystem, which is host root by a different name. It would also undo
+the `cap_drop: [ALL]` and `no-new-privileges` on that service. If you want
+environments, the honest options are to run jarvis-core directly on the host,
+or to give it a daemon you are willing to hand over — a rootless one, or a
+socket proxy restricted to the container endpoints.
+
 Names are strict — lowercase letters, digits, dot, dash, underscore — because a
 name becomes a directory, a branch prefix and a container mount. The refusal
 says what is allowed. Nothing can leave the workspace root: a name goes through
