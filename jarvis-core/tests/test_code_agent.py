@@ -153,6 +153,7 @@ def make_agent(
     writable: bool = True,
     checks: list[str] | None = None,
     sandbox: list[str] | None = None,
+    environment: Any = None,
     **kwargs: Any,
 ) -> CodeAgent:
     jarvis.data["llm"] = SimpleNamespace(client=model, model="test-model")
@@ -171,7 +172,10 @@ def make_agent(
         checks=list(checks or []),
     )
     return CodeAgent(
-        jarvis, repo, workspace=Workspace(repo, sandbox=sandbox), **kwargs
+        jarvis,
+        repo,
+        workspace=Workspace(repo, sandbox=sandbox, environment=environment),
+        **kwargs,
     )
 
 
@@ -334,7 +338,12 @@ async def test_a_configured_check_actually_runs_and_its_output_comes_back(
     jarvis, repo_dir
 ):
     model = FakeModel([[call("run_check", command="echo hello-from-the-check")], "done"])
-    agent = make_agent(jarvis, repo_dir, model, checks=["echo hello-from-the-check"])
+    # Read-only: a host check runs the OPERATOR's files, which is the only
+    # configuration where running one on the host is honest. See
+    # `test_a_writable_repository_with_nothing_around_it_gets_no_checks`.
+    agent = make_agent(
+        jarvis, repo_dir, model, writable=False, checks=["echo hello-from-the-check"]
+    )
     run = await agent.execute("do a thing")
     assert "hello-from-the-check" in model.results_of("run_check")[0]
     assert run.checks and run.checks[0]["ok"] is True
@@ -342,7 +351,7 @@ async def test_a_configured_check_actually_runs_and_its_output_comes_back(
 
 async def test_a_failing_check_is_reported_as_failing(jarvis, repo_dir):
     model = FakeModel([[call("run_check", command="false")], "done"])
-    agent = make_agent(jarvis, repo_dir, model, checks=["false"])
+    agent = make_agent(jarvis, repo_dir, model, writable=False, checks=["false"])
     run = await agent.execute("do a thing")
     assert "failed" in model.results_of("run_check")[0]
     assert run.checks[0]["ok"] is False
@@ -356,9 +365,138 @@ async def test_extra_whitespace_in_the_models_command_still_matches(jarvis, repo
     flexibility in the match, and it cannot add or remove an argument.
     """
     model = FakeModel([[call("run_check", command="  echo   ok  ")], "done"])
-    agent = make_agent(jarvis, repo_dir, model, checks=["echo ok"])
+    agent = make_agent(
+        jarvis, repo_dir, model, writable=False, checks=["echo ok"]
+    )
     await agent.execute("do a thing")
     assert "passed" in model.results_of("run_check")[0]
+
+
+async def test_a_writable_repository_with_nothing_around_it_gets_no_checks(
+    jarvis, repo_dir
+):
+    """The allow-list is of command STRINGS, and that is not the whole story.
+
+    `pytest -q` is the operator's command, but it imports `conftest.py`; `npm
+    test` runs `package.json`; `make` runs the Makefile. On a writable repo
+    every one of those is a `write_file` away, so an unconfined host check is
+    arbitrary host execution wearing the allow-list as a hat. The tool is not
+    offered at all in that configuration.
+    """
+    model = FakeModel(["done"])
+    agent = make_agent(jarvis, repo_dir, model, writable=True, checks=["echo hi"])
+    await agent.execute("do a thing")
+    assert "run_check" not in model.tool_names
+
+
+async def test_it_refuses_the_check_even_when_the_model_calls_it_unoffered(
+    jarvis, repo_dir
+):
+    """Withholding a tool is not a control: recovery can name it anyway.
+
+    `llm/toolcalls.py` turns a narrated call into a real one and does not know
+    which tools were withheld, so the refusal has to live at the tool too.
+    """
+    marker = repo_dir / "ran"
+    model = FakeModel(
+        [[call("run_check", command=f"touch {marker}")], "done"]
+    )
+    agent = make_agent(
+        jarvis, repo_dir, model, writable=True, checks=[f"touch {marker}"]
+    )
+    await agent.execute("do a thing")
+    result = model.results_of("run_check")[0]
+    assert "no environment and no sandbox wrapper" in result
+    assert not marker.exists(), "the check ran on the host anyway"
+
+
+async def test_a_check_does_not_execute_a_file_the_job_just_wrote(jarvis, repo_dir):
+    """The attack end to end, in the shape it would actually be used."""
+    marker = repo_dir / "pwned"
+    payload = f"import os\nopen({str(marker)!r}, 'w').close()\n"
+    model = FakeModel(
+        [
+            [call("write_file", path="conftest.py", content=payload)],
+            [call("run_check", command="python conftest.py")],
+            "done",
+        ]
+    )
+    agent = make_agent(
+        jarvis, repo_dir, model, writable=True, checks=["python conftest.py"]
+    )
+    await agent.execute("do a thing")
+    assert (repo_dir / "conftest.py").exists(), "the write itself is allowed"
+    assert not marker.exists(), "a file the job wrote was executed on the host"
+
+
+async def test_an_operator_sandbox_wrapper_is_enough_to_allow_checks(
+    jarvis, repo_dir
+):
+    """`sandbox:` is the operator's own confinement, and it counts."""
+    model = FakeModel([[call("run_check", command="echo ok")], "done"])
+    agent = make_agent(
+        jarvis,
+        repo_dir,
+        model,
+        writable=True,
+        checks=["echo ok"],
+        sandbox=["env"],
+    )
+    await agent.execute("do a thing")
+    assert "run_check" in model.tool_names
+    assert "passed" in model.results_of("run_check")[0]
+
+
+@pytest.mark.parametrize("ending", ["cancelled", "raised", "finished"])
+async def test_a_job_that_ends_any_way_at_all_removes_its_container(
+    jarvis, repo_dir, monkeypatch, ending: str
+):
+    """Cancellation is the one that gets missed.
+
+    A container holds the repository bind-mounted read-write for as long as it
+    lives, so "the job stopped" and "the container went away" have to be the
+    same event. `execute` closes the session in a `finally`, which covers a
+    normal end and an exception — and `asyncio.CancelledError` is a
+    BaseException, not an Exception, so it is worth proving rather than
+    assuming.
+    """
+    import asyncio
+
+    from jarvis.integrations.code import sandbox
+    from jarvis.integrations.code.sandbox import Environment
+
+    # CI runs as root and `container_argv` refuses to build a command line
+    # then — which would make this test pass by creating no container at all.
+    monkeypatch.setattr(sandbox, "_current_ids", lambda: (1000, 1000))
+
+    runs: list[list[str]] = []
+
+    async def _docker(argv, timeout, **kwargs):
+        runs.append(argv)
+        return 0, ""
+
+    model = FakeModel([[call("run_command", command="pip install pygame")], "done"])
+    agent = make_agent(
+        jarvis, repo_dir, model, environment=Environment(name="build")
+    )
+    session = await agent.ws.open_session()
+    session._run = _docker
+
+    if ending != "finished":
+        blow_up = asyncio.CancelledError if ending == "cancelled" else RuntimeError
+
+        async def _finish():
+            raise blow_up("the job stopped here")
+
+        agent._finish = _finish
+        with pytest.raises(blow_up):
+            await agent.execute("do a thing")
+    else:
+        await agent.execute("do a thing")
+
+    removed = [a for a in runs if a[1:2] == ["rm"]]
+    assert removed, f"a {ending} job left its container running: {runs}"
+    assert agent.ws._session is None
 
 
 async def test_a_repository_with_no_checks_is_not_offered_the_tool(jarvis, repo_dir):

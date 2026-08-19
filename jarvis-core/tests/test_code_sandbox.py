@@ -33,9 +33,9 @@ from jarvis.integrations.code.sandbox import (  # noqa: E402
     WORK_DIR,
     Environment,
     SandboxError,
+    Session,
     container_argv,
     environment_from_dict,
-    run_in_container,
     setup_script,
 )
 
@@ -369,45 +369,64 @@ def test_setup_commands_stop_at_the_first_failure():
 # ---------------------------------------------------------------------------
 # running
 # ---------------------------------------------------------------------------
-@pytest.mark.asyncio
 async def test_running_passes_the_built_argv_through_untouched():
+    """Through `Session`, because that is the only way to run anything now.
+
+    There used to be a second entry point — `run_in_container`, one container
+    per command — kept alive by these tests alone after `Session` replaced it.
+    A dormant execution path carrying its own copy of the fences is a thing
+    somebody re-wires later without re-reading them, so it was deleted and
+    what it proved moved here.
+    """
     seen: list[list[str]] = []
 
-    async def _runner(argv, timeout):
+    async def _runner(argv, timeout, **kwargs):
         seen.append(argv)
         return 0, "ok"
 
-    code, out = await run_in_container(
-        env(), Path("/srv/repo"), "pytest -q", runner=_runner
-    )
+    session = Session(env(), Path("/srv/repo"), runner=_runner)
+    code, out = await session.run("pytest -q")
     assert (code, out) == (0, "ok")
-    assert seen[0][0] == "docker"
-    assert seen[0][-3:] == ["/bin/sh", "-c", "pytest -q"]
+    assert seen[0][0] == "docker"  # the `docker run` that made the container
+    assert seen[-1][0] == "docker" and seen[-1][1] == "exec"
+    assert seen[-1][-3:-1] == ["/bin/sh", "-c"]
+    assert seen[-1][-1].endswith("pytest -q")
 
 
-@pytest.mark.asyncio
 async def test_the_environments_timeout_is_used_unless_overridden():
     seen: list[float] = []
 
-    async def _runner(argv, timeout):
-        seen.append(timeout)
+    async def _runner(argv, timeout, **kwargs):
+        if argv[1] == "exec":
+            seen.append(timeout)
         return 0, ""
 
-    await run_in_container(env(timeout=42), Path("/x"), "ls", runner=_runner)
-    await run_in_container(env(timeout=42), Path("/x"), "ls", timeout=5, runner=_runner)
+    session = Session(env(timeout=42), Path("/x"), runner=_runner)
+    await session.run("ls")
+    await session.run("ls", timeout=5)
     assert seen == [42, 5]
 
 
-@pytest.mark.asyncio
 async def test_a_missing_docker_says_what_to_do_rather_than_raising():
     """An operator who set `environment:` without installing Docker gets a
     sentence naming both fixes, not a traceback in a log they never read."""
-    code, out = await run_in_container(
-        env(), Path("/x"), "ls", docker="definitely-not-a-real-binary-xyz"
-    )
+    session = Session(env(), Path("/x"), docker="definitely-not-a-real-binary-xyz")
+    code, out = await session.run("ls")
     assert code == 1
     assert "docker is not installed" in out
     assert "environment:" in out
+
+
+def test_there_is_one_way_to_run_a_command_in_a_container():
+    """No second entry point, so there is one place the fences have to be."""
+    from jarvis.integrations.code import sandbox as module
+
+    entry = [
+        name
+        for name in dir(module)
+        if name.endswith("_in_container") and not name.startswith("_")
+    ]
+    assert entry == [], f"a second execution path came back: {entry}"
 
 
 # ---------------------------------------------------------------------------
@@ -687,8 +706,57 @@ def test_the_size_of_a_written_file_is_bounded():
     per file on every driver.
     """
     argv = argv_for(env(max_file_mb=100))
-    assert "--ulimit=fsize=204800" in argv  # 100 MiB in 512-byte blocks
+    # BYTES. docker passes `--ulimit` values to `setrlimit(2)` unscaled, and
+    # RLIMIT_FSIZE is in bytes; this used to assert 512-byte blocks, which
+    # made a 100 MB environment a 200 KiB one and agreed with the code because
+    # both were wrong the same way.
+    assert "--ulimit=fsize=104857600" in argv
     assert "--ulimit=nofile=4096:4096" in argv
+
+
+def test_the_file_size_limit_reaches_commands_and_not_only_the_container():
+    """The regression that came with sessions.
+
+    `ulimit` values are per-process, set on the container's INIT process.
+    `docker exec` spawns a new one from the daemon, which inherits the
+    daemon's limits, not the container's — so `--ulimit=fsize` stopped
+    applying to every command a job ran the moment commands moved from `run`
+    to `exec`. `docker exec` has no `--ulimit`, so the shell re-applies it.
+    """
+    from jarvis.integrations.code.sandbox import exec_argv
+
+    argv = exec_argv("box", "dd if=/dev/zero of=/work/pad", max_file_mb=100)
+    script = argv[-1]
+    # 512-byte blocks here, bytes on the flag above. Different units, and
+    # using one for the other is a fence off by a factor of 512.
+    assert script.startswith("ulimit -f 204800 2>/dev/null; ")
+    assert "ulimit -n 4096 2>/dev/null; " in script
+    assert script.endswith("dd if=/dev/zero of=/work/pad")
+
+
+async def test_a_session_command_carries_the_file_size_limit():
+    """Wired, not merely available: the argument has to be passed."""
+    seen: list[list[str]] = []
+
+    async def _spy(argv, timeout, **kwargs):
+        seen.append(argv)
+        return 0, ""
+
+    session = Session(env(max_file_mb=7), Path("/tmp/x"), runner=_spy)
+    session.started = True
+    await session.run("make")
+    assert seen and seen[0][-1].startswith(f"ulimit -f {7 * 2048} ")
+
+
+def test_the_command_length_limit_is_measured_before_the_prologue():
+    """Otherwise the ceiling moves whenever the prologue's wording changes."""
+    from jarvis.integrations.code.sandbox import MAX_COMMAND_CHARS, exec_argv
+
+    longest = "x" * MAX_COMMAND_CHARS
+    argv = exec_argv("box", longest, max_file_mb=1)
+    assert argv[-1].endswith(longest)
+    with pytest.raises(SandboxError):
+        exec_argv("box", "x" * (MAX_COMMAND_CHARS + 1), max_file_mb=1)
 
 
 def test_the_file_size_limit_is_clamped_and_survives_nonsense():

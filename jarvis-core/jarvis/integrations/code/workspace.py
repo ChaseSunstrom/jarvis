@@ -99,6 +99,29 @@ HOST_GIT_GUARDS = (
     "-c", "core.fsmonitor=",
     "-c", "protocol.ext.allow=never",
 )
+
+#: The last component of every config key whose value git hands to a shell.
+#:
+#: Matched against the LAST dotted component so that the subsection is
+#: irrelevant: `filter.z.clean`, `diff.mine.textconv` and `gpg.ssh.program` are
+#: all named by a job, and only the tail is fixed. Erring wide is deliberate —
+#: a false positive costs an operator one line in `.git/config`, and a false
+#: negative is a command running as them.
+EXECUTING_KEYS = (
+    # filter.<driver>.*  — reached from .gitattributes, which a job may write.
+    "clean", "smudge", "process",
+    # diff.*, difftool.*, mergetool.*, merge.<driver>.*, trailer.<t>.*
+    "textconv", "external", "command", "cmd", "driver",
+    # core.*
+    "fsmonitor", "hookspath", "gitproxy", "sshcommand", "editor", "askpass",
+    "pager", "helper", "program",
+    # A local-path remote runs these on THIS machine.
+    "uploadpack", "receivepack", "uploadarchive",
+)
+
+#: Long enough for a slow disk, short enough that a config pointing `include`
+#: at a fifo fails the job instead of hanging it.
+CONFIG_SCAN_TIMEOUT = 15.0
 #: A diff longer than this is not a change anybody is going to review; it is a
 #: reformat or a checked-in build directory, and truncating it says so.
 MAX_DIFF_BYTES = 400_000
@@ -218,6 +241,42 @@ class Workspace:
     @property
     def sandboxed(self) -> bool:
         return self.environment is not None
+
+    @property
+    def confined(self) -> bool:
+        """Is there anything at all between a check and this machine?
+
+        Either an `environment:` (a container) or the operator's own
+        `sandbox:` wrapper counts. Neither means a check is a plain host
+        process, which is only acceptable on a repository the job cannot
+        write — see `unconfined_check_refusal`.
+        """
+        return self.sandboxed or bool(self.sandbox)
+
+    def unconfined_check_refusal(self) -> str:
+        """Why a check must not run, or "" if it may.
+
+        A check is the operator's command, not the model's — but *what that
+        command executes* is a file in the repository, and on a writable repo
+        the job has just been editing those. `pytest` imports `conftest.py`,
+        `npm test` runs whatever `package.json` says, `make` runs the
+        Makefile. Writing one of those is a plain `write_file` away, so an
+        unconfined check on a writable repository is arbitrary host execution
+        with extra steps, and the allow-list of command STRINGS does not
+        narrow it at all.
+
+        Read-only is fine: the job cannot have written what the check runs, so
+        it is the operator's own code doing what it always did.
+        """
+        if not self.repo.writable or self.confined:
+            return ""
+        return (
+            f"{self.repo.name} is writable but has no environment and no "
+            "sandbox wrapper, so a check would run on the host — and a check "
+            "runs files from the repository (conftest.py, package.json, "
+            "Makefile) that this job can write. Refusing. Give the repository "
+            "an `environment:`, or a `sandbox:` wrapper, or mark it read-only."
+        )
 
     async def open_session(self):
         """The container this job's commands run in, created once.
@@ -406,7 +465,7 @@ class Workspace:
         after. Checking once was a time-of-check/time-of-use bug with the
         window deliberately held open by the model.
         """
-        problem = self.unsafe_git_config()
+        problem = await self.async_unsafe_git_config()
         if problem:
             raise GitError(problem)
         code, out, err = await self._run(
@@ -429,9 +488,12 @@ class Workspace:
         safe, or a sentence naming the key when it is not — the caller refuses
         rather than running git and hoping.
 
-        Reads `.git/config` textually rather than through `git config`, because
-        asking git to tell you whether git is about to run something is asking
-        the wrong party.
+        This is the TEXTUAL half. It reads the file itself, so a refusal never
+        depends on git agreeing to be asked. It is deliberately not the whole
+        check: git's parser accepts forms a regex does not model, and every
+        such difference is a hole. `async_unsafe_git_config` runs git's own
+        parser over the same file and refuses if EITHER half objects — neither
+        is trusted to clear a repository, each is trusted to condemn one.
         """
         problem = self._unsafe_config_file(self.root / ".git" / "config")
         if problem:
@@ -470,8 +532,14 @@ class Workspace:
             return ""
 
         # Followed first: an include can define any of the keys below.
+        #
+        # Not anchored, for the same reason the key scan below is not, and
+        # this asymmetry was a real hole: `[include] path = ../evil` on ONE
+        # line is honoured by git and was invisible to `^\s*path`, so the
+        # included `filter.z.clean` never reached the scan and `git add` ran
+        # it. Reproduced against git 2.43 before this line changed.
         for match in re.finditer(
-            r"^\s*path\s*=\s*(.+?)\s*$", text, re.IGNORECASE | re.MULTILINE
+            r"(?:^|\s|\])path\s*=\s*(.+?)\s*$", text, re.IGNORECASE | re.MULTILINE
         ):
             raw = match.group(1).strip().strip('"')
             if not raw:
@@ -483,20 +551,7 @@ class Workspace:
             if problem:
                 return f"{config} includes {included}, and {problem}"
 
-        for key in (
-            "clean",
-            "smudge",
-            "process",
-            "textconv",
-            "external",
-            "fsmonitor",
-            "hookspath",
-            "sshcommand",
-            "helper",
-            "pager",
-            "editor",
-            "askpass",
-        ):
+        for key in EXECUTING_KEYS:
             # Not anchored to the line start: git accepts `[a] b = c` on one
             # line, and an anchored pattern reads the file and sees nothing.
             if re.search(rf"(?:^|\s|\]){key}\s*=", text, re.IGNORECASE | re.MULTILINE):
@@ -505,6 +560,63 @@ class Workspace:
                     "Jarvis will not run git in this repository until that is "
                     "removed — a job that wrote it would be choosing what the "
                     "host executes."
+                )
+        return ""
+
+    async def async_unsafe_git_config(self) -> str:
+        """`unsafe_git_config`, plus every key git's own parser can see.
+
+        A regex is worse than git at reading git's config format, and git is
+        the party that decides what runs. Asking it closes that gap: `git
+        config --list` looks values up, it does not act on them, and
+        `--includes` expands the include graph in git's terms — which retires
+        every include syntax at once instead of one regex at a time.
+
+        Strictly an ADDITION. A `git config` that fails, times out, or is too
+        old for these flags has no opinion, and the textual verdict stands; it
+        can never clear a repository the textual half condemned.
+        """
+        problem = self.unsafe_git_config()
+        if problem:
+            return problem
+        config = self.root / ".git" / "config"
+        if not config.is_file():
+            return ""
+        code, out, _err = await self._run(
+            [
+                # The guards go on this one too. They are irrelevant to
+                # `config --list` — it looks values up, it does not act on
+                # them — but "every host git carries the guards" is only an
+                # invariant worth having if it has no exceptions to remember.
+                *HOST_GIT_GUARDS,
+                "--no-pager",
+                "config",
+                "--file",
+                str(config),
+                "--list",
+                "--includes",
+                "--name-only",
+                "-z",
+            ],
+            self.root,
+            CONFIG_SCAN_TIMEOUT,
+            env=_host_git_env(),
+        )
+        if code != 0:
+            # A config this cannot parse is one real git cannot parse either,
+            # and that command fails on its own. Silence here, not a refusal
+            # invented from a broken tool.
+            return ""
+        for name in out.split("\0"):
+            name = name.strip()
+            if not name:
+                continue
+            if name.rsplit(".", 1)[-1].lower() in EXECUTING_KEYS:
+                return (
+                    f"{config} sets {name!r}, which tells git to run a "
+                    "command. Jarvis will not run git in this repository "
+                    "until that is removed — a job that wrote it would be "
+                    "choosing what the host executes."
                 )
         return ""
 

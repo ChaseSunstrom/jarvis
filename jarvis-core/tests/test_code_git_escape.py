@@ -226,7 +226,50 @@ async def test_the_guards_are_actually_passed_to_git(repo: Path):
 
     ws = Workspace(Repo(name="p", path=str(repo)), runner=_spy)
     await ws.current_branch()
-    assert seen[0][:6] == list(HOST_GIT_GUARDS)
+    assert seen, "no git ran at all"
+    # Every call, not the first: `git()` now runs a config scan ahead of the
+    # command, and a spot check on one invocation is how an unguarded second
+    # one gets added without anybody noticing.
+    for args in seen:
+        assert args[:6] == list(HOST_GIT_GUARDS), args
+
+
+def test_host_git_is_spawned_in_exactly_one_place():
+    """One door, so the guards only have to be nailed to one door.
+
+    Every host git goes through `Workspace.git`, which refuses on a poisoned
+    config and prepends `HOST_GIT_GUARDS`. A second `create_subprocess_exec`
+    naming git would be a way past both, and would look perfectly ordinary in
+    review — so it is counted here instead.
+    """
+    import re
+
+    source = Path(
+        "jarvis/integrations/code/workspace.py"
+    ).resolve()
+    if not source.exists():  # pragma: no cover - running from another cwd
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "jarvis/integrations/code/workspace.py"
+        )
+    text = source.read_text()
+    spawns = re.findall(r'create_subprocess_exec\(\s*\n?\s*"git"', text)
+    assert len(spawns) == 1, f"{len(spawns)} places spawn host git, expected 1"
+
+
+async def test_a_poisoned_config_says_which_file_and_which_key(
+    ws: Workspace, repo: Path
+):
+    """The refusal is what an operator sees, so it has to be actionable.
+
+    "Jarvis will not run git here" with no file and no key is a support
+    ticket. Both halves of the check name both.
+    """
+    _git(repo, "config", "filter.evil.clean", "/bin/sh")
+    for problem in (ws.unsafe_git_config(), await ws.async_unsafe_git_config()):
+        assert str(repo / ".git" / "config") in problem
+        assert "clean" in problem
+        assert "run a command" in problem
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +306,72 @@ async def test_every_execution_bearing_key_is_caught(
 ):
     _git(repo, "config", key, value)
     assert ws.unsafe_git_config(), f"{key} was not noticed"
+
+
+async def test_a_one_line_include_is_followed_too(
+    ws: Workspace, repo: Path, tmp_path: Path
+):
+    """The shipped hole: `[include] path = X` on ONE line.
+
+    The include follower was anchored to the line start while the key scan
+    below it was not, so a section header and its key on the same line — a
+    form git honours, verified against git 2.43 — meant the included file was
+    never read and its `filter.z.clean` never scanned. `git add` then ran it.
+    """
+    included = tmp_path / "included"
+    included.write_text('[filter "z"]\n\tclean = touch /tmp/pwned\n')
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text() + f"[include] path = {included}\n")
+
+    # git honours it: this is the attack, not a hypothetical.
+    assert "touch /tmp/pwned" in _git(repo, "config", "--get", "filter.z.clean")
+
+    problem = ws.unsafe_git_config()
+    assert problem, "the one-line include was not followed"
+    assert "clean" in problem
+    with pytest.raises(GitError):
+        await ws.diff()
+
+
+async def test_an_include_git_can_read_but_a_regex_cannot(
+    ws: Workspace, repo: Path, tmp_path: Path
+):
+    """Line continuation: the reason the textual scan is only half the check.
+
+    git joins a value ending in a backslash with the next line. No regex over
+    single lines models that, and rather than grow one, the second half asks
+    git's own parser for the expanded key list. The assertion that the textual
+    half MISSES this is deliberate: it records why the second half exists, and
+    fails loudly if someone deletes it as redundant.
+    """
+    included = tmp_path / "evil"
+    included.write_text('[filter "z"]\n\tclean = touch /tmp/pwned\n')
+    head, tail = str(included)[:-2], str(included)[-2:]
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text() + f'[include]\n\tpath = "{head}\\\n{tail}"\n')
+
+    assert "touch /tmp/pwned" in _git(repo, "config", "--get", "filter.z.clean")
+
+    assert ws.unsafe_git_config() == ""
+    problem = await ws.async_unsafe_git_config()
+    assert "filter.z.clean" in problem
+    with pytest.raises(GitError):
+        await ws.diff()
+
+
+async def test_the_parser_half_never_clears_what_the_textual_half_condemned(
+    ws: Workspace, repo: Path
+):
+    """Ordering: a passing `git config` must not overrule a textual refusal."""
+    _git(repo, "config", "filter.evil.clean", "/bin/sh")
+    assert ws.unsafe_git_config()
+    assert await ws.async_unsafe_git_config()
+
+
+async def test_gpg_program_is_in_the_roster(ws: Workspace, repo: Path):
+    """`gpg.program` runs on a signed commit and was missing from the list."""
+    _git(repo, "config", "gpg.program", "/bin/sh")
+    assert ws.unsafe_git_config()
 
 
 async def test_an_ordinary_repository_is_not_flagged(ws: Workspace):

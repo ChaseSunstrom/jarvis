@@ -8,7 +8,15 @@ the host is the largest hole anybody has ever put in this codebase.
 That argument is still true, and this module does not weaken it. What it adds
 is a *second* place for commands to run — a container that is thrown away when
 the job ends — and a shell that exists **only there**. On the host there is
-still no shell, and a repository with no environment behaves exactly as before.
+still no shell.
+
+An environment also turned out to be the only honest way to run a check on a
+repository a job can WRITE. A check is the operator's command string, but it
+executes files out of the working tree — `conftest.py`, `package.json`, the
+Makefile — and a job that can write those chooses what runs. So on a writable
+repository, `run_check` now needs an environment (or the operator's own
+`sandbox:` wrapper); without one it is withheld and refused. A READ-ONLY
+repository with no environment behaves exactly as before.
 
 ## What an environment buys, and what it costs
 
@@ -56,6 +64,14 @@ a test that fails if it is dropped:
     --memory / --cpus           likewise for RAM and CPU.
     --mount type=tmpfs,/tmp     somewhere to write that is not the repository
                                 and not the image.
+    --ulimit fsize              the bind mount is the host's disk and Docker
+                                cannot quota it, so the cap is per file. NOT
+                                inherited by `docker exec`, which is a new
+                                process with the daemon's limits — `exec_argv`
+                                re-applies it in the shell, and that is the
+                                only reason it still holds.
+    --ulimit nofile             a descriptor storm is the other cheap way to
+                                hurt a host. Same caveat, same answer.
     -v <repo>:/work  -w /work   THE ONLY host path in the container. Not the
                                 workspace root, not the parent — one repo.
 
@@ -64,6 +80,39 @@ And the negatives, which matter as much: no `--privileged`, no
 another container that mounts anything), no host networking, and none of the
 operator's environment variables. `env:` on the environment is an explicit
 allow-list written in configuration.yaml.
+
+## What this does NOT stop
+
+Written down because a fence list reads like a guarantee, and these are the
+places where it is not one.
+
+**The container can write `.git`.** The bind mount is the whole repository,
+and `resolve_for_write` — which refuses `.git` — is a HOST-side check on the
+host-side tools. A shell inside the container is under no such rule. That is
+survivable only because it was assumed: `Workspace.git` re-checks the config
+before every single invocation rather than once per job, precisely because
+the job can rewrite it underneath. What a job CAN still do is corrupt its own
+repository, which is a mess to clean up and not a host compromise.
+
+**A hook written into `.git/hooks` outlives the job.** Host git never runs it
+(`core.hooksPath=/dev/null`), and `unsafe_git_config` reports an executable
+hook rather than ignoring it — but the operator's own shell, their editor,
+their cron job run hooks normally. The report is the mitigation; there is no
+way to stop a file existing in a directory the container can write.
+
+**`persist: true` keeps what a job installed.** That is the feature, and it
+means one job's `apt-get install` is in the next job's image. A job that
+installs something hostile has left it for its successors. `reset_environment`
+throws the image away, and the console offers it; nothing does so
+automatically.
+
+**`egress` really is egress.** See above — the LAN and jarvis-core's own API
+are on the other side of it.
+
+**None of this bounds a writable repository's host CHECKS**, because those are
+refused outright now: a writable repository with no `environment:` and no
+`sandbox:` wrapper is not offered `run_check` at all. See
+`Workspace.unconfined_check_refusal`.
 
 ## Why this shells out to `docker` rather than using a library
 
@@ -101,7 +150,6 @@ __all__ = [
     "SandboxError",
     "container_argv",
     "environment_from_dict",
-    "run_in_container",
 ]
 
 #: A base with a compiler, git and python. Deliberately a plain upstream image
@@ -120,6 +168,15 @@ WORK_DIR = "/work"
 
 MAX_COMMAND_CHARS = 4000
 MAX_OUTPUT_CHARS = 20_000
+
+#: A file-descriptor storm is a cheap way to hurt a host, so both the
+#: container and every command inside it get the same ceiling.
+MAX_OPEN_FILES = 4096
+#: `--ulimit` reaches `setrlimit(2)` unscaled, and RLIMIT_FSIZE is in bytes.
+BYTES_PER_MB = 1024 * 1024
+#: `ulimit -f` in POSIX `sh` is in 512-byte blocks, which is NOT the same unit
+#: as the flag above. Two names so that neither can be used for the other.
+BLOCKS_PER_MB = 2048
 #: Longest a single command may run. A build is minutes; nothing legitimate in
 #: a coding job is an hour, and a wedged process must not hold the job open.
 DEFAULT_TIMEOUT = 900.0
@@ -410,10 +467,16 @@ def container_argv(
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         # The bind mount is the host's filesystem; nothing else here bounds
-        # what a job writes into it. `fsize` is in 512-byte blocks.
-        f"--ulimit=fsize={environment.max_file_mb * 2048}",
+        # what a job writes into it.
+        #
+        # BYTES. `--ulimit` values reach `setrlimit(2)` unscaled — docker does
+        # no unit conversion — and RLIMIT_FSIZE is documented in bytes. This
+        # line used to multiply by 2048 in the belief that it took 512-byte
+        # blocks, which capped the default 2048 MB environment at 4 MiB: not a
+        # loose fence, a wrong one, strict enough to kill an ordinary build.
+        f"--ulimit=fsize={environment.max_file_mb * BYTES_PER_MB}",
         # A file-descriptor storm is the other cheap way to hurt a host.
-        "--ulimit=nofile=4096:4096",
+        f"--ulimit=nofile={MAX_OPEN_FILES}:{MAX_OPEN_FILES}",
     ]
 
     # As the invoking user, so files written through the bind mount are owned
@@ -470,16 +533,37 @@ def exec_argv(
     docker: str = "docker",
     uid: int | None = None,
     gid: int | None = None,
+    max_file_mb: int | None = None,
 ) -> list[str]:
     """Run a command inside an already-running session container.
 
-    The fences are on the container, not on this: `docker exec` cannot widen
-    them. Which is the point — the network policy, the mounts, the capability
-    set and the limits were all decided when the container was created, and
-    every command afterwards inherits exactly those.
+    Most fences are on the container and `docker exec` cannot widen them: the
+    network policy, the mounts, the capability set and the CGROUP limits
+    (memory, cpus, pids) were decided at creation, and an exec joins the same
+    cgroup.
+
+    **Resource limits are the exception, and it is not a small one.** `ulimit`
+    values are per-process, set by `setrlimit` on the container's INIT
+    process; an exec is a new process spawned by the daemon and gets the
+    daemon's defaults instead. So `--ulimit=fsize` — the only thing bounding
+    what a job writes through the bind mount onto the host's disk — stopped
+    applying the moment commands moved from `docker run` to `docker exec`,
+    which is to say the moment a session existed. `docker exec` has no
+    `--ulimit` flag to fix that with, so the limit is re-applied inside, by
+    the shell, before the command runs.
+
+    `ulimit -f` is in 512-byte blocks under POSIX `sh`. A `/bin/sh` that is
+    really bash uses 1024, which makes the limit twice as generous as asked —
+    the harmless direction for a disk-exhaustion guard, and not worth probing
+    the shell to correct. Failures are swallowed: a shell that cannot lower
+    its own limit should still run the command, and the container's cgroups
+    are still there.
     """
     if not command.strip():
         raise SandboxError("no command to run")
+    # Against the command the CALLER wrote. Measuring after the prologue was
+    # prepended would move the limit by however long the prologue happens to
+    # be, which is this function's business and not the caller's.
     if len(command) > MAX_COMMAND_CHARS:
         raise SandboxError(
             f"that command is {len(command)} characters; the limit is {MAX_COMMAND_CHARS}"
@@ -487,6 +571,11 @@ def exec_argv(
     current_uid, current_gid = _current_ids()
     uid = current_uid if uid is None else uid
     gid = current_gid if gid is None else gid
+    if max_file_mb is not None:
+        command = (
+            f"ulimit -f {max_file_mb * BLOCKS_PER_MB} 2>/dev/null; "
+            f"ulimit -n {MAX_OPEN_FILES} 2>/dev/null; "
+        ) + command
     return [
         docker,
         "exec",
@@ -584,7 +673,12 @@ class Session:
             if problem:
                 return 1, problem
         limit = self.environment.timeout if timeout is None else timeout
-        argv = exec_argv(self.name, command, docker=self.docker)
+        argv = exec_argv(
+            self.name,
+            command,
+            docker=self.docker,
+            max_file_mb=self.environment.max_file_mb,
+        )
         code, out = await self._run(argv, limit, docker=self.docker, name=self.name)
         return code, out
 
@@ -722,35 +816,6 @@ def setup_script(environment: Environment) -> str:
     if not environment.setup:
         return ""
     return "set -e\n" + "\n".join(environment.setup)
-
-
-async def run_in_container(
-    environment: Environment,
-    repo_root: Path,
-    command: str,
-    *,
-    docker: str = "docker",
-    timeout: float | None = None,
-    writable: bool = True,
-    runner: Any = None,
-) -> tuple[int, str]:
-    """Run one command in the environment. Returns `(exit code, output)`.
-
-    `runner` is injected by tests so the whole path above can be exercised
-    without a daemon. In production it is `_spawn`, which runs the argv with
-    `create_subprocess_exec` — never a shell on this side.
-    """
-    # A name, so a timeout has something to kill. Random rather than derived
-    # from the repository: two jobs in the same repository must not collide,
-    # and a predictable name is one another container could squat.
-    name = f"jarvis-code-{uuid.uuid4().hex[:16]}"
-    argv = container_argv(
-        environment, repo_root, command, docker=docker, writable=writable, name=name
-    )
-    limit = environment.timeout if timeout is None else timeout
-    if runner is not None:
-        return await runner(argv, limit)
-    return await _spawn(argv, limit, docker=docker, name=name)
 
 
 async def _kill_container(docker: str, name: str) -> None:

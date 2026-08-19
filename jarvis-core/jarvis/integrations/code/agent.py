@@ -230,7 +230,7 @@ class CodeAgent:
         # BEFORE `is_repo`, which itself runs git: a poisoned repository would
         # otherwise be reported as "not a git repository", which sends the
         # operator to look for the wrong thing entirely.
-        unsafe = self.ws.unsafe_git_config()
+        unsafe = await self.ws.async_unsafe_git_config()
         if unsafe:
             raise GitError(unsafe)
         if not await self.ws.is_repo():
@@ -276,6 +276,11 @@ class CodeAgent:
         one it has a container would have it call a tool that is not there.
         """
         if not self.ws.sandboxed:
+            if self.ws.unconfined_check_refusal() or not self.repo.checks:
+                return (
+                    "- You have no shell and nothing to run. Read, reason and "
+                    "edit; you cannot execute anything here."
+                )
             return (
                 "- You have no shell. `run_check` runs the checks this "
                 "repository declares, and nothing else exists."
@@ -500,7 +505,7 @@ class CodeAgent:
                     ),
                 )
             )
-        if self.repo.checks:
+        if self.repo.checks and not self.ws.unconfined_check_refusal():
             tools.append(
                 (
                     "run_check",
@@ -607,6 +612,13 @@ class CodeAgent:
         if self.ws.sandboxed:
             code, out = await self.ws.run_sandboxed(allowed[wanted])
         else:
+            # Checked here as well as at `_tool_schemas`, because a model can
+            # name a tool it was never offered — the recovery path in
+            # `llm/toolcalls.py` exists precisely to turn narrated calls into
+            # real ones, and it does not know which were withheld.
+            refusal = self.ws.unconfined_check_refusal()
+            if refusal:
+                return refusal
             code, out = await self._spawn(
                 self.ws.sandbox_argv(check_argv(allowed[wanted]))
             )

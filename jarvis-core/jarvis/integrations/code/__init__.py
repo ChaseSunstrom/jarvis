@@ -42,9 +42,15 @@ nothing outside it is claimed:
 3. **Paths are confined** by `integrations/files/paths.py`: the same resolver,
    with the same symlink check, used by the files integration. Not a second
    implementation.
-4. **There is no shell.** `run_check` runs a whole string from the repository's
-   own `checks:` list, matched exactly, split with `shlex`, executed with
-   `create_subprocess_exec`. The model chooses *whether*, never *what*.
+4. **There is no shell**, and on a writable repository there is no host
+   execution either. `run_check` runs a whole string from the repository's own
+   `checks:` list, matched exactly, split with `shlex`, executed with
+   `create_subprocess_exec`; the model chooses *whether*, never *what*.
+   Choosing *whether* is still enough on a repository the job can write,
+   because a check runs FILES — `conftest.py`, `package.json`, the Makefile —
+   and those are a `write_file` away. So a writable repository with neither an
+   `environment:` nor a `sandbox:` wrapper is not offered `run_check` at all,
+   and the tool refuses if called anyway.
 5. **A job never touches your branch.** It refuses to start on a dirty tree,
    makes `jarvis/<date>-<job>`, and stops. A person merges it, or does not.
 6. **`sandbox:`**, if set, is a command prefix — `docker run --rm --network
