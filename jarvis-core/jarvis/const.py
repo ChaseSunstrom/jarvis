@@ -140,7 +140,9 @@ GATED_SERVICES = frozenset(
         "files.write",
         # Starts a Jarvis Code job, which edits files in a real repository on
         # a branch of its own and runs that repository's checks. Tool form:
-        # `code_task` (Tier 3). `code.repositories` and `code.result` are its
+        # `start_coding_job` (Tier 3) — NOT `code_task`, which is the
+        # orchestrator's remote one at Tier 2 and a different verb
+        # entirely. `code.repositories` and `code.result` are its
         # ungated neighbours and read nothing but what the operator configured
         # and what a finished job produced — which is exactly the shape this
         # set exists for, and why it names calls rather than the domain.

@@ -117,6 +117,42 @@ describe('server rendering', () => {
 		expect(body).not.toContain('<details open');
 	});
 
+	it('never renders a settled assistant turn as a blank bubble', () => {
+		// The reported symptom: a model whose whole output was reasoning left
+		// `content` empty, `pending` false, and no error — and BOTH arms of the
+		// text block were false, so the bubble rendered a collapsed
+		// "REASONING · N words" and nothing else. A blank is indistinguishable
+		// from a client that lost the message.
+		const blank = {
+			...assistantPlaceholder(),
+			content: '',
+			thinking: 'a hundred and ninety-seven words of deliberation',
+			pending: false
+		};
+
+		const { body } = render(ChatMessage, { props: { message: blank } });
+
+		expect(body).toContain('No answer came back');
+		expect(body).toContain('Only reasoning');
+	});
+
+	it('says nothing extra when a turn genuinely answered', () => {
+		const answered = {
+			...assistantPlaceholder(),
+			content: 'Done, Sir.',
+			pending: false
+		};
+		const { body } = render(ChatMessage, { props: { message: answered } });
+		expect(body).toContain('Done, Sir.');
+		expect(body).not.toContain('No answer came back');
+	});
+
+	it('a turn still in flight shows the caret, not the empty notice', () => {
+		const waiting = { ...assistantPlaceholder(), content: '', pending: true };
+		const { body } = render(ChatMessage, { props: { message: waiting } });
+		expect(body).not.toContain('No answer came back');
+	});
+
 	it('renders the empty state and the composer with no conversation', () => {
 		const { body } = render(ChatPanel, {
 			props: {

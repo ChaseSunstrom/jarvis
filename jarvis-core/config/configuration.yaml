@@ -657,7 +657,9 @@ research:
 #   5. A job refuses to start on a dirty tree, works on `jarvis/<date>-<job>`,
 #      and never commits to the branch you are on. You merge it, or you do not.
 #
-# The model's own `code_task` tool is approval-gated, like `execute_command`:
+# The model's own `start_coding_job` tool is approval-gated, like
+# `execute_command` (it is NOT `code_task` — that name belongs to the
+# orchestrator's remote coding service, at a lower tier):
 # starting a job edits files on a real disk. The console's START button is not,
 # for the same reason the console may schedule a service call and the assistant
 # may not — that request carried a bearer token.
@@ -705,8 +707,10 @@ code:
 # secrets below are set — the tools register but answer "not configured"
 # rather than pretending to work.
 #
-# The persona prompt tells the model that delegate_to_agents, code_task and
-# execute_command exist, so this block is what makes that true.
+# This block is what registers delegate_to_agents, code_task and
+# execute_command. Nothing in the persona names them any more — the prompt
+# lists the live registry instead, so a tool that is not set up is never
+# promised to the model.
 orchestrator:
   url: http://127.0.0.1:8188
   # Two secrets, deliberately different values — same rule as the browser.

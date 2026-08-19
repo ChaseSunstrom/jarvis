@@ -438,6 +438,28 @@ async def companion_list(request: Request) -> list[dict[str, Any]]:
     return common.companion_list_payload(get_jarvis(request))
 
 
+@api_router.get("/tools")
+async def tools_list(request: Request) -> dict[str, Any]:
+    """The model's own toolbox. `/config/tool/list` is the editable subset."""
+    try:
+        return common.tools_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/tools/call")
+async def tools_call(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_call_tool(
+            get_jarvis(request),
+            str(body.get("name") or ""),
+            body.get("arguments"),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/config/tool/list")
 async def tool_list(request: Request) -> list[dict[str, Any]]:
     return common.tool_list_payload(get_jarvis(request))

@@ -27,7 +27,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,7 +101,42 @@ Tool use:
   waiting on their confirmation and do not call it again.
 - Only the entities listed below exist. If a name doesn't resolve, call
   list_entities rather than guessing an entity_id.
+- CALL a tool by making a tool call. Never write one out as text, in your
+  answer or in your reasoning: describing a call does not perform it, and
+  saying you have started something you have not is the one thing you must
+  never do. If you cannot call it, say so plainly instead.
 """
+
+#: The line that bounds the toolbox, mirroring the entity rule above.
+#:
+#: ## Why this exists
+#:
+#: `config/prompts/jarvis.txt` names specific tools in flat prose — "For code,
+#: use code_task", "use delegate_to_agents", "call run_background_task" — and
+#: that file is read verbatim with no reference to the registry. The tools
+#: array is built separately, from `as_openai_schema()`. So a model could be
+#: told in the system prompt that `code_task` exists while not being handed
+#: `code_task`, and the prompt bounded ENTITIES ("Only the entities listed
+#: below exist") with no equivalent sentence for tools.
+#:
+#: The observed result: asked for a coding job, the model wrote a convincing
+#: script of a `code_task` call in its reasoning, invented the result, and told
+#: the user the work had started. Nothing had. Asked for an update a turn
+#: later it said, in its own reasoning, "But I didn't actually call the
+#: code_task function."
+#:
+#: One sentence, built from the live registry, closes the gap between what the
+#: prose promises and what the model actually has.
+TOOLBOX_RULE = (
+    "The tools you have are exactly these, and nothing else exists: {names}. "
+    "Anything named elsewhere in these instructions that is not in this list "
+    "is unavailable right now — say so plainly rather than pretending to use "
+    "it."
+)
+
+#: Enough for a large install without crowding the persona. Names are short;
+#: this is a few hundred characters even with an MCP server or two attached.
+MAX_TOOLBOX_CHARS = 2000
 
 #: Longest an entity's name, state or unit may be inside the house summary.
 #: Generous for a real value ("unavailable", "22.4", "Front Door") and far
@@ -166,6 +201,10 @@ def _summary_value(value: object) -> str:
 TURN_EVENT_TOOL_START = "tool-start"
 TURN_EVENT_TOOL_END = "tool-end"
 TURN_EVENT_THINKING = "thinking"
+#: The model wrote a tool call out as text instead of making one. Surfaced as
+#: an event, not only a log line, so a client can show that the turn is being
+#: retried rather than appearing to stall.
+TURN_EVENT_TOOL_NARRATED = "tool-narrated"
 
 #: The one tool the agent serves itself rather than the registry.
 #:
@@ -413,6 +452,33 @@ class ConversationAgent:
         self.last_conversation_id = ""
 
     # --- prompt -----------------------------------------------------------
+    def toolbox_rule(self) -> str:
+        """Name the live toolbox, so the prose cannot promise what is absent.
+
+        Read from the registry the schema is built from, not from a list kept
+        beside it — that separation is the whole bug this closes.
+        """
+        # Defensive about the registry's shape on purpose. `system_prompt` is
+        # called from places that pass a stand-in — the console's prompt
+        # preview, tests that only need `exposure` — and a prompt builder that
+        # can raise is a turn that dies before it starts. No names is simply no
+        # sentence.
+        registry = getattr(self, "tools", None)
+        lister = getattr(registry, "names", None)
+        if not callable(lister):
+            return ""
+        try:
+            names = [str(n) for n in lister()]
+        except Exception:  # noqa: BLE001 - never break the prompt over this
+            _LOGGER.debug("Could not read the tool registry for the prompt", exc_info=True)
+            return ""
+        if not names:
+            return ""
+        listed = ", ".join(names)
+        if len(listed) > MAX_TOOLBOX_CHARS:
+            listed = listed[:MAX_TOOLBOX_CHARS].rsplit(", ", 1)[0] + ", …"
+        return TOOLBOX_RULE.format(names=listed)
+
     def persona(self) -> str:
         if self._persona_override:
             return self._persona_override
@@ -483,6 +549,9 @@ class ConversationAgent:
         """
         areas = ", ".join(a.name for a in self.jarvis.areas.areas.values())
         parts = [self.persona().strip(), TOOL_RULES.strip()]
+        toolbox = self.toolbox_rule()
+        if toolbox:
+            parts.append(toolbox)
         if areas:
             parts.append(f"Areas in this home: {areas}.")
         parts.append(self.house_summary())
@@ -604,6 +673,35 @@ class ConversationAgent:
                     async for delta in rounds:
                         pieces.append(delta)
                         yield delta
+                # A turn that said NOTHING is a bug reported as a success.
+                #
+                # A reasoning model can put its whole output in the think
+                # channel: `ThinkStripper` routes it to the reasoning panel and
+                # removes it from the answer, the round loop returns because
+                # there were no tool calls, and `result.text` becomes "". The
+                # pipeline then emits `intent-end` with `speech: ""` and
+                # `response_type: "action_done"` — a SUCCESS — and the console
+                # renders a settled, permanent, blank bubble with a collapsed
+                # "REASONING · 197 words" above it and no text at all. On the
+                # voice path it is silence.
+                #
+                # Nothing anywhere objected: the only fallback in this method
+                # was for `OllamaError`. One sentence is worth more than a
+                # blank, and the log line is what makes it diagnosable.
+                if not any(piece.strip() for piece in pieces):
+                    _LOGGER.warning(
+                        "The model produced no answer text (%d round(s), %d "
+                        "characters of reasoning). Falling back to a sentence "
+                        "rather than returning an empty turn.",
+                        result.rounds,
+                        len(result.thinking or ""),
+                    )
+                    empty = (
+                        "I thought about that but didn't manage to put an answer "
+                        "into words, Sir. Would you ask me again?"
+                    )
+                    pieces.append(empty)
+                    yield empty
             except OllamaError as exc:
                 _LOGGER.error("Ollama failed during conversation: %s", exc)
                 result.error = str(exc)
@@ -694,6 +792,10 @@ class ConversationAgent:
         on_thinking: Callable[[str], None] | None = None,
     ) -> AsyncIterator[str]:
         emit = emit or self._turn_emitter(None)
+        #: One corrective round per turn, no more. A model that narrates the
+        #: same call twice is not going to be argued into it, and a loop here
+        #: would cost the user a minute to arrive at the same answer.
+        nudged = False
         for round_index in range(self.max_tool_rounds):
             result.rounds = round_index + 1
             # Withdrawn once used. "Once per turn" is in the tool's description,
@@ -704,10 +806,50 @@ class ConversationAgent:
                 else schema
             )
             chat = _Round(self, messages, offered or None, context, result, emit, on_thinking)
+            said: list[str] = []
             async with aclosing(chat.stream()) as deltas:
                 async for delta in deltas:
+                    said.append(delta)
                     yield delta
             if not chat.pending_tool_calls:
+                # A round that made no tool call but WROTE one out is the
+                # failure this catches: the model scripts the call in prose or
+                # in its reasoning, invents the result, and tells the user the
+                # work has started. Nothing had. Give it exactly one chance to
+                # do it properly — noticing and saying nothing would leave the
+                # user with a promise and no job.
+                if not nudged and offered:
+                    narrated = narrated_tool_call(
+                        "".join(said) + "\n" + (result.thinking or ""),
+                        (_tool_name(t) for t in offered),
+                    )
+                    if narrated:
+                        nudged = True
+                        _LOGGER.warning(
+                            "The model described calling %r without calling it; "
+                            "asking it to make the call properly. This is usually "
+                            "a model too small to emit structured tool calls "
+                            "reliably.",
+                            narrated,
+                        )
+                        emit(
+                            TURN_EVENT_TOOL_NARRATED,
+                            {"tool": narrated, "round": result.rounds},
+                        )
+                        messages.append(self._assistant_message_text("".join(said)))
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"You described calling {narrated} but you did "
+                                    "not actually call it, so nothing happened. "
+                                    "Either make the tool call now, or tell me "
+                                    "plainly that you cannot and why. Do not "
+                                    "write a tool call out as text."
+                                ),
+                            }
+                        )
+                        continue
                 return
 
         # Rounds exhausted and the model still wants tools: take them away and
@@ -800,6 +942,12 @@ class ConversationAgent:
     # every result; Ollama wants none of those and matches on the tool's name.
     # Duck-typed so a test's stub client — of which there are many, and none of
     # which knew about this — keeps working on the shape it always produced.
+    def _assistant_message_text(self, text: str) -> dict[str, Any]:
+        """The turn's own words, replayed so the correction has something to
+        correct. Plain text, no tool calls — there were none, which is the
+        point."""
+        return {"role": "assistant", "content": str(text or "")}
+
     def _assistant_message(self, result: ChatResult) -> dict[str, Any]:
         build = getattr(self.client, "assistant_message", None)
         if callable(build):
@@ -1001,6 +1149,60 @@ class _Round:
                 # Normal end, an error, or the consumer walking away: the
                 # upstream response gets closed either way.
                 await stream.aclose()
+
+
+#: Words a model uses when it is SCRIPTING a call rather than reporting one.
+#: Deliberately broad: the check below already requires a registered tool name
+#: as a whole token, which ordinary prose does not contain — the persona tells
+#: the model to "report what happened, not which service you called".
+_CALL_CUE_RE = re.compile(
+    r"\b(call(?:s|ed|ing)?|invoke[sd]?|execut(?:e|ed|ing)|dispatch(?:ed|ing)?|"
+    r"tool[_ ]?call|function[_ ]?call|parameters?|arguments?)\b",
+    re.IGNORECASE,
+)
+
+
+def narrated_tool_call(text: str, names: Iterable[str]) -> str:
+    """The tool a turn TALKED about calling without calling it, or "".
+
+    ## The failure this catches
+
+    Tool calls are read only from the structured `tool_calls` field on the
+    wire — `ollama.parse_tool_calls` and `openai_compat._ToolCallBuffer` both
+    look nowhere else, and nothing in this repo has ever scanned `content` or
+    `thinking`. A model that writes
+
+        [Tool Call] -> code_task(repo="snake_opengl", instruction="...")
+        `code_task` called.✅
+
+    into its reasoning produces a turn with zero tool calls, zero log lines,
+    and a friendly reply promising work that was never dispatched. That is not
+    hypothetical: it is what a local 8B did when asked for a coding job, and
+    the turn after, asked for an update, its own reasoning read "But I didn't
+    actually call the code_task function."
+
+    ## Why this is a detector and not a parser
+
+    It deliberately does NOT try to extract the arguments and run the call.
+    Executing something a model wrote as prose, in a format nothing validated,
+    is exactly the injection surface the structured field exists to avoid. All
+    this does is notice, so the caller can ask the model to do it properly and
+    so the log says what happened.
+
+    Requires BOTH a registered tool name as a whole token and a call-shaped
+    cue, because a name alone can appear in an honest sentence ("I can't run
+    code_task — the orchestrator is not configured").
+    """
+    body = str(text or "")
+    if not body.strip() or not _CALL_CUE_RE.search(body):
+        return ""
+    for name in names:
+        token = str(name or "").strip()
+        if not token:
+            continue
+        if re.search(rf"(?<![\w]){re.escape(token)}(?![\w])", body):
+            return token
+    return ""
 
 
 def _tool_name(entry: Any) -> str:

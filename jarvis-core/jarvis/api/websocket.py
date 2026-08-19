@@ -710,6 +710,17 @@ class WebSocketHandler:
             self.jarvis, str(msg.get("job_id") or ""), bool(msg.get("enabled", True))
         )
 
+    async def _cmd_tools_list(self, msg: dict[str, Any]) -> Any:
+        return common.tools_list_payload(self.jarvis)
+
+    async def _cmd_tools_call(self, msg: dict[str, Any]) -> Any:
+        return await common.async_call_tool(
+            self.jarvis,
+            str(msg.get("name") or ""),
+            msg.get("arguments"),
+            context=self._context(),
+        )
+
     async def _cmd_code_list(self, msg: dict[str, Any]) -> Any:
         return common.code_list_payload(self.jarvis)
 
@@ -1098,6 +1109,13 @@ WebSocketHandler._HANDLERS = {
     "jarvis/schedule/add": WebSocketHandler._cmd_schedule_add,
     "jarvis/schedule/remove": WebSocketHandler._cmd_schedule_remove,
     "jarvis/schedule/enabled": WebSocketHandler._cmd_schedule_enabled,
+    # The model's own toolbox, and running one by hand. `config/tool/list`
+    # below is a different question — what this console may EDIT — and the
+    # Tools page shows the union, because a backend can answer one and not the
+    # other. `jarvis/tools/call` goes through the same approval gate a model
+    # turn does, so a Tier-3 tool raises a card here too.
+    "jarvis/tools/list": WebSocketHandler._cmd_tools_list,
+    "jarvis/tools/call": WebSocketHandler._cmd_tools_call,
     # Jarvis Code. Starting a job IS a client command, unlike minting a bare
     # task: a coding job has a worker behind it, so the record it creates is
     # one something is driving.

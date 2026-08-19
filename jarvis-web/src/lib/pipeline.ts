@@ -54,6 +54,19 @@ export interface PipelineCallbacks {
 	 * rather than once per token.
 	 */
 	onThinking?: (delta: string) => void;
+
+	/**
+	 * The model wrote a tool call out as text instead of making one.
+	 *
+	 * jarvis-core noticed and is asking it to make the call properly, which
+	 * costs one extra round. Worth surfacing: without it the turn simply takes
+	 * longer for no visible reason, and the failure it corrects — a confident
+	 * "I've started that" over work that was never dispatched — is the kind a
+	 * user only discovers by asking for an update.
+	 *
+	 * Fires at most once per turn.
+	 */
+	onToolNarrated?: (tool: string) => void;
 	/** TTS media path from tts-end (data.tts_output.url). */
 	onTtsUrl?: (url: string) => void;
 	/** Pipeline error event (data.code, data.message). */
@@ -310,6 +323,11 @@ export class PipelineClient {
 			}
 			case 'intent-tool-end': {
 				this.cb.onToolEnd?.(toolCall(ev.data));
+				break;
+			}
+			case 'intent-tool-narrated': {
+				const tool = ev.data?.tool;
+				if (typeof tool === 'string' && tool) this.cb.onToolNarrated?.(tool);
 				break;
 			}
 			case 'intent-thinking': {

@@ -657,16 +657,49 @@ async def test_a_failed_approve_does_not_report_success(tmp_path: Path) -> None:
 # ===========================================================================
 # the tool surface the persona promises
 # ===========================================================================
-async def test_the_persona_prompts_tools_all_exist(tmp_path: Path) -> None:
-    """The shipped prompt names these; a prompt promising absent tools is a bug."""
-    prompt = (
+async def test_the_persona_promises_no_tool_it_cannot_guarantee(tmp_path: Path) -> None:
+    """A prompt promising absent tools is a bug — now prevented structurally.
+
+    ## What this used to assert, and why it changed
+
+    It required `config/prompts/jarvis.txt` to NAME `delegate_to_agents` and
+    `code_task`, and required both to be registered. The intent was right and
+    the mechanism was backwards: it pinned the prose and the registry together
+    for two hand-listed names, in a fixture where the orchestrator is always
+    configured. On an install without an `orchestrator:` block the prose still
+    promised both and nothing checked.
+
+    The invariant is now enforced by construction instead. The persona file
+    names no integration tool at all, and `ConversationAgent.toolbox_rule()`
+    writes the list into the prompt from the live registry — the same registry
+    `as_openai_schema()` builds the model's tools array from. Prose and
+    toolbox cannot disagree because there is only one source.
+
+    Both halves are checked here: the file stays quiet, and the generated
+    sentence does name the orchestrator's tools when it IS configured.
+    """
+    prompt_file = (
         Path(__file__).resolve().parents[1] / "config" / "prompts" / "jarvis.txt"
     ).read_text(encoding="utf-8")
-    _, registry = await build(tmp_path, FakeOrchestrator())
+    jarvis, registry = await build(tmp_path, FakeOrchestrator())
     assert registry is not None
+
     for name in ("delegate_to_agents", "code_task"):
-        assert name in prompt, f"the persona no longer mentions {name}"
-        assert registry.get(name) is not None, f"{name} is promised but not registered"
+        assert registry.get(name) is not None, f"{name} is no longer registered"
+        assert name not in prompt_file, (
+            f"the persona file names {name} again. It is read verbatim and "
+            "cannot know whether the orchestrator is configured; let "
+            "toolbox_rule() name the tools from the registry instead."
+        )
+
+    from jarvis.llm.agent import ConversationAgent
+
+    agent = ConversationAgent(jarvis, client=None, tools=registry)
+    generated = agent.system_prompt("hello", [])
+    for name in ("delegate_to_agents", "code_task"):
+        assert name in generated, (
+            f"{name} is registered but the prompt never tells the model it has it"
+        )
 
 
 @pytest.mark.parametrize(

@@ -281,6 +281,19 @@ export interface ToolDescription {
 	description?: string;
 	parameters?: Record<string, any>;
 	domain?: string | null;
+	/** 1 direct · 2 background · 3 approval. Absent on the fallback path. */
+	tier?: number;
+	/**
+	 * Whether running this ALWAYS asks a human first.
+	 *
+	 * Computed by jarvis-core, never re-derived here from `tier`. The tier is
+	 * not the whole rule — a tool in a gated domain is held at any tier — and
+	 * a console that reimplemented the rule would be a second copy of a
+	 * security decision that is deliberately made in one place.
+	 */
+	needs_approval?: boolean;
+	/** Held depending on its arguments, so the listing cannot say in advance. */
+	may_escalate?: boolean;
 	/** Set by the client when the entry was synthesised from a service. */
 	source?: 'tools' | 'services';
 }
@@ -1004,6 +1017,9 @@ export function normalizeTools(result: any): ToolDescription[] {
 		description: tool?.description ?? tool?.function?.description ?? '',
 		parameters: tool?.parameters ?? tool?.function?.parameters ?? {},
 		domain: tool?.domain ?? null,
+		tier: typeof tool?.tier === 'number' ? tool.tier : undefined,
+		needs_approval: tool?.needs_approval === true,
+		may_escalate: tool?.may_escalate === true,
 		source: 'tools' as const
 	}));
 }

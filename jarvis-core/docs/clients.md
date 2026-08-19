@@ -90,6 +90,8 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/schedule/add` | `kind` (`notify`/`research`/`code`/`service`) plus a `when` — `{mode: once, at: <iso>}`, `{mode: daily, at: "HH:MM"}`, `{mode: weekly, at, days}` or `{mode: every, minutes}`. Every firing mints a task, so it shows on the same progress surfaces as everything else |
 | `jarvis/schedule/remove` | `job_id`; a job from `configuration.yaml` is refused — edit the file |
 | `jarvis/schedule/enabled` | `job_id`, `enabled`; turn one off without forgetting it |
+| `jarvis/tools/list` | the model's own toolbox: `{tools: [{name, description, parameters, tier, domain, needs_approval, may_escalate}], count}`. This is exactly the set `agent.py` offers the model, with no filtering, so "listed here" and "offered to the model" are the same set by construction. `needs_approval` and `may_escalate` are computed server-side because tier alone is not the whole rule — a gated domain holds a tool at any tier, and a tool with a gate is held depending on its arguments |
+| `jarvis/tools/call` | `name`, `arguments`; runs one tool the way the model would, straight through `ToolRegistry.call` — same argument coercion, same unknown-tool message, **same approval gate**. A Tier-3 tool answers `approval_required` and raises a card rather than running. Distinct from `config/tool/list` below, which is the subset this console may EDIT; the Tools page shows the union |
 | `jarvis/code/list` | Jarvis Code: `{repositories: [...], jobs: [...], sandboxed}`. `jobs` is the task list filtered to `kind: code`, so a page can draw both halves from one request |
 | `jarvis/code/start` | `repo`, `instruction`; starts a coding job and returns its `task_id`. The job runs on a branch of its own and reports through the task list, so its progress is the same bar as everything else. Not approval-gated — the request carried a bearer token, whereas the model's `code_task` tool is Tier 3 |
 | `jarvis/code/result` | `task_id`; the branch, the diff, the checks and the tool trail from one finished job |
@@ -149,8 +151,9 @@ server  {"id": 3, "type": "event", "event": {"type": "run-start", "data": {
 client  <binary>  0x01 + Int16LE PCM     one chunk of 16 kHz mono audio
 client  <binary>  0x01                   lone handler-id byte = end of audio
 server  ... stt-start, stt-vad-start, stt-vad-end, stt-end, intent-start,
-            intent-tool-start / intent-tool-end / intent-thinking (as they
-            happen), intent-progress (streaming deltas), intent-end,
+            intent-tool-start / intent-tool-end / intent-tool-narrated /
+            intent-thinking (as they happen), intent-progress (deltas),
+            intent-end,
             tts-start, tts-end, run-end
 ```
 
@@ -190,6 +193,7 @@ flight can tell them apart:
 | `intent-tool-start` | `{name, arguments, round, index, total}` — fired **before** the call runs, so a nine-second tool is visible for nine seconds |
 | `intent-tool-end` | `{name, round, index, total, ok, status, error, duration_ms}`. `ok` is false for a tool that answered `{"status": "error"}` as well as one that threw |
 | `intent-thinking` | `{delta}` — a slice of the model's reasoning. Consecutive slices are coalesced server-side, so this is paragraphs and not tokens |
+| `intent-tool-narrated` | `{tool, round}` — the model wrote a tool call out as text instead of making one, and is being asked to make it properly. Show "still working" rather than stalling; the corrective round happens at most once per turn. Common with small local models |
 
 Reasoning never appears in `intent-progress`: that is the text the TTS speaks
 and the HUD renders as the reply, and a model's deliberation is neither.

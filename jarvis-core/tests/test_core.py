@@ -292,6 +292,88 @@ def test_config_include_secret_env_and_packages(tmp_path, monkeypatch):
     assert "packages" not in config  # folded away
 
 
+def test_an_empty_env_var_default_is_empty_and_not_two_quote_characters(
+    tmp_path, monkeypatch
+):
+    """A security fix, not a tidy-up.
+
+    A tag argument is a plain scalar, so quotes written inside it are
+    characters rather than YAML quoting. `!env_var TOKEN ""` therefore produced
+    the two-character string `""` — which is TRUTHY — and the shipped
+    configuration.yaml uses exactly that idiom for both orchestrator secrets.
+
+    On an install that had set neither variable:
+
+      * `OrchestratorConfig.configured` said yes and the `NotConfigured` guard
+        was skipped, so calls went to a port with nothing behind it;
+      * `can_approve` said yes — arming the ONLY credential that can release a
+        command to the sandbox or apply a diff, with a value an attacker
+        guesses on the first try;
+      * `secrets_are_distinct` said no, because both were the same two
+        characters.
+    """
+    monkeypatch.delenv("NOT_SET_ANYWHERE", raising=False)
+    _write(
+        tmp_path,
+        "configuration.yaml",
+        'a: !env_var NOT_SET_ANYWHERE ""\n'
+        "b: !env_var NOT_SET_ANYWHERE ''\n",
+    )
+    config = load_config(tmp_path)
+    assert config["a"] == ""
+    assert config["b"] == ""
+    assert not config["a"], "an unset secret must not read as configured"
+
+
+def test_an_env_var_default_may_contain_spaces(tmp_path, monkeypatch):
+    """`split()` took only the first word, so a default silently truncated."""
+    monkeypatch.delenv("GREETING", raising=False)
+    _write(tmp_path, "configuration.yaml", "greeting: !env_var GREETING Good morning\n")
+    assert load_config(tmp_path)["greeting"] == "Good morning"
+
+
+def test_a_value_that_really_contains_quotes_keeps_them(tmp_path, monkeypatch):
+    """Only ONE matching surrounding pair comes off, and only if it matches."""
+    monkeypatch.delenv("Q", raising=False)
+    _write(
+        tmp_path,
+        "configuration.yaml",
+        'a: !env_var Q "quoted"\n'
+        "b: !env_var Q 'half\n"
+        'c: !env_var Q ""doubled""\n',
+    )
+    config = load_config(tmp_path)
+    assert config["a"] == "quoted"
+    assert config["b"] == "'half"
+    assert config["c"] == '"doubled"'
+
+
+def test_the_environment_still_wins_over_the_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN", "real-secret")
+    _write(tmp_path, "configuration.yaml", 'token: !env_var TOKEN ""\n')
+    assert load_config(tmp_path)["token"] == "real-secret"
+
+
+def test_the_shipped_config_has_no_secret_that_reads_as_set(monkeypatch):
+    """The one that mattered: prove it against the file we actually ship."""
+    from pathlib import Path as _Path
+
+    for name in ("ORCHESTRATOR_TOKEN", "APPROVAL_SECRET", "BROWSER_APPROVAL_SECRET"):
+        monkeypatch.delenv(name, raising=False)
+    shipped = _Path(__file__).resolve().parents[1] / "config"
+    config = load_config(shipped)
+
+    orchestrator = config.get("orchestrator") or {}
+    assert orchestrator.get("token") == ""
+    assert orchestrator.get("approval_secret") == ""
+
+    from jarvis.integrations.orchestrator import OrchestratorConfig
+
+    cfg = OrchestratorConfig.from_config(orchestrator)
+    assert not cfg.configured, "an unconfigured orchestrator reported itself ready"
+    assert not cfg.can_approve, "the approval credential was armed with a default"
+
+
 def test_merge_packages_records_which_package_supplied_each_key(tmp_path):
     """After the merge, a package's value is indistinguishable from a literal.
 

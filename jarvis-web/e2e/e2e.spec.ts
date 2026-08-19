@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Put `light.lab_lights` back to `off`, whatever the last test left it as.
@@ -551,10 +551,83 @@ test("automations page creates, edits and deletes an automation", async ({
   await expect(page.getByTestId("error")).toHaveCount(0);
 });
 
-test("tools page degrades to the service catalogue and test-runs a tool", async ({
+/** Tell the mock to forget the toolbox commands, the way an older backend has. */
+async function forgetToolbox(page: Page, unsupported: boolean): Promise<void> {
+  await page.evaluate(
+    (flag) =>
+      new Promise((resolve) => {
+        const ws = new WebSocket(
+          `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+        );
+        ws.onopen = () =>
+          ws.send(
+            JSON.stringify({
+              id: 94,
+              type: "jarvis/test/tools_unsupported",
+              unsupported: flag,
+            }),
+          );
+        ws.onmessage = () => {
+          ws.close();
+          resolve(null);
+        };
+      }),
+    unsupported,
+  );
+}
+
+test("tools page lists the model's own toolbox and test-runs a tool", async ({
+  page,
+}) => {
+  // The native path — jarvis-core implements jarvis/tools/list and
+  // jarvis/tools/call. This is what the user actually gets; the fallback
+  // below is only for an older backend.
+  await page.goto("/tools");
+  await forgetToolbox(page, false);
+  await page.reload();
+
+  await expect(page.getByTestId("tool-select")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("hint")).toHaveCount(0);
+
+  // A registry tool with no dot in its name — the exact shape whose fallback
+  // used to re-throw "unknown command 'jarvis/tools/call'", because
+  // splitToolName() needs a dot and code_task has none.
+  await page.getByTestId("tool-select").selectOption("code_task");
+  await page.getByTestId("tool-args").fill('{"repo": "x", "instruction": "y"}');
+  await page.getByTestId("tool-run").click();
+  await expect(page.getByTestId("tool-result")).toContainText("code_task", {
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("error")).toHaveCount(0);
+});
+
+test("a tier-3 tool asks before it runs, even from the test runner", async ({
+  page,
+}) => {
+  // The console is authenticated, so it is tempting to let it just run things.
+  // That would make this page the easiest Tier-3 bypass in the product.
+  await page.goto("/tools");
+  await forgetToolbox(page, false);
+  await page.reload();
+  await expect(page.getByTestId("tool-select")).toBeVisible({ timeout: 15_000 });
+
+  await page.getByTestId("tool-select").selectOption("lock_control");
+  // Said BEFORE the button is pressed, not after.
+  await expect(page.getByTestId("tool-needs-approval")).toContainText("asks you first");
+
+  await page.getByTestId("tool-args").fill('{"name": "front door"}');
+  await page.getByTestId("tool-run").click();
+  await expect(page.getByTestId("tool-result")).toContainText("approval_required", {
+    timeout: 10_000,
+  });
+});
+
+test("tools page degrades to the service catalogue on an older backend", async ({
   page,
 }) => {
   await page.goto("/tools");
+  await forgetToolbox(page, true);
+  await page.reload();
 
   // The mock answers unknown_command for jarvis/tools/list — the page must
   // explain that and fall back rather than break.
@@ -586,6 +659,10 @@ test("tools page degrades to the service catalogue and test-runs a tool", async 
   await expect(expose).toHaveText("HIDDEN", { timeout: 10_000 });
   await expose.click();
   await expect(expose).toHaveText("EXPOSED", { timeout: 10_000 });
+
+  // Put it back: the suite shares one mock process, and a leaked flag would
+  // make whichever test runs next fail for a reason that is not its own.
+  await forgetToolbox(page, false);
 });
 
 test("settings page reports the selected backend and streams events", async ({

@@ -34,6 +34,7 @@ with fakes and no network:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import itertools
 import logging
@@ -78,6 +79,10 @@ EVENT_INTENT_END = "intent-end"
 #: mistake.
 EVENT_INTENT_TOOL_START = "intent-tool-start"
 EVENT_INTENT_TOOL_END = "intent-tool-end"
+#: The model wrote a tool call out as text instead of making one, and is being
+#: asked to do it properly. Surfaced rather than only logged so a client can
+#: say "still working" instead of appearing to stall for an extra round.
+EVENT_INTENT_TOOL_NARRATED = "intent-tool-narrated"
 #: A slice of the model's reasoning. Never part of `intent-progress`, because
 #: that is the text the TTS speaks and the HUD renders as the reply.
 EVENT_INTENT_THINKING = "intent-thinking"
@@ -129,14 +134,29 @@ DEFAULT_VAD_SILENCE_MS = 900
 #: an hour of PCM.
 MAX_VERIFY_BYTES = 16000 * 2 * 20
 
-#: Turn events buffered between two ticks of the intent loop.
+#: Turn events buffered between two drains.
 #:
 #: Reasoning arrives token by token, so this fills fastest when a model is
 #: thinking hard — which is also when the client most wants to see something.
 #: Consecutive reasoning slices are coalesced into one frame on the way out
 #: (see `_drain_turn_events`), so in practice the queue holds tool events and a
 #: few hundred characters of thought, not one entry per token.
+#:
+#: The bound is a memory guard, not a schedule. It used to be both by accident:
+#: the only drain hung off the intent loop, which does not tick while the model
+#: is thinking or a tool is running, so a turn that queued more than this
+#: before its first token lost the oldest — the tool rows, and the reasoning
+#: before them, evicted from the left with nothing said. `TURN_EVENT_DRAIN_SECONDS`
+#: is the schedule now, and `test_a_tool_row_survives_a_turn_that_thinks_before_it_speaks`
+#: is what keeps the two separate.
 MAX_QUEUED_TURN_EVENTS = 512
+
+#: How often the intent stage flushes what the agent has reported.
+#:
+#: Fast enough that a tool row reaches the console while the tool is still
+#: running, slow enough that a turn spent entirely in reasoning costs a few
+#: dozen wakeups rather than one per token.
+TURN_EVENT_DRAIN_SECONDS = 0.05
 
 #: How much reasoning goes out in one frame. A thousand characters is a
 #: paragraph — enough that the collapsed block on the client grows visibly,
@@ -147,12 +167,14 @@ MAX_THINKING_FRAME_CHARS = 1000
 _TURN_EVENT_NAMES = {
     "tool-start": EVENT_INTENT_TOOL_START,
     "tool-end": EVENT_INTENT_TOOL_END,
+    "tool-narrated": EVENT_INTENT_TOOL_NARRATED,
     "thinking": EVENT_INTENT_THINKING,
 }
 
 _HANDLER_IDS = itertools.count(1)
 
 __all__ = [
+    "EVENT_INTENT_TOOL_NARRATED",
     "PipelineError",
     "PipelineEvent",
     "PipelineRun",
@@ -320,6 +342,9 @@ class PipelineRun:
         self._turn_events: deque[tuple[str, dict[str, Any]]] = deque(
             maxlen=MAX_QUEUED_TURN_EVENTS
         )
+        #: Held while draining, so the intent loop and the ticker below cannot
+        #: emit at the same time.
+        self._drain_lock = asyncio.Lock()
         self._audio_ms = 0.0
         #: The turn's audio, kept only while a gate is active and only up to
         #: :data:`MAX_VERIFY_BYTES`. Nothing is written to disk and it is
@@ -689,14 +714,32 @@ class PipelineRun:
             EVENT_INTENT_START, {"engine": self.conversation_engine, "language": self.language}
         )
         reply = ""
+        # Drained by a task of its own, NOT off the back of the delta loop.
+        #
+        # The loop below used to carry the drain, with a comment claiming it
+        # ran "on every tick, not only when there is text". It did not, and the
+        # reason was one function away: `_converse_deltas` drops every falsy
+        # delta, and the agent's rounds only ever yield visible text. So during
+        # reasoning and during tool execution — precisely the seconds the rows
+        # exist to narrate — the loop never ticked and nothing drained.
+        #
+        # `_turn_events` is a bounded deque that evicts from the LEFT, so a
+        # turn that queued more than `MAX_QUEUED_TURN_EVENTS` events before
+        # producing its first token silently lost its oldest ones: the tool
+        # rows, and the reasoning that preceded them. Reproduced at 512.
+        #
+        # A ticker rather than a bigger bound: the bound is there to stop a
+        # runaway turn growing the process, and raising it would only move the
+        # cliff. The events want emitting when they happen.
+        drainer = asyncio.ensure_future(self._drain_turn_events_until_done())
         try:
             async for delta in self._converse_deltas(text):
-                # Drained on every tick, not only when there is text: a turn
-                # that spends nine seconds in tool calls produces no content
-                # delta at all, and a queue only flushed alongside one would
-                # hold the whole toolchain back until the model started
-                # speaking — which is exactly the interval the rows exist to
-                # narrate.
+                # Still drained here as well as on the ticker, and this is the
+                # half that guarantees ORDER: everything the agent queued
+                # before this delta is emitted before it. Reasoning that
+                # preceded a tool call has to reach the client ahead of the row
+                # for that call, or the transcript reads as though the model
+                # decided first and thought afterwards.
                 await self._drain_turn_events()
                 if not delta:
                     continue
@@ -710,6 +753,11 @@ class PipelineRun:
         except Exception as err:
             raise PipelineError("intent-failed", str(err) or type(err).__name__) from err
         finally:
+            # Stop the ticker before the last drain, so the two cannot be
+            # emitting at once and interleave a half-merged reasoning frame.
+            drainer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drainer
             # Whatever the agent reported after the last delta — the tail of a
             # tool round, the close of a reasoning block — still belongs to this
             # turn, and on an error path it is the most informative thing there
@@ -899,6 +947,21 @@ class PipelineRun:
             return
         self._turn_events.append((name, data if isinstance(data, dict) else {}))
 
+    async def _drain_turn_events_until_done(self) -> None:
+        """Flush the agent's turn events while the turn is still running.
+
+        Cancelled by the intent stage when the model stops streaming. The
+        interval is short enough that a tool row appears while the tool is
+        still running — which is the whole point of the row — and long enough
+        that a quiet turn costs a handful of wakeups.
+        """
+        try:
+            while True:
+                await asyncio.sleep(TURN_EVENT_DRAIN_SECONDS)
+                await self._drain_turn_events()
+        except asyncio.CancelledError:
+            raise
+
     async def _drain_turn_events(self) -> None:
         """Emit everything the agent has reported since the last tick.
 
@@ -908,6 +971,13 @@ class PipelineRun:
         into one block anyway. Tool events are never merged — each is a
         distinct row with its own identity.
         """
+        # Serialised against the ticker: both call this, and two drains
+        # interleaving would split a coalesced reasoning frame in half and
+        # could emit a tool row between the two pieces.
+        async with self._drain_lock:
+            await self._drain_locked()
+
+    async def _drain_locked(self) -> None:
         pending: str = ""
         while self._turn_events:
             name, data = self._turn_events.popleft()

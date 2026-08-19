@@ -20,9 +20,11 @@
 // and serves a real WAV file at /api/tts_proxy/test.mp3 over HTTP
 // (Authorization: Bearer <token> required).
 //
-// Commands it deliberately does NOT know (jarvis/tools/list) answer
-// unknown_command, which is what the client's graceful-degradation path
-// expects to see.
+// It knows jarvis/tools/list and jarvis/tools/call, because jarvis-core does.
+// `jarvis/test/tools_unsupported` makes it forget them again, so the console's
+// graceful-degradation path stays covered — a real deployment may be an older
+// backend. That fallback used to be the ONLY thing tested here, because
+// neither the mock nor the server had ever implemented the command.
 //
 // Usage:  node mock-ha.mjs [port]         (standalone)
 //         import { startMockHA } from './mock-ha.mjs'
@@ -708,6 +710,64 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			.filter((t) => (activeOnly ? !TASK_TERMINAL.includes(t.status) : true))
 			.sort((a, b) => b.created - a.created)
 			.map(taskDict);
+
+	/**
+	 * The model's own toolbox, as `jarvis/tools/list` answers it.
+	 *
+	 * A superset of the editable ones: built-ins the console cannot edit are
+	 * exactly the rows the union on the Tools page exists to keep. One is
+	 * deliberately Tier 3 so the approval path can be tested from here — a
+	 * console test-runner that ran a held tool would be the easiest Tier-3
+	 * bypass in the product, and that is worth an e2e, not just a unit test.
+	 */
+	let toolsUnsupported = false;
+	let approvalSeq = 0;
+	const nativeTools = () => {
+		// Built from `world.tools` plus the extras only the MODEL has, never a
+		// hardcoded list beside it: `world.tools` already holds `lock_control`
+		// and `turn_on`, and a second copy of either produced duplicate keys
+		// in the console's `{#each}` — which blanked the whole Test-run
+		// control with an `each_key_duplicate` error and nothing on screen to
+		// say why. The page is hardened against that now; the fixture should
+		// not be generating it either.
+		const extras = [
+			{
+				name: 'get_state',
+				description: 'Read one entity.',
+				parameters: { type: 'object', properties: { name: { type: 'string' } } },
+				tier: 1,
+				domain: null
+			},
+			{
+				name: 'code_task',
+				description: 'Hand a coding job to the coding agent.',
+				parameters: {
+					type: 'object',
+					properties: { repo: { type: 'string' }, instruction: { type: 'string' } }
+				},
+				tier: 2,
+				domain: null
+			}
+		];
+		const held = new Set(world.tools.map((t) => t.name));
+		const rows = [
+			...world.tools.map((t) => ({
+				name: t.name,
+				description: t.description ?? '',
+				parameters: t.parameters ?? { type: 'object', properties: {} },
+				tier: t.tier ?? 1,
+				domain: t.domain ?? null
+			})),
+			...extras.filter((t) => !held.has(t.name))
+		];
+		return rows.map((t) => ({
+			...t,
+			// Mirrors jarvis-core: tier 3 OR a gated domain, computed server-side
+			// so the console never re-derives the rule.
+			needs_approval: t.tier >= 3 || t.domain === 'lock' || t.domain === 'notify',
+			may_escalate: t.name === 'turn_on'
+		}));
+	};
 
 	/**
 	 * Jarvis Code.
@@ -1964,6 +2024,66 @@ index 1234567..89abcde 100644
 
 				case 'config/companion/list':
 					ok(msg.id, world.companions);
+					break;
+
+				// --- the model's own toolbox ---------------------------------
+				//
+				// jarvis-core implements these. The mock can be told to FORGET
+				// them (`jarvis/test/tools_unsupported`) so the console's
+				// graceful-degradation path stays covered too — a real
+				// deployment may be an older backend, and that fallback is the
+				// only thing this suite used to exercise, because neither the
+				// mock nor the server had ever implemented the command.
+				case 'jarvis/tools/list': {
+					if (toolsUnsupported) {
+						fail(msg.id, 'unknown_command', `unhandled: ${msg.type}`);
+						break;
+					}
+					ok(msg.id, { tools: nativeTools(), count: nativeTools().length });
+					break;
+				}
+
+				case 'jarvis/tools/call': {
+					if (toolsUnsupported) {
+						fail(msg.id, 'unknown_command', `unhandled: ${msg.type}`);
+						break;
+					}
+					const wanted = String(msg.name ?? '');
+					const tool = nativeTools().find((t) => t.name === wanted);
+					if (!tool) {
+						fail(msg.id, 'not_found', `unknown tool '${wanted}'`);
+						break;
+					}
+					if (tool.needs_approval) {
+						// What the real registry answers: held, with a request
+						// id, and a card raised. NOT run.
+						const requestId = `req-${++approvalSeq}`;
+						broadcast('jarvis_approval_required', {
+							request_id: requestId,
+							tool: tool.name,
+							arguments: msg.arguments ?? {},
+							tier: tool.tier
+						});
+						ok(msg.id, {
+							tool: tool.name,
+							result: {
+								status: 'approval_required',
+								request_id: requestId,
+								tool: tool.name
+							}
+						});
+						break;
+					}
+					ok(msg.id, {
+						tool: tool.name,
+						result: { status: 'ok', tool: tool.name, arguments: msg.arguments ?? {} }
+					});
+					break;
+				}
+
+				case 'jarvis/test/tools_unsupported':
+					toolsUnsupported = Boolean(msg.unsupported);
+					ok(msg.id, { unsupported: toolsUnsupported });
 					break;
 
 				case 'config/tool/list':

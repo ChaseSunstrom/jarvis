@@ -74,8 +74,11 @@ If it fails:
 
 * leave the orchestrator running — `code_task` and the command broker are
   independent of decomposition quality;
-* drop `delegate_to_agents` from what the model can see, by excluding it in
-  the `llm: expose:` block;
+* drop `delegate_to_agents` from what the model can see, by removing the
+  `orchestrator:` block from `configuration.yaml` — that integration is what
+  registers the tool. (`llm: expose:` will not do it: that block filters
+  **entities**, not tools, and setting it there narrows nothing while looking
+  as though it has.)
 * tiers 1 and 2 ship regardless and are reliable.
 
 Coder quality scales with the model: `CODER_MODEL` defaults to

@@ -93,6 +93,21 @@
 					<span class="sr">Thinking</span><span class="caret" aria-hidden="true"></span>
 				{/if}
 			</p>
+		{:else if message.role === 'assistant'}
+			<!--
+				A settled assistant turn with no text at all.
+
+				jarvis-core no longer produces one — a turn that would have been
+				empty now falls back to a sentence — but an older backend does,
+				and this branch did not exist: both arms above were false and
+				the bubble rendered nothing, leaving a permanent blank under a
+				collapsed "REASONING · N words". A blank is indistinguishable
+				from a client that lost the message, so it is worth saying.
+			-->
+			<p class="text empty" data-testid="chat-empty">
+				No answer came back for this one.{#if message.thinking}
+					Only reasoning — open it above.{/if}
+			</p>
 		{/if}
 
 		{#if message.error}
@@ -156,6 +171,10 @@
 	}
 	.msg.assistant .text {
 		color: var(--jv-text-bright);
+	}
+	.text.empty {
+		color: var(--jv-text-faint);
+		font-style: italic;
 	}
 	.text.waiting {
 		color: var(--jv-text-faint);

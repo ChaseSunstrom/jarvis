@@ -48,10 +48,45 @@ def _secret(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
     return loader.secrets[key]
 
 
+def _unquote(value: str) -> str:
+    """Strip ONE matching pair of surrounding quotes from a tag argument.
+
+    ## Why this is not cosmetic
+
+    A tag's argument is a plain YAML scalar, so the quoting a human writes
+    inside it is not YAML quoting — it is characters. `!env_var TOKEN ""`
+    therefore produced the two-character string `""`, which is TRUTHY.
+
+    The shipped configuration.yaml uses exactly that idiom for both
+    orchestrator secrets. With the variables unset:
+
+        token           == '""'      -> `configured` says yes
+        approval_secret == '""'      -> `can_approve` says yes
+        token == approval_secret     -> `secrets_are_distinct` says no
+
+    So an install that had set nothing believed it was configured, skipped the
+    `NotConfigured` guard, and posted to a port with nothing behind it — and,
+    far worse, armed the approval path with a secret whose value is two
+    characters an attacker guesses on the first try. `APPROVAL_SECRET` is the
+    only thing that can release a command to the sandbox or apply a diff.
+
+    One pair only, and only when the ends match, so a value that genuinely
+    starts or ends with a quote survives.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
 def _env_var(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
-    args = str(loader.construct_scalar(node)).split()  # type: ignore[arg-type]
+    # `split(None, 1)`, not `split()`: the default is everything after the
+    # name, so `!env_var GREETING Good morning` is "Good morning" rather than
+    # "Good" — the old form silently truncated at the first space.
+    args = str(loader.construct_scalar(node)).split(None, 1)  # type: ignore[arg-type]
+    if not args:
+        raise ConfigError("!env_var needs a variable name")
     name = args[0]
-    default = args[1] if len(args) > 1 else None
+    default = _unquote(args[1].strip()) if len(args) > 1 else None
     value = os.environ.get(name, default)
     if value is None:
         raise ConfigError(f"environment variable {name} is not set and has no default")

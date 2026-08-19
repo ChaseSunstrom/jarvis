@@ -227,3 +227,197 @@ def test_every_tool_route_is_wired_to_the_api():
     for verb in ("list", "create", "update", "delete"):
         assert f"/api/config/tool/{verb}" in paths, verb
         assert f"config/tool/{verb}" in websocket.WebSocketHandler._HANDLERS, verb
+
+
+# ---------------------------------------------------------------------------
+# `jarvis/tools/list` and `jarvis/tools/call` — the model's own toolbox
+# ---------------------------------------------------------------------------
+#
+# These two existed in `jarvis-web/src/lib/jarvisClient.ts` — with a documented
+# graceful-degradation path, unit tests for that path, and a Tools page built
+# on top of it — for the whole life of the product, and jarvis-core implemented
+# NEITHER. The console's "Test run" button answered
+#
+#     unknown command 'jarvis/tools/call'
+#
+# and the page quietly relabelled itself to the service catalogue. The e2e
+# suite was green throughout because the mock backend deliberately did not know
+# the command either, so the only thing ever tested was the fallback.
+#
+# That is the client-server seam this repo keeps finding: a contract written on
+# one side only. The tests below are on the SERVER side on purpose.
+
+
+async def test_the_toolbox_command_answers_at_all(jarvis):
+    """The regression. `unknown command` was the entire bug."""
+    from jarvis.api import websocket
+
+    assert "jarvis/tools/list" in websocket.WebSocketHandler._HANDLERS
+    assert "jarvis/tools/call" in websocket.WebSocketHandler._HANDLERS
+
+    payload = common.tools_list_payload(jarvis)
+    assert payload["count"] > 10, "an empty toolbox would make this vacuous"
+    assert payload["count"] == len(payload["tools"])
+
+
+async def test_the_listing_is_exactly_what_the_model_is_offered(jarvis):
+    """Not "roughly the same". The same set, by construction.
+
+    `agent.py` builds the model's schema from `as_openai_schema()` over this
+    registry with no filtering, so if these two ever diverge the page is
+    lying about the thing it exists to answer — "is the tool the model is
+    failing to call actually registered?"
+    """
+    registry = jarvis.data["llm_tools"]
+    listed = {t["name"] for t in common.tools_list_payload(jarvis)["tools"]}
+    offered = {t["function"]["name"] for t in registry.as_openai_schema()}
+    assert listed == offered
+
+
+async def test_the_listing_carries_the_approval_rule_not_just_the_tier(jarvis):
+    """`tier` is not the whole rule, so the console must not re-derive it.
+
+    `lock_control` is Tier 3. `write_file`-shaped tools are Tier 3. But a tool
+    can also be held for its DOMAIN at any tier, and a tool with a `gate` is
+    held depending on its arguments. A TypeScript reimplementation of that
+    would be a second copy of a security decision.
+    """
+    from jarvis.llm.tools import TIER_APPROVAL
+
+    tools = {t["name"]: t for t in common.tools_list_payload(jarvis)["tools"]}
+
+    held = [t for t in tools.values() if t["needs_approval"]]
+    assert held, "no tool reports needing approval; the field is not being set"
+    for entry in held:
+        from jarvis.const import GATED_DOMAINS
+
+        assert entry["tier"] >= TIER_APPROVAL or entry["domain"] in GATED_DOMAINS
+
+    # And a gated-domain tool is reported held even though its tier alone
+    # would not say so.
+    lock = tools.get("lock_control")
+    if lock is not None:
+        assert lock["needs_approval"] is True
+
+
+async def test_a_test_run_actually_runs_the_tool(jarvis):
+    jarvis.states.set("light.lab", "off", {"friendly_name": "Lab"})
+    answer = await common.async_call_tool(
+        jarvis, "get_state", {"name": "Lab"}
+    )
+    assert answer["tool"] == "get_state"
+    assert answer["result"], answer
+
+
+async def test_an_unknown_tool_is_a_clean_404_not_a_model_shaped_answer(jarvis):
+    """`registry.call` answers unknown tools with a dict a MODEL can act on.
+
+    A request wants the HTTP-shaped answer instead, so the console can tell
+    "no such tool" from "the tool ran and refused".
+    """
+    with pytest.raises(ApiError) as caught:
+        await common.async_call_tool(jarvis, "no_such_tool_at_all", {})
+    assert caught.value.code == "not_found"
+
+
+async def test_a_nameless_call_is_refused(jarvis):
+    with pytest.raises(ApiError) as caught:
+        await common.async_call_tool(jarvis, "   ", {})
+    assert caught.value.code == "invalid_format"
+
+
+async def test_arguments_must_be_an_object(jarvis):
+    """A list or a string here would reach `registry.call` as `{"input": ...}`.
+
+    Silently reshaping a caller's mistake into a different call is how a test
+    run reports success for something nobody asked for.
+    """
+    with pytest.raises(ApiError) as caught:
+        await common.async_call_tool(jarvis, "get_state", ["Lab"])
+    assert caught.value.code == "invalid_format"
+    assert "object" in caught.value.message
+
+
+async def test_a_test_run_does_not_bypass_the_approval_gate(jarvis):
+    """THE test on this command.
+
+    A console test runner that skipped the tier gate would be the easiest
+    Tier-3 bypass in the product: every approval-held verb — `execute_command`,
+    `apply_code_task`, `write_file`, `start_coding_job`, anything in a gated
+    domain — reachable with one button and no human. It goes through
+    `ToolRegistry.call`, which holds it exactly as it holds a model turn.
+    """
+    from jarvis.llm.tools import TIER_APPROVAL, schema_object
+
+    ran = []
+
+    async def _boom(args, context=None):
+        ran.append(args)
+        return {"status": "ok", "did": "the dangerous thing"}
+
+    jarvis.data["llm_tools"].register(
+        name="pretend_dangerous_verb",
+        description="stands in for execute_command",
+        parameters=schema_object({"x": {"type": "string"}}, []),
+        handler=_boom,
+        tier=TIER_APPROVAL,
+    )
+
+    answer = await common.async_call_tool(
+        jarvis, "pretend_dangerous_verb", {"x": "1"}
+    )
+    result = answer["result"]
+    assert not ran, "a Tier-3 tool RAN from the console test runner"
+    assert result.get("status") == "approval_required", result
+    assert result.get("request_id"), "no approval request was raised to answer"
+
+
+async def test_the_held_request_is_the_one_a_human_can_answer(jarvis):
+    """A held test run has to reach the same approvals queue as any other.
+
+    Raising a request nothing surfaces would be worse than refusing outright:
+    the button would appear to hang.
+    """
+    from jarvis.llm.tools import TIER_APPROVAL, schema_object
+
+    async def _noop(args, context=None):
+        return {"status": "ok"}
+
+    jarvis.data["llm_tools"].register(
+        name="pretend_gated",
+        description="x",
+        parameters=schema_object({}, []),
+        handler=_noop,
+        tier=TIER_APPROVAL,
+    )
+    await common.async_call_tool(jarvis, "pretend_gated", {})
+    pending = jarvis.data["llm_tools"].pending_requests()
+    assert [p for p in pending if p["tool"] == "pretend_gated"], pending
+
+
+async def test_bad_arguments_come_back_naming_the_key(jarvis):
+    """Coercion is `registry.call`'s job, and the console gets its answer.
+
+    Reimplementing validation in the API layer would give the console a
+    different verdict from the one the model gets for the same call.
+    """
+    answer = await common.async_call_tool(jarvis, "get_state", {"nonsense": 1})
+    result = answer["result"]
+    assert result.get("status") == "error"
+    assert "expected" in result or "error" in result
+
+
+async def test_without_an_assistant_the_toolbox_says_so(tmp_path):
+    box = Jarvis(tmp_path)
+    with pytest.raises(ApiError):
+        common.tools_list_payload(box)
+    with pytest.raises(ApiError):
+        await common.async_call_tool(box, "get_state", {})
+
+
+def test_the_toolbox_is_reachable_over_rest_as_well():
+    from jarvis.api import rest
+
+    paths = {getattr(route, "path", "") for route in rest.api_router.routes}
+    assert "/api/tools" in paths
+    assert "/api/tools/call" in paths

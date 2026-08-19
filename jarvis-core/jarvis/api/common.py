@@ -615,6 +615,97 @@ def tool_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
     return rows
 
 
+def tools_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """What the MODEL sees — not what this console can edit.
+
+    Deliberately a different command from `config/tool/list`, which answers
+    "what may be edited here" and marks each row `editable`. The console shows
+    the union of the two, because a backend can answer one and not the other,
+    and because a tool the model can call but nobody can edit still has to
+    appear. This one is the model's toolbox: `jarvis/llm/agent.py` builds its
+    schema from `as_openai_schema()` over this same registry with no filtering,
+    so "listed here" and "offered to the model" are the same set by
+    construction rather than by agreement.
+
+    That equivalence is the point. The reason this command had to exist is that
+    "is the tool the model is failing to call actually registered?" was not a
+    question any surface could answer.
+
+    `needs_approval` and `may_escalate` are computed HERE, from the registry's
+    own rule, rather than re-derived in TypeScript from `tier`. The tier is not
+    the whole rule — a tool in a gated domain is held at any tier, and a tool
+    with a `gate` is held depending on its arguments — and a console that
+    reimplemented that would be a second copy of the security decision.
+    """
+    from ..const import GATED_DOMAINS
+    from ..llm.tools import TIER_APPROVAL
+
+    registry = _tool_registry(jarvis)
+    tools: list[dict[str, Any]] = []
+    for name in registry.names():
+        tool = registry.get(name)
+        if tool is None:  # pragma: no cover - names() came from the same dict
+            continue
+        entry = tool.as_dict()
+        entry["needs_approval"] = bool(
+            tool.tier >= TIER_APPROVAL or (tool.domain and tool.domain in GATED_DOMAINS)
+        )
+        # A gate decides per call, so the listing cannot say yes or no — only
+        # that this one is capable of being held. Saying "no" here for a tool
+        # that will in fact ask would be the worse of the two errors.
+        entry["may_escalate"] = tool.gate is not None
+        tools.append(entry)
+    return {"tools": tools, "count": len(tools)}
+
+
+async def async_call_tool(
+    jarvis: "Jarvis",
+    name: str,
+    arguments: Any = None,
+    *,
+    context: Any = None,
+) -> dict[str, Any]:
+    """Run one tool the way the model would, and answer with what it got.
+
+    Straight through `ToolRegistry.call`, which is the whole design: argument
+    coercion against the declared schema, the unknown-tool message with the
+    list of real names, the approval gate, the `jarvis_tool_called` event. A
+    console test-run that reimplemented any of that would be testing a second
+    code path and reporting it as the first.
+
+    ## This is not a way round the gate
+
+    `registry.call` holds a Tier-3 tool here exactly as it holds it mid-turn:
+    the reply is the approval-required payload and an approval card is raised.
+    That is stricter than the console's existing reach, not looser —
+    `call_service` has always been able to call any service directly and is
+    not tiered at all. A test runner that skipped the gate would have made this
+    page the easiest Tier-3 bypass in the product.
+    """
+    registry = _tool_registry(jarvis)
+    tool_name = str(name or "").strip()
+    if not tool_name:
+        raise ApiError("invalid_format", "a tool call needs a name", 400)
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise ApiError(
+            "invalid_format",
+            "tool arguments must be an object, not "
+            f"{type(arguments).__name__}",
+            400,
+        )
+
+    result = await registry.call(tool_name, arguments, context)
+    # `call` answers `{"status": "error", "error": "unknown tool ..."}` rather
+    # than raising, because that shape is what a model reads and acts on. A
+    # REQUEST deserves the HTTP-shaped answer instead, so the console can tell
+    # "no such tool" from "the tool ran and said no".
+    if isinstance(result, dict) and str(result.get("error", "")).startswith("unknown tool"):
+        raise ApiError("not_found", str(result.get("error")), 404)
+    return {"tool": tool_name, "result": result}
+
+
 def _taken_names(jarvis: "Jarvis") -> set[str]:
     """Names held by something that is not the authored store."""
     from ..llm.authored_tools import get_authored_tools
@@ -1248,7 +1339,7 @@ def code_result_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
 async def async_start_code_job(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
     """Start a coding job from an authenticated caller.
 
-    Not approval-gated, unlike the model's `code_task` tool. Same asymmetry and
+    Not approval-gated, unlike the model's `start_coding_job` tool. Same asymmetry and
     same reason as `async_add_scheduled`: a request that reached here carried a
     bearer token, whereas a tool call may have been shaped by a page the model
     read.

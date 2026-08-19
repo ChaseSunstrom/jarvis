@@ -7,6 +7,7 @@ import {
 	NAME_RE,
 	blankToolForm,
 	parseToolForm,
+	dedupeByName,
 	runnerOptions,
 	runnerSelection,
 	toolFormFromRow,
@@ -171,5 +172,56 @@ describe('the mirrored server rules', () => {
 		expect(block, 'could not find ALLOWED_METHODS').not.toBe('');
 		const found = [...block.matchAll(/"([A-Z]+)"/g)].map((m) => m[1]);
 		expect([...found].sort()).toEqual([...METHODS].sort());
+	});
+});
+
+
+describe('dedupeByName', () => {
+	it('keeps the first of a repeated name', () => {
+		const rows = [
+			{ name: 'turn_on', description: 'from the model' },
+			{ name: 'lock_control', description: 'a' },
+			{ name: 'turn_on', description: 'a projection of it' }
+		];
+		expect(dedupeByName(rows).map((r) => r.name)).toEqual(['turn_on', 'lock_control']);
+		expect(dedupeByName(rows)[0].description).toBe('from the model');
+	});
+
+	it('drops a nameless row rather than keying on an empty string', () => {
+		expect(dedupeByName([{ name: '' }, { name: 'a' }]).map((r) => r.name)).toEqual(['a']);
+	});
+
+	it('leaves a clean list alone', () => {
+		const rows = [{ name: 'a' }, { name: 'b' }];
+		expect(dedupeByName(rows)).toEqual(rows);
+	});
+});
+
+describe('runnerOptions never yields a duplicate key', () => {
+	// A keyed {#each} over a duplicate throws `each_key_duplicate` in Svelte 5,
+	// which takes out the whole block: the observed symptom was a Test-run
+	// control with no options, no error, and a disabled button — a page that
+	// looked like a backend with no tools at all.
+	const dup = [
+		{ name: 'turn_on' },
+		{ name: 'turn_on' },
+		{ name: 'lock_control' }
+	];
+
+	it('with nothing selected', () => {
+		const names = runnerOptions(dup, dup, '').map((t) => t.name);
+		expect(names).toEqual([...new Set(names)]);
+	});
+
+	it('with a selection already in the visible list', () => {
+		const names = runnerOptions(dup, dup, 'turn_on').map((t) => t.name);
+		expect(names).toEqual([...new Set(names)]);
+	});
+
+	it('with a selection pulled in from the catalogue', () => {
+		const visible = [{ name: 'turn_on' }, { name: 'turn_on' }];
+		const names = runnerOptions(dup, visible, 'lock_control').map((t) => t.name);
+		expect(names).toEqual([...new Set(names)]);
+		expect(names).toContain('lock_control');
 	});
 });

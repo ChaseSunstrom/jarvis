@@ -21,8 +21,9 @@
 		runnerOptions,
 		runnerSelection,
 		toolFormFromRow,
-		type ToolForm
-	} from '$lib/toolDraft';
+		type ToolForm,
+	dedupeByName
+} from '$lib/toolDraft';
 
 	// `$state`, unlike the other management pages: this one PASSES the
 	// connection to a child. Left as a plain `let`, `<McpServers>` would be
@@ -198,7 +199,12 @@
 	 */
 	let catalogue = $derived.by<ToolDescription[]>(() => {
 		const seen = new Set(tools.map((t) => t.name));
-		return [
+		// `dedupeByName` on the way out, not just `seen` on the way in: `seen`
+		// only protects the second source from the first, and a duplicate
+		// WITHIN the first reached the keyed `{#each}` below and threw
+		// `each_key_duplicate`, blanking the whole runner with nothing on
+		// screen to explain it.
+		return dedupeByName([
 			...tools,
 			...rows
 				.filter((row) => !seen.has(row.name))
@@ -208,7 +214,7 @@
 					domain: row.domain,
 					parameters: row.parameters ?? undefined
 				}))
-		];
+		]);
 	});
 	let visibleTools = $derived(
 		catalogue.filter((t) => t.name.toLowerCase().includes(toolFilter.trim().toLowerCase()))
@@ -274,7 +280,21 @@
 		try {
 			const outcome = await conn.client.callTool(selected, parsed);
 			result = JSON.stringify(outcome ?? null, null, 2);
-			toasts.success(`Ran ${selected}`);
+			// A held tool did not run, and saying "Ran it" over an approval
+			// card is the kind of small lie that teaches people to distrust
+			// the whole page. jarvis-core answers `approval_required`; the
+			// banner at the top of the console is where it gets answered.
+			const held =
+				(outcome as any)?.result?.status === 'approval_required' ||
+				(outcome as any)?.status === 'approval_required';
+			if (held) {
+				toasts.info(
+					`${selected} is waiting for you`,
+					'it needs approval — answer it in the banner at the top'
+				);
+			} else {
+				toasts.success(`Ran ${selected}`);
+			}
 		} catch (e) {
 			err = describeError(e);
 			toasts.error(`${selected} failed`, describeError(e));
@@ -489,6 +509,16 @@
 	</div>
 	{#if selectedTool?.description}
 		<p class="muted">{selectedTool.description}</p>
+	{/if}
+	{#if selectedTool?.needs_approval}
+		<p class="notice" data-testid="tool-needs-approval">
+			Tier {selectedTool.tier ?? 3} — running this asks you first. It will not run until you
+			answer the approval banner.
+		</p>
+	{:else if selectedTool?.may_escalate}
+		<p class="muted" data-testid="tool-may-escalate">
+			May ask for approval, depending on what it is pointed at.
+		</p>
 	{/if}
 	{#if result}
 		<pre data-testid="tool-result" aria-live="polite">{result}</pre>
