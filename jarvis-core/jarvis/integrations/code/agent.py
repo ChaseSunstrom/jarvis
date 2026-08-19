@@ -258,8 +258,14 @@ class CodeAgent:
         self.run.branch = await self.ws.start_branch(
             branch_name(self._task_id or "job")
         )
-        await self._work(instruction)
-        await self._finish()
+        try:
+            await self._work(instruction)
+            await self._finish()
+        finally:
+            # However the job ends. A container left running holds the
+            # repository mounted and, with `persist`, never commits what it
+            # installed — so the next job reinstalls it.
+            await self.ws.close_session()
         return self.run
 
     def _shell_rule(self) -> str:
@@ -660,15 +666,16 @@ class CodeAgent:
 
     async def _run_setup_once(self) -> None:
         """The environment's `setup:` commands, before the first real one."""
-        from .sandbox import setup_script
-
         if self._setup_done:
             return
         self._setup_done = True
-        script = setup_script(self.ws.environment) if self.ws.sandboxed else ""
-        if not script:
+        if not self.ws.sandboxed:
             return
-        code, out = await self.ws.run_sandboxed(script)
+        session = await self.ws.open_session()
+        outcome = await session.run_setup()
+        if outcome is None:
+            return
+        code, out = outcome
         self.run.commands.append(
             {"command": "(environment setup)", "ok": code == 0, "output": out[-4000:]}
         )

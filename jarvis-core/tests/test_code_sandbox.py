@@ -408,3 +408,292 @@ async def test_a_missing_docker_says_what_to_do_rather_than_raising():
     assert code == 1
     assert "docker is not installed" in out
     assert "environment:" in out
+
+
+# ---------------------------------------------------------------------------
+# the session: one container per JOB, so installing works at all
+# ---------------------------------------------------------------------------
+class _FakeDocker:
+    """Records argv and answers whatever the test queued."""
+
+    def __init__(self, *, image_exists: bool = False) -> None:
+        self.calls: list[list[str]] = []
+        self.image_exists = image_exists
+        self.results: dict[str, tuple[int, str]] = {}
+
+    async def __call__(self, argv, timeout, *, docker="docker", name=""):
+        self.calls.append(argv)
+        verb = argv[1] if len(argv) > 1 else ""
+        if verb == "image" and argv[2] == "inspect":
+            return (0, "") if self.image_exists else (1, "no such image")
+        return self.results.get(verb, (0, "ok"))
+
+    def argv_for(self, verb: str) -> list[list[str]]:
+        return [c for c in self.calls if len(c) > 1 and c[1] == verb]
+
+
+@pytest.mark.asyncio
+async def test_every_command_runs_in_the_same_container():
+    """THE bug this replaced.
+
+    The first version did `docker run --rm` per command, so
+    `run_command("pip install pygame")` installed into a container that was
+    removed before the next line could import it. Installing was, in effect,
+    impossible — which is the opposite of what an environment is for.
+    """
+    docker = _FakeDocker()
+    session = sandbox.Session(env(), Path("/srv/repo"), runner=docker)
+
+    await session.run("pip install pygame")
+    await session.run("python -c 'import pygame'")
+
+    assert len(docker.argv_for("run")) == 1, "a second container was created"
+    execs = docker.argv_for("exec")
+    assert len(execs) == 2
+    # Both reached the SAME container.
+    assert execs[0][-4] == execs[1][-4] == session.name
+
+
+@pytest.mark.asyncio
+async def test_the_container_idles_rather_than_exiting():
+    """A container whose command exits is a container `--rm` removes."""
+    docker = _FakeDocker()
+    session = sandbox.Session(env(), Path("/x"), runner=docker)
+    await session.start()
+
+    run = docker.argv_for("run")[0]
+    assert "--detach" in run
+    # `sleep infinity` is GNU-only; busybox refuses it.
+    assert run[-1] == "tail -f /dev/null"
+
+
+@pytest.mark.asyncio
+async def test_the_fences_are_on_the_container_not_on_each_exec():
+    """`docker exec` cannot widen what the container was created with, which is
+    why the network policy and the mounts are decided once."""
+    docker = _FakeDocker()
+    session = sandbox.Session(env(network=NETWORK_EGRESS), Path("/srv/repo"), runner=docker)
+    await session.run("whoami")
+
+    run = docker.argv_for("run")[0]
+    assert "--cap-drop=ALL" in run
+    assert "--network=bridge" in run
+    assert any(p.startswith("--volume=/srv/repo:") for p in run)
+
+    execute = docker.argv_for("exec")[0]
+    assert not any(p.startswith("--network") for p in execute)
+    assert not any(p.startswith("--volume") for p in execute)
+    assert not any(p.startswith("--cap-") for p in execute)
+
+
+@pytest.mark.asyncio
+async def test_setup_runs_once_and_inside_the_job_container():
+    """An operator's `setup:` used to run in a container of its own and be
+    thrown away, so `apt-get install libglfw3-dev` reached nothing."""
+    docker = _FakeDocker()
+    session = sandbox.Session(env(setup=["apt-get install -y cmake"]), Path("/x"), runner=docker)
+
+    await session.run_setup()
+    await session.run_setup()
+    await session.run("cmake --version")
+
+    execs = docker.argv_for("exec")
+    setups = [c for c in execs if "cmake" in c[-1] and "apt-get" in c[-1]]
+    assert len(setups) == 1, "setup ran more than once, or not at all"
+    assert len(docker.argv_for("run")) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_container_is_removed_when_the_job_ends():
+    docker = _FakeDocker()
+    session = sandbox.Session(env(), Path("/x"), runner=docker)
+    await session.run("ls")
+    await session.close()
+    removed = docker.argv_for("rm")
+    assert removed and session.name in removed[0]
+
+
+# ---------------------------------------------------------------------------
+# persistence: the tools outlive the job, the container does not
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_nothing_is_kept_unless_the_environment_asks():
+    docker = _FakeDocker()
+    session = sandbox.Session(env(), Path("/x"), runner=docker)
+    await session.run("pip install pygame")
+    await session.close()
+    assert not docker.argv_for("commit"), "an environment kept state it did not opt into"
+
+
+@pytest.mark.asyncio
+async def test_a_persisting_environment_keeps_what_it_installed():
+    """"if it closes a session, the tools are still there"."""
+    docker = _FakeDocker()
+    session = sandbox.Session(env(persist=True), Path("/x"), runner=docker)
+    await session.run("apt-get install -y cmake")
+    await session.close()
+
+    committed = docker.argv_for("commit")
+    assert committed, "the installed tools were thrown away"
+    assert committed[0][-1] == "jarvis-code-env-build:latest"
+    assert committed[0][-2] == session.name
+
+
+@pytest.mark.asyncio
+async def test_the_next_job_starts_from_the_kept_image():
+    docker = _FakeDocker(image_exists=True)
+    session = sandbox.Session(env(persist=True), Path("/x"), runner=docker)
+    await session.start()
+    run = docker.argv_for("run")[0]
+    # The image argument sits immediately before the container's command.
+    assert run[-4] == "jarvis-code-env-build:latest"
+
+
+@pytest.mark.asyncio
+async def test_with_no_kept_image_yet_it_starts_from_the_configured_one():
+    docker = _FakeDocker(image_exists=False)
+    session = sandbox.Session(env(persist=True, image="gcc:14"), Path("/x"), runner=docker)
+    await session.start()
+    assert docker.argv_for("run")[0][-4] == "gcc:14"
+
+
+@pytest.mark.asyncio
+async def test_the_configured_image_survives_a_persisted_run():
+    """A reset has to have something to go back to.
+
+    `start()` swaps the image for the persisted tag; mutating the Environment
+    instead of copying it would make the configured image unrecoverable and
+    `reset_environment` a no-op.
+    """
+    docker = _FakeDocker(image_exists=True)
+    environment = env(persist=True, image="gcc:14")
+    session = sandbox.Session(environment, Path("/x"), runner=docker)
+    await session.start()
+    assert environment.image == "gcc:14"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_job_can_decline_to_keep_its_container():
+    """A half-applied `apt-get` is a worse starting point than the image."""
+    docker = _FakeDocker()
+    session = sandbox.Session(env(persist=True), Path("/x"), runner=docker)
+    await session.run("apt-get install -y nonsense")
+    await session.close(keep=False)
+    assert not docker.argv_for("commit")
+
+
+@pytest.mark.asyncio
+async def test_resetting_throws_the_kept_image_away():
+    docker = _FakeDocker()
+    ok, note = await sandbox.reset_environment(env(persist=True), runner=docker)
+    assert ok
+    removed = [c for c in docker.calls if c[1:3] == ["image", "rm"]]
+    assert removed and removed[0][-1] == "jarvis-code-env-build:latest"
+    assert "reinstall" in note
+
+
+@pytest.mark.asyncio
+async def test_resetting_an_environment_that_keeps_nothing_says_so():
+    docker = _FakeDocker()
+    ok, note = await sandbox.reset_environment(env(), runner=docker)
+    assert not ok
+    assert "does not keep anything" in note
+
+
+@pytest.mark.asyncio
+async def test_a_commit_failure_is_a_warning_not_a_lost_job(caplog):
+    """The job's diff is the deliverable; failing to keep its tools is not
+    worth losing that over."""
+    import logging
+
+    docker = _FakeDocker()
+    docker.results["commit"] = (1, "no space left on device")
+    session = sandbox.Session(env(persist=True), Path("/x"), runner=docker)
+    await session.run("ls")
+    with caplog.at_level(logging.WARNING):
+        await session.close()
+    assert any("could not keep" in r.getMessage() for r in caplog.records)
+    assert docker.argv_for("rm"), "the container was left running"
+
+
+def test_the_cache_volume_covers_downloads_and_not_installs():
+    """A volume over `site-packages` would make installs persist by accident,
+    which is what `persist:` is for and what `cache:` deliberately is not."""
+    argv = argv_for(env(cache=True))
+    volumes = [p for p in argv if p.startswith("--volume=")]
+    cache_mounts = [v for v in volumes if "jarvis-code-cache-build" in v]
+    assert cache_mounts
+    for mount in cache_mounts:
+        destination = mount.rsplit(":", 1)[-1]
+        assert ".cache" in destination
+        assert "site-packages" not in destination
+        assert destination != WORK_DIR
+
+
+def test_a_docker_that_is_not_running_says_which_of_the_two_things_is_wrong():
+    from jarvis.integrations.code.sandbox import _explain_docker_failure
+
+    assert "not running" in _explain_docker_failure("Cannot connect to the Docker daemon")
+    assert "docker` group" in _explain_docker_failure(
+        "permission denied while trying to connect to /var/run/docker.sock"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_workspace_reuses_one_session_across_commands():
+    """The same property, one layer up.
+
+    `Session` keeping one container is only useful if the Workspace hands out
+    the same Session — a fresh one per command would create a fresh container
+    per command and put the original bug straight back.
+    """
+    from jarvis.integrations.code.workspace import Repo, Workspace
+
+    docker = _FakeDocker()
+    ws = Workspace(
+        Repo(name="p", path="/srv/repo", writable=True), environment=env()
+    )
+    session = await ws.open_session()
+    session._run = docker  # the container is faked; the reuse is not
+
+    await ws.run_sandboxed("pip install pygame")
+    await ws.run_sandboxed("python -c 'import pygame'")
+
+    assert len(docker.argv_for("run")) == 1
+    assert len(docker.argv_for("exec")) == 2
+
+
+@pytest.mark.asyncio
+async def test_closing_the_workspace_session_lets_the_next_job_start_clean():
+    from jarvis.integrations.code.workspace import Repo, Workspace
+
+    docker = _FakeDocker()
+    ws = Workspace(Repo(name="p", path="/srv/repo"), environment=env())
+    session = await ws.open_session()
+    session._run = docker
+    await ws.run_sandboxed("ls")
+    await ws.close_session()
+
+    assert docker.argv_for("rm")
+    assert ws._session is None, "a closed session was left attached"
+
+
+def test_the_size_of_a_written_file_is_bounded():
+    """The bind mount is the host's filesystem, and nothing else caps it.
+
+    `--memory`, `--pids-limit` and the 512 MB tmpfs all leave `/work` alone,
+    so `dd if=/dev/zero of=/work/pad` filled the operator's disk. Docker cannot
+    quota a bind mount, so this is `--ulimit fsize`, which the kernel enforces
+    per file on every driver.
+    """
+    argv = argv_for(env(max_file_mb=100))
+    assert "--ulimit=fsize=204800" in argv  # 100 MiB in 512-byte blocks
+    assert "--ulimit=nofile=4096:4096" in argv
+
+
+def test_the_file_size_limit_is_clamped_and_survives_nonsense():
+    from jarvis.integrations.code.sandbox import environment_from_dict
+
+    assert environment_from_dict({"name": "a"}).max_file_mb == 2048
+    assert environment_from_dict({"name": "a", "max_file_mb": "banana"}).max_file_mb > 0
+    assert environment_from_dict({"name": "a", "max_file_mb": 0}).max_file_mb >= 1

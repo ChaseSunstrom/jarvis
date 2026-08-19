@@ -121,6 +121,52 @@ code:
       environment: cpp
 ```
 
+### One container per job, and tools that outlive it
+
+A job gets **one** container, created when it first needs one and removed when
+it finishes. Every `run_command` reaches it with `docker exec`, so an install
+in one command is there for the next — which sounds obvious and was not: the
+first version ran `docker run --rm` per command, so `pip install pygame`
+installed into a container that was gone before the next line could import it.
+Installing was, in effect, impossible.
+
+By default the container is thrown away, so the next job starts from the image
+again and reinstalls. If that is a minute of `apt-get` every run, say so:
+
+```yaml
+    - name: cpp
+      image: gcc:14
+      network: egress
+      persist: true
+```
+
+With `persist`, the container is committed to `jarvis-code-env-cpp:latest` when
+the job ends, and the next job starts from that. `apt-get install cmake`
+happens once, not once a job.
+
+**The image persists; the container never does.** That distinction is the
+design. A long-lived container would have to keep its mounts — and mounts are
+fixed when a container is created — so reusing one across repositories would
+mean mounting the whole workspace and letting every job see its siblings.
+Committing keeps the tools and keeps the one-repository mount.
+
+**What it costs, plainly:** a job can leave something in that image, and every
+later job in the same environment starts from it. That is real cross-job
+influence, and it is why `persist` is off by default. When an environment gets
+into a state you do not like:
+
+```
+code.reset_environment  name: cpp
+```
+
+throws the image away and goes back to the `image:` you configured.
+
+If you want cheaper rebuilds without that, `cache: true` keeps only the package
+*caches* (pip, npm, cargo, go) in a named volume — downloads are reused,
+nothing is installed ahead of time. It is deliberately mounted only at cache
+paths: a volume over `site-packages` would make installs persist by accident,
+which is what `persist` is for and what `cache` is not.
+
 ### `network:` is the choice worth making deliberately
 
 | | |
@@ -153,6 +199,18 @@ environment is an explicit allow-list.
 
 `container_argv()` is a pure function returning a list of strings, so all of
 the above is proved by unit tests on a machine with no Docker installed.
+
+### Disk, and the one thing that is not bounded
+
+`--memory`, `--cpus`, `--pids-limit` and a 512 MB tmpfs on `/tmp` all leave the
+bind mount alone, because `/work` is your filesystem and Docker cannot put a
+quota on a bind mount (`--storage-opt size=` covers the container's own layer,
+and only on some storage drivers). So a job could fill your disk.
+
+`--ulimit fsize` now caps any single file at `max_file_mb` (2 GB by default),
+which the kernel enforces everywhere. It does **not** stop a million small
+files. If that matters, put a filesystem quota on the workspace directory —
+that one is yours to set, and no container flag substitutes for it.
 
 ### What is NOT proved by those tests
 
@@ -283,6 +341,7 @@ second and log it.
 | `code.run` | `repo`, `instruction` → a task id. **Approval-gated** |
 | `code.create_repository` | `name` → a new repository in the workspace |
 | `code.clone_repository` | `forge`, `project` → a clone, if the allow-list permits it |
+| `code.reset_environment` | `name` → throws away a persisting environment's image |
 | `code.push_branch` | `repo`, `branch` → pushes it. **Approval-gated** |
 | `code.repositories` | what Jarvis may work in |
 | `code.result` | the branch, diff, checks and trail of a finished job |

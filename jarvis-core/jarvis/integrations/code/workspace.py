@@ -209,13 +209,37 @@ class Workspace:
         #: leave nothing to review.
         self.sandbox = list(sandbox or [])
         #: A `sandbox.Environment`, or None. With one, commands run in a
-        #: throwaway container whose only host path is this repository, and the
-        #: agent gains `run_command`. Without one it has no shell at all.
+        #: container whose only host path is this repository, and the agent
+        #: gains `run_command`. Without one it has no shell at all.
         self.environment = environment
+        #: The live container, once a job has asked for one.
+        self._session: Any = None
 
     @property
     def sandboxed(self) -> bool:
         return self.environment is not None
+
+    async def open_session(self):
+        """The container this job's commands run in, created once.
+
+        One per JOB, not one per command: the first version spawned a fresh
+        container for every command, so `pip install` was thrown away before
+        the next line could use it. Installing was, in effect, impossible.
+        """
+        from .sandbox import SandboxError, Session
+
+        if self.environment is None:
+            raise SandboxError(
+                f"{self.repo.name} has no environment, so there is nothing to "
+                "run commands in."
+            )
+        if self._session is None:
+            self._session = Session(
+                self.environment,
+                self.root,
+                writable=self.repo.writable,
+            )
+        return self._session
 
     async def run_sandboxed(self, command: str, *, timeout: float | None = None):
         """One command inside this repository's environment.
@@ -224,20 +248,14 @@ class Workspace:
         "run it here instead" is exactly the mistake this whole module exists
         to make impossible.
         """
-        from .sandbox import SandboxError, run_in_container
+        session = await self.open_session()
+        return await session.run(command, timeout=timeout)
 
-        if self.environment is None:
-            raise SandboxError(
-                f"{self.repo.name} has no environment, so there is nothing to "
-                "run commands in."
-            )
-        return await run_in_container(
-            self.environment,
-            self.root,
-            command,
-            timeout=timeout,
-            writable=self.repo.writable,
-        )
+    async def close_session(self, *, keep: bool = True) -> None:
+        """Commit the tools (if the environment persists) and remove it."""
+        if self._session is not None:
+            await self._session.close(keep=keep)
+            self._session = None
 
     def sandbox_argv(self, argv: list[str]) -> list[str]:
         """A check command, behind the operator's wrapper if they set one.

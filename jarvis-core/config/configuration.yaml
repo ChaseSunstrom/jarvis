@@ -705,6 +705,22 @@ code:
   #   network: egress
   #   memory: 2g
   #   cpus: "2"
+  #   # KEEP WHAT IT INSTALLS. Without this every job starts from the image
+  #   # again and re-downloads its whole toolchain. With it, the container is
+  #   # committed to `jarvis-code-env-python:latest` when the job ends and the
+  #   # next one starts from that — `apt-get install cmake` happens once.
+  #   #
+  #   # The IMAGE persists; the container never does. A job still gets a fresh
+  #   # container with only its own repository mounted.
+  #   #
+  #   # The cost, plainly: a job can leave something in that image and every
+  #   # later job in this environment starts from it. `code.reset_environment`
+  #   # throws it away and goes back to the line above.
+  #   persist: true
+  #   # Cheaper alternative if you do not want that: keep only the package
+  #   # CACHES in a volume, so downloads are reused but nothing is installed
+  #   # ahead of time. Ignored when `persist` is on, which is strictly better.
+  #   cache: false
   #   setup:
   #     - pip install --quiet --upgrade pip
   #

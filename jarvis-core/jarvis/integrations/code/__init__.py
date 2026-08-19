@@ -430,6 +430,22 @@ def _register_services(jarvis: "Jarvis") -> None:
         },
     )
 
+    async def handle_reset_environment(call: ServiceCall) -> dict[str, Any]:
+        ok, note = await async_reset_environment(jarvis, str(call.get("name") or ""))
+        return {"status": "ok" if ok else "error", "message": note}
+
+    jarvis.services.register(
+        DOMAIN,
+        "reset_environment",
+        handle_reset_environment,
+        supports_response=True,
+        description=(
+            "Throw away what a persisting environment has installed, putting it "
+            "back to its configured image."
+        ),
+        fields={"name": {"description": "Which environment.", "required": True}},
+    )
+
     jarvis.services.register(
         DOMAIN,
         "repositories",
@@ -787,6 +803,24 @@ async def async_push_branch(
     return await ws.push(forge, str(branch or ""), config_dir=jarvis.config_dir)
 
 
+async def async_reset_environment(
+    jarvis: "Jarvis", name: str
+) -> tuple[bool, str]:
+    """Put a persisting environment back to its configured image."""
+    from .sandbox import reset_environment
+
+    cfg = get_config(jarvis)
+    if cfg is None:
+        return False, "the code integration is not set up on this server"
+    environment = cfg.environments.get(str(name or "").strip())
+    if environment is None:
+        return False, (
+            f"There is no environment called {name!r}. There is: "
+            f"{', '.join(cfg.environments) or 'none configured'}."
+        )
+    return await reset_environment(environment)
+
+
 # ---------------------------------------------------------------------------
 # starting a job
 # ---------------------------------------------------------------------------
@@ -983,6 +1017,7 @@ def listing_payload(jarvis: "Jarvis") -> dict[str, Any]:
 __all__ = [
     "CodeConfig",
     "async_create_repository",
+    "async_reset_environment",
     "check_name",
     "get_repos",
     "DOMAIN",

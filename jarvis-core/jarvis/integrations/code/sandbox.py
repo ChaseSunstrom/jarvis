@@ -83,7 +83,7 @@ import os
 import re
 import shlex
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,10 @@ _LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_IMAGE",
+    "Session",
+    "exec_argv",
+    "persisted_image",
+    "reset_environment",
     "Environment",
     "NETWORK_EGRESS",
     "NETWORK_NONE",
@@ -121,6 +125,17 @@ MAX_OUTPUT_CHARS = 20_000
 DEFAULT_TIMEOUT = 900.0
 MAX_TIMEOUT = 3600.0
 
+#: Where package managers keep downloads, inside the container.
+#:
+#: Caches only. Not `site-packages`, not `node_modules`, not `/usr/local` — a
+#: volume over any of those would make installations persist between jobs,
+#: which is the thing the throwaway container exists to prevent. Re-downloading
+#: is the cost this avoids; re-installing is not.
+CACHE_PATHS = (
+    "/home/builder/.cache",
+    "/root/.cache",
+)
+
 #: An environment name is used in log lines and config; keep it boring.
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 #: An image reference. Deliberately permissive about registries and digests and
@@ -128,6 +143,13 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$")
 #: Environment variable names an environment may set.
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+def _as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _current_ids() -> tuple[int, int]:
@@ -170,6 +192,51 @@ class Environment:
     #: -y libpq-dev" and friends — the things a repository needs that the image
     #: does not have.
     setup: list[str] = field(default_factory=list)
+    #: Largest single file a job may write, in MiB.
+    #:
+    #: The bind mount is the one thing `--memory`, `--pids-limit` and the
+    #: bounded tmpfs do not cover: `/work` is the operator's filesystem, and
+    #: `dd if=/dev/zero of=/work/pad` fills it. Docker cannot put a quota on a
+    #: bind mount — `--storage-opt size=` covers the container's own layer and
+    #: only on some storage drivers — so this is `--ulimit fsize`, which the
+    #: kernel enforces per file, everywhere.
+    #:
+    #: It does not stop many small files. That residual is documented rather
+    #: than papered over; a job that wants to fill a disk with a million
+    #: one-byte files still can, and the answer to that is a filesystem quota
+    #: on the workspace, which is the operator's to set.
+    max_file_mb: int = 2048
+    #: Keep what a job INSTALLS, so the next one does not reinstall it.
+    #:
+    #: "It downloads a toolchain every single time" is the complaint this
+    #: answers. On `close()` the container is committed to an image of its own
+    #: — `jarvis-code-env-<name>:latest` — and the next job in this environment
+    #: starts from that. `apt-get install cmake` happens once, not once a job.
+    #:
+    #: The IMAGE persists, never the container. That distinction is the whole
+    #: design: a long-lived container would have to keep its mounts, and its
+    #: mounts are fixed when it is created — so reusing one across repositories
+    #: would mean mounting the whole workspace and letting every job see its
+    #: siblings. Committing keeps the tools and keeps the one-repository mount.
+    #:
+    #: WHAT IT COSTS, plainly: a job can leave something in that image, and
+    #: every later job in the same environment starts from it. That is real
+    #: cross-job influence and it is why this is off by default. `code.reset_
+    #: environment` throws the image away and goes back to the configured one.
+    persist: bool = False
+    #: Keep a named volume of package caches between jobs.
+    #:
+    #: The container dies with the job, so without this every job re-downloads
+    #: its whole dependency tree — minutes of network per run, and a lot of
+    #: somebody else's bandwidth. The volume holds ONLY cache directories
+    #: (pip, npm, cargo, go); the repository and the installed packages are
+    #: still thrown away.
+    #:
+    #: It is the one thing that survives a job, so it is opt-in: a poisoned
+    #: cache is a way for one job to affect a later one in the same
+    #: environment. Worth it for a scratch project, worth thinking about for
+    #: anything else.
+    cache: bool = False
     #: A Docker network the operator created, used instead of the default
     #: bridge when `network: egress`. The way to give a job the internet
     #: without giving it the LAN — Docker cannot express that itself, and
@@ -194,6 +261,9 @@ class Environment:
             # browser's memory for no reason.
             "env": sorted(self.env),
             "setup": list(self.setup),
+            "cache": self.cache,
+            "persist": self.persist,
+            "persist_image": persisted_image(self) if self.persist else "",
         }
 
     def describe(self) -> str:
@@ -203,7 +273,12 @@ class Environment:
             if self.networked
             else "no network"
         )
-        return f"{self.image} · {reach} · {self.memory} RAM · {self.cpus} CPU"
+        extras = ""
+        if self.persist:
+            extras += " · keeps what it installs"
+        elif self.cache:
+            extras += " · cached downloads"
+        return f"{self.image} · {reach} · {self.memory} RAM · {self.cpus} CPU{extras}"
 
 
 def environment_from_dict(raw: Any) -> Environment | None:
@@ -265,6 +340,9 @@ def environment_from_dict(raw: Any) -> Environment | None:
         env=env,
         setup=[str(c) for c in (raw.get("setup") or []) if str(c).strip()][:16],
         network_name=str(raw.get("network_name") or "").strip(),
+        cache=bool(raw.get("cache")),
+        persist=bool(raw.get("persist")),
+        max_file_mb=max(1, min(_as_int(raw.get("max_file_mb"), 2048), 1_000_000)),
     )
 
 
@@ -278,6 +356,7 @@ def container_argv(
     gid: int | None = None,
     writable: bool = True,
     name: str = "",
+    detach: bool = False,
 ) -> list[str]:
     """The exact `docker run` command line, as a list.
 
@@ -309,6 +388,10 @@ def container_argv(
         # and `run_command("sleep 999999")` outlives the job for ever, still
         # holding the repository mounted.
         f"--name={name}" if name else "--label=jarvis-code=1",
+        # A session container idles in the background; commands reach it with
+        # `docker exec`. See `Session` for why one container per JOB rather
+        # than one per command.
+        *(["--detach"] if detach else []),
         # Nothing is typed at a coding job. Without this a command that decides
         # to prompt waits on a terminal nobody is sitting at.
         "--interactive=false",
@@ -326,6 +409,11 @@ def container_argv(
         f"--pids-limit={environment.pids}",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
+        # The bind mount is the host's filesystem; nothing else here bounds
+        # what a job writes into it. `fsize` is in 512-byte blocks.
+        f"--ulimit=fsize={environment.max_file_mb * 2048}",
+        # A file-descriptor storm is the other cheap way to hurt a host.
+        "--ulimit=nofile=4096:4096",
     ]
 
     # As the invoking user, so files written through the bind mount are owned
@@ -348,6 +436,15 @@ def container_argv(
         )
     argv.append(f"--user={uid}:{gid}")
 
+    if environment.cache:
+        # Per ENVIRONMENT, not per repository: two repositories using the same
+        # image want the same wheels, and a volume per repository would defeat
+        # the point. Mounted only at cache paths — never at the repository, and
+        # never anywhere a package would be installed to.
+        volume = f"jarvis-code-cache-{environment.name}"
+        for destination in CACHE_PATHS:
+            argv.append(f"--volume={volume}:{destination}")
+
     if not environment.networked:
         argv.append("--network=none")
     else:
@@ -359,6 +456,261 @@ def container_argv(
     argv.append(environment.image)
     argv.extend(["/bin/sh", "-c", command])
     return argv
+
+
+def persisted_image(environment: Environment) -> str:
+    """The image a persisting environment's tools are committed into."""
+    return f"jarvis-code-env-{environment.name}:latest"
+
+
+def exec_argv(
+    name: str,
+    command: str,
+    *,
+    docker: str = "docker",
+    uid: int | None = None,
+    gid: int | None = None,
+) -> list[str]:
+    """Run a command inside an already-running session container.
+
+    The fences are on the container, not on this: `docker exec` cannot widen
+    them. Which is the point — the network policy, the mounts, the capability
+    set and the limits were all decided when the container was created, and
+    every command afterwards inherits exactly those.
+    """
+    if not command.strip():
+        raise SandboxError("no command to run")
+    if len(command) > MAX_COMMAND_CHARS:
+        raise SandboxError(
+            f"that command is {len(command)} characters; the limit is {MAX_COMMAND_CHARS}"
+        )
+    current_uid, current_gid = _current_ids()
+    uid = current_uid if uid is None else uid
+    gid = current_gid if gid is None else gid
+    return [
+        docker,
+        "exec",
+        "--interactive=false",
+        f"--workdir={WORK_DIR}",
+        f"--user={uid}:{gid}",
+        name,
+        "/bin/sh",
+        "-c",
+        command,
+    ]
+
+
+class Session:
+    """One container, alive for one job.
+
+    ## Why not one container per command
+
+    Because a coding job installs things, and the first version threw every
+    installation away. `run_command("pip install pygame")` ran in a container
+    that was removed the moment it exited; the next command ran in a fresh one
+    with no pygame in it. The operator's own `setup:` was discarded the same
+    way. "It can download and install what it needs" was not true of anything
+    that outlived a single command — which is to say, of installing.
+
+    So the container is created once, idles on `tail -f /dev/null`, and every
+    command reaches it with `docker exec`. Installs persist for the length of
+    the job and are destroyed with it.
+
+    ## What still does not survive
+
+    The job. `close()` removes the container, so the next job starts from the
+    image again. That is deliberate: a container that outlived its job would be
+    state a later job inherits without anyone deciding it should, and the whole
+    argument for `--rm` was that nothing a job installs becomes permanent. A
+    slow `pip install` every time is the price, and `cache: true` on the
+    environment is the way to pay less of it without keeping the container.
+    """
+
+    def __init__(
+        self,
+        environment: Environment,
+        repo_root: Path,
+        *,
+        docker: str = "docker",
+        writable: bool = True,
+        runner: Any = None,
+    ) -> None:
+        self.environment = environment
+        self.repo_root = repo_root
+        self.docker = docker
+        self.writable = writable
+        self._run = runner or _spawn_plain
+        self.name = f"jarvis-code-{uuid.uuid4().hex[:16]}"
+        self.started = False
+        self._setup_done = False
+
+    async def start(self) -> str:
+        """Create the container. Returns "" or a sentence saying why not.
+
+        Starts from the environment's PERSISTED image when it has one, so a
+        toolchain a previous job installed is already there.
+        """
+        if self.started:
+            return ""
+        environment = self.environment
+        if environment.persist:
+            tag = persisted_image(environment)
+            if await self._image_exists(tag):
+                # `replace` rather than mutating: the configured image is what
+                # a reset goes back to, and losing it here would make the reset
+                # a no-op.
+                environment = replace(environment, image=tag)
+                _LOGGER.debug("code: reusing persisted image %s", tag)
+        argv = container_argv(
+            environment,
+            self.repo_root,
+            # Something that does nothing, for ever, in every image: `sleep
+            # infinity` is GNU-only and busybox refuses it.
+            "tail -f /dev/null",
+            docker=self.docker,
+            writable=self.writable,
+            name=self.name,
+            detach=True,
+        )
+        code, out = await self._run(argv, 120.0)
+        if code != 0:
+            return _explain_docker_failure(out)
+        self.started = True
+        return ""
+
+    async def run(self, command: str, timeout: float | None = None) -> tuple[int, str]:
+        if not self.started:
+            problem = await self.start()
+            if problem:
+                return 1, problem
+        limit = self.environment.timeout if timeout is None else timeout
+        argv = exec_argv(self.name, command, docker=self.docker)
+        code, out = await self._run(argv, limit, docker=self.docker, name=self.name)
+        return code, out
+
+    async def run_setup(self) -> tuple[int, str] | None:
+        """The operator's `setup:`, once, inside THIS container."""
+        if self._setup_done:
+            return None
+        self._setup_done = True
+        script = setup_script(self.environment)
+        if not script:
+            return None
+        return await self.run(script, timeout=self.environment.timeout)
+
+    async def close(self, *, keep: bool = True) -> None:
+        """Commit what was installed, then remove the container.
+
+        `keep=False` for a job that failed in a way that makes its container
+        not worth remembering — a half-applied `apt-get` is a worse starting
+        point than the image it came from.
+        """
+        if not self.started:
+            return
+        self.started = False
+        if keep and self.environment.persist:
+            await self._commit()
+        # Through the session's own runner, not `_kill_container`: the removal
+        # is part of what a test of this class needs to see, and a path that
+        # skipped the injected runner was a path nothing checked.
+        code, out = await self._run(
+            [self.docker, "rm", "--force", self.name], 60.0
+        )
+        if code != 0:
+            _LOGGER.warning(
+                "code: could not remove container %s (%s). `docker rm -f %s` "
+                "will clear it.",
+                self.name,
+                (out or "").strip()[-200:],
+                self.name,
+            )
+
+    async def _commit(self) -> None:
+        tag = persisted_image(self.environment)
+        code, out = await self._run(
+            [
+                self.docker,
+                "commit",
+                # No CMD change: the next `docker run` supplies its own, and a
+                # committed CMD of `tail -f /dev/null` would be inherited by
+                # anything that ran this image without one.
+                self.name,
+                tag,
+            ],
+            300.0,
+        )
+        if code != 0:
+            _LOGGER.warning(
+                "code: could not keep %s's tools (%s). The next job will start "
+                "from %s again.",
+                self.environment.name,
+                (out or "").strip()[-200:],
+                self.environment.image,
+            )
+            return
+        _LOGGER.info(
+            "code: kept %s's installed tools as %s", self.environment.name, tag
+        )
+
+    async def _image_exists(self, tag: str) -> bool:
+        code, _out = await self._run(
+            [self.docker, "image", "inspect", tag], 60.0
+        )
+        return code == 0
+
+
+async def reset_environment(
+    environment: Environment, *, docker: str = "docker", runner: Any = None
+) -> tuple[bool, str]:
+    """Throw away a persisting environment's image.
+
+    The escape hatch for the cost `persist` carries: a job left something in
+    there — a broken package set, a half-applied upgrade, anything worse — and
+    every later job starts from it. This puts the environment back to the image
+    the operator configured.
+    """
+    if not environment.persist:
+        return False, f"{environment.name} does not keep anything, so there is nothing to reset."
+    tag = persisted_image(environment)
+    spawn = runner or _spawn_plain
+    code, out = await spawn([docker, "image", "rm", "--force", tag], 120.0)
+    if code != 0:
+        said = (out or "").strip()
+        if "no such image" in said.lower():
+            return True, f"{environment.name} was already back to {environment.image}."
+        return False, f"could not reset {environment.name}: {said[-200:]}"
+    return True, (
+        f"{environment.name} is back to {environment.image}. The next job will "
+        "reinstall whatever it needs."
+    )
+
+
+def _explain_docker_failure(out: str) -> str:
+    """Turn a docker error into something an operator can act on."""
+    said = (out or "").strip()
+    lowered = said.lower()
+    if "permission denied" in lowered and "docker.sock" in lowered:
+        return (
+            "Jarvis cannot reach the Docker daemon: permission denied on the "
+            "socket. Add the user jarvis-core runs as to the `docker` group, or "
+            "use rootless Docker. " + said[-300:]
+        )
+    if "cannot connect to the docker daemon" in lowered:
+        return (
+            "The Docker daemon is not running, so the sandboxed environment "
+            "cannot be used. Start it, or remove `environment:` from this "
+            "repository to fall back to its declared checks."
+        )
+    if "manifest unknown" in lowered or "not found" in lowered and "pull" in lowered:
+        return f"That environment's image could not be pulled: {said[-300:]}"
+    return f"could not start the container: {said[-400:]}"
+
+
+async def _spawn_plain(
+    argv: list[str], timeout: float, *, docker: str = "docker", name: str = ""
+) -> tuple[int, str]:
+    """`_spawn`, named separately so `Session` can be given a fake."""
+    return await _spawn(argv, timeout, docker=docker, name=name)
 
 
 def setup_script(environment: Environment) -> str:
