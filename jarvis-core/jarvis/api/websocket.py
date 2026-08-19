@@ -728,6 +728,23 @@ class WebSocketHandler:
         payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
         return await common.async_start_code_job(self.jarvis, payload)
 
+    async def _cmd_code_create_repo(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_create_code_repository(self.jarvis, payload)
+
+    async def _cmd_code_forget_repo(self, msg: dict[str, Any]) -> Any:
+        return await common.async_forget_code_repository(
+            self.jarvis, str(msg.get("name") or "")
+        )
+
+    async def _cmd_code_clone_repo(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_clone_code_repository(self.jarvis, payload)
+
+    async def _cmd_code_push(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_push_code_branch(self.jarvis, payload)
+
     async def _cmd_code_result(self, msg: dict[str, Any]) -> Any:
         return common.code_result_payload(self.jarvis, str(msg.get("task_id") or ""))
 
@@ -1121,6 +1138,10 @@ WebSocketHandler._HANDLERS = {
     # one something is driving.
     "jarvis/code/list": WebSocketHandler._cmd_code_list,
     "jarvis/code/start": WebSocketHandler._cmd_code_start,
+    "jarvis/code/create_repo": WebSocketHandler._cmd_code_create_repo,
+    "jarvis/code/forget_repo": WebSocketHandler._cmd_code_forget_repo,
+    "jarvis/code/clone_repo": WebSocketHandler._cmd_code_clone_repo,
+    "jarvis/code/push": WebSocketHandler._cmd_code_push,
     "jarvis/code/result": WebSocketHandler._cmd_code_result,
     "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
     "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,

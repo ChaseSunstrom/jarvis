@@ -8,6 +8,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	MAX_DIFF_LINES,
+	describeEnvironment,
+	whyNotName,
+	type CodeEnvironment,
 	countChanges,
 	describeChecks,
 	describeRepo,
@@ -146,5 +149,69 @@ describe('describeSandbox', () => {
 
 	it('says so when there is one', () => {
 		expect(describeSandbox(true)).toContain('wrapper');
+	});
+});
+
+
+function environment(over: Partial<CodeEnvironment> = {}): CodeEnvironment {
+	return {
+		name: 'python',
+		image: 'python:3.12',
+		network: 'none',
+		memory: '2g',
+		cpus: '2',
+		env: [],
+		setup: [],
+		...over
+	};
+}
+
+describe('whyNotName', () => {
+	it('allows an ordinary name', () => {
+		for (const ok of ['snake', 'snake-opengl', 'a1', 'my.project', 'a_b']) {
+			expect(whyNotName(ok)).toBe('');
+		}
+	});
+
+	it('refuses a name that is a path in disguise', () => {
+		// The name becomes a directory. jarvis-core refuses these too — this
+		// copy exists so the form can say why before a round trip, not so the
+		// browser can decide.
+		for (const bad of ['../etc', 'a/b', '..', 'a b']) {
+			expect(whyNotName(bad)).not.toBe('');
+		}
+	});
+
+	it('insists on lowercase, and says why', () => {
+		expect(whyNotName('Snake')).toContain('lowercase');
+	});
+
+	it('refuses a reserved name', () => {
+		expect(whyNotName('node_modules')).toContain('reserved');
+		expect(whyNotName('git')).toContain('reserved');
+	});
+
+	it('refuses an empty name and one that is too long', () => {
+		expect(whyNotName('   ')).toContain('needs a name');
+		expect(whyNotName('x'.repeat(65))).toContain('too long');
+	});
+});
+
+describe('describeEnvironment', () => {
+	it('says plainly that no environment means no shell', () => {
+		const said = describeEnvironment(null);
+		expect(said).toContain('No shell');
+		expect(said).toContain('declared checks');
+	});
+
+	it('leads with what the network can do, because that is the choice', () => {
+		expect(describeEnvironment(environment({ network: 'egress' }))).toContain(
+			'reach the internet'
+		);
+		expect(describeEnvironment(environment())).toContain('no network');
+	});
+
+	it('names the image, so the reader knows what is in it', () => {
+		expect(describeEnvironment(environment({ image: 'gcc:14' }))).toContain('gcc:14');
 	});
 });

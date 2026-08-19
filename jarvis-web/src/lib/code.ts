@@ -23,6 +23,14 @@ export interface CodeRepo {
 	description: string;
 	checks: string[];
 	writable: boolean;
+	/** The name of a `code: environments:` entry, or "" for no shell at all. */
+	environment?: string;
+	/** True when Jarvis created it, false when the operator declared it. */
+	managed?: boolean;
+	/** One line from jarvis-core describing the environment, or "". */
+	environment_detail?: string;
+	/** Whether that environment can reach the internet. */
+	networked?: boolean;
 }
 
 export interface CodeCheck {
@@ -51,10 +59,76 @@ export interface CodeResult {
 	rounds: number;
 }
 
+export interface CodeEnvironment {
+	name: string;
+	image: string;
+	/** `none` or `egress`. */
+	network: string;
+	memory: string;
+	cpus: string;
+	/** Variable NAMES only — jarvis-core never sends the values. */
+	env: string[];
+	setup: string[];
+}
+
 export interface CodeListing {
 	repositories: CodeRepo[];
 	jobs: unknown[];
 	sandboxed: boolean;
+	environments: CodeEnvironment[];
+	/** Whether `code: workspace:` is set, i.e. whether creation is possible. */
+	can_create: boolean;
+	workspace: string;
+}
+
+/**
+ * Whether a repository name is usable, as a sentence or "".
+ *
+ * A deliberate copy of `check_name` in jarvis-core, and the server still
+ * refuses independently — this exists so the form can say why BEFORE a round
+ * trip, not so the browser can decide. The two rules are pinned together by
+ * `test_the_console_and_the_server_agree_about_names`.
+ */
+export function whyNotName(name: string): string {
+	const text = name.trim();
+	if (!text) return 'A repository needs a name.';
+	if (text.length > 64) return 'That name is too long — 64 characters at most.';
+	if (text !== text.toLowerCase()) {
+		return 'Use lowercase: a name is a directory, and some filesystems do not tell “Foo” from “foo”.';
+	}
+	if (!/^[a-z0-9][a-z0-9._-]*$/.test(text)) {
+		return 'Use lowercase letters, digits, dot, dash and underscore, starting with a letter or digit. No spaces or slashes.';
+	}
+	if (text.includes('..')) return 'A name may not contain “..”.';
+	if (RESERVED_NAMES.has(text)) {
+		return `“${text}” is reserved — it means something else to git or the filesystem.`;
+	}
+	return '';
+}
+
+/** Mirrors `_RESERVED` in jarvis-core's `repos.py`. */
+export const RESERVED_NAMES = new Set([
+	'con', 'prn', 'aux', 'nul', 'com1', 'lpt1',
+	'git', '.git', 'node_modules', '__pycache__', 'venv', '.venv',
+	'tmp', 'temp', 'test', 'dist', 'build'
+]);
+
+/**
+ * What an environment lets a job do, in words a person can weigh.
+ *
+ * The network line is the one that matters: `egress` means the container can
+ * read this repository AND make outbound connections. Saying that plainly is
+ * the difference between an informed choice and a default nobody read.
+ */
+export function describeEnvironment(environment: CodeEnvironment | null): string {
+	if (!environment) {
+		return 'No environment — it can read and edit, and run only this repository’s declared checks. No shell.';
+	}
+	const reach =
+		environment.network === 'egress'
+			? 'can reach the internet, so it can install what it needs'
+			: 'has no network';
+	return `${environment.image} · ${reach} · ${environment.memory} RAM`;
 }
 
 export type DiffKind = 'add' | 'remove' | 'meta' | 'hunk' | 'context';

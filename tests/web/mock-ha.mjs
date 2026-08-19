@@ -780,7 +780,7 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	 * page and the task dock are looking at the same record — which is the
 	 * property worth testing, and one a separate job store would quietly break.
 	 */
-	const codeRepos = [
+	let codeRepos = [
 		{
 			name: 'jarvis',
 			path: '/srv/jarvis',
@@ -797,6 +797,45 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 		}
 	];
 	let codeSandboxed = false;
+	const codeEnvironments = [
+		{
+			name: 'python',
+			image: 'python:3.12-bookworm',
+			network: 'egress',
+			memory: '2g',
+			cpus: '2',
+			env: [],
+			setup: []
+		},
+		{
+			name: 'offline',
+			image: 'python:3.12-bookworm',
+			network: 'none',
+			memory: '1g',
+			cpus: '1',
+			env: [],
+			setup: []
+		}
+	];
+	const codeWorkspace = '/srv/jarvis/workspaces';
+	/** Mirrors `_RESERVED` in jarvis-core's repos.py. */
+	const codeReserved = new Set([
+		'con', 'prn', 'aux', 'nul', 'com1', 'lpt1',
+		'git', '.git', 'node_modules', '__pycache__', 'venv', '.venv',
+		'tmp', 'temp', 'test', 'dist', 'build'
+	]);
+	const badRepoName = (name) => {
+		const text = String(name ?? '').trim();
+		if (!text) return 'A repository needs a name.';
+		if (text.length > 64) return 'That name is too long — 64 characters at most.';
+		if (text !== text.toLowerCase()) return 'Use lowercase.';
+		if (!/^[a-z0-9][a-z0-9._-]*$/.test(text)) {
+			return 'Use lowercase letters, digits, dot, dash and underscore.';
+		}
+		if (text.includes('..')) return 'A name may not contain "..".';
+		if (codeReserved.has(text)) return `'${text}' is reserved.`;
+		return '';
+	};
 	/** task id -> the finished job's diff, checks and trail. */
 	const codeResults = new Map();
 
@@ -1701,7 +1740,10 @@ index 1234567..89abcde 100644
 					ok(msg.id, {
 						repositories: codeRepos,
 						jobs: taskListing({ kind: 'code' }),
-						sandboxed: codeSandboxed
+						sandboxed: codeSandboxed,
+						environments: codeEnvironments,
+						can_create: true,
+						workspace: codeWorkspace
 					});
 					break;
 
@@ -1784,6 +1826,70 @@ index 1234567..89abcde 100644
 					break;
 				}
 
+				case 'jarvis/code/create_repo': {
+					const problem = badRepoName(msg.name);
+					if (problem) {
+						fail(msg.id, 'invalid_format', problem);
+						break;
+					}
+					const wanted = String(msg.name).trim();
+					if (codeRepos.some((r) => r.name === wanted)) {
+						fail(msg.id, 'invalid_format', `There is already a repository called '${wanted}'.`);
+						break;
+					}
+					const environment = String(msg.environment || '');
+					if (environment && !codeEnvironments.some((e) => e.name === environment)) {
+						fail(msg.id, 'invalid_format', `There is no environment called '${environment}'.`);
+						break;
+					}
+					const made = {
+						name: wanted,
+						path: `${codeWorkspace}/${wanted}`,
+						description: String(msg.description || ''),
+						checks: [],
+						writable: true,
+						managed: true,
+						environment,
+						environment_detail: environment
+							? codeEnvironments.find((e) => e.name === environment).image
+							: '',
+						networked: environment
+							? codeEnvironments.find((e) => e.name === environment).network === 'egress'
+							: false
+					};
+					codeRepos.push(made);
+					ok(msg.id, {
+						repository: made,
+						repositories: codeRepos,
+						jobs: taskListing({ kind: 'code' }),
+						sandboxed: codeSandboxed,
+						environments: codeEnvironments,
+						can_create: true,
+						workspace: codeWorkspace
+					});
+					break;
+				}
+
+				case 'jarvis/code/forget_repo': {
+					const index = codeRepos.findIndex((r) => r.name === String(msg.name || ''));
+					if (index < 0) {
+						fail(msg.id, 'not_found', `There is no repository called '${msg.name}'.`);
+						break;
+					}
+					const [dropped] = codeRepos.splice(index, 1);
+					ok(msg.id, {
+						forgotten: dropped.name,
+						note: `Forgot ${dropped.name}. The files are still at ${dropped.path}.`,
+						repositories: codeRepos,
+						jobs: taskListing({ kind: 'code' }),
+						sandboxed: codeSandboxed,
+						environments: codeEnvironments,
+						can_create: true,
+						workspace: codeWorkspace
+					});
+					break;
+				}
+
 				case 'jarvis/code/result': {
 					const found = codeResults.get(String(msg.task_id ?? ''));
 					if (!found) {
@@ -1798,6 +1904,7 @@ index 1234567..89abcde 100644
 				// sandboxed wording without a second mock process.
 				case 'jarvis/test/code_reset': {
 					codeResults.clear();
+					codeRepos = codeRepos.filter((r) => !r.managed);
 					codeSandboxed = Boolean(msg.sandboxed);
 					for (const task of [...taskStore.values()]) {
 						if (task.kind === 'code') removeTask(task.id);

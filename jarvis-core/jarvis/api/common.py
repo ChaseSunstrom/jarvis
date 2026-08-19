@@ -1336,6 +1336,88 @@ def code_result_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
     return found
 
 
+async def async_create_code_repository(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    """Make a repository from the console.
+
+    Same authority as starting a job and the same asymmetry with the model:
+    this request carried a bearer token. Unlike the model's `create_repository`
+    tool it is not tiered at all — but it also cannot reach outside the
+    workspace root, because the confinement is in `RepoStore`, not in the
+    caller.
+    """
+    from ..integrations.code import async_create_repository
+
+    _code(jarvis)
+    payload = data or {}
+    entry, why = await async_create_repository(
+        jarvis,
+        str(payload.get("name") or ""),
+        description=str(payload.get("description") or ""),
+        environment=str(payload.get("environment") or ""),
+    )
+    if entry is None:
+        raise ApiError("invalid_format", why, 400)
+    return {"repository": entry.as_dict(), **code_list_payload(jarvis)}
+
+
+async def async_forget_code_repository(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """Drop it from the registry. The files stay — Jarvis does not delete."""
+    from ..integrations.code import get_repos
+
+    cfg = _code(jarvis)
+    repos = get_repos(jarvis)
+    if repos is None:
+        raise ApiError("unavailable", "this server has no code integration", 503)
+    gone, note = await repos.async_forget(str(name or ""))
+    if not gone:
+        raise ApiError("not_found", note, 404)
+    cfg.repositories.pop(str(name), None)
+    return {"forgotten": name, "note": note, **code_list_payload(jarvis)}
+
+
+async def async_clone_code_repository(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    """Clone a permitted repository from a forge.
+
+    The allow-list is enforced in the integration, not here — the console has
+    exactly the same reach as the model on this one, because the constraint is
+    the operator's configuration rather than who is asking.
+    """
+    from ..integrations.code import async_clone_repository
+
+    _code(jarvis)
+    payload = data or {}
+    entry, why = await async_clone_repository(
+        jarvis,
+        str(payload.get("forge") or ""),
+        str(payload.get("project") or ""),
+        name=str(payload.get("name") or ""),
+        environment=str(payload.get("environment") or ""),
+    )
+    if entry is None:
+        raise ApiError("invalid_format", why, 400)
+    return {"repository": entry.as_dict(), **code_list_payload(jarvis)}
+
+
+async def async_push_code_branch(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    """Push a `jarvis/…` branch back to its forge."""
+    from ..integrations.code import async_push_branch
+
+    _code(jarvis)
+    payload = data or {}
+    ok, note = await async_push_branch(
+        jarvis, str(payload.get("repo") or ""), str(payload.get("branch") or "")
+    )
+    if not ok:
+        raise ApiError("invalid_format", note, 400)
+    return {"pushed": True, "note": note}
+
+
 async def async_start_code_job(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
     """Start a coding job from an authenticated caller.
 

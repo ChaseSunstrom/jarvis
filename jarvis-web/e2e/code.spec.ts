@@ -149,3 +149,61 @@ test('CODE is in the nav and reachable by its chord', async ({ page }) => {
 	await page.keyboard.press('c');
 	await expect(page).toHaveURL(/\/code$/, { timeout: 10_000 });
 });
+
+
+test('a repository can be created from the console', async ({ page }) => {
+	// The thing that was impossible before: asked for something new, there was
+	// nowhere to put it.
+	await openCode(page);
+	await reset(page);
+
+	await page.getByTestId('code-new-repo').click();
+	await page.getByTestId('repo-name').fill('snake-opengl');
+	await page.getByTestId('repo-description').fill('a snake game');
+	await page.getByTestId('repo-environment').selectOption('python');
+	// The environment line says what a job there will be allowed to do, before
+	// the button is pressed.
+	await expect(page.getByTestId('repo-environment-note')).toContainText('reach the internet');
+
+	await page.getByTestId('repo-create').click();
+	await expect(page.getByTestId('code-repo')).toContainText('snake-opengl', {
+		timeout: 10_000
+	});
+
+	// And it is immediately usable as a job target.
+	await page.getByTestId('code-repo').selectOption('snake-opengl');
+	await expect(page.getByTestId('code-repo-environment')).toHaveAttribute(
+		'data-networked',
+		'true'
+	);
+	await expect(page.getByTestId('code-repo-egress')).toContainText('outbound connections');
+});
+
+test('a bad repository name is refused before it is sent', async ({ page }) => {
+	await openCode(page);
+	await reset(page);
+	await page.getByTestId('code-new-repo').click();
+
+	await page.getByTestId('repo-name').fill('../etc');
+	await expect(page.getByTestId('repo-name-problem')).toBeVisible();
+	await expect(page.getByTestId('repo-create')).toBeDisabled();
+
+	await page.getByTestId('repo-name').fill('Snake');
+	await expect(page.getByTestId('repo-name-problem')).toContainText('lowercase');
+	await expect(page.getByTestId('repo-create')).toBeDisabled();
+
+	await page.getByTestId('repo-name').fill('node_modules');
+	await expect(page.getByTestId('repo-name-problem')).toContainText('reserved');
+
+	await page.getByTestId('repo-name').fill('snake');
+	await expect(page.getByTestId('repo-name-problem')).toHaveCount(0);
+	await expect(page.getByTestId('repo-create')).toBeEnabled();
+});
+
+test('a repository with no environment says it has no shell', async ({ page }) => {
+	await openCode(page);
+	await reset(page);
+	await page.getByTestId('code-repo').selectOption('notes');
+	await expect(page.getByTestId('code-repo-environment')).toContainText('No shell');
+	await expect(page.getByTestId('code-repo-egress')).toHaveCount(0);
+});

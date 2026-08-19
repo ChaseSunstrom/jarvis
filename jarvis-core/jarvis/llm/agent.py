@@ -309,6 +309,71 @@ class ConversationResult:
         }
 
 
+class TagStripper:
+    """Hides `OPEN … CLOSE` from a token stream, tag-splits and all.
+
+    The same algorithm `ThinkStripper` uses, with the tags as parameters and no
+    listener: what it removes is discarded from the VISIBLE text only. The
+    accumulated `ChatResult.content` still has it, which is what
+    `_recover_tool_calls` reads.
+
+    Written for `<tool_call>`. A model whose server has no tool-call parser
+    emits that markup as ordinary content, and without this the user watches
+    `<tool_call>{"name": ...}</tool_call>` appear in the answer — and on a voice
+    path, hears it read out.
+    """
+
+    def __init__(self, open_tag: str, close_tag: str) -> None:
+        self.OPEN = open_tag
+        self.CLOSE = close_tag
+        self._buffer = ""
+        self._inside = False
+
+    def feed(self, delta: str) -> str:
+        if not delta:
+            return ""
+        self._buffer += delta
+        out: list[str] = []
+        while True:
+            if self._inside:
+                index = self._buffer.find(self.CLOSE)
+                if index == -1:
+                    # Hold nothing: everything up to a possible partial close
+                    # is inside the block and simply dropped.
+                    keep = ThinkStripper._partial_tail(self._buffer, self.CLOSE)
+                    self._buffer = self._buffer[len(self._buffer) - keep :] if keep else ""
+                    break
+                self._buffer = self._buffer[index + len(self.CLOSE) :]
+                self._inside = False
+                continue
+            index = self._buffer.find(self.OPEN)
+            if index == -1:
+                keep = ThinkStripper._partial_tail(self._buffer, self.OPEN)
+                if keep:
+                    out.append(self._buffer[: len(self._buffer) - keep])
+                    self._buffer = self._buffer[len(self._buffer) - keep :]
+                else:
+                    out.append(self._buffer)
+                    self._buffer = ""
+                break
+            out.append(self._buffer[:index])
+            self._buffer = self._buffer[index + len(self.OPEN) :]
+            self._inside = True
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Whatever is left, unless we are still inside a block.
+
+        An unterminated block is discarded rather than shown: a stream that
+        ended mid-call has nothing a human wants to read.
+        """
+        if self._inside:
+            self._buffer = ""
+            return ""
+        tail, self._buffer = self._buffer, ""
+        return tail
+
+
 class ThinkStripper:
     """Drops ``<think>...</think>`` from a token stream, tag-splits and all.
 
@@ -782,6 +847,43 @@ class ConversationAgent:
             _LOGGER.debug("Semantic recall failed for this turn", exc_info=True)
             return {}
 
+    def _recover_tool_calls(
+        self, chat_result: ChatResult, schema: Sequence[dict[str, Any]] | None
+    ) -> None:
+        """Put a text-formatted tool call back into the structured field.
+
+        Mutates `chat_result` so everything downstream — execution, the tool
+        rows, the archive — sees an ordinary call and needs to know nothing
+        about this. The visible content has the markup taken out, so the user
+        is not shown the wire.
+        """
+        from .toolcalls import recover
+
+        offered = [_tool_name(entry) for entry in (schema or [])]
+        found = recover(chat_result.content or "", chat_result.thinking or "", offered)
+        if not found:
+            return
+
+        from .ollama import ToolCall
+
+        chat_result.tool_calls = [
+            ToolCall(name=name, arguments=arguments, id=f"recovered-{index}")
+            for index, (name, arguments) in enumerate(found.calls)
+        ]
+        chat_result.content = found.text
+        # INFO, not debug: this is a server misconfiguration the operator can
+        # fix, and it will otherwise recur on every single turn.
+        _LOGGER.info(
+            "Recovered %d tool call(s) the model wrote as text (%s). The model "
+            "is behaving; the serving layer is not parsing them. Set "
+            "--tool-call-parser (vLLM) or --jinja with a tool template "
+            "(llama.cpp), or use a model whose Ollama template emits "
+            "ToolCalls. Recovered: %s",
+            len(found.calls),
+            found.fmt,
+            ", ".join(name for name, _ in found.calls),
+        )
+
     async def _run_rounds(
         self,
         messages: list[dict[str, Any]],
@@ -1068,6 +1170,13 @@ class _Round:
             # the client pushes. Both land on `_on_thinking`, so a surface sees
             # one kind of event whatever the deployment is running.
             stripper = ThinkStripper(self._on_thinking)
+            # `<tool_call>` markup is machinery, not an answer. A server with
+            # no tool-call parser streams it as ordinary content, and without
+            # this the user watches it appear in the reply — and on the voice
+            # path, hears it read aloud. What it removes is discarded here
+            # only; `ChatResult.content` keeps it, which is what the recovery
+            # below parses.
+            calls = TagStripper("<tool_call>", "</tool_call>")
             stream = agent.client.chat(
                 model=agent.model,
                 messages=self._messages,
@@ -1095,15 +1204,25 @@ class _Round:
                 stream.on_thinking = self._on_thinking
             try:
                 async for delta in stream:
-                    visible = stripper.feed(delta)
+                    visible = calls.feed(stripper.feed(delta))
                     if visible:
                         emitted += 1
                         yield visible
-                tail = stripper.flush()
+                tail = calls.feed(stripper.flush()) + calls.flush()
                 if tail:
                     yield tail
 
                 chat_result = stream.result
+                # A tool call the SERVER did not parse into the structured
+                # field, but the model did emit. Qwen3, Hermes, Mistral and
+                # Llama 3 all express a call as text in a known format, and
+                # turning that into `tool_calls` is the serving layer's job —
+                # vLLM needs `--tool-call-parser`, llama.cpp needs `--jinja`.
+                # Miss the flag and the model does everything right while the
+                # assistant silently does nothing. Bounded by the tools this
+                # round actually offered; see `llm/toolcalls.py`.
+                if not chat_result.tool_calls and self._schema is not None:
+                    agent._recover_tool_calls(chat_result, self._schema)
                 if chat_result.tool_calls and self._schema is not None:
                     self.pending_tool_calls = True
                     await agent._execute_tool_calls(

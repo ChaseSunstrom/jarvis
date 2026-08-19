@@ -795,6 +795,19 @@ export class JarvisClient {
 		return this.command({ type: 'jarvis/code/start', repo, instruction });
 	}
 
+	createCodeRepo(payload: {
+		name: string;
+		description?: string;
+		environment?: string;
+	}): Promise<CodeListing & { repository: unknown }> {
+		return this.command({ type: 'jarvis/code/create_repo', ...payload });
+	}
+
+	/** Drop it from the listing. jarvis-core does NOT delete the files. */
+	forgetCodeRepo(name: string): Promise<CodeListing & { note: string }> {
+		return this.command({ type: 'jarvis/code/forget_repo', name });
+	}
+
 	/** The branch, diff, checks and trail of a finished job. Null while it runs. */
 	async getCodeResult(taskId: string): Promise<CodeResult | null> {
 		try {

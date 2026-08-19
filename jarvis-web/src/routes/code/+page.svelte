@@ -23,9 +23,12 @@
 	import TaskCard from '$lib/components/TaskCard.svelte';
 	import {
 		describeChecks,
+		describeEnvironment,
 		describeRepo,
 		describeSandbox,
+		whyNotName,
 		whyNotStart,
+		type CodeEnvironment,
 		type CodeRepo,
 		type CodeResult
 	} from '$lib/code';
@@ -42,6 +45,15 @@
 	let loading = $state(true);
 	let repos = $state<CodeRepo[]>([]);
 	let sandboxed = $state(false);
+	let environments = $state<CodeEnvironment[]>([]);
+	let canCreate = $state(false);
+	let workspace = $state('');
+	// The new-repository form.
+	let creating = $state(false);
+	let newName = $state('');
+	let newDescription = $state('');
+	let newEnvironment = $state('');
+	let saving = $state(false);
 	let jobs = $state<TaskRow[]>([]);
 	let picked = $state('');
 	let instruction = $state('');
@@ -52,6 +64,10 @@
 	let loadingResult = $state(false);
 
 	const repo = $derived(repos.find((r) => r.name === picked) ?? null);
+	const repoEnvironment = $derived(
+		environments.find((e) => e.name === repo?.environment) ?? null
+	);
+	const nameProblem = $derived(newName ? whyNotName(newName) : '');
 	const blocked = $derived(whyNotStart(repo, instruction));
 	// Newest first, which is what `listing()` already answers with.
 	const mine = $derived(jobs.filter((j) => j.kind === 'code'));
@@ -108,6 +124,31 @@
 		}
 	}
 
+	async function createRepo(): Promise<void> {
+		if (!conn || saving || nameProblem || !newName.trim()) return;
+		saving = true;
+		err = '';
+		try {
+			const listing = await conn.client.createCodeRepo({
+				name: newName.trim(),
+				description: newDescription.trim(),
+				environment: newEnvironment
+			});
+			repos = listing.repositories ?? [];
+			environments = listing.environments ?? [];
+			toasts.success(`Created ${newName.trim()}`, 'it is empty — start a job to fill it');
+			picked = newName.trim();
+			newName = '';
+			newDescription = '';
+			creating = false;
+		} catch (e) {
+			err = describeError(e);
+			toasts.error('Could not create it', describeError(e));
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function cancel(task: TaskRow): Promise<void> {
 		if (!conn) return;
 		try {
@@ -160,6 +201,9 @@
 			const listing = await connection.client.listCode();
 			repos = listing.repositories ?? [];
 			sandboxed = !!listing.sandboxed;
+			environments = listing.environments ?? [];
+			canCreate = !!listing.can_create;
+			workspace = listing.workspace ?? '';
 			if (!picked && repos.length) picked = repos[0].name;
 			jobs = mergeTaskList(jobs, await connection.client.listTasks({ kind: 'code' }));
 		} catch (e) {
@@ -203,17 +247,92 @@
 
 {#if loading}
 	<Skeleton rows={3} />
-{:else if !repos.length}
+{:else if !repos.length && !canCreate}
 	<div class="jv-empty" data-testid="code-empty">
 		<span class="jv-empty-mark" aria-hidden="true">[ ]</span>
 		<p class="jv-empty-title">No repositories</p>
 		<p class="jv-empty-body">
-			Jarvis works only in repositories you name, under <code>code:</code> in
-			<code>configuration.yaml</code>. Each one says whether it may be changed and which commands
-			may be run in it — there is nothing to add from here, deliberately.
+			Jarvis works in repositories you name under <code>code:</code> in
+			<code>configuration.yaml</code>. To let it create its own, set
+			<code>code: workspace:</code> to a directory it may write in — then a NEW REPOSITORY
+			button appears here.
 		</p>
 	</div>
 {:else}
+	{#if canCreate}
+		<section class="panel" data-testid="code-repos">
+			<div class="panel-head">
+				<span>Repositories</span>
+				<span class="muted" data-testid="code-workspace">{workspace}</span>
+			</div>
+			<div class="toolbar">
+				<button
+					type="button"
+					class="btn"
+					data-testid="code-new-repo"
+					aria-expanded={creating}
+					onclick={() => {
+						creating = !creating;
+						err = '';
+					}}
+				>
+					{creating ? 'CANCEL' : '+ NEW REPOSITORY'}
+				</button>
+			</div>
+
+			{#if creating}
+				<div class="editor" data-testid="code-repo-form">
+					<label for="repo-name">Name</label>
+					<input
+						id="repo-name"
+						type="text"
+						placeholder="snake-opengl"
+						data-testid="repo-name"
+						bind:value={newName}
+					/>
+					{#if nameProblem}
+						<p class="err" data-testid="repo-name-problem">{nameProblem}</p>
+					{/if}
+
+					<label for="repo-description">What is it for</label>
+					<input
+						id="repo-description"
+						type="text"
+						data-testid="repo-description"
+						bind:value={newDescription}
+					/>
+
+					<label for="repo-environment">Build environment</label>
+					<select id="repo-environment" data-testid="repo-environment" bind:value={newEnvironment}>
+						<option value="">None — no shell, declared checks only</option>
+						{#each environments as e (e.name)}
+							<option value={e.name}>{e.name} · {e.image}</option>
+						{/each}
+					</select>
+					<p class="hint" data-testid="repo-environment-note">
+						{describeEnvironment(environments.find((e) => e.name === newEnvironment) ?? null)}
+					</p>
+
+					<div class="row">
+						<button
+							type="button"
+							class="btn"
+							data-testid="repo-create"
+							disabled={saving || !!nameProblem || !newName.trim()}
+							onclick={createRepo}
+						>
+							{saving ? 'CREATING…' : 'CREATE'}
+						</button>
+						<span class="hint">
+							Created in {workspace}, with a README and an initial commit. Jarvis never deletes
+							a repository.
+						</span>
+					</div>
+				</div>
+			{/if}
+		</section>
+	{/if}
+
 	<section class="panel" data-testid="code-new">
 		<div class="panel-head">
 			<span>New job</span>
@@ -230,6 +349,19 @@
 			<p class="hint" data-testid="code-repo-note">
 				{#if repo.description}{repo.description} — {/if}{describeRepo(repo)}
 			</p>
+			<p
+				class="hint"
+				data-testid="code-repo-environment"
+				data-networked={repo.networked ? 'true' : 'false'}
+			>
+				{describeEnvironment(repoEnvironment)}
+			</p>
+			{#if repo.networked}
+				<p class="notice" data-testid="code-repo-egress">
+					This environment can reach the internet. A job here can read this repository and make
+					outbound connections.
+				</p>
+			{/if}
 		{/if}
 
 		<label for="code-instruction">What to change</label>

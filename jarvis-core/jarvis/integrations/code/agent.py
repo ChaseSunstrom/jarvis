@@ -87,6 +87,10 @@ class CodeRun:
     diff: str = ""
     diff_stat: str = ""
     checks: list[dict[str, Any]] = field(default_factory=list)
+    #: Every `run_command` this job ran, so the console can show the build as
+    #: well as the diff. A job that installed six packages and then failed is
+    #: only explicable with this.
+    commands: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
     rounds: int = 0
     #: True when the loop hit `max_rounds` or `max_seconds` rather than the
@@ -103,6 +107,7 @@ class CodeRun:
             "files_changed": list(self.files_changed),
             "diff_stat": self.diff_stat,
             "checks": list(self.checks),
+            "commands": list(self.commands),
             "summary": self.summary,
             "rounds": self.rounds,
             "stopped_early": self.stopped_early,
@@ -137,8 +142,7 @@ a guess.
 include more surrounding lines rather than guessing which one.
 - Change the least you can. Do not reformat, do not rename things you were not \
 asked to rename, do not "tidy" code you are passing through.
-- You have no shell. `run_check` runs the checks this repository declares, and \
-nothing else exists.
+{shell}
 - Call `plan_step` as you move through the plan above. Somebody is watching \
 a progress bar drawn from it, and a bar that never moves is worse than no bar.
 - When the job is done, say so plainly in one or two sentences and stop \
@@ -212,6 +216,8 @@ class CodeAgent:
         self._started = 0.0
         #: 1-based, the furthest plan step the model has claimed.
         self._plan_at = 0
+        #: The environment's `setup:` runs once per job, not per command.
+        self._setup_done = False
 
     # --- the whole job ----------------------------------------------------
     async def execute(self, instruction: str, task_id: str = "") -> CodeRun:
@@ -219,7 +225,14 @@ class CodeAgent:
         self._task_id = task_id
         self._started = time.monotonic()
         self._plan_at = 0
+        self._setup_done = False
 
+        # BEFORE `is_repo`, which itself runs git: a poisoned repository would
+        # otherwise be reported as "not a git repository", which sends the
+        # operator to look for the wrong thing entirely.
+        unsafe = self.ws.unsafe_git_config()
+        if unsafe:
+            raise GitError(unsafe)
         if not await self.ws.is_repo():
             raise GitError(f"{self.repo.name} is not a git repository")
         if await self.ws.is_dirty():
@@ -249,6 +262,33 @@ class CodeAgent:
         await self._finish()
         return self.run
 
+    def _shell_rule(self) -> str:
+        """What this repository lets the model run, in its own words.
+
+        Two genuinely different machines, so two different sentences. Telling a
+        sandboxed job it has no shell would waste it; telling an unsandboxed
+        one it has a container would have it call a tool that is not there.
+        """
+        if not self.ws.sandboxed:
+            return (
+                "- You have no shell. `run_check` runs the checks this "
+                "repository declares, and nothing else exists."
+            )
+        environment = self.ws.environment
+        reach = (
+            "It can reach the network, so install whatever you need."
+            if getattr(environment, "networked", False)
+            else "It has NO network, so work with what is already there — "
+            "an install will fail."
+        )
+        return (
+            f"- `run_command` runs any shell command in a throwaway container "
+            f"({getattr(environment, 'image', '?')}) whose only visible "
+            f"directory is this repository. {reach} Nothing you do in there "
+            "touches the rest of the machine and nothing survives the job, so "
+            "do not be timid: build it, run it, and read the errors."
+        )
+
     async def _tree(self) -> str:
         try:
             files = self.ws.listing("", depth=2)
@@ -260,7 +300,8 @@ class CodeAgent:
     async def _work(self, instruction: str) -> None:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT.format(
-                plan="\n".join(f"  {i + 1}. {s}" for i, s in enumerate(self.run.plan))
+                plan="\n".join(f"  {i + 1}. {s}" for i, s in enumerate(self.run.plan)),
+                shell=self._shell_rule(),
             )},
             {"role": "user", "content": instruction},
         ]
@@ -286,6 +327,16 @@ class CodeAgent:
             messages.append(self._assistant_message(result))
             for call in calls:
                 self._check_stopped()
+                # Per CALL, not only per round: ten `sleep 890`s in one
+                # assistant message is ten times the environment's timeout
+                # inside a single round, and the round-level check never runs.
+                if time.monotonic() - self._started > self.max_seconds:
+                    self.run.stopped_early = True
+                    self.run.summary = (
+                        f"stopped after {self.max_seconds / 60:.0f} minutes; what "
+                        "was done so far is on the branch"
+                    )
+                    return
                 name, args = _call_parts(call)
                 outcome = await self._dispatch(name, args)
                 self.run.trail.append((name, _summarise(args), outcome[:120]))
@@ -324,6 +375,8 @@ class CodeAgent:
                 return self._do_write(args)
             if name == "run_check":
                 return await self._do_check(args)
+            if name == "run_command":
+                return await self._do_command(args)
             if name == "plan_step":
                 return await self._do_plan_step(args)
             return f"there is no tool called {name!r}"
@@ -416,6 +469,28 @@ class CodeAgent:
                     schema_object(
                         {"path": {"type": "string"}, "content": {"type": "string"}},
                         ["path", "content"],
+                    ),
+                )
+            )
+        if self.ws.sandboxed:
+            tools.append(
+                (
+                    "run_command",
+                    "Run any shell command in this repository's sandboxed "
+                    "environment: install dependencies, build, run tests, "
+                    "whatever the job needs. It runs in a throwaway container "
+                    "whose only visible directory is this repository, so "
+                    "nothing you do here can touch the rest of the machine and "
+                    "nothing survives the job. Prefer this over guessing "
+                    "whether a dependency is present — just install it.",
+                    schema_object(
+                        {
+                            "command": {
+                                "type": "string",
+                                "description": "a shell command, e.g. `pip install -e . && pytest -q`",
+                            }
+                        },
+                        ["command"],
                     ),
                 )
             )
@@ -519,7 +594,16 @@ class CodeAgent:
                 f"{wanted!r} is not one of this repository's checks. "
                 f"They are: {', '.join(self.repo.checks) or 'none'}"
             )
-        code, out = await self._spawn(self.ws.sandbox_argv(check_argv(allowed[wanted])))
+        # In the container when there is one. A check that ran on the host
+        # while `run_command` ran in a container would be two different
+        # machines with two different dependency sets, and the job would be
+        # debugging the difference rather than the code.
+        if self.ws.sandboxed:
+            code, out = await self.ws.run_sandboxed(allowed[wanted])
+        else:
+            code, out = await self._spawn(
+                self.ws.sandbox_argv(check_argv(allowed[wanted]))
+            )
         record = {"command": wanted, "ok": code == 0, "output": out[-4000:]}
         self.run.checks.append(record)
         head = "passed" if code == 0 else f"failed (exit {code})"
@@ -543,6 +627,57 @@ class CodeAgent:
         self._plan_at = wanted
         await self._advance(wanted, str(args.get("note") or ""))
         return f"noted: step {wanted} of {len(self.run.plan)}"
+
+    async def _do_command(self, args: dict[str, Any]) -> str:
+        """Run anything, inside the container and nowhere else.
+
+        This is the one tool that takes a command the model wrote, and it is
+        offered ONLY when the repository has an environment. The safety comes
+        from where it runs, not from what it says: see `sandbox.py` for the
+        fences, of which the load-bearing one is that the container's only host
+        path is this repository.
+        """
+        from .sandbox import SandboxError
+
+        command = str(args.get("command") or "").strip()
+        if not command:
+            return "run_command needs a command."
+        # The operator's `setup:` runs first, once per job. It was parsed and
+        # then never used — an operator who wrote `apt-get install libglfw3-dev`
+        # got a container without it and a build failure they could not explain.
+        # Prepended rather than run in its own container, because `--rm` means
+        # a separate container would throw the installation away.
+        await self._run_setup_once()
+        try:
+            code, out = await self.ws.run_sandboxed(command)
+        except SandboxError as err:
+            return f"no: {err}"
+        record = {"command": command, "ok": code == 0, "output": out[-4000:]}
+        self.run.commands.append(record)
+        head = "ok" if code == 0 else f"exit {code}"
+        body = out[-MAX_RESULT_CHARS:] or "(no output)"
+        return f"{command}: {head}\n{body}"
+
+    async def _run_setup_once(self) -> None:
+        """The environment's `setup:` commands, before the first real one."""
+        from .sandbox import setup_script
+
+        if self._setup_done:
+            return
+        self._setup_done = True
+        script = setup_script(self.ws.environment) if self.ws.sandboxed else ""
+        if not script:
+            return
+        code, out = await self.ws.run_sandboxed(script)
+        self.run.commands.append(
+            {"command": "(environment setup)", "ok": code == 0, "output": out[-4000:]}
+        )
+        if code != 0:
+            _LOGGER.warning(
+                "code: setup for environment %s failed: %s",
+                getattr(self.ws.environment, "name", "?"),
+                out[-400:],
+            )
 
     async def _spawn(self, argv: list[str]) -> tuple[int, str]:
         try:

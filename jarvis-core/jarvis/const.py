@@ -147,6 +147,12 @@ GATED_SERVICES = frozenset(
         # and what a finished job produced — which is exactly the shape this
         # set exists for, and why it names calls rather than the domain.
         "code.run",
+        # Pushes a branch to GitHub or GitLab. Tool form: `push_branch`
+        # (Tier 3). Outward-facing in the way this set exists for: it puts
+        # code on a server other people can see, and deleting a local file
+        # does not undo it. `code.clone_repository` is its ungated neighbour
+        # and only reads something the operator's allow-list already permits.
+        "code.push_branch",
     }
 )
 

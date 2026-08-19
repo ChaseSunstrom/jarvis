@@ -633,6 +633,41 @@ async def code_start(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.post("/code/repos")
+async def code_create_repo(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_create_code_repository(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/code/repos/{name}")
+async def code_forget_repo(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return await common.async_forget_code_repository(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/clone")
+async def code_clone_repo(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_clone_code_repository(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/code/push")
+async def code_push(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_push_code_branch(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/code/jobs/{task_id}")
 async def code_result(request: Request, task_id: str) -> dict[str, Any]:
     try:

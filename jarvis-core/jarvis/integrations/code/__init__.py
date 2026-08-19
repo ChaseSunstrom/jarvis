@@ -85,9 +85,14 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pathlib import Path
+
 from ...services import ServiceCall
 from ...tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
 from .agent import CodeAgent, CodeRun, MAX_ROUNDS, Stopped
+from .repos import RepoStore, check_name
+from .forges import Forge, forge_from_dict, permits, split_project
+from .sandbox import Environment, environment_from_dict
 from .workspace import GitError, PathRefused, Repo, Workspace, repo_from_dict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -105,6 +110,7 @@ KIND = "code"
 DATA_CONFIG = "config"
 DATA_RUNS = "runs"
 DATA_RESULTS = "results"
+DATA_REPOS = "repos"
 
 MAX_INSTRUCTION_CHARS = 2000
 #: Finished runs kept in memory for the console to open. The task itself
@@ -115,6 +121,15 @@ MAX_KEPT = 20
 @dataclass
 class CodeConfig:
     repositories: dict[str, Repo] = field(default_factory=dict)
+    #: Where Jarvis MAY create repositories. None means it may not.
+    workspace: Path | None = None
+    #: Named containers a job may run in. Empty means no job gets a shell.
+    environments: dict[str, Environment] = field(default_factory=dict)
+    #: GitHub/GitLab hosts, each with its own allow-list of repositories.
+    forges: dict[str, Forge] = field(default_factory=dict)
+    #: The environment a repository the MODEL creates gets. Empty means none,
+    #: i.e. no shell — the safe default, and the operator's choice either way.
+    default_environment: str = ""
     model: str = ""
     max_rounds: int = MAX_ROUNDS
     max_seconds: float = 20 * 60
@@ -149,8 +164,69 @@ class CodeConfig:
         else:
             sandbox = shlex.split(str(raw_sandbox))
 
+        environments: dict[str, Environment] = {}
+        for raw in data.get("environments") or []:
+            built = environment_from_dict(raw)
+            if built is None:
+                continue
+            if built.name in environments:
+                _LOGGER.warning(
+                    "code: two environments called %r; keeping the first", built.name
+                )
+                continue
+            environments[built.name] = built
+
+        # An `environment:` naming something that does not exist is a typo in
+        # the setting that decides whether a job gets a shell. Refusing the
+        # repository would be worse than dropping the reference — the job can
+        # still read and edit — so it loses the shell and says so loudly.
+        for repo in repos.values():
+            if repo.environment and repo.environment not in environments:
+                _LOGGER.warning(
+                    "code: repository %s names environment %r, which is not "
+                    "configured. It will run with no shell.",
+                    repo.name,
+                    repo.environment,
+                )
+                repo.environment = ""
+
+        forges: dict[str, Forge] = {}
+        for raw in data.get("forges") or []:
+            built = forge_from_dict(raw)
+            if built is None:
+                continue
+            if built.name in forges:
+                _LOGGER.warning("code: two forges called %r; keeping the first", built.name)
+                continue
+            if not built.allow:
+                # Not an error, and not a reason to drop it: an operator adding
+                # a forge before deciding what to permit should see it listed
+                # and refusing, rather than wonder why it vanished.
+                _LOGGER.warning(
+                    "code: forge %s permits no repositories, so nothing can be "
+                    "cloned from it. Add paths under `allow:`.",
+                    built.name,
+                )
+            forges[built.name] = built
+
+        default_environment = str(data.get("default_environment") or "").strip()
+        if default_environment and default_environment not in environments:
+            _LOGGER.warning(
+                "code: default_environment is %r, which is not configured. "
+                "Repositories Jarvis creates will have no shell.",
+                default_environment,
+            )
+            default_environment = ""
+
+        raw_workspace = str(data.get("workspace") or "").strip()
+        workspace = Path(raw_workspace).expanduser() if raw_workspace else None
+
         return cls(
             repositories=repos,
+            workspace=workspace,
+            environments=environments,
+            forges=forges,
+            default_environment=default_environment,
             model=str(data.get("model") or "").strip(),
             max_rounds=_int("max_rounds", MAX_ROUNDS, 4, 200),
             max_seconds=_int("max_minutes", 20, 1, 120) * 60.0,
@@ -158,7 +234,17 @@ class CodeConfig:
         )
 
     def listing(self) -> list[dict[str, Any]]:
-        return [repo.as_dict() for repo in self.repositories.values()]
+        rows = []
+        for repo in self.repositories.values():
+            entry = repo.as_dict()
+            environment = self.environments.get(repo.environment)
+            entry["environment_detail"] = environment.describe() if environment else ""
+            entry["networked"] = bool(environment and environment.networked)
+            rows.append(entry)
+        return rows
+
+    def environment_for(self, repo: Repo) -> Environment | None:
+        return self.environments.get(repo.environment) if repo.environment else None
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +263,24 @@ def get_config(jarvis: "Jarvis") -> CodeConfig | None:
 
 
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
+    from ...store import Store
+    from .repos import STORE_KEY
+
     cfg = CodeConfig.from_config(config)
     store = _store(jarvis)
     store[DATA_CONFIG] = cfg
     store.setdefault(DATA_RUNS, {})
     store.setdefault(DATA_RESULTS, {})
+
+    repos = RepoStore(Store(jarvis.config_dir, STORE_KEY), cfg.workspace)
+    await repos.async_load()
+    store[DATA_REPOS] = repos
+    # Everything Jarvis made joins the same registry as everything declared, so
+    # every surface below — the listing, the tool, the console — sees one kind
+    # of repository. A second list would be a second thing to keep in step.
+    for entry in repos.repos.values():
+        if entry.name not in cfg.repositories:
+            cfg.repositories[entry.name] = entry.as_repo()
 
     _register_services(jarvis)
     _register_tools(jarvis)
@@ -203,11 +302,16 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
 
     jarvis.register_shutdown(_shutdown)
     _LOGGER.info(
-        "code ready: %d repositor%s, %d writable, checks %s",
+        "code ready: %d repositor%s (%d writable), %d environment(s)%s, "
+        "workspace %s",
         len(cfg.repositories),
         "y" if len(cfg.repositories) == 1 else "ies",
         sum(1 for r in cfg.repositories.values() if r.writable),
-        "sandboxed" if cfg.sandbox else "not sandboxed",
+        len(cfg.environments),
+        " — one or more can reach the network"
+        if any(e.networked for e in cfg.environments.values())
+        else "",
+        cfg.workspace or "not set (Jarvis cannot create repositories)",
     )
     return True
 
@@ -250,6 +354,82 @@ def _register_services(jarvis: "Jarvis") -> None:
             "source": {"description": "Who asked, for the task's record."},
         },
     )
+    async def handle_create(call: ServiceCall) -> dict[str, Any]:
+        entry, why = await async_create_repository(
+            jarvis,
+            str(call.get("name") or ""),
+            description=str(call.get("description") or ""),
+            environment=str(call.get("environment") or ""),
+        )
+        if entry is None:
+            return {"status": "error", "error": why}
+        return {"status": "ok", "repository": entry.as_dict()}
+
+    jarvis.services.register(
+        DOMAIN,
+        "create_repository",
+        handle_create,
+        supports_response=True,
+        description=(
+            "Create a new git repository inside the configured workspace. "
+            "Refused unless `code: workspace:` is set."
+        ),
+        fields={
+            "name": {"description": "Lowercase name; becomes a directory.", "required": True},
+            "description": {"description": "What it is for."},
+            "environment": {"description": "Which sandbox it builds in."},
+        },
+    )
+
+    async def handle_clone(call: ServiceCall) -> dict[str, Any]:
+        entry, why = await async_clone_repository(
+            jarvis,
+            str(call.get("forge") or ""),
+            str(call.get("project") or call.get("repo") or ""),
+            name=str(call.get("name") or ""),
+            environment=str(call.get("environment") or ""),
+        )
+        if entry is None:
+            return {"status": "error", "error": why}
+        return {"status": "ok", "repository": entry.as_dict()}
+
+    async def handle_push(call: ServiceCall) -> dict[str, Any]:
+        ok, note = await async_push_branch(
+            jarvis, str(call.get("repo") or ""), str(call.get("branch") or "")
+        )
+        return {"status": "ok" if ok else "error", "message": note}
+
+    jarvis.services.register(
+        DOMAIN,
+        "clone_repository",
+        handle_clone,
+        supports_response=True,
+        description=(
+            "Clone a repository from a configured forge into the workspace. "
+            "Only paths on that forge's allow-list may be cloned."
+        ),
+        fields={
+            "forge": {"description": "Which forge, by name.", "required": True},
+            "project": {"description": "owner/name", "required": True},
+            "name": {"description": "Local name; defaults to the last segment."},
+            "environment": {"description": "Which sandbox it builds in."},
+        },
+    )
+    jarvis.services.register(
+        DOMAIN,
+        "push_branch",
+        handle_push,
+        supports_response=True,
+        description=(
+            "Push one `jarvis/…` branch back to the forge it was cloned from. "
+            "Never main, never forced."
+        ),
+        fields={
+            "repo": {"description": "Which repository.", "required": True},
+            "branch": {"description": "The jarvis/… branch.", "required": True},
+        },
+    )
+
     jarvis.services.register(
         DOMAIN,
         "repositories",
@@ -273,7 +453,12 @@ def _register_tools(jarvis: "Jarvis") -> None:
         _LOGGER.debug("code: no LLM tool registry; the services still work")
         return
 
-    from ...llm.tools import TIER_APPROVAL, TIER_DIRECT, schema_object
+    from ...llm.tools import (
+        TIER_APPROVAL,
+        TIER_BACKGROUND,
+        TIER_DIRECT,
+        schema_object,
+    )
 
     async def tool_start_coding_job(args: dict[str, Any], context: Any = None) -> Any:
         task = await async_start(
@@ -319,6 +504,125 @@ def _register_tools(jarvis: "Jarvis") -> None:
         handler=tool_repos,
         tier=TIER_DIRECT,
     )
+    async def tool_create_repository(args: dict[str, Any], context: Any = None) -> Any:
+        # `environment` is NOT taken from the model. It used to be, and that
+        # let it hand itself the container of its choice: read the listing,
+        # spot the one with `network: egress`, and create a repository of its
+        # own using it — a networked shell in one Tier-2 call with no human
+        # anywhere. The operator picks, through `default_environment` or by
+        # naming one in `repositories:`; the console may still choose per
+        # repository, because that request carried a bearer token.
+        cfg = get_config(jarvis)
+        entry, why = await async_create_repository(
+            jarvis,
+            str(args.get("name") or ""),
+            description=str(args.get("description") or ""),
+            environment=(cfg.default_environment if cfg else ""),
+        )
+        if entry is None:
+            return {"status": "error", "error": why}
+        return {
+            "status": "ok",
+            "repository": entry.name,
+            "path": entry.path,
+            "message": (
+                f"Created {entry.name}. It is empty apart from a README, so the "
+                "next step is a coding job to put something in it."
+            ),
+        }
+
+    registry.register(
+        name="create_repository",
+        description=(
+            "Create a new, empty git repository Jarvis can then work in. Use "
+            "this when the user asks for something that does not exist yet — a "
+            "new program, a new project — rather than saying there is nowhere "
+            "to put it. Only works when a workspace is configured."
+        ),
+        parameters=schema_object(
+            {
+                "name": {
+                    "type": "string",
+                    "description": "lowercase, e.g. `snake-opengl`; becomes a directory",
+                },
+                "description": {"type": "string", "description": "one line on what it is"},
+            },
+            ["name"],
+        ),
+        handler=tool_create_repository,
+        # Tier 2, not 3. It makes ONE empty directory inside a root the
+        # operator named for exactly this, writes two files nobody will miss,
+        # and cannot touch anything else — `write_file` is Tier 3 because it
+        # overwrites things that already exist, and this cannot. Holding it for
+        # a human would put an approval card between "write me a Snake game"
+        # and anything happening at all.
+        tier=TIER_BACKGROUND,
+    )
+
+    async def tool_clone(args: dict[str, Any], context: Any = None) -> Any:
+        cfg = get_config(jarvis)
+        entry, why = await async_clone_repository(
+            jarvis,
+            str(args.get("forge") or ""),
+            str(args.get("project") or ""),
+            # Not the model's choice, for the same reason as create_repository.
+            environment=(cfg.default_environment if cfg else ""),
+        )
+        if entry is None:
+            return {"status": "error", "error": why}
+        return {
+            "status": "ok",
+            "repository": entry.name,
+            "message": f"Cloned {entry.name}. Start a coding job to work in it.",
+        }
+
+    async def tool_push(args: dict[str, Any], context: Any = None) -> Any:
+        ok, note = await async_push_branch(
+            jarvis, str(args.get("repo") or ""), str(args.get("branch") or "")
+        )
+        return {"status": "ok" if ok else "error", "message": note}
+
+    registry.register(
+        name="clone_repository",
+        description=(
+            "Clone a repository from GitHub or GitLab into the workspace so a "
+            "coding job can work in it. Only repositories the operator has "
+            "permitted can be cloned — call list_code_repositories to see the "
+            "forges and what each one allows."
+        ),
+        parameters=schema_object(
+            {
+                "forge": {"type": "string", "description": "the forge's name, e.g. `github`"},
+                "project": {"type": "string", "description": "`owner/name`"},
+            },
+            ["forge", "project"],
+        ),
+        handler=tool_clone,
+        # Reading something the operator said Jarvis may read, into a directory
+        # they set aside for it. The allow-list is the gate, and it is enforced
+        # in code rather than by asking.
+        tier=TIER_BACKGROUND,
+    )
+    registry.register(
+        name="push_branch",
+        description=(
+            "Push a finished `jarvis/…` branch back to the forge it came from, "
+            "so a human can open a pull request. Never pushes main and never "
+            "forces."
+        ),
+        parameters=schema_object(
+            {
+                "repo": {"type": "string", "description": "the repository's name"},
+                "branch": {"type": "string", "description": "the jarvis/… branch"},
+            },
+            ["repo", "branch"],
+        ),
+        handler=tool_push,
+        # Outward-facing: this puts code on a server other people can see, and
+        # deleting a local file does not undo it.
+        tier=TIER_APPROVAL,
+    )
+
     registry.register(
         name="start_coding_job",
         description=(
@@ -343,6 +647,144 @@ def _register_tools(jarvis: "Jarvis") -> None:
         handler=tool_start_coding_job,
         tier=TIER_APPROVAL,
     )
+
+
+# ---------------------------------------------------------------------------
+# making a repository
+# ---------------------------------------------------------------------------
+def get_repos(jarvis: "Jarvis") -> RepoStore | None:
+    found = _store(jarvis).get(DATA_REPOS)
+    return found if isinstance(found, RepoStore) else None
+
+
+async def async_create_repository(
+    jarvis: "Jarvis",
+    name: str,
+    *,
+    description: str = "",
+    environment: str = "",
+) -> tuple[Any, str]:
+    """Make one, and put it in the live registry. `(entry, "")` or `(None, why)`.
+
+    The registry update is the half that is easy to forget: a repository on
+    disk that no listing knows about is one nothing can be started against, so
+    creating it would look like it worked and then nothing would.
+    """
+    cfg = get_config(jarvis)
+    repos = get_repos(jarvis)
+    if cfg is None or repos is None:
+        return None, "the code integration is not set up on this server"
+    if not repos.enabled:
+        return None, (
+            "There is nowhere to put it. Set `code: workspace:` in "
+            "configuration.yaml to a directory Jarvis may create repositories "
+            "in, then restart."
+        )
+
+    wanted = str(environment or "").strip()
+    if wanted and wanted not in cfg.environments:
+        return None, (
+            f"There is no environment called {wanted!r}. There is: "
+            f"{', '.join(cfg.environments) or 'none configured'}."
+        )
+
+    entry, why = await repos.async_create(
+        name,
+        description=description,
+        environment=wanted,
+        # Declared repositories are the ones this must not collide with; the
+        # store already knows about its own.
+        taken={n for n, r in cfg.repositories.items() if not r.managed},
+    )
+    if entry is None:
+        return None, why
+    cfg.repositories[entry.name] = entry.as_repo()
+    return entry, ""
+
+
+async def async_clone_repository(
+    jarvis: "Jarvis",
+    forge_name: str,
+    project: str,
+    *,
+    name: str = "",
+    environment: str = "",
+) -> tuple[Any, str]:
+    """Clone a permitted repository. `(entry, "")` or `(None, why not)`.
+
+    The allow-list check lives here so the refusal can name the forge and say
+    what IS permitted — a model that guessed a path should be told the rule,
+    not just "no".
+    """
+    cfg = get_config(jarvis)
+    repos = get_repos(jarvis)
+    if cfg is None or repos is None:
+        return None, "the code integration is not set up on this server"
+    forge = cfg.forges.get(str(forge_name or "").strip())
+    if forge is None:
+        return None, (
+            f"There is no forge called {forge_name!r}. There is: "
+            f"{', '.join(cfg.forges) or 'none configured'}."
+        )
+    if not forge.token:
+        return None, (
+            f"{forge.name} has no token, so nothing can be cloned from it. "
+            "Set it in configuration.yaml."
+        )
+    if not split_project(project):
+        return None, f"{project!r} is not a repository path like owner/name."
+    if not permits(forge, project):
+        return None, (
+            f"{project} is not on {forge.name}'s allow-list, so Jarvis may not "
+            f"touch it. Permitted: {', '.join(forge.allow) or 'nothing yet'}."
+        )
+    if environment and environment not in cfg.environments:
+        return None, f"There is no environment called {environment!r}."
+
+    entry, why = await repos.async_clone(
+        forge,
+        project,
+        config_dir=jarvis.config_dir,
+        name=name,
+        environment=environment,
+        taken={n for n, r in cfg.repositories.items() if not r.managed},
+    )
+    if entry is None:
+        return None, why
+    cfg.repositories[entry.name] = entry.as_repo()
+    return entry, ""
+
+
+async def async_push_branch(
+    jarvis: "Jarvis", repo_name: str, branch: str
+) -> tuple[bool, str]:
+    """Push one `jarvis/…` branch back to the forge it came from."""
+    cfg = get_config(jarvis)
+    if cfg is None:
+        return False, "the code integration is not set up on this server"
+    repo = cfg.repositories.get(str(repo_name or "").strip())
+    if repo is None:
+        return False, f"There is no repository called {repo_name!r}."
+    if not repo.origin:
+        return False, (
+            f"{repo.name} did not come from a forge, so there is nowhere to "
+            "push it."
+        )
+    forge_name = repo.origin.split(":", 1)[0]
+    forge = cfg.forges.get(forge_name)
+    if forge is None:
+        return False, f"{repo.name} came from {forge_name!r}, which is no longer configured."
+    if not forge.push:
+        return False, (
+            f"{forge.name} is read-only. Set `push: true` on it in "
+            "configuration.yaml to allow this."
+        )
+    project = repo.origin.split(":", 1)[1] if ":" in repo.origin else ""
+    if not permits(forge, project):
+        return False, f"{project} is no longer on {forge.name}'s allow-list."
+
+    ws = Workspace(repo, environment=cfg.environment_for(repo))
+    return await ws.push(forge, str(branch or ""), config_dir=jarvis.config_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +853,9 @@ async def _drive(
         model=cfg.model,
         max_rounds=cfg.max_rounds,
         max_seconds=cfg.max_seconds,
-        workspace=Workspace(repo, sandbox=cfg.sandbox),
+        workspace=Workspace(
+            repo, sandbox=cfg.sandbox, environment=cfg.environment_for(repo)
+        ),
     )
     try:
         await registry.async_update(task_id, status=STATUS_RUNNING)
@@ -521,15 +965,26 @@ def listing_payload(jarvis: "Jarvis") -> dict[str, Any]:
     cfg = get_config(jarvis) or CodeConfig()
     registry = getattr(jarvis, "tasks", None)
     jobs = registry.listing(kind=KIND) if registry is not None else []
+    repos = get_repos(jarvis)
     return {
         "repositories": cfg.listing(),
         "jobs": jobs,
         "sandboxed": bool(cfg.sandbox),
+        "environments": [e.as_dict() for e in cfg.environments.values()],
+        # Never a token — `as_dict` sends `has_token` instead.
+        "forges": [f.as_dict() for f in cfg.forges.values()],
+        # Whether the console may offer a "new repository" form at all, and
+        # where the files would land if it does.
+        "can_create": bool(repos and repos.enabled),
+        "workspace": str(cfg.workspace) if cfg.workspace else "",
     }
 
 
 __all__ = [
     "CodeConfig",
+    "async_create_repository",
+    "check_name",
+    "get_repos",
     "DOMAIN",
     "KIND",
     "async_setup",

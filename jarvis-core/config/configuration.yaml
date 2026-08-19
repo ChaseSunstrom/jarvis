@@ -664,6 +664,100 @@ research:
 # for the same reason the console may schedule a service call and the assistant
 # may not — that request carried a bearer token.
 code:
+  # WHERE JARVIS MAY CREATE REPOSITORIES.
+  #
+  # Unset (the default) means it may not: asked for something new, it says so
+  # rather than inventing a location. Set it and `create_repository` starts
+  # working — from the console's CODE tab and from a spoken request alike.
+  #
+  # Everything created lands inside this one directory and nothing can leave
+  # it: a name becomes a directory name and goes through the same resolver, with
+  # the same symlink check, as every other path in this file.
+  #
+  # Jarvis never DELETES anything here. "Forget" drops the row and leaves the
+  # files; removing them is one `rm` away for a human who means it.
+  workspace: ""        # e.g. ~/jarvis/workspaces
+
+  # ENVIRONMENTS — where a job is allowed to run things.
+  #
+  # This is the setting that changes what a coding job IS. With no environment
+  # a job may read, edit, and run the exact strings in that repository's
+  # `checks:` — there is no shell anywhere. With one, it may run ANY command,
+  # inside a throwaway container whose only visible directory is that one
+  # repository. That is what makes "install the dependencies and build it"
+  # possible, and it needs Docker on this host.
+  #
+  # The fences are not optional and not configurable: --rm, --cap-drop ALL,
+  # --security-opt no-new-privileges, a pids/memory/cpu limit, your uid (so
+  # files it writes are yours), a tmpfs for /tmp, and exactly one host path —
+  # the repository. No docker socket, no host networking, and none of your
+  # environment variables. See jarvis/integrations/code/sandbox.py.
+  #
+  # `network` is the one worth thinking about:
+  #   none    (default) nothing reaches out. Fine when dependencies are vendored.
+  #   egress  the container can reach the internet. This is what makes
+  #           `pip install` work — and it means a job can read your repository
+  #           AND make outbound connections. Give it to scratch projects
+  #           happily and to your private repositories deliberately.
+  environments: []
+  # - name: python
+  #   image: python:3.12-bookworm
+  #   network: egress
+  #   memory: 2g
+  #   cpus: "2"
+  #   setup:
+  #     - pip install --quiet --upgrade pip
+  #
+  # - name: cpp
+  #   image: gcc:14
+  #   network: egress
+  #   setup:
+  #     - apt-get update && apt-get install -y --no-install-recommends cmake libglfw3-dev
+  #
+  # - name: offline
+  #   image: python:3.12-bookworm
+  #   network: none
+  #
+  # `network: egress` joins Docker's default bridge, and that reaches this HOST
+  # at the gateway address and everything else on your LAN — your router, a
+  # NAS, jarvis-core's own API. If that matters, create a network with the
+  # access you want and name it:
+  #   network_name: jarvis-egress
+
+  # The environment a repository JARVIS creates gets. Empty means none, i.e. no
+  # shell. The model does not choose this — it used to be an argument on
+  # `create_repository`, which let it read the listing, spot the environment
+  # with egress, and hand itself a networked shell in one un-approved call.
+  default_environment: ""
+
+  # GITHUB AND GITLAB — and the list of repositories Jarvis may touch.
+  #
+  # A forge is a host, a token, and an ALLOW-LIST. The token can very likely
+  # reach every repository on the account; the allow-list is what says which
+  # ones Jarvis may. Nothing outside it can be cloned or pushed, and there is
+  # no "allow everything" setting — a forge with an empty `allow:` permits
+  # nothing, which is the safe reading of a half-written config.
+  #
+  # Repositories Jarvis CREATES in the workspace above need no entry here; it
+  # made them. Pushing one somewhere still needs a forge that permits the path.
+  #
+  # The token never reaches the model, never reaches the container, and never
+  # appears in a URL or an argv — git gets it through GIT_ASKPASS. See
+  # jarvis/integrations/code/forges.py.
+  forges: []
+  # - name: github
+  #   kind: github            # github | gitlab
+  #   # host: github.com      # or your self-hosted GitLab
+  #   token: !env_var GITHUB_TOKEN ""
+  #   # Cloning is reading. Pushing is publishing, so it is off until you say
+  #   # otherwise — and even then Jarvis pushes only its own `jarvis/…`
+  #   # branches, never main, and never with --force.
+  #   push: false
+  #   allow:
+  #     - chasesunstrom/jarvis
+  #     - chasesunstrom/notes
+  #     # - chasesunstrom/*   # a whole account, if you mean it
+
   repositories: []
   # - name: jarvis
   #   path: ~/src/jarvis
@@ -676,6 +770,9 @@ code:
   #   checks:
   #     - pytest -q
   #     - ruff check .
+  #   # Which environment its commands and checks run in. Without this the
+  #   # repository gets no shell at all, which is the old behaviour.
+  #   environment: python
 
   # A command prefix every CHECK runs behind. Empty means none — and note what
   # that does and does not mean: the model still has no shell and still cannot
