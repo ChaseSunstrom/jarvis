@@ -845,6 +845,67 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			setup: []
 		}
 	];
+	// --- n8n ----------------------------------------------------------------
+	// Factories, so `jarvis/test/n8n_reset` can put an activated workflow back
+	// and a test that empties the instance does not decide what the next one
+	// sees.
+	const freshN8nInstance = () => ({
+		url: 'http://n8n.lan:5678',
+		has_key: true,
+		allow_activate: false,
+		tag: 'jarvis',
+		configured: true
+	});
+	const freshN8nWorkflows = () => [
+		{
+			id: 'wf-receipts',
+			name: 'File the receipt',
+			active: false,
+			tags: ['jarvis'],
+			updated_at: '2026-02-01T09:00:00Z',
+			nodes: [
+				{ name: 'Webhook', type: 'n8n-nodes-base.webhook' },
+				// The case the whole page exists for: a node that asked for a
+				// credential and has none attached.
+				{ name: 'Gmail', type: 'n8n-nodes-base.gmail', credentials: { gmailOAuth2: {} } }
+			],
+			edges: [['Webhook', 'Gmail']]
+		},
+		{
+			id: 'wf-nightly',
+			name: 'Nightly backup',
+			active: true,
+			tags: [],
+			updated_at: '2026-01-20T02:00:00Z',
+			nodes: [
+				{ name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger' },
+				{ name: 'S3', type: 'n8n-nodes-base.awsS3', credentials: { aws: { id: '4' } } }
+			],
+			edges: [['Schedule', 'S3']]
+		}
+	];
+	let n8nInstance = freshN8nInstance();
+	let n8nWorkflows = freshN8nWorkflows();
+	let n8nCheck = { ok: true, detail: 'Connected to http://n8n.lan:5678.' };
+	const n8nRuns = [
+		{
+			id: 'run-1',
+			workflow_id: 'wf-nightly',
+			status: 'success',
+			started_at: '2026-02-01T02:00:00Z',
+			stopped_at: '2026-02-01T02:00:11Z',
+			mode: 'trigger'
+		},
+		{
+			id: 'run-2',
+			workflow_id: 'wf-nightly',
+			status: 'error',
+			started_at: '2026-01-31T02:00:00Z',
+			stopped_at: '2026-01-31T02:00:03Z',
+			mode: 'trigger'
+		}
+	];
+
 	const codeWorkspace = '/srv/jarvis/workspaces';
 	/**
 	 * Forges, exactly as jarvis-core sends them: the allow-list verbatim and
@@ -1809,6 +1870,84 @@ index 1234567..89abcde 100644
 						target.tools = [];
 					}
 					ok(msg.id, mcpListing());
+					break;
+				}
+
+				// --- n8n -----------------------------------------------------
+				case 'jarvis/n8n/list':
+					ok(msg.id, {
+						workflows: n8nWorkflows.map((w) => ({
+							id: w.id,
+							name: w.name,
+							active: w.active,
+							nodes: w.nodes.length,
+							tags: w.tags ?? [],
+							updated_at: w.updated_at ?? ''
+						})),
+						next_cursor: '',
+						instance: n8nInstance
+					});
+					break;
+
+				case 'jarvis/n8n/workflow': {
+					const found = n8nWorkflows.find((w) => w.id === String(msg.workflow_id || ''));
+					if (!found) {
+						fail(msg.id, 'not_found', `no workflow ${msg.workflow_id}`);
+						break;
+					}
+					// Mirrors `describe_graph` + `needed_connections`: STRUCTURE only,
+					// never node parameters — that is where people type API keys.
+					ok(msg.id, {
+						workflow: {
+							id: found.id,
+							name: found.name,
+							active: found.active,
+							nodes: found.nodes.map((n) => ({
+								name: n.name,
+								type: n.type,
+								has_credential: !!n.credentials,
+								credential_types: n.credentials ? Object.keys(n.credentials) : []
+							})),
+							edges: found.edges ?? [],
+							connections_needed: found.nodes.flatMap((n) =>
+								Object.entries(n.credentials ?? {})
+									.filter(([, v]) => !v || !v.id)
+									.map(([type]) => ({ node: n.name, credential_type: type }))
+							)
+						}
+					});
+					break;
+				}
+
+				case 'jarvis/n8n/check':
+					ok(msg.id, n8nCheck);
+					break;
+
+				case 'jarvis/n8n/set_active': {
+					const target = n8nWorkflows.find((w) => w.id === String(msg.workflow_id || ''));
+					if (!target) {
+						fail(msg.id, 'not_found', `no workflow ${msg.workflow_id}`);
+						break;
+					}
+					target.active = Boolean(msg.active);
+					ok(msg.id, { id: target.id, active: target.active });
+					break;
+				}
+
+				case 'jarvis/n8n/executions':
+					ok(msg.id, {
+						executions: n8nRuns.filter(
+							(r) => !msg.workflow_id || r.workflow_id === String(msg.workflow_id)
+						)
+					});
+					break;
+
+				/** Put n8n back, and let a test see the unconfigured wording. */
+				case 'jarvis/test/n8n_reset': {
+					n8nInstance = { ...freshN8nInstance(), ...(msg.instance ?? {}) };
+					n8nWorkflows = freshN8nWorkflows();
+					n8nCheck = msg.check ?? { ok: true, detail: 'Connected to http://n8n.lan:5678.' };
+					ok(msg.id, { instance: n8nInstance });
 					break;
 				}
 

@@ -15,6 +15,13 @@ import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import type { McpServer } from './mcpDraft';
 import type { ScheduledJob } from './schedule';
 import type { CodeListing, CodeResult } from './code';
+import type {
+	N8nCheck,
+	N8nExecution,
+	N8nGraph,
+	N8nInstance,
+	N8nWorkflow
+} from './n8n';
 
 export type SendFn = (data: string) => void;
 
@@ -826,6 +833,50 @@ export class JarvisClient {
 		environment?: string;
 	}): Promise<CodeListing & { repository: unknown }> {
 		return this.command({ type: 'jarvis/code/clone_repo', ...payload });
+	}
+
+	// --- n8n ---------------------------------------------------------------
+	/** Workflows plus the instance line. Never the API key. */
+	listN8nWorkflows(limit = 50): Promise<{
+		workflows: N8nWorkflow[];
+		next_cursor: string;
+		instance: N8nInstance;
+	}> {
+		return this.command({ type: 'jarvis/n8n/list', limit });
+	}
+
+	/**
+	 * One workflow's STRUCTURE, and what it still needs connected.
+	 *
+	 * Node `parameters` are deliberately absent — that is where people type an
+	 * API key into an HTTP header field, and jarvis-core will not send them.
+	 */
+	getN8nWorkflow(id: string): Promise<{ workflow: N8nGraph }> {
+		// `workflow_id`, never `id`: `command()` stamps the RPC id onto the
+		// frame LAST, so a payload key called `id` is overwritten and the
+		// server looks up a workflow named after a sequence number. The
+		// comment on `command()` says so; this is what it was warning about.
+		return this.command({ type: 'jarvis/n8n/workflow', workflow_id: id });
+	}
+
+	/** Whether this url, this key and this n8n version work together. */
+	checkN8n(): Promise<N8nCheck> {
+		return this.command({ type: 'jarvis/n8n/check' });
+	}
+
+	/**
+	 * Switch a workflow on or off.
+	 *
+	 * The console may activate even where `allow_activate` forbids the MODEL
+	 * to: that flag is about what Jarvis does on its own, and a person pressing
+	 * this button is the human it exists to insist on.
+	 */
+	setN8nActive(id: string, active: boolean): Promise<{ id: string; active: boolean }> {
+		return this.command({ type: 'jarvis/n8n/set_active', workflow_id: id, active });
+	}
+
+	listN8nExecutions(id = '', limit = 20): Promise<{ executions: N8nExecution[] }> {
+		return this.command({ type: 'jarvis/n8n/executions', workflow_id: id, limit });
 	}
 
 	/** Drop it from the listing. jarvis-core does NOT delete the files. */

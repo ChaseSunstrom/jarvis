@@ -50,7 +50,7 @@ export function isBareKey(e: KeyLike): boolean {
 
 /**
  * `g`-prefixed navigation chords. `g a` is automations; areas takes `g r`
- * (rooms) and tasks takes `g k` — `g t` was already tools. Code takes `g c`.
+ * (rooms) and tasks takes `g k` — `g t` was already tools. Code takes `g c`, n8n `g n`.
  */
 export const CHORDS: Readonly<Record<string, string>> = {
 	'g d': '/devices',
@@ -59,6 +59,7 @@ export const CHORDS: Readonly<Record<string, string>> = {
 	'g t': '/tools',
 	'g k': '/tasks',
 	'g c': '/code',
+	'g n': '/n8n',
 	'g s': '/settings',
 	'g h': '/'
 };

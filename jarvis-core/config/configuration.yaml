@@ -564,6 +564,49 @@ files:
   #   writable: false
 
 # ---------------------------------------------------------------------------
+# n8n — the outside world's services.
+# ---------------------------------------------------------------------------
+# Point Jarvis at an n8n instance and it can read, write and switch off
+# workflows there. n8n is NOT a second automation engine for the house — Jarvis
+# already has one, and two places a rule could live is two places to look when
+# something did not fire. What n8n has that Jarvis does not is a few hundred
+# maintained SaaS connectors, so the split is: n8n owns the outside world
+# (mail, spreadsheets, invoices), Jarvis owns the house and the conversation.
+#
+# THREE RULES, and they are why this is safe to hand a model:
+#
+#   1. Jarvis never touches a credential. A node it writes arrives carrying a
+#      guessed credential id — every n8n example online has one — and that
+#      block is STRIPPED and reported instead. Jarvis tells you "this needs a
+#      Gmail credential"; you connect it in n8n, where the secrets already are.
+#   2. What Jarvis writes arrives SWITCHED OFF. The payload is rebuilt from
+#      four keys, so a model setting `active: true` is not setting anything.
+#   3. The model reads structure, never node parameters — that is where people
+#      type an API key into an HTTP header field.
+#
+# `create_n8n_workflow` is Tier 3: a workflow is a program that will run
+# against somebody's email and somebody's money the moment it is switched on.
+# There is no delete tool, and no way for Jarvis to make a credential.
+n8n:
+  # Where it is. Empty (the default) means the tools exist and say "point me at
+  # an n8n", which is a setup step rather than a dead end.
+  url: ""                       # e.g. http://127.0.0.1:5678
+
+  # From n8n: Settings -> n8n API -> Create an API key. It reaches n8n in the
+  # X-N8N-API-KEY header and appears in no URL, no log and no tool result.
+  api_key: !env_var N8N_API_KEY ""
+
+  # May JARVIS switch a workflow on by itself? Off, because activation is the
+  # moment a workflow goes live, and one Jarvis just wrote usually cannot work
+  # until you have attached the credentials it asked for. The console's own
+  # button is unaffected — a person pressing it is the human this insists on.
+  allow_activate: false
+
+  # Tag suggested for everything Jarvis writes, so "what did the assistant
+  # make" is one filter in n8n rather than archaeology.
+  tag: jarvis
+
+# ---------------------------------------------------------------------------
 # MCP — anybody else's tools, inside Jarvis.
 # ---------------------------------------------------------------------------
 # Model Context Protocol servers. Each one Jarvis can reach lends it their

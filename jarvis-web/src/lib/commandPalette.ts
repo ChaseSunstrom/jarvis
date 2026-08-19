@@ -58,6 +58,7 @@ export const PAGE_ITEMS: readonly PaletteItem[] = [
 	{ id: 'page:/tools', kind: 'page', label: 'Tools', detail: '/tools', href: '/tools', keywords: 'llm catalogue exposure' },
 	{ id: 'page:/tasks', kind: 'page', label: 'Tasks', detail: '/tasks', href: '/tasks', keywords: 'jobs progress research background scheduled' },
 	{ id: 'page:/code', kind: 'page', label: 'Code', detail: '/code', href: '/code', keywords: 'repository repositories git branch diff agent coding job' },
+	{ id: 'page:/n8n', kind: 'page', label: 'n8n', detail: '/n8n', href: '/n8n', keywords: 'workflow workflows automation integration gmail notion sheets credential connect' },
 	{ id: 'page:/settings', kind: 'page', label: 'Settings', detail: '/settings', href: '/settings', keywords: 'backend events log' }
 ];
 

@@ -153,6 +153,19 @@ GATED_SERVICES = frozenset(
         # does not undo it. `code.clone_repository` is its ungated neighbour
         # and only reads something the operator's allow-list already permits.
         "code.push_branch",
+        # Writes a workflow into the operator's n8n. Tool form:
+        # `create_n8n_workflow` (Tier 3). A workflow is a program that will run
+        # against somebody's email and somebody's money as soon as it is
+        # switched on, and it arrives switched off precisely so a person reads
+        # it first — an automation that could write one unattended would be the
+        # way round that. `n8n.list`, `n8n.get`, `n8n.executions` and
+        # `n8n.check` are its ungated neighbours and read only structure.
+        "n8n.create",
+        # Switches one on or off. Tool form: `deactivate_n8n_workflow`, and
+        # `activate_n8n_workflow` where the operator allowed it — both Tier 3.
+        # Off is the safe direction and still stops something the household may
+        # depend on; on is the moment a workflow becomes live.
+        "n8n.set_active",
     }
 )
 

@@ -721,6 +721,23 @@ class WebSocketHandler:
             context=self._context(),
         )
 
+    # --- n8n ------------------------------------------------------------
+    async def _cmd_n8n_list(self, msg: dict[str, Any]) -> Any:
+        return await common.async_n8n_workflows(self.jarvis, msg)
+
+    async def _cmd_n8n_workflow(self, msg: dict[str, Any]) -> Any:
+        # `workflow_id`, not `id`: the frame's `id` is the request id.
+        return await common.async_n8n_workflow(self.jarvis, msg.get("workflow_id"))
+
+    async def _cmd_n8n_check(self, msg: dict[str, Any]) -> Any:
+        return await common.async_n8n_check(self.jarvis)
+
+    async def _cmd_n8n_set_active(self, msg: dict[str, Any]) -> Any:
+        return await common.async_n8n_set_active(self.jarvis, msg)
+
+    async def _cmd_n8n_executions(self, msg: dict[str, Any]) -> Any:
+        return await common.async_n8n_executions(self.jarvis, msg)
+
     async def _cmd_code_list(self, msg: dict[str, Any]) -> Any:
         return common.code_list_payload(self.jarvis)
 
@@ -1136,6 +1153,11 @@ WebSocketHandler._HANDLERS = {
     # Jarvis Code. Starting a job IS a client command, unlike minting a bare
     # task: a coding job has a worker behind it, so the record it creates is
     # one something is driving.
+    "jarvis/n8n/list": WebSocketHandler._cmd_n8n_list,
+    "jarvis/n8n/workflow": WebSocketHandler._cmd_n8n_workflow,
+    "jarvis/n8n/check": WebSocketHandler._cmd_n8n_check,
+    "jarvis/n8n/set_active": WebSocketHandler._cmd_n8n_set_active,
+    "jarvis/n8n/executions": WebSocketHandler._cmd_n8n_executions,
     "jarvis/code/list": WebSocketHandler._cmd_code_list,
     "jarvis/code/start": WebSocketHandler._cmd_code_start,
     "jarvis/code/create_repo": WebSocketHandler._cmd_code_create_repo,

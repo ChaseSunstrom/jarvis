@@ -151,6 +151,14 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     # Sends a branch to a forge. The allow-list decides WHICH repository;
     # this decides whether anything leaves the machine at all.
     "push_branch": "code.push_branch",
+    # n8n. Writes a program into somebody's automation platform; it arrives
+    # switched off so a human reads it first, and the service form would be
+    # the way round that.
+    "create_n8n_workflow": "n8n.create",
+    # Both directions of the same service. Off is the safe one and still
+    # stops something the household may rely on.
+    "deactivate_n8n_workflow": "n8n.set_active",
+    "activate_n8n_workflow": "n8n.set_active",
     # --- no service form: the tool is the only door ----------------------
     # Registry-level tools with no `services.register` counterpart. An
     # automation cannot call these at all.

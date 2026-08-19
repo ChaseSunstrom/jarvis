@@ -650,6 +650,49 @@ async def code_forget_repo(request: Request, name: str) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/n8n")
+async def n8n_list(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_n8n_workflows(get_jarvis(request), dict(request.query_params))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/n8n/check")
+async def n8n_check(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_n8n_check(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/n8n/workflows/{workflow_id}")
+async def n8n_workflow(request: Request, workflow_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_n8n_workflow(get_jarvis(request), workflow_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/n8n/active")
+async def n8n_set_active(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_n8n_set_active(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/n8n/executions")
+async def n8n_executions(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_n8n_executions(
+            get_jarvis(request), dict(request.query_params)
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.post("/code/clone")
 async def code_clone_repo(request: Request) -> dict[str, Any]:
     body = await json_body(request)

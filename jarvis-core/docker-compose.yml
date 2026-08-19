@@ -151,6 +151,10 @@ services:
       # service needs them arriving here too.
       - ORCHESTRATOR_TOKEN=${ORCHESTRATOR_TOKEN:-}
       - APPROVAL_SECRET=${APPROVAL_SECRET:-}
+      # n8n's API key, if you point Jarvis at an n8n (`n8n: url:` in
+      # configuration.yaml). Settings -> n8n API -> Create an API key.
+      # Unset means the n8n tools answer "point me at an n8n" and do nothing.
+      - N8N_API_KEY=${N8N_API_KEY:-}
     depends_on:
       jarvis-config-init:
         condition: service_completed_successfully

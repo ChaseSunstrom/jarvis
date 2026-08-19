@@ -1488,6 +1488,103 @@ async def async_clone_code_repository(
     return {"repository": entry.as_dict(), **code_list_payload(jarvis)}
 
 
+# --- n8n --------------------------------------------------------------------
+def _n8n(jarvis: "Jarvis") -> Any:
+    from ..integrations.n8n import get_config
+
+    cfg = get_config(jarvis)
+    if cfg is None:
+        raise ApiError("unavailable", "this server has no n8n integration", 503)
+    return cfg
+
+
+def n8n_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Where the instance is and whether it has a key. Never the key."""
+    from ..integrations.n8n import listing_payload
+
+    _n8n(jarvis)
+    return listing_payload(jarvis)
+
+
+async def async_n8n_check(jarvis: "Jarvis") -> dict[str, Any]:
+    """Does this url, this key and this n8n version actually work together?
+
+    The console's one honest answer to "is it set up". The client was written
+    against documentation rather than a live instance, so a version mismatch
+    has to be one sentence on screen rather than an empty list nobody can
+    explain.
+    """
+    from ..integrations.n8n import async_probe
+
+    _n8n(jarvis)
+    return await async_probe(jarvis)
+
+
+async def async_n8n_workflows(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    from ..integrations.n8n import N8nError, async_list
+
+    _n8n(jarvis)
+    payload = data or {}
+    try:
+        rows, cursor = await async_list(jarvis, limit=int(payload.get("limit") or 50))
+    except N8nError as err:
+        raise ApiError("upstream_error", str(err), 502) from err
+    return {"workflows": rows, "next_cursor": cursor, **n8n_payload(jarvis)}
+
+
+async def async_n8n_workflow(jarvis: "Jarvis", workflow_id: str) -> dict[str, Any]:
+    from ..integrations.n8n import N8nError, async_graph
+
+    _n8n(jarvis)
+    try:
+        return {"workflow": await async_graph(jarvis, str(workflow_id or ""))}
+    except N8nError as err:
+        raise ApiError("upstream_error", str(err), 502) from err
+
+
+async def async_n8n_set_active(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Activate or deactivate, from a request that carried a bearer token.
+
+    The console may activate even when the MODEL may not: `allow_activate` is
+    about what Jarvis does on its own, and a person pressing a button in the
+    console is the human that flag exists to insist on. Deactivating is open
+    to both.
+    """
+    from ..integrations.n8n import N8nError, get_client
+
+    _n8n(jarvis)
+    payload = data or {}
+    # `workflow_id`, not `id`: over the websocket the frame's `id` is the
+    # request id, and a command that read `id` would be handed a sequence
+    # number. The REST twin accepts it under the same name for one vocabulary.
+    workflow_id = str(payload.get("workflow_id") or payload.get("id") or "")
+    active = bool(payload.get("active"))
+    client = get_client(jarvis)
+    if client is None:
+        raise ApiError("unavailable", "this server has no n8n integration", 503)
+    try:
+        await client.set_active(workflow_id, active)
+    except N8nError as err:
+        raise ApiError("upstream_error", str(err), 502) from err
+    return {"id": workflow_id, "active": active}
+
+
+async def async_n8n_executions(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    from ..integrations.n8n import N8nError, async_executions
+
+    _n8n(jarvis)
+    payload = data or {}
+    try:
+        runs = await async_executions(
+            jarvis,
+            workflow_id=str(payload.get("workflow_id") or payload.get("id") or ""),
+            limit=int(payload.get("limit") or 20),
+        )
+    except N8nError as err:
+        raise ApiError("upstream_error", str(err), 502) from err
+    return {"executions": runs}
+
+
 async def async_push_code_branch(
     jarvis: "Jarvis", data: dict[str, Any]
 ) -> dict[str, Any]:

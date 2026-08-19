@@ -99,6 +99,11 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/code/clone_repo` | `forge`, `project` (`owner/name`), optional `name` and `environment`. Clones into the workspace. Refused unless that path is on the forge's allow-list — the console has no more reach here than the model, because the constraint is the operator's configuration rather than who is asking |
 | `jarvis/code/push` | `repo`, `branch`; pushes one `jarvis/…` branch to the forge it came from. Never `main`, never forced, and refused if `origin` was rewritten |
 | `jarvis/code/result` | `task_id`; the branch, the diff, the checks and the tool trail from one finished job |
+| `jarvis/n8n/list` | the workflows on the configured n8n, plus `instance` (`url`, `has_key`, `allow_activate`) — never the API key. `limit` up to 100 |
+| `jarvis/n8n/workflow` | `workflow_id`; one workflow's STRUCTURE — nodes, types, which carry a credential, the edges, and `connections_needed`. Node `parameters` are deliberately absent: people type API keys into them |
+| `jarvis/n8n/check` | `{ok, detail}` — whether this url, this key and this n8n version actually work together. The one honest answer to "is it set up" |
+| `jarvis/n8n/set_active` | `workflow_id`, `active`; switches a workflow on or off. The console may activate even where `allow_activate` forbids the MODEL to — a person pressing a button is the human that flag insists on |
+| `jarvis/n8n/executions` | `workflow_id` (optional), `limit`; recent runs with their status. **Not `id`** on any of these three — over the websocket the frame's `id` is the request id, so a command reading it would be handed a sequence number |
 | `jarvis/mcp/list` | every configured MCP server, its tools, and whether it is up: `{servers: [...], allow_stdio, default_tier}`. Never carries a server's token |
 | `jarvis/mcp/add` | `name` plus either `url` (+ optional `token`) or, when the operator has allowed it, `command`/`args`. Adds the server, connects, and registers its tools as `mcp_<server>_<tool>` |
 | `jarvis/mcp/remove` | `name`; forgets a console-added server and unregisters its tools. A server defined in `configuration.yaml` is refused — edit the file |
