@@ -28,6 +28,7 @@
 		formFor,
 		isUnchanged,
 		platformNote,
+		whyNotEntityId,
 		type EntityForm
 	} from '$lib/entityAdmin';
 
@@ -117,6 +118,13 @@
 
 	let options = $derived(areaOptions(areas));
 	let pending = $derived(entityChanges(entryMap.get(editing), form));
+	// Only once the box has been touched into something different, so opening
+	// an editor does not greet you with a complaint about the id you have.
+	const idProblem = $derived(
+		editing && form.entityId.trim().toLowerCase() !== editing
+			? whyNotEntityId(form.entityId, editing)
+			: ''
+	);
 	let summary = $derived(describeChanges(pending));
 
 	/**
@@ -408,12 +416,33 @@
 
 				{#if editing === state.entity_id}
 					<div class="editor" data-testid="editor-{state.entity_id}">
-						<p class="entity-id">{state.entity_id}</p>
 						{#if platformNote(entryMap.get(state.entity_id))}
 							<p class="notice origin" data-testid="origin-{state.entity_id}">
 								{platformNote(entryMap.get(state.entity_id))}
 							</p>
 						{/if}
+
+						<div class="field">
+							<label for="id-{state.entity_id}">Entity id</label>
+							<input
+								id="id-{state.entity_id}"
+								type="text"
+								class="entity-id"
+								data-testid="id-{state.entity_id}"
+								spellcheck="false"
+								autocapitalize="off"
+								autocomplete="off"
+								bind:value={form.entityId}
+							/>
+							{#if idProblem}
+								<p class="err" data-testid="id-problem-{state.entity_id}">{idProblem}</p>
+							{:else}
+								<p class="hint">
+									This is the key, not the label — automations that name it are
+									updated to follow.
+								</p>
+							{/if}
+						</div>
 
 						<div class="field">
 							<label for="name-{state.entity_id}">Name</label>

@@ -604,6 +604,15 @@ export class JarvisClient {
 	 * Update a registry entry. jarvis-core ignores null-valued fields, so pass
 	 * `''` (not null) to clear an area assignment.
 	 */
+	/**
+	 * Update one entity's registry entry.
+	 *
+	 * `new_entity_id` changes the id itself, which is a key and not a label:
+	 * jarvis-core moves the state with it and rewrites the authored automations
+	 * that named the old one. It is spelled out here rather than left to the
+	 * spread, because a field the type does not mention is one the next reader
+	 * assumes is not sent.
+	 */
 	updateEntity(
 		entityId: string,
 		changes: Partial<
@@ -611,7 +620,7 @@ export class JarvisClient {
 				EntityRegistryEntry,
 				'name' | 'icon' | 'area_id' | 'device_id' | 'aliases' | 'disabled' | 'hidden' | 'exposed'
 			>
-		>
+		> & { new_entity_id?: string }
 	): Promise<any> {
 		return this.command({
 			type: 'config/entity_registry/update',

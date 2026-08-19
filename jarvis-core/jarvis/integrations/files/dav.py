@@ -200,8 +200,25 @@ def _int(raw: str) -> int:
         return 0
 
 
-def auth_for(username: str, password: str) -> Any:
-    """Basic auth, or none. Digest is not supported and says so."""
-    if username or password:
-        return httpx.BasicAuth(username, password)
-    return None
+#: How a root authenticates. `basic` is right for Nextcloud, ownCloud and
+#: every app-password flow; `digest` is what older Apache `mod_dav` and some
+#: NAS boxes ask for, and it is the one that used to be unavailable.
+AUTH_SCHEMES = ("basic", "digest")
+
+
+def auth_for(username: str, password: str, scheme: str = "basic") -> Any:
+    """The auth object for a root, or None when it needs no credential.
+
+    Digest is httpx's own `DigestAuth`, which does the challenge/response
+    round trip itself — the reason this used to say "not supported" was that
+    nothing here passed the scheme through, not that it was hard.
+
+    An unknown scheme falls back to basic rather than raising: a typo in
+    `auth: bsaic` should not take a whole root offline, and the request that
+    follows will fail loudly on its own if basic is genuinely wrong.
+    """
+    if not (username or password):
+        return None
+    if str(scheme or "").strip().lower() == "digest":
+        return httpx.DigestAuth(username, password)
+    return httpx.BasicAuth(username, password)

@@ -104,7 +104,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/mcp/remove` | `name`; forgets a console-added server and unregisters its tools. A server defined in `configuration.yaml` is refused — edit the file |
 | `jarvis/mcp/reconnect` | `name`, or omit for all; reconnects and re-reads the tool list, which is how a server that gained a tool becomes visible |
 | `jarvis/approve` | resolve a Tier-3 approval the safety gate is holding |
-| `config/entity_registry/list` · `/update` | rename, re-area, hide, or set `exposed` on an entity |
+| `config/entity_registry/list` · `/update` | rename (label or `entity_id`), re-area, hide, or set `exposed` |
 | `config/device_registry/list` · `/update` | device names and area assignment |
 | `config/area_registry/list` · `/create` · `/update` · `/delete` | areas |
 | `config/companion/list` | the phones, desktops and satellites *running Jarvis*, each with what it will let Jarvis do to it and whether it is connected. Not the house's entities — those are the registries above. `include_actions: false` returns counts instead of manifests |
@@ -138,6 +138,30 @@ meaning of an existing one.
 Registry updates skip **null-valued** fields, so a client clears an assignment
 by sending `""` — `{"type": "config/entity_registry/update", "entity_id":
 "light.a", "area_id": ""}` — not `null`.
+
+**Renaming an `entity_id`** is the same command, with `new_entity_id`. It used
+to answer `not_supported`; it now moves the registry entry, carries the state
+across, and rewrites the authored automations that named the old id:
+
+```
+client  {"id": 9, "type": "config/entity_registry/update",
+         "entity_id": "light.kitchen", "new_entity_id": "light.cooking"}
+server  {"id": 9, "type": "result", "success": true, "result": {
+           "entity_entry": {"entity_id": "light.cooking", …},
+           "renamed_from": "light.kitchen",
+           "automations_updated": ["Kitchen at dusk"]}}
+```
+
+Three refusals, each `invalid_format` with a sentence: an id that is malformed,
+one that already exists, and one in a different domain — the domain is what
+decides which services an entity accepts, so `light.x` renamed to `switch.x`
+would promise `switch.turn_on` from a platform that does not implement it.
+
+The registry event names both ids (`{"action": "update", "entity_id":
+"light.cooking", "old_entity_id": "light.kitchen"}`) so a listener can follow
+the move rather than seeing one entity vanish and another appear. Automations
+in `configuration.yaml` are the operator's file and are NOT rewritten; only
+authored ones, which Jarvis stores itself.
 
 The same operations exist over REST (`GET /api/states`,
 `POST /api/services/{domain}/{service}`, `POST /api/config/area_registry/create`

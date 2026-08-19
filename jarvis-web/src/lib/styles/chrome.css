@@ -996,6 +996,10 @@
 	border-radius: var(--jv-radius-sm);
 	background: var(--jv-field);
 }
+/* Was a read-only line above the editor; it is an INPUT now that an
+   entity_id can be changed. Same face and tracking either way — an id is a
+   key, and a proportional font makes `light.l1` and `light.11` the same
+   shape. */
 .console .editor .entity-id {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-2xs);
@@ -1003,6 +1007,12 @@
 	color: var(--jv-text-dim);
 	margin: 0;
 	overflow-wrap: anywhere;
+}
+.console .editor input.entity-id {
+	/* An editable id reads as text you own, not as metadata. */
+	color: var(--jv-text);
+	font-size: var(--jv-fs-xs);
+	overflow-wrap: normal;
 }
 .console .field {
 	display: flex;

@@ -293,6 +293,168 @@ async def test_the_real_git_runner_is_what_production_uses(store: RepoStore):
     assert callable(_run_git)
 
 
+async def test_a_server_with_no_git_says_how_to_install_it(store: RepoStore):
+    """What the operator actually saw: an errno and a name they could not reuse.
+
+    `[Errno 2] No such file or directory: 'git'` is accurate and useless. It
+    is also raised by the FIRST git command, which runs after the directory
+    and the README are already written — so the half-made repository then made
+    the name unusable.
+    """
+
+    async def _no_git(args, cwd, timeout, env=None):
+        return 1, "", "could not run git: [Errno 2] No such file or directory: 'git'"
+
+    entry, why = await store.async_create("snake-opengl", git=_no_git)
+    assert entry is None
+    assert "git is not installed" in why
+    assert "apt install git" in why
+    assert "[Errno 2]" not in why, "the errno was passed through to the operator"
+    assert not (store.workspace / "snake-opengl").exists(), (
+        "a directory was left behind by a creation that failed"
+    )
+
+
+async def test_a_missing_git_is_explained_wherever_it_is_noticed(tmp_path: Path):
+    """Not only at creation. Starting a job, diffing, pushing — all of them go
+    through `_run_git`, so the sentence lives there and not in each caller."""
+    from jarvis.integrations.code.workspace import GIT_MISSING, _run_git
+
+    code, _out, err = await _run_git(
+        ["--version"], tmp_path, 30.0, env={"PATH": str(tmp_path)}
+    )
+    assert code == 1
+    assert err == GIT_MISSING
+    assert "install" in err
+
+
+async def test_a_missing_working_directory_is_not_reported_as_a_missing_git(
+    tmp_path: Path,
+):
+    """ENOENT means two very different things here, and they arrive alike.
+
+    No `git` on the PATH and no directory to run it in are both
+    `FileNotFoundError`. Reporting the second as the first sends the operator
+    to install something they already have — which is what the first version
+    of this guard did.
+    """
+    from jarvis.integrations.code.workspace import GIT_MISSING, _run_git
+
+    code, _out, err = await _run_git(["--version"], tmp_path / "gone", 5.0)
+    assert code == 1
+    assert err != GIT_MISSING
+    assert "could not run git" in err
+
+
+async def test_the_name_is_usable_again_after_a_failed_creation(store: RepoStore):
+    """The half-made directory was the part that hurt.
+
+    Without the rollback the operator installs git, tries the same name, and
+    is told it already exists — by a directory Jarvis made and did not
+    register, which is the worst of both.
+    """
+    calls: list[list[str]] = []
+
+    async def _dies_at_commit(args, cwd, timeout, env=None):
+        calls.append(args)
+        if args[0] == "--version":
+            return 0, "git version 2.43.0", ""
+        if "commit" in args:
+            return 1, "", "nothing to commit"
+        return 0, "", ""
+
+    entry, why = await store.async_create("snake-opengl", git=_dies_at_commit)
+    assert entry is None and "commit" in why
+    assert not (store.workspace / "snake-opengl").exists()
+    assert "snake-opengl" not in store.repos
+
+    # And now the same name works, which is the whole point.
+    entry, why = await store.async_create("snake-opengl")
+    assert entry is not None, why
+
+
+async def test_git_is_checked_before_anything_is_written(store: RepoStore):
+    """Order matters: the probe has to come first or the rollback is doing
+    work that need never have happened."""
+    seen: list[str] = []
+
+    async def _runner(args, cwd, timeout, env=None):
+        seen.append(args[0])
+        if args[0] == "--version":
+            # Refuse here, and nothing below should have run.
+            return 1, "", "could not run git: [Errno 2] No such file or directory: 'git'"
+        return 0, "", ""
+
+    await store.async_create("snake-opengl", git=_runner)
+    assert seen == ["--version"], seen
+
+
+async def test_the_workspace_root_is_created_if_it_is_not_there(tmp_path: Path):
+    """`workspace: ~/jarvis/workspaces` on a fresh machine is a path that does
+    not exist yet, and refusing to make it would make the default useless."""
+    root = tmp_path / "not" / "yet"
+    store = RepoStore(_Memory(), root)
+    entry, why = await store.async_create("snake")
+    assert entry is not None, why
+    assert (root / "snake" / ".git").is_dir()
+
+
+async def test_a_clone_that_fails_leaves_nothing_behind(store: RepoStore, tmp_path: Path):
+    from jarvis.integrations.code.forges import Forge
+
+    async def _fails(args, cwd, timeout, env=None):
+        if args[0] == "--version":
+            return 0, "git version 2.43.0", ""
+        # git itself creates the directory before it fails partway.
+        (store.workspace / "widgets").mkdir(parents=True, exist_ok=True)
+        return 1, "", "fatal: could not read Username"
+
+    forge = Forge(name="work", kind="github", host="github.com", allow=["acme/widgets"])
+    entry, why = await store.async_clone(
+        forge, "acme/widgets", config_dir=tmp_path, git=_fails
+    )
+    assert entry is None and "clone failed" in why
+    assert not (store.workspace / "widgets").exists()
+
+
+def test_the_workspace_defaults_to_the_home_directory():
+    """A fresh install can make a repository without being configured first.
+
+    Off-by-default read as cautious and mostly just broke the feature: "write
+    me a Snake game" answered "there is nowhere to put it", and the fix was a
+    key nobody knew to look for.
+    """
+    from jarvis.integrations.code import DEFAULT_WORKSPACE, CodeConfig
+
+    expected = Path(DEFAULT_WORKSPACE).expanduser()
+    for raw in ({}, {"workspace": ""}, {"workspace": None}, {"workspace": "  "}):
+        assert CodeConfig.from_config(raw).workspace == expected, raw
+
+
+@pytest.mark.parametrize("value", ["off", "no", "none", "false", "disabled", "OFF", False])
+def test_creation_can_still_be_turned_off_explicitly(value):
+    """Removing the opt-in must not remove the ability to opt out."""
+    from jarvis.integrations.code import CodeConfig
+
+    assert CodeConfig.from_config({"workspace": value}).workspace is None
+
+
+def test_an_operators_own_path_still_wins():
+    from jarvis.integrations.code import CodeConfig
+
+    assert CodeConfig.from_config({"workspace": "~/elsewhere"}).workspace == (
+        Path("~/elsewhere").expanduser()
+    )
+
+
+async def test_the_refusal_names_the_setting_that_is_actually_wrong():
+    """"Set `code: workspace:`" is unhelpful when it IS set — to `off`."""
+    store = RepoStore(_Memory(), None)
+    _entry, why = await store.async_create("snake")
+    assert "turned off" in why
+    assert "~/jarvis/workspaces" in why
+
+
 def test_the_console_and_the_server_agree_about_names():
     """Two implementations of one rule, pinned together.
 

@@ -7,10 +7,10 @@ game, the honest answer was "there is nowhere to put it".
 
 ## The workspace root
 
-One directory, named by the operator:
+One directory. `~/jarvis/workspaces` unless the operator names another:
 
     code:
-      workspace: ~/jarvis/workspaces
+      workspace: ~/somewhere/else    # or `off` to refuse creation entirely
 
 Inside it, Jarvis may create repositories freely. Outside it, nothing changes:
 there is still no tool that takes a path, and a repository declared under
@@ -23,8 +23,11 @@ grant: reaching anything above the root. Every path goes through the same
 resolver as everything else in this package (`files/paths.py`), including its
 symlink check, so a name is confined the same way a file path is.
 
-With no `workspace:` set, creation is refused with a sentence saying which key
-to add. An operator who has not opted in gets exactly the behaviour they had.
+This used to default to OFF, which read as cautious and was mostly just
+broken: on a fresh install the answer to "write me a Snake game" was "there is
+nowhere to put it", and the fix was a key nobody knew to look for. `off` still
+refuses, and says so in those words rather than pointing at a key that is
+already set.
 
 ## Why names are strict
 
@@ -61,6 +64,7 @@ __all__ = [
     "RepoStore",
     "check_name",
     "describe_new_repo",
+    "git_problem",
     "initial_files",
 ]
 
@@ -81,6 +85,32 @@ _RESERVED = frozenset(
 
 MAX_REPOS = 100
 STORE_KEY = "code_repos"
+
+
+async def git_problem(runner: Any, cwd: Path) -> str:
+    """Empty when git can run here; otherwise a sentence saying how to fix it.
+
+    Asked BEFORE anything is created. Without this the first git command is
+    the one that fails, and it fails after the directory and the README are
+    already on disk — which left a half-made repository that the next attempt
+    then refused as "already exists". The operator saw an errno and a name
+    they could no longer use.
+
+    Through the injected runner rather than `shutil.which`, so a test that
+    supplies a fake git is not forced to have a real one.
+    """
+    from .workspace import GIT_MISSING
+
+    code, _out, err = await runner(["--version"], cwd, 30.0)
+    if code == 0:
+        return ""
+    text = (err or "").strip()
+    # The wording lives in `workspace._run_git`, which is where the missing
+    # binary is actually noticed; a fake runner in a test may hand back either
+    # that sentence or a raw errno, and both mean the same thing.
+    if text == GIT_MISSING or "No such file or directory" in text:
+        return GIT_MISSING
+    return f"git does not work here: {text[:200]}"
 
 
 def check_name(name: Any) -> str:
@@ -198,6 +228,22 @@ class CreatedRepo:
         )
 
 
+def _remove_tree(target: Path) -> None:
+    """Undo a half-made repository. Best effort, and never anything else.
+
+    Only ever called on a path this module just created — `async_create`
+    refuses when `target.exists()`, so reaching the `mkdir` means it did not
+    exist a moment ago. Jarvis does not delete repositories; it does clean up
+    after itself.
+    """
+    import shutil
+
+    try:
+        shutil.rmtree(target)
+    except OSError as err:  # pragma: no cover - best effort
+        _LOGGER.warning("code: could not clean up %s: %s", target, err)
+
+
 class RepoStore:
     """The repositories Jarvis made, on disk and in memory."""
 
@@ -256,9 +302,7 @@ class RepoStore:
         """
         if self.workspace is None:
             return None, (
-                "There is nowhere to put it. Set `code: workspace:` in "
-                "configuration.yaml to a directory Jarvis may create "
-                "repositories in."
+                "Creating repositories is turned off: `code: workspace:` is set to `off` in configuration.yaml. Remove that line to get the default (~/jarvis/workspaces), or name a directory of your own."
             )
         problem = check_name(name)
         if problem:
@@ -288,10 +332,21 @@ class RepoStore:
 
         runner = git or _run_git
         try:
+            self.workspace.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            return None, f"Could not create the workspace {self.workspace}: {err}"
+
+        # Before the directory exists, not after. See `git_problem`.
+        problem = await git_problem(runner, self.workspace)
+        if problem:
+            return None, problem
+
+        try:
             target.mkdir(parents=True)
             for filename, body in initial_files(name, description).items():
                 (target / filename).write_text(body, encoding="utf-8")
         except OSError as err:
+            _remove_tree(target)
             return None, f"Could not create {target}: {err}"
 
         # `-b main`: a repository whose default branch depends on the host's
@@ -306,6 +361,11 @@ class RepoStore:
         ):
             code, _out, err = await runner(args, target, 60.0)
             if code != 0:
+                # Nothing half-made left behind. A directory with a README and
+                # no `.git` is not a repository, it is not in the registry, and
+                # it makes the name unusable on the next attempt — so the
+                # failure has to undo itself.
+                _remove_tree(target)
                 return None, f"git {args[0]} failed in {target}: {err.strip()[:200]}"
 
         entry = CreatedRepo(
@@ -343,8 +403,7 @@ class RepoStore:
 
         if self.workspace is None:
             return None, (
-                "There is nowhere to put it. Set `code: workspace:` in "
-                "configuration.yaml."
+                "Creating repositories is turned off: `code: workspace:` is set to `off` in configuration.yaml. Remove that line to get the default (~/jarvis/workspaces), or name a directory of your own."
             )
         wanted = str(name or "").strip() or local_name(project)
         problem = check_name(wanted)
@@ -371,6 +430,15 @@ class RepoStore:
         from .workspace import _run_git
 
         runner = git or _run_git
+        try:
+            self.workspace.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            return None, f"Could not create the workspace {self.workspace}: {err}"
+
+        problem = await git_problem(runner, self.workspace)
+        if problem:
+            return None, problem
+
         code, _out, err = await runner(
             ["clone", "--depth", "50", url, str(target)],
             self.workspace,
@@ -378,6 +446,9 @@ class RepoStore:
             env=git_env(forge, config_dir),
         )
         if code != 0:
+            # A clone that dies partway leaves the directory behind, and the
+            # next attempt then refuses the name as "already exists".
+            _remove_tree(target)
             # Redacted: git puts the URL in its errors, and an askpass failure
             # can echo more than you want into a log somebody pastes.
             return None, f"clone failed: {redact(err, forge).strip()[:300]}"

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,7 +11,8 @@ import {
 	formatAliases,
 	isUnchanged,
 	parseAliases,
-	platformNote
+	platformNote,
+	whyNotEntityId
 } from './entityAdmin';
 import type { EntityRegistryEntry } from './jarvisClient';
 
@@ -38,6 +41,7 @@ describe('formFor', () => {
 
 	it('survives an entry that is not there at all', () => {
 		expect(formFor(undefined)).toEqual({
+			entityId: '',
 			name: '',
 			areaId: NO_AREA,
 			aliases: '',
@@ -162,5 +166,44 @@ describe('platformNote', () => {
 		expect(platformNote(entry({ platform: 'mqtt' }))).toBe('Created by the mqtt integration.');
 		expect(platformNote(entry({ platform: undefined }))).toBe('');
 		expect(platformNote(undefined)).toBe('');
+	});
+});
+
+describe('whyNotEntityId', () => {
+	/**
+	 * The console's rules are a copy of jarvis-core's `EntityRegistry.rename`,
+	 * so the form can refuse before a round trip. Neither side owns the
+	 * answers — `tests/contracts/entity_id_rename.json` is read by both suites,
+	 * and jarvis-core asserts the real registry against the same rows.
+	 *
+	 * `taken` rows are skipped: a collision is something only the server knows
+	 * about, and pretending otherwise would be a rule the console cannot keep.
+	 */
+	const table = JSON.parse(
+		readFileSync(
+			fileURLToPath(new URL('../../../tests/contracts/entity_id_rename.json', import.meta.url)),
+			'utf-8'
+		)
+	) as { cases: { from: string; to: string; ok: boolean; taken?: string[] }[] };
+
+	it('agrees with jarvis-core on every row of the shared table', () => {
+		const rows = table.cases.filter((row) => !row.taken);
+		expect(rows.length).toBeGreaterThanOrEqual(12);
+		for (const row of rows) {
+			const problem = whyNotEntityId(row.to, row.from);
+			expect(
+				problem === '',
+				`${row.from} -> ${JSON.stringify(row.to)}: console said ` +
+					`${problem || '<allowed>'}, table says ${row.ok}`
+			).toBe(row.ok);
+		}
+	});
+
+	it('says which domain it has to stay in, not just that it is wrong', () => {
+		expect(whyNotEntityId('switch.kitchen', 'light.kitchen')).toContain('light');
+	});
+
+	it('shows the shape rather than restating the rule', () => {
+		expect(whyNotEntityId('kitchen', 'light.kitchen')).toContain('light.kitchen');
 	});
 });

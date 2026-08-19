@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "One table, two implementations. jarvis-core's `EntityRegistry.rename`",
+    "decides whether an entity_id may change; the console mirrors the rules in",
+    "`whyNotEntityId` so the form can refuse before a round trip. A copy that",
+    "drifts makes the form accept what the server rejects, and the reader",
+    "blames the form. Both suites read THIS file.",
+    "",
+    "`taken` lists ids that already exist, so the collision rule is covered on",
+    "the server side; the console cannot know them and skips those rows."
+  ],
+  "cases": [
+    { "from": "light.kitchen", "to": "light.cooking", "ok": true },
+    { "from": "light.kitchen", "to": "light.kitchen", "ok": true },
+    { "from": "light.kitchen", "to": "LIGHT.COOKING", "ok": true },
+    { "from": "light.kitchen", "to": "light.a_b_9", "ok": true },
+    { "from": "light.kitchen", "to": "switch.kitchen", "ok": false },
+    { "from": "light.kitchen", "to": "kitchen", "ok": false },
+    { "from": "light.kitchen", "to": "light.", "ok": false },
+    { "from": "light.kitchen", "to": ".kitchen", "ok": false },
+    { "from": "light.kitchen", "to": "", "ok": false },
+    { "from": "light.kitchen", "to": "light.Kitchen Light", "ok": false },
+    { "from": "light.kitchen", "to": "light kitchen", "ok": false },
+    { "from": "light.kitchen", "to": "light.kitchen.extra", "ok": false },
+    { "from": "light.kitchen", "to": "light.-dash", "ok": false },
+    { "from": "light.kitchen", "to": "9light.kitchen", "ok": false },
+    { "from": "light.kitchen", "to": "light.hallway", "ok": false, "taken": ["light.hallway"] }
+  ]
+}

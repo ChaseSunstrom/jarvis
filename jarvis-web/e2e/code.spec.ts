@@ -129,8 +129,10 @@ test('the sandbox line does not claim more than it can', async ({ page }) => {
 		timeout: 15_000
 	});
 	// With no wrapper the model still has no shell and cannot leave the
-	// repository, so the sentence names the one thing that actually changes.
-	await expect(page.getByTestId('code-sandbox')).toContainText('Checks run as the server does');
+	// repository, so the sentence names the one thing that actually changes —
+	// where the checks run, which since the host-check refusal may be nowhere.
+	await expect(page.getByTestId('code-sandbox')).toContainText('environment');
+	await expect(page.getByTestId('code-sandbox')).not.toContainText('unsafe');
 
 	await reset(page, true);
 	await page.reload();
@@ -145,6 +147,13 @@ test('CODE is in the nav and reachable by its chord', async ({ page }) => {
 	await expect(page.getByTestId('tasks-lede')).toHaveAttribute('data-redialling', 'false', {
 		timeout: 15_000
 	});
+	// The boot animation swallows the FIRST key — `BootSequence` registers a
+	// one-shot `keydown` that jumps the timeline to its end, so a `g` pressed
+	// while it plays skips the animation instead of arming the chord, and only
+	// the `c` reaches the handler. That is deliberate behaviour and invisible
+	// on a fast machine, which is exactly why this raced: it failed on the
+	// slow runs and passed on the quick ones.
+	await expect(page.getByTestId('boot')).toHaveCount(0, { timeout: 15_000 });
 	await page.keyboard.press('g');
 	await page.keyboard.press('c');
 	await expect(page).toHaveURL(/\/code$/, { timeout: 10_000 });
@@ -253,6 +262,27 @@ test('a read-only forge and a missing token both say so', async ({ page }) => {
 	await page.getByTestId('clone-forge').selectOption('mirror');
 	await expect(page.getByTestId('clone-forge-note')).toContainText('cannot push branches back');
 	await expect(page.getByTestId('clone-forge-token')).toContainText('No token configured');
+});
+
+test('an empty console says how to end up with a repository', async ({ page }) => {
+	// What the operator actually saw: an empty picker over "Pick a repository
+	// first", which names what is missing and not how to fix it.
+	await openCode(page);
+	await tell(page, { type: 'jarvis/test/code_empty' });
+	await page.reload();
+	await expect(page.getByTestId('code-lede')).toHaveAttribute('data-redialling', 'false', {
+		timeout: 15_000
+	});
+
+	await expect(page.getByTestId('code-repo')).toBeDisabled();
+	const note = page.getByTestId('code-no-repos');
+	await expect(note).toContainText('NEW REPOSITORY');
+	await expect(note).toContainText('CLONE FROM A FORGE');
+
+	// Put the declared repositories back. One mock process serves the file and
+	// the tests below load their page BEFORE they reset, so a test that empties
+	// the list and walks away decides what the next one sees.
+	await reset(page);
 });
 
 test('a repository with no environment says it has no shell', async ({ page }) => {

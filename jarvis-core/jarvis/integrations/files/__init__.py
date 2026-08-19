@@ -97,6 +97,8 @@ class Root:
     url: str = ""
     username: str = ""
     password: str = ""
+    #: `basic` (the default, and what Nextcloud wants) or `digest`.
+    auth: str = "basic"
     #: Read-only unless the operator said otherwise. There is no API to change
     #: this: the config file is the only place it is decided.
     writable: bool = False
@@ -133,6 +135,7 @@ def root_from_dict(raw: Any) -> Root | None:
         url=str(raw.get("url") or ""),
         username=str(raw.get("username") or ""),
         password=str(raw.get("password") or ""),
+        auth=str(raw.get("auth") or "basic").strip().lower(),
         writable=bool(raw.get("writable")),
         description=str(raw.get("description") or "")[:200],
     )
@@ -226,7 +229,7 @@ class FileManager:
                 url,
                 content=propfind_body(),
                 headers={"Depth": "1", "Content-Type": 'application/xml; charset="utf-8"'},
-                auth=auth_for(root.username, root.password),
+                auth=auth_for(root.username, root.password, root.auth),
             )
         except httpx.HTTPError as err:
             raise FileError(f"could not reach {root.name}: {err}") from err
@@ -279,7 +282,7 @@ class FileManager:
         try:
             response = await self._http.get(
                 url,
-                auth=auth_for(root.username, root.password),
+                auth=auth_for(root.username, root.password, root.auth),
                 # Ask the server to stop early. A server that ignores it is
                 # caught by the slice below; one that honours it never sends
                 # the rest.
@@ -373,7 +376,7 @@ class FileManager:
         url = join_url(root.url, relative)
         try:
             response = await self._http.put(
-                url, content=body, auth=auth_for(root.username, root.password)
+                url, content=body, auth=auth_for(root.username, root.password, root.auth)
             )
         except httpx.HTTPError as err:
             raise FileError(f"could not write {relative} to {root.name}: {err}") from err

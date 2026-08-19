@@ -221,6 +221,13 @@ test('TASKS is reachable by nav, chord and palette', async ({ page }) => {
 	await expect(page.getByTestId('devices-lede')).toHaveAttribute('data-redialling', 'false', {
 		timeout: 15_000
 	});
+	// The boot animation swallows the FIRST key — `BootSequence` registers a
+	// one-shot `keydown` that jumps the timeline to its end, so a `g` pressed
+	// while it plays skips the animation instead of arming the chord, and only
+	// the `c` reaches the handler. That is deliberate behaviour and invisible
+	// on a fast machine, which is exactly why this raced: it failed on the
+	// slow runs and passed on the quick ones.
+	await expect(page.getByTestId('boot')).toHaveCount(0, { timeout: 15_000 });
 	await page.keyboard.press('g');
 	await page.keyboard.press('k');
 	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/tasks', {

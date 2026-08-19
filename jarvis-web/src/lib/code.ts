@@ -218,7 +218,9 @@ export const RESERVED_NAMES = new Set([
  */
 export function describeEnvironment(environment: CodeEnvironment | null): string {
 	if (!environment) {
-		return 'No environment — it can read and edit, and run only this repository’s declared checks. No shell.';
+		// Deliberately not "and runs the declared checks": whether it may do
+		// that depends on the repository, and `whyNoChecks` is what knows.
+		return 'No environment — it can read and edit. No shell.';
 	}
 	const reach =
 		environment.network === 'egress'
@@ -294,15 +296,38 @@ export function countChanges(lines: DiffLine[]): { added: number; removed: numbe
  * instruction into a read-only repository and gets a report back instead of a
  * branch should have known before they pressed the button, not after.
  */
-export function describeRepo(repo: CodeRepo): string {
+export function describeRepo(repo: CodeRepo, sandboxed = false): string {
 	const parts: string[] = [];
 	parts.push(repo.writable ? 'may be changed' : 'read-only — Jarvis will look, not touch');
-	if (repo.checks.length) {
-		parts.push(`checks: ${repo.checks.join(', ')}`);
-	} else {
+	if (!repo.checks.length) {
 		parts.push('no checks configured');
+	} else if (whyNoChecks(repo, sandboxed)) {
+		parts.push('checks withheld');
+	} else {
+		parts.push(`checks: ${repo.checks.join(', ')}`);
 	}
 	return parts.join(' · ');
+}
+
+/**
+ * Why this repository's checks will not run, or "".
+ *
+ * A check is the operator's command string, but it executes FILES out of the
+ * working tree — `pytest` imports `conftest.py`, `npm test` runs
+ * `package.json`, `make` runs the Makefile — and on a writable repository a
+ * job can write those. So jarvis-core withholds `run_check` entirely unless
+ * there is an `environment:` or a `sandbox:` wrapper between the check and the
+ * machine. Saying so here means the operator finds out from the page rather
+ * than from a job that quietly never ran its tests.
+ */
+export function whyNoChecks(repo: CodeRepo, sandboxed = false): string {
+	if (!repo.checks.length || !repo.writable) return '';
+	if (repo.environment || sandboxed) return '';
+	return (
+		'Checks are withheld here: this repository can be changed, and a check runs ' +
+		'files a job could have written. Give it an environment, or set `code.sandbox`, ' +
+		'or make it read-only.'
+	);
 }
 
 /**
@@ -340,5 +365,6 @@ export function describeChecks(checks: CodeCheck[]): string {
 export function describeSandbox(sandboxed: boolean): string {
 	return sandboxed
 		? 'Checks run behind the wrapper set in configuration.yaml.'
-		: 'Checks run as the server does. Set `code.sandbox` to put a wrapper around them.';
+		: 'Checks run in the repository’s environment, or not at all on a writable ' +
+			'repository without one. Set `code.sandbox` for a wrapper instead.';
 }

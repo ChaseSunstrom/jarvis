@@ -417,20 +417,106 @@ def _changes(payload: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any
     return {key: payload[key] for key in allowed if key in payload}
 
 
+def _rewrite_entity_id(value: Any, old: str, new: str) -> tuple[Any, int]:
+    """`old` becomes `new` anywhere inside a nested config. Returns the count.
+
+    Whole strings only, never substrings: `light.kitchen` must not rewrite the
+    `light.kitchen_counter` sitting next to it in the same list.
+    """
+    if isinstance(value, str):
+        return (new, 1) if value == old else (value, 0)
+    if isinstance(value, list):
+        changed = 0
+        out = []
+        for item in value:
+            rewritten, count = _rewrite_entity_id(item, old, new)
+            out.append(rewritten)
+            changed += count
+        return out, changed
+    if isinstance(value, dict):
+        changed = 0
+        out = {}
+        for key, item in value.items():
+            rewritten, count = _rewrite_entity_id(item, old, new)
+            out[key] = rewritten
+            changed += count
+        return out, changed
+    return value, 0
+
+
+async def _follow_rename_into_automations(
+    jarvis: "Jarvis", old: str, new: str
+) -> list[str]:
+    """Point authored automations at the entity's new id. Returns their names.
+
+    Renaming an entity and leaving the automations that drive it pointing at
+    an id nothing answers to is a rename that silently breaks the house. These
+    are configs Jarvis owns and stores, so it can follow them; anything in
+    `configuration.yaml` is the operator's file and is reported instead.
+    """
+    from ..automation.authored import get_authored
+
+    try:
+        store = get_authored(jarvis)
+    except Exception:  # noqa: BLE001 - automations are optional
+        return []
+    touched: list[str] = []
+    for entry in list(store.entries()):
+        entry_id = str(entry.get("id") or "")
+        config = {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")}
+        rewritten, count = _rewrite_entity_id(config, old, new)
+        if not count:
+            continue
+        try:
+            await store.async_update(entry_id, rewritten)
+        except Exception as err:  # noqa: BLE001 - one bad config must not stop the rest
+            _LOGGER.warning(
+                "could not follow the rename of %s into automation %s: %s",
+                old,
+                entry_id,
+                err,
+            )
+            continue
+        touched.append(str(entry.get("alias") or entry_id))
+    # Reload so the running engine picks up the rewritten configs; without it
+    # the file is right and the behaviour is still wrong until a restart. Only
+    # if the integration is loaded at all — automations are optional.
+    if touched and jarvis.services.has_service("automation", "reload"):
+        await jarvis.services.async_call("automation", "reload", {}, blocking=True)
+    return touched
+
+
 async def async_update_entity(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
     entity_id = str(payload.get("entity_id") or "")
     if not entity_id:
         raise ApiError("invalid_format", "entity_id is required", 400)
-    if payload.get("new_entity_id") and payload["new_entity_id"] != entity_id:
-        raise ApiError(
-            "not_supported",
-            "renaming an entity_id is not supported yet; set 'name' instead",
-            400,
-        )
+    wanted = str(payload.get("new_entity_id") or "").strip().lower()
+
     entry = await jarvis.entities.update(entity_id, **_changes(payload, ENTITY_UPDATE_FIELDS))
     if entry is None:
         raise ApiError("not_found", f"unknown entity {entity_id}", 404)
-    return {"entity_entry": entry.as_dict()}
+
+    result: dict[str, Any] = {}
+    if wanted and wanted != entity_id:
+        # After the other fields, so a request that both renames and renames-
+        # the-label does not half-apply when the id turns out to be taken.
+        state = jarvis.states.get(entity_id)
+        try:
+            entry = await jarvis.entities.rename(entity_id, wanted)
+        except ValueError as err:
+            raise ApiError("invalid_format", str(err), 400) from err
+        if entry is None:  # pragma: no cover - update() already found it
+            raise ApiError("not_found", f"unknown entity {entity_id}", 404)
+        if state is not None:
+            # Carried, not recreated: an entity that came back as `unknown`
+            # after a rename would look broken to everything watching it.
+            jarvis.states.set(wanted, state.state, state.attributes)
+            jarvis.states.remove(entity_id)
+        result["renamed_from"] = entity_id
+        result["automations_updated"] = await _follow_rename_into_automations(
+            jarvis, entity_id, wanted
+        )
+    return {"entity_entry": entry.as_dict(), **result}
 
 
 async def async_update_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:

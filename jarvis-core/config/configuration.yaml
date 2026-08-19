@@ -555,6 +555,9 @@ files:
   #   username: YOURNAME
   #   # An app password, not your login. Nextcloud: Settings -> Security.
   #   password: !env_var NEXTCLOUD_PASSWORD ""
+  #   # `basic` (the default, and what Nextcloud and ownCloud want) or
+  #   # `digest`, which older Apache mod_dav and some NAS boxes ask for.
+  #   auth: basic
   #   # Read-only unless you say otherwise. Even then `write_file` is Tier 3
   #   # and asks every time: this flag allows it at all, the tier is you
   #   # seeing each one.
@@ -671,17 +674,23 @@ research:
 code:
   # WHERE JARVIS MAY CREATE REPOSITORIES.
   #
-  # Unset (the default) means it may not: asked for something new, it says so
-  # rather than inventing a location. Set it and `create_repository` starts
-  # working — from the console's CODE tab and from a spoken request alike.
+  # `~/jarvis/workspaces` unless you name somewhere else. It is created on
+  # first use, so a fresh install can answer "write me a Snake game" instead
+  # of "there is nowhere to put it".
   #
-  # Everything created lands inside this one directory and nothing can leave
-  # it: a name becomes a directory name and goes through the same resolver, with
-  # the same symlink check, as every other path in this file.
+  # What that grants is narrow: make a directory under this one root, `git
+  # init` it, write a README. RUNNING anything still needs an `environment:`
+  # below. Everything created lands inside this directory and nothing can
+  # leave it — a name becomes a directory name and goes through the same
+  # resolver, with the same symlink check, as every other path in this file.
+  #
+  # `off` (or `false`, `no`, `none`, `disabled`) refuses creation entirely.
   #
   # Jarvis never DELETES anything here. "Forget" drops the row and leaves the
-  # files; removing them is one `rm` away for a human who means it.
-  workspace: ""        # e.g. ~/jarvis/workspaces
+  # files; removing them is one `rm` away for a human who means it. A creation
+  # that fails partway does clean up after itself, so a name is never left
+  # unusable by a half-made directory.
+  workspace: ~/jarvis/workspaces
 
   # ENVIRONMENTS — where a job is allowed to run things.
   #

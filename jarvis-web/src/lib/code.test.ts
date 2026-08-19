@@ -12,6 +12,7 @@ import {
 	MAX_DIFF_LINES,
 	describeEnvironment,
 	suggestedName,
+	whyNoChecks,
 	whyNotName,
 	whyNotProject,
 	type CodeForge,
@@ -118,8 +119,51 @@ describe('describeRepo', () => {
 	});
 
 	it('names the checks, or says there are none', () => {
-		expect(describeRepo(repo({ checks: ['pytest -q'] }))).toContain('pytest -q');
+		// Read-only, because a WRITABLE repository with no environment does not
+		// get to run its checks at all — see `whyNoChecks`.
+		expect(
+			describeRepo(repo({ checks: ['pytest -q'], writable: false }))
+		).toContain('pytest -q');
 		expect(describeRepo(repo())).toContain('no checks');
+	});
+
+	it('does not list checks that will never run', () => {
+		const said = describeRepo(repo({ checks: ['pytest -q'], writable: true }));
+		expect(said).toContain('withheld');
+		expect(said).not.toContain('pytest -q');
+	});
+});
+
+describe('whyNoChecks', () => {
+	/**
+	 * A check is the operator's command string, but it EXECUTES files out of
+	 * the working tree, and on a writable repository a job can write those. So
+	 * jarvis-core withholds `run_check` unless something stands between the
+	 * check and the machine.
+	 */
+	it('explains the one configuration where checks are withheld', () => {
+		const said = whyNoChecks(repo({ checks: ['pytest -q'], writable: true }));
+		expect(said).toContain('withheld');
+		expect(said).toMatch(/environment/i);
+		expect(said).toMatch(/read-only/i);
+	});
+
+	it('is quiet when there is an environment', () => {
+		expect(
+			whyNoChecks(repo({ checks: ['pytest -q'], writable: true, environment: 'python' }))
+		).toBe('');
+	});
+
+	it('is quiet when the operator set a sandbox wrapper', () => {
+		expect(whyNoChecks(repo({ checks: ['pytest -q'], writable: true }), true)).toBe('');
+	});
+
+	it('is quiet on a read-only repository, where the files are the operator’s', () => {
+		expect(whyNoChecks(repo({ checks: ['pytest -q'], writable: false }))).toBe('');
+	});
+
+	it('is quiet when there are no checks to withhold', () => {
+		expect(whyNoChecks(repo({ writable: true }))).toBe('');
 	});
 });
 
@@ -148,7 +192,7 @@ describe('describeSandbox', () => {
 		// only thing the wrapper changes is where the CHECKS run, and the
 		// sentence has to say that rather than imply the rest is off.
 		const off = describeSandbox(false);
-		expect(off).toContain('Checks run as the server does');
+		expect(off).toMatch(/environment/i);
 		expect(off).not.toMatch(/not sandboxed|unsafe/i);
 	});
 
@@ -206,7 +250,9 @@ describe('describeEnvironment', () => {
 	it('says plainly that no environment means no shell', () => {
 		const said = describeEnvironment(null);
 		expect(said).toContain('No shell');
-		expect(said).toContain('declared checks');
+		// Deliberately silent about checks: whether they run depends on the
+		// repository, not the environment, and `whyNoChecks` is what knows.
+		expect(said).not.toContain('checks');
 	});
 
 	it('leads with what the network can do, because that is the choice', () => {

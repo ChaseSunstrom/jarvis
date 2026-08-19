@@ -123,6 +123,18 @@ MAX_INSTRUCTION_CHARS = 2000
 #: outlives this; what expires is the diff, which is the large part.
 MAX_KEPT = 20
 
+#: Where Jarvis may create repositories when the operator has not said.
+#:
+#: A directory of its own under the home directory, not the current working
+#: directory and not a temp dir: repositories outlive the process that made
+#: them, and a path that moves with the shell is a path nobody can find twice.
+DEFAULT_WORKSPACE = "~/jarvis/workspaces"
+
+#: `workspace:` values that mean "Jarvis may not create repositories at all".
+#: `false` (the YAML boolean) works too.
+WORKSPACE_OFF = frozenset({"off", "no", "none", "false", "disabled"})
+
+
 
 @dataclass
 class CodeConfig:
@@ -224,8 +236,27 @@ class CodeConfig:
             )
             default_environment = ""
 
-        raw_workspace = str(data.get("workspace") or "").strip()
-        workspace = Path(raw_workspace).expanduser() if raw_workspace else None
+        # `~/jarvis/workspaces` unless told otherwise. This used to default to
+        # OFF, which read as cautious and was mostly just broken: asked for a
+        # Snake game, Jarvis answered "there is nowhere to put it" on a fresh
+        # install, and the fix was a configuration key nobody knew to look for.
+        #
+        # What the default grants is narrow — make a directory under one root,
+        # `git init` it, write a README. Running anything still needs an
+        # `environment:`, and every path still goes through the same resolver,
+        # symlink check included, so nothing reaches above the root.
+        #
+        # The off switch stays explicit, because removing the opt-in must not
+        # remove the ability to opt out.
+        raw_workspace = data.get("workspace")
+        if raw_workspace is False or (
+            isinstance(raw_workspace, str)
+            and raw_workspace.strip().lower() in WORKSPACE_OFF
+        ):
+            workspace = None
+        else:
+            text = str(raw_workspace or "").strip()
+            workspace = Path(text or DEFAULT_WORKSPACE).expanduser()
 
         return cls(
             repositories=repos,
@@ -317,7 +348,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         " — one or more can reach the network"
         if any(e.networked for e in cfg.environments.values())
         else "",
-        cfg.workspace or "not set (Jarvis cannot create repositories)",
+        cfg.workspace or "off — Jarvis may not create repositories",
     )
     return True
 
@@ -377,8 +408,9 @@ def _register_services(jarvis: "Jarvis") -> None:
         handle_create,
         supports_response=True,
         description=(
-            "Create a new git repository inside the configured workspace. "
-            "Refused unless `code: workspace:` is set."
+            "Create a new git repository inside the workspace "
+            "(~/jarvis/workspaces unless configured otherwise). Refused only "
+            "when `code: workspace:` is `off`."
         ),
         fields={
             "name": {"description": "Lowercase name; becomes a directory.", "required": True},
@@ -559,7 +591,7 @@ def _register_tools(jarvis: "Jarvis") -> None:
             "Create a new, empty git repository Jarvis can then work in. Use "
             "this when the user asks for something that does not exist yet — a "
             "new program, a new project — rather than saying there is nowhere "
-            "to put it. Only works when a workspace is configured."
+            "to put it."
         ),
         parameters=schema_object(
             {
@@ -698,9 +730,9 @@ async def async_create_repository(
         return None, "the code integration is not set up on this server"
     if not repos.enabled:
         return None, (
-            "There is nowhere to put it. Set `code: workspace:` in "
-            "configuration.yaml to a directory Jarvis may create repositories "
-            "in, then restart."
+            "Creating repositories is turned off: `code: workspace:` is set "
+            "to `off` in configuration.yaml. Remove that line to get the "
+            "default (~/jarvis/workspaces), or name a directory of your own."
         )
 
     wanted = str(environment or "").strip()

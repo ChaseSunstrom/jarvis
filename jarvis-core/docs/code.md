@@ -20,20 +20,30 @@ stops it.
 
 ## Making repositories
 
-Set one key and Jarvis can create its own:
+Jarvis creates its own, in `~/jarvis/workspaces`, with nothing to configure.
+"Write me a Snake game in C++" has somewhere to go: `create_repository` makes
+`~/jarvis/workspaces/snake-opengl`, `git init -b main`, a README and an initial
+commit — and a coding job fills it in. The console's **CODE** tab has a NEW
+REPOSITORY button doing the same thing. The directory is made on first use.
+
+Somewhere else, or nowhere at all:
 
 ```yaml
 code:
-  workspace: ~/jarvis/workspaces
+  workspace: ~/somewhere/else
+  # workspace: off      # refuse creation entirely
 ```
 
-Then "write me a Snake game in C++" has somewhere to go: `create_repository`
-makes `~/jarvis/workspaces/snake-opengl`, `git init -b main`, a README and an
-initial commit — and a coding job fills it in. The console's **CODE** tab grows
-a NEW REPOSITORY button doing the same thing.
+This defaulted to OFF once. It read as cautious and was mostly just broken —
+on a fresh install the answer was "there is nowhere to put it", and the fix
+was a key nobody knew to look for. What the default grants is narrow: a
+directory under one root, `git init`, a README. Running anything still needs
+an `environment:`.
 
-Unset (the default) means Jarvis may not create anything, and says so rather
-than inventing a location.
+**git has to be installed.** It is checked before anything is written, so a
+machine without it gets a sentence naming the package to install rather than
+an errno — and a creation that fails for any reason removes what it made, so
+the name is still free on the next attempt.
 
 Names are strict — lowercase letters, digits, dot, dash, underscore — because a
 name becomes a directory, a branch prefix and a container mount. The refusal

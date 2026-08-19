@@ -83,7 +83,7 @@ matches a DNS-rebinding attacker, who controls both headers).
 | Route | What it does |
 | --- | --- |
 | `/` | Voice HUD: hands-free VAD, barge-in, orb, latency readout, a mute that is remembered, and a text box for when the microphone is refused. Tier-3 approvals and live tool activity are docked over it — they are raised by voice turns, so the surface you spoke to is where they have to be answerable |
-| `/devices` | Every entity grouped by area, live over `subscribe_events`, with inline controls (toggle, brightness, cover open/stop/close + position, climate setpoint and HVAC mode, media transport and volume, locks, selects, numbers). MANAGE edits an entity's name, area, aliases and its exposed / hidden / disabled flags |
+| `/devices` | Every entity grouped by area, live over `subscribe_events`, with inline controls (toggle, brightness, cover open/stop/close + position, climate setpoint and HVAC mode, media transport and volume, locks, selects, numbers). MANAGE edits an entity's **`entity_id`**, name, area, aliases and its exposed / hidden / disabled flags. Changing the id moves the state with it and rewrites the authored automations that named it; a change of domain or a taken id is refused with the reason before SAVE |
 | `/areas` | Create / rename / delete areas and assign entities to them |
 | `/automations` | Enable, disable and run automations; shows `last_triggered`. Create, edit and delete automations — triggers, conditions and actions as JSON |
 | `/tools` | The LLM tool catalogue, an entity-exposure switchboard, and a test-runner that calls a tool with JSON arguments and prints the result. Create, edit and delete tools — an HTTP call the assistant may make, with its tier |

@@ -442,3 +442,67 @@ async def test_setup_with_no_places_still_registers_the_tools(jarvis):
 def test_the_cap_is_bounded_from_both_ends(jarvis):
     assert FileManager(jarvis, max_bytes=1).max_bytes >= 1_000
     assert FileManager(jarvis, max_bytes=10**9).max_bytes <= 2_000_000
+
+
+# ---------------------------------------------------------------------------
+# WebDAV auth, which used to be basic or nothing
+# ---------------------------------------------------------------------------
+def test_a_root_can_ask_for_digest_auth():
+    """Older Apache `mod_dav` and several NAS boxes only offer digest.
+
+    This said "digest is not supported and says so" — but the reason was that
+    nothing passed a scheme through, not that httpx could not do it.
+    """
+    import httpx
+
+    from jarvis.integrations.files import root_from_dict
+    from jarvis.integrations.files.dav import auth_for
+
+    root = root_from_dict(
+        {"name": "nas", "url": "https://nas.lan/dav", "username": "u", "password": "p",
+         "auth": "digest"}
+    )
+    assert root is not None and root.auth == "digest"
+    assert isinstance(auth_for(root.username, root.password, root.auth), httpx.DigestAuth)
+
+
+def test_basic_is_still_the_default():
+    import httpx
+
+    from jarvis.integrations.files import root_from_dict
+    from jarvis.integrations.files.dav import auth_for
+
+    root = root_from_dict(
+        {"name": "nc", "url": "https://cloud.lan", "username": "u", "password": "p"}
+    )
+    assert root is not None and root.auth == "basic"
+    assert isinstance(auth_for(root.username, root.password, root.auth), httpx.BasicAuth)
+
+
+def test_no_credential_means_no_auth_object():
+    from jarvis.integrations.files.dav import auth_for
+
+    assert auth_for("", "") is None
+    assert auth_for("", "", "digest") is None
+
+
+def test_a_misspelled_scheme_falls_back_rather_than_breaking_the_root():
+    """`auth: bsaic` should not take a whole root offline."""
+    import httpx
+
+    from jarvis.integrations.files.dav import auth_for
+
+    assert isinstance(auth_for("u", "p", "bsaic"), httpx.BasicAuth)
+    assert isinstance(auth_for("u", "p", ""), httpx.BasicAuth)
+
+
+def test_the_scheme_reaches_every_request_and_not_just_the_listing():
+    """Three call sites read it; one that kept `basic` would fail on write."""
+    import re
+
+    source = Path(__file__).resolve().parents[1] / "jarvis/integrations/files/__init__.py"
+    text = source.read_text(encoding="utf-8")
+    calls = re.findall(r"auth_for\([^)]*\)", text)
+    assert calls, "nothing calls auth_for any more"
+    for call in calls:
+        assert "root.auth" in call, f"{call} does not pass the scheme through"

@@ -33,6 +33,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -136,6 +137,14 @@ SKIP_DIRS = frozenset(
         ".pytest_cache", ".ruff_cache", "dist", "build", ".svelte-kit",
         ".gradle", "target", ".next", ".terraform", ".tox",
     }
+)
+
+
+#: What to say when there is no git at all. One sentence, one place.
+GIT_MISSING = (
+    "git is not installed, or is not on the PATH this server runs with. "
+    "Jarvis needs it — install it (`apt install git`, `dnf install git`, "
+    "`brew install git`) and restart jarvis-core."
 )
 
 
@@ -748,6 +757,25 @@ async def _run_git(
             # operation wants.
             env=env,
         )
+    except FileNotFoundError as err:
+        # ENOENT here means one of two very different things: no `git` on the
+        # PATH, or no working directory to run it in. Both arrive as the same
+        # exception, so `which` decides — reporting "git is not installed" for
+        # a repository that has been deleted would send the operator to
+        # install something they already have.
+        # Against the PATH the CHILD would have used, not this process's:
+        # `execvpe` resolves the name through the env it is handed, so a
+        # caller that passes an env with its own PATH gets a different answer
+        # — and the check is worthless if it asks a different question from
+        # the one that just failed.
+        path = (env or {}).get("PATH", os.environ.get("PATH"))
+        if shutil.which("git", path=path) is None:
+            # The likeliest first failure on a fresh server, and
+            # `[Errno 2] No such file or directory: 'git'` is accurate and
+            # useless. Every path into git comes through here, so saying it
+            # once says it everywhere.
+            return 1, "", GIT_MISSING
+        return 1, "", f"could not run git: {err}"
     except (OSError, ValueError) as err:
         return 1, "", f"could not run git: {err}"
     try:

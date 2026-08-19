@@ -31,14 +31,16 @@ import java.util.concurrent.TimeoutException
  * ## Why this test exists at all
  *
  * `MainActivity`'s AUTOMATIONS button and `SettingsActivity`'s AUTOMATIONS and
- * AUDIT LOG buttons all point at `ai.jarvis.app.automation.ui.*` activities that
- * are declared in AndroidManifest.xml but are not implemented in this build.
- * As `JarvisScreens` explains, that combination does NOT throw
- * `ActivityNotFoundException` — the intent resolves against the manifest entry
- * and the app dies later with "Unable to instantiate activity". The toast is the
- * evidence that `JarvisScreens.isPresent` caught it first. Asserting the toast
- * rather than merely "did not crash" is what makes the test able to tell the
- * fixed behaviour from a version where the crash simply happens a moment later.
+ * AUDIT LOG buttons point at `ai.jarvis.app.automation.ui.*` activities that
+ * are declared in AndroidManifest.xml. They ARE implemented now — the test
+ * branches on that and asserts the screen opens — but the manifest entry is
+ * what makes their absence dangerous in a build that strips the module: as
+ * `JarvisScreens` explains, that combination does NOT throw
+ * `ActivityNotFoundException`. The intent resolves against the manifest entry
+ * and the app dies later with "Unable to instantiate activity". The toast is
+ * the evidence that `JarvisScreens.isPresent` caught it first, and asserting
+ * the toast rather than merely "did not crash" is what tells the fixed
+ * behaviour from a version where the crash happens a moment later.
  *
  * ## The one rule for the action you pass
  *

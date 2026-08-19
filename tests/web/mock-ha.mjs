@@ -144,13 +144,20 @@ export function makeWorld() {
 			disabled: false
 		}
 	];
-	const states = new Map(
+	// Factories, not literals: `jarvis/test/registry_reset` rebuilds both, and a
+	// reset that handed back the SAME objects would restore the shape and keep
+	// every mutation a previous test made to them.
+	const freshStates = () => new Map(
 		[
 			mkState('light.lab_lights', 'off', {
 				friendly_name: 'Lab Lights',
 				brightness: 0,
 				supported_color_modes: ['brightness']
 			}),
+			// A SECOND light, so a rename can collide with something in the same
+			// domain. Without one, every collision test trips the domain rule
+			// first and the "already taken" path is never exercised.
+			mkState('light.hall_lamp', 'on', { friendly_name: 'Hall Lamp' }),
 			mkState('switch.desk_fan', 'off', { friendly_name: 'Desk Fan' }),
 			mkState('sensor.lab_temperature', '21.4', {
 				friendly_name: 'Lab Temperature',
@@ -188,8 +195,15 @@ export function makeWorld() {
 			mkState('lock.front_door', 'locked', { friendly_name: 'Front Door' })
 		].map((s) => [s.entity_id, s])
 	);
-	const entities = [
+	const states = freshStates();
+	// Reads a FRESH state map, never the live one: after a rename the live map
+	// is keyed by the new id, and an entity factory that consulted it would
+	// rebuild the registry from the very mutation the reset is undoing.
+	const freshEntities = () => {
+		const seed = freshStates();
+		return [
 		['light.lab_lights', 'lab', 'dev-lab-1'],
+		['light.hall_lamp', null, null],
 		['switch.desk_fan', 'lab', 'dev-lab-1'],
 		['sensor.lab_temperature', null, 'dev-lab-1'],
 		['cover.garage_door', 'garage', null],
@@ -202,7 +216,7 @@ export function makeWorld() {
 		unique_id: `mock-${entity_id}`,
 		platform: 'demo',
 		name: null,
-		original_name: states.get(entity_id).attributes.friendly_name,
+		original_name: seed.get(entity_id).attributes.friendly_name,
 		device_id,
 		area_id,
 		aliases: [],
@@ -211,7 +225,9 @@ export function makeWorld() {
 		hidden: false,
 		exposed: true,
 		capabilities: {}
-	}));
+		}));
+	};
+	const entities = freshEntities();
 
 	// Both seeded automations come "from YAML" — no `ui_` prefix — so the suite
 	// starts with something the console must refuse to edit, and anything it
@@ -388,6 +404,10 @@ export function makeWorld() {
 	return {
 		areas, devices, entities, states, automations, settings, tools,
 		companions, approvals: [], calls: [],
+		// Exposed so `jarvis/test/registry_reset` can rebuild the registry and
+		// the states between tests; they are closures over the seed data, not
+		// references to the live objects.
+		freshStates, freshEntities,
 		// Pairing: a counter for readable code names and the live set, so the
 		// single-use rule is exercised rather than assumed.
 		pairingCodes: 0, livePairingCodes: new Set(),
@@ -780,11 +800,18 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	 * page and the task dock are looking at the same record — which is the
 	 * property worth testing, and one a separate job store would quietly break.
 	 */
-	let codeRepos = [
+	// A factory, so `jarvis/test/code_empty` can clear the list and
+	// `code_reset` can put the declared ones back. Emptying the live array
+	// would take them away for the rest of the mock process.
+	const freshCodeRepos = () => [
 		{
 			name: 'jarvis',
 			path: '/srv/jarvis',
 			description: 'the assistant itself',
+			// Read-only would be the honest fixture for a repo with checks —
+			// jarvis-core withholds `run_check` on a writable one without an
+			// environment — but this stands in for "declared by the operator
+			// with a sandbox wrapper", which the sandboxed reset exercises.
 			checks: ['pytest -q', 'ruff check .'],
 			writable: true
 		},
@@ -796,6 +823,7 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			writable: false
 		}
 	];
+	let codeRepos = freshCodeRepos();
 	let codeSandboxed = false;
 	const codeEnvironments = [
 		{
@@ -1632,6 +1660,22 @@ index 1234567..89abcde 100644
 				 * matches" is only meaningful if it can get back to that state
 				 * deliberately rather than by running first.
 				 */
+				/**
+				 * Put the entity registry and the states back.
+				 *
+				 * Renaming an entity mutates BOTH, and one mock process serves a
+				 * whole spec file — so without this the first rename in a file
+				 * silently decides what the rest of it sees.
+				 */
+				case 'jarvis/test/registry_reset': {
+					world.entities.length = 0;
+					for (const entry of world.freshEntities()) world.entities.push(entry);
+					world.states.clear();
+					for (const [id, state] of world.freshStates()) world.states.set(id, state);
+					ok(msg.id, { entities: world.entities.length });
+					break;
+				}
+
 				case 'jarvis/test/schedule_reset': {
 					for (const [id, job] of [...scheduled.entries()]) {
 						if (job.editable) scheduled.delete(id);
@@ -1980,9 +2024,16 @@ index 1234567..89abcde 100644
 
 				// Put the mock back to a known state, and let a test see the
 				// sandboxed wording without a second mock process.
+				/** No repositories at all — the state a fresh install starts in. */
+				case 'jarvis/test/code_empty': {
+					codeRepos = [];
+					ok(msg.id, codePayload());
+					break;
+				}
+
 				case 'jarvis/test/code_reset': {
 					codeResults.clear();
-					codeRepos = codeRepos.filter((r) => !r.managed);
+					codeRepos = freshCodeRepos();
 					codeSandboxed = Boolean(msg.sandboxed);
 					for (const task of [...taskStore.values()]) {
 						if (task.kind === 'code') removeTask(task.id);
@@ -2532,8 +2583,60 @@ index 1234567..89abcde 100644
 					for (const field of ['name', 'icon', 'area_id', 'device_id', 'aliases', 'disabled', 'hidden', 'exposed']) {
 						if (msg[field] !== undefined && msg[field] !== null) entry[field] = msg[field];
 					}
+					// Renaming the id itself. Mirrors `EntityRegistry.rename`:
+					// same domain, valid shape, not already taken — and the
+					// STATE moves too, or the entity exists twice and works
+					// neither way.
+					const result = { entity_entry: entry };
+					const wanted = String(msg.new_entity_id || '').trim().toLowerCase();
+					if (wanted && wanted !== entry.entity_id) {
+						if (!/^[a-z][a-z0-9_]*\.[a-z0-9_]+$/.test(wanted)) {
+							fail(msg.id, 'invalid_format', `${wanted} is not a valid entity_id`);
+							break;
+						}
+						if (world.entities.some((e) => e.entity_id === wanted)) {
+							fail(msg.id, 'invalid_format', `${wanted} already exists.`);
+							break;
+						}
+						if (wanted.split('.')[0] !== entry.entity_id.split('.')[0]) {
+							fail(
+								msg.id,
+								'invalid_format',
+								'an entity cannot move between domains'
+							);
+							break;
+						}
+						const was = entry.entity_id;
+						const state = world.states.get(was);
+						entry.entity_id = wanted;
+						if (state) {
+							world.states.delete(was);
+							world.states.set(wanted, { ...state, entity_id: wanted });
+						}
+						result.renamed_from = was;
+						result.automations_updated = [];
+						broadcast('entity_registry_updated', {
+							action: 'update',
+							entity_id: wanted,
+							old_entity_id: was
+						});
+						if (state) {
+							broadcast('state_changed', {
+								entity_id: was,
+								old_state: state,
+								new_state: null
+							});
+							broadcast('state_changed', {
+								entity_id: wanted,
+								old_state: null,
+								new_state: world.states.get(wanted)
+							});
+						}
+						ok(msg.id, result);
+						break;
+					}
 					broadcast('entity_registry_updated', { action: 'update', entity_id: entry.entity_id });
-					ok(msg.id, { entity_entry: entry });
+					ok(msg.id, result);
 					break;
 				}
 

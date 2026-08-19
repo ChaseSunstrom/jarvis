@@ -27,6 +27,7 @@
 		describeRepo,
 		describeSandbox,
 		suggestedName,
+		whyNoChecks,
 		whyNotName,
 		whyNotProject,
 		whyNotStart,
@@ -79,6 +80,7 @@
 		environments.find((e) => e.name === repo?.environment) ?? null
 	);
 	const nameProblem = $derived(newName ? whyNotName(newName) : '');
+	const checksWithheld = $derived(repo ? whyNoChecks(repo, sandboxed) : '');
 	const forge = $derived(forges.find((f) => f.name === cloneForge) ?? null);
 	const projectProblem = $derived(cloneProject ? whyNotProject(forge, cloneProject) : '');
 	// Empty means "use the last path segment", which is what git does; the
@@ -493,15 +495,38 @@
 		</div>
 
 		<label for="code-repo">Repository</label>
-		<select id="code-repo" bind:value={picked} data-testid="code-repo">
+		<select
+			id="code-repo"
+			bind:value={picked}
+			data-testid="code-repo"
+			disabled={!repos.length}
+		>
 			{#each repos as r (r.name)}
 				<option value={r.name}>{r.name}</option>
 			{/each}
 		</select>
+		{#if !repos.length}
+			<!-- An empty picker above "Pick a repository first" is a dead end: it
+			     says what is missing and not how to end up with one. -->
+			<p class="notice" data-testid="code-no-repos">
+				{#if canCreate}
+					Nothing to work in yet. Use <strong>+ NEW REPOSITORY</strong> above to
+					make one{#if forges.length}, or <strong>CLONE FROM A FORGE</strong> to pull
+						one down{/if}.
+				{:else}
+					Nothing to work in, and creating is turned off. Declare a repository under
+					`code: repositories:` in configuration.yaml, or remove `workspace: off` to
+					let Jarvis make its own.
+				{/if}
+			</p>
+		{/if}
 		{#if repo}
 			<p class="hint" data-testid="code-repo-note">
-				{#if repo.description}{repo.description} — {/if}{describeRepo(repo)}
+				{#if repo.description}{repo.description} — {/if}{describeRepo(repo, sandboxed)}
 			</p>
+			{#if checksWithheld}
+				<p class="notice" data-testid="code-repo-no-checks">{checksWithheld}</p>
+			{/if}
 			<p
 				class="hint"
 				data-testid="code-repo-environment"
