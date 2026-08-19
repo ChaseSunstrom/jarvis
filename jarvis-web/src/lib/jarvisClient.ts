@@ -803,6 +803,22 @@ export class JarvisClient {
 		return this.command({ type: 'jarvis/code/create_repo', ...payload });
 	}
 
+	/**
+	 * Clone one of the forge's PERMITTED repositories into the workspace.
+	 *
+	 * The allow-list is jarvis-core's; the console mirrors it only so the form
+	 * can say no without a round trip. A token is never sent either way — it
+	 * lives in the server's configuration and reaches git through `GIT_ASKPASS`.
+	 */
+	cloneCodeRepo(payload: {
+		forge: string;
+		project: string;
+		name?: string;
+		environment?: string;
+	}): Promise<CodeListing & { repository: unknown }> {
+		return this.command({ type: 'jarvis/code/clone_repo', ...payload });
+	}
+
 	/** Drop it from the listing. jarvis-core does NOT delete the files. */
 	forgetCodeRepo(name: string): Promise<CodeListing & { note: string }> {
 		return this.command({ type: 'jarvis/code/forget_repo', name });

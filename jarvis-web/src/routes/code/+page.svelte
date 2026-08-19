@@ -26,9 +26,12 @@
 		describeEnvironment,
 		describeRepo,
 		describeSandbox,
+		suggestedName,
 		whyNotName,
+		whyNotProject,
 		whyNotStart,
 		type CodeEnvironment,
+		type CodeForge,
 		type CodeRepo,
 		type CodeResult
 	} from '$lib/code';
@@ -48,12 +51,20 @@
 	let environments = $state<CodeEnvironment[]>([]);
 	let canCreate = $state(false);
 	let workspace = $state('');
+	let forges = $state<CodeForge[]>([]);
 	// The new-repository form.
 	let creating = $state(false);
 	let newName = $state('');
 	let newDescription = $state('');
 	let newEnvironment = $state('');
 	let saving = $state(false);
+	// The clone form. Separate state, because a half-typed clone and a
+	// half-typed new repository must not overwrite each other's fields.
+	let cloning = $state(false);
+	let cloneForge = $state('');
+	let cloneProject = $state('');
+	let cloneName = $state('');
+	let cloneEnvironment = $state('');
 	let jobs = $state<TaskRow[]>([]);
 	let picked = $state('');
 	let instruction = $state('');
@@ -68,6 +79,12 @@
 		environments.find((e) => e.name === repo?.environment) ?? null
 	);
 	const nameProblem = $derived(newName ? whyNotName(newName) : '');
+	const forge = $derived(forges.find((f) => f.name === cloneForge) ?? null);
+	const projectProblem = $derived(cloneProject ? whyNotProject(forge, cloneProject) : '');
+	// Empty means "use the last path segment", which is what git does; the
+	// placeholder shows what that would be rather than leaving it a mystery.
+	const cloneLocal = $derived(cloneName.trim() || suggestedName(cloneProject));
+	const cloneNameProblem = $derived(cloneLocal ? whyNotName(cloneLocal) : '');
 	const blocked = $derived(whyNotStart(repo, instruction));
 	// Newest first, which is what `listing()` already answers with.
 	const mine = $derived(jobs.filter((j) => j.kind === 'code'));
@@ -124,6 +141,42 @@
 		}
 	}
 
+	/** Everything a create or clone response carries back. One place. */
+	function absorb(listing: {
+		repositories?: CodeRepo[];
+		environments?: CodeEnvironment[];
+		forges?: CodeForge[];
+	}): void {
+		repos = listing.repositories ?? [];
+		environments = listing.environments ?? [];
+		forges = listing.forges ?? forges;
+	}
+
+	async function cloneRepo(): Promise<void> {
+		if (!conn || saving || projectProblem || cloneNameProblem || !cloneProject.trim()) return;
+		saving = true;
+		err = '';
+		try {
+			const listing = await conn.client.cloneCodeRepo({
+				forge: cloneForge,
+				project: cloneProject.trim(),
+				name: cloneName.trim(),
+				environment: cloneEnvironment
+			});
+			absorb(listing);
+			toasts.success(`Cloned ${cloneLocal}`, `from ${cloneProject.trim()}`);
+			picked = cloneLocal;
+			cloneProject = '';
+			cloneName = '';
+			cloning = false;
+		} catch (e) {
+			err = describeError(e);
+			toasts.error('Could not clone it', describeError(e));
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function createRepo(): Promise<void> {
 		if (!conn || saving || nameProblem || !newName.trim()) return;
 		saving = true;
@@ -134,8 +187,7 @@
 				description: newDescription.trim(),
 				environment: newEnvironment
 			});
-			repos = listing.repositories ?? [];
-			environments = listing.environments ?? [];
+			absorb(listing);
 			toasts.success(`Created ${newName.trim()}`, 'it is empty — start a job to fill it');
 			picked = newName.trim();
 			newName = '';
@@ -202,6 +254,8 @@
 			repos = listing.repositories ?? [];
 			sandboxed = !!listing.sandboxed;
 			environments = listing.environments ?? [];
+			forges = listing.forges ?? [];
+			if (!cloneForge && forges.length) cloneForge = forges[0].name;
 			canCreate = !!listing.can_create;
 			workspace = listing.workspace ?? '';
 			if (!picked && repos.length) picked = repos[0].name;
@@ -273,12 +327,111 @@
 					aria-expanded={creating}
 					onclick={() => {
 						creating = !creating;
+						cloning = false;
 						err = '';
 					}}
 				>
 					{creating ? 'CANCEL' : '+ NEW REPOSITORY'}
 				</button>
+				{#if forges.length}
+					<button
+						type="button"
+						class="btn"
+						data-testid="code-clone-repo"
+						aria-expanded={cloning}
+						onclick={() => {
+							cloning = !cloning;
+							creating = false;
+							err = '';
+						}}
+					>
+						{cloning ? 'CANCEL' : '↓ CLONE FROM A FORGE'}
+					</button>
+				{/if}
 			</div>
+
+			{#if cloning}
+				<div class="editor" data-testid="code-clone-form">
+					<label for="clone-forge">Forge</label>
+					<select id="clone-forge" data-testid="clone-forge" bind:value={cloneForge}>
+						{#each forges as f (f.name)}
+							<option value={f.name}>{f.name} · {f.kind} · {f.host}</option>
+						{/each}
+					</select>
+					{#if forge}
+						<p class="hint" data-testid="clone-forge-note">
+							{forge.allow.length
+								? `Permitted: ${forge.allow.join(', ')}.`
+								: 'Nothing is permitted on this forge yet — add it to `allow:` in configuration.yaml.'}
+							{forge.push ? '' : ' Read-only: Jarvis cannot push branches back.'}
+						</p>
+						{#if !forge.has_token}
+							<p class="hint" data-testid="clone-forge-token">
+								No token configured. Public repositories clone fine; a private one will fail
+								asking for a password.
+							</p>
+						{/if}
+					{/if}
+
+					<label for="clone-project">Repository</label>
+					<input
+						id="clone-project"
+						type="text"
+						placeholder="owner/repo"
+						data-testid="clone-project"
+						bind:value={cloneProject}
+					/>
+					{#if projectProblem}
+						<p class="err" data-testid="clone-project-problem">{projectProblem}</p>
+					{/if}
+
+					<label for="clone-name">Call it (optional)</label>
+					<input
+						id="clone-name"
+						type="text"
+						placeholder={suggestedName(cloneProject) || 'the last part of the path'}
+						data-testid="clone-name"
+						bind:value={cloneName}
+					/>
+					{#if cloneNameProblem}
+						<p class="err" data-testid="clone-name-problem">{cloneNameProblem}</p>
+					{/if}
+
+					<label for="clone-environment">Build environment</label>
+					<select
+						id="clone-environment"
+						data-testid="clone-environment"
+						bind:value={cloneEnvironment}
+					>
+						<option value="">None — no shell, declared checks only</option>
+						{#each environments as e (e.name)}
+							<option value={e.name}>{e.name} · {e.image}</option>
+						{/each}
+					</select>
+					<p class="hint" data-testid="clone-environment-note">
+						{describeEnvironment(environments.find((e) => e.name === cloneEnvironment) ?? null)}
+					</p>
+
+					<div class="row">
+						<button
+							type="button"
+							class="btn"
+							data-testid="clone-start"
+							disabled={saving ||
+								!!projectProblem ||
+								!!cloneNameProblem ||
+								!cloneProject.trim()}
+							onclick={cloneRepo}
+						>
+							{saving ? 'CLONING…' : 'CLONE'}
+						</button>
+						<span class="hint">
+							Cloned into {workspace}. Jarvis works on a `jarvis/…` branch and never pushes
+							unless you ask it to.
+						</span>
+					</div>
+				</div>
+			{/if}
 
 			{#if creating}
 				<div class="editor" data-testid="code-repo-form">

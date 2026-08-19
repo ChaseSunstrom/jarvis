@@ -818,6 +818,39 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 		}
 	];
 	const codeWorkspace = '/srv/jarvis/workspaces';
+	/**
+	 * Forges, exactly as jarvis-core sends them: the allow-list verbatim and
+	 * `has_token` in place of the token, which never leaves the server.
+	 */
+	const codeForges = [
+		{
+			name: 'work',
+			kind: 'github',
+			host: 'github.com',
+			has_token: true,
+			allow: ['chasesunstrom/jarvis', 'chasesunstrom/*'],
+			push: true
+		},
+		{
+			name: 'mirror',
+			kind: 'gitlab',
+			host: 'gitlab.com',
+			has_token: false,
+			allow: ['acme/widgets'],
+			push: false
+		}
+	];
+	/** One shape, four handlers — a payload that drifts between them is a bug
+	 *  the console sees as a field that exists on some responses. */
+	const codePayload = () => ({
+		repositories: codeRepos,
+		jobs: taskListing({ kind: 'code' }),
+		sandboxed: codeSandboxed,
+		environments: codeEnvironments,
+		forges: codeForges,
+		can_create: true,
+		workspace: codeWorkspace
+	});
 	/** Mirrors `_RESERVED` in jarvis-core's repos.py. */
 	const codeReserved = new Set([
 		'con', 'prn', 'aux', 'nul', 'com1', 'lpt1',
@@ -1737,14 +1770,7 @@ index 1234567..89abcde 100644
 
 				// --- Jarvis Code ---------------------------------------------
 				case 'jarvis/code/list':
-					ok(msg.id, {
-						repositories: codeRepos,
-						jobs: taskListing({ kind: 'code' }),
-						sandboxed: codeSandboxed,
-						environments: codeEnvironments,
-						can_create: true,
-						workspace: codeWorkspace
-					});
+					ok(msg.id, codePayload());
 					break;
 
 				case 'jarvis/code/start': {
@@ -1858,15 +1884,72 @@ index 1234567..89abcde 100644
 							: false
 					};
 					codeRepos.push(made);
-					ok(msg.id, {
-						repository: made,
-						repositories: codeRepos,
-						jobs: taskListing({ kind: 'code' }),
-						sandboxed: codeSandboxed,
-						environments: codeEnvironments,
-						can_create: true,
-						workspace: codeWorkspace
-					});
+					ok(msg.id, { repository: made, ...codePayload() });
+					break;
+				}
+
+				case 'jarvis/code/clone_repo': {
+					const forge = codeForges.find((f) => f.name === String(msg.forge || ''));
+					if (!forge) {
+						fail(msg.id, 'invalid_format', `There is no forge called '${msg.forge}'.`);
+						break;
+					}
+					const project = String(msg.project || '').replace(/^\/+|\/+$/g, '');
+					const wantedParts = project.toLowerCase().split('/').filter(Boolean);
+					const permitted =
+						wantedParts.length >= 2 &&
+						forge.allow.some((pattern) => {
+							const segments = pattern.toLowerCase().split('/');
+							if (segments[segments.length - 1] === '*') {
+								const head = segments.slice(0, -1);
+								return (
+									wantedParts.length > head.length &&
+									head.every((segment, i) => wantedParts[i] === segment)
+								);
+							}
+							return (
+								segments.length === wantedParts.length &&
+								segments.every((segment, i) => wantedParts[i] === segment)
+							);
+						});
+					if (!permitted) {
+						fail(
+							msg.id,
+							'invalid_format',
+							`${project} is not on ${forge.name}'s allow-list.`
+						);
+						break;
+					}
+					const local = String(msg.name || '').trim() || project.split('/').pop().toLowerCase();
+					const problem = badRepoName(local);
+					if (problem) {
+						fail(msg.id, 'invalid_format', problem);
+						break;
+					}
+					if (codeRepos.some((r) => r.name === local)) {
+						fail(msg.id, 'invalid_format', `There is already a repository called '${local}'.`);
+						break;
+					}
+					const cloneEnvironment = String(msg.environment || '');
+					const found = codeEnvironments.find((e) => e.name === cloneEnvironment);
+					if (cloneEnvironment && !found) {
+						fail(msg.id, 'invalid_format', `There is no environment called '${cloneEnvironment}'.`);
+						break;
+					}
+					const cloned = {
+						name: local,
+						path: `${codeWorkspace}/${local}`,
+						description: `${forge.kind}:${project}`,
+						checks: [],
+						writable: true,
+						managed: true,
+						origin: `https://${forge.host}/${project}.git`,
+						environment: cloneEnvironment,
+						environment_detail: found ? found.image : '',
+						networked: found ? found.network === 'egress' : false
+					};
+					codeRepos.push(cloned);
+					ok(msg.id, { repository: cloned, ...codePayload() });
 					break;
 				}
 
@@ -1880,12 +1963,7 @@ index 1234567..89abcde 100644
 					ok(msg.id, {
 						forgotten: dropped.name,
 						note: `Forgot ${dropped.name}. The files are still at ${dropped.path}.`,
-						repositories: codeRepos,
-						jobs: taskListing({ kind: 'code' }),
-						sandboxed: codeSandboxed,
-						environments: codeEnvironments,
-						can_create: true,
-						workspace: codeWorkspace
+						...codePayload()
 					});
 					break;
 				}

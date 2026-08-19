@@ -652,8 +652,13 @@ research:
 #      even offered the edit tools — the model cannot call what it cannot see.
 #   3. Paths go through the same resolver the `files:` block uses, symlink
 #      check included. One implementation, not two.
-#   4. There is NO SHELL. `run_check` runs a whole string from `checks:`,
-#      matched exactly. The model chooses whether, never what.
+#   4. There is NO SHELL, and on a WRITABLE repository no host execution at
+#      all. `run_check` runs a whole string from `checks:`, matched exactly —
+#      the model chooses whether, never what. But a check runs FILES from the
+#      repository (conftest.py, package.json, the Makefile) and a job that can
+#      write those chooses what runs, so a writable repository with neither an
+#      `environment:` nor a `sandbox:` wrapper is not offered `run_check` at
+#      all. Read-only repositories are unaffected.
 #   5. A job refuses to start on a dirty tree, works on `jarvis/<date>-<job>`,
 #      and never commits to the branch you are on. You merge it, or you do not.
 #
@@ -681,8 +686,10 @@ code:
   # ENVIRONMENTS — where a job is allowed to run things.
   #
   # This is the setting that changes what a coding job IS. With no environment
-  # a job may read, edit, and run the exact strings in that repository's
-  # `checks:` — there is no shell anywhere. With one, it may run ANY command,
+  # a job may read, edit, and — on a READ-ONLY repository — run the exact
+  # strings in that repository's `checks:`; there is no shell anywhere, and on
+  # a writable repository there are no checks either (see rule 4 above, and
+  # docs/code.md). With one, it may run ANY command,
   # inside a throwaway container whose only visible directory is that one
   # repository. That is what makes "install the dependencies and build it"
   # possible, and it needs Docker on this host.
@@ -786,15 +793,18 @@ code:
   #   checks:
   #     - pytest -q
   #     - ruff check .
-  #   # Which environment its commands and checks run in. Without this the
-  #   # repository gets no shell at all, which is the old behaviour.
+  #   # Which environment its commands and checks run in. Without this a
+  #   # read-only repository gets no shell (the old behaviour) and a WRITABLE
+  #   # one gets no checks either, unless you set `sandbox:` below.
   #   environment: python
 
   # A command prefix every CHECK runs behind. Empty means none — and note what
   # that does and does not mean: the model still has no shell and still cannot
   # leave the repository. What a wrapper changes is where your own test suite
   # runs, which matters because a test suite is arbitrary code that often wants
-  # the network.
+  # the network — and, on a writable repository, is code the JOB may have
+  # written, which is why a wrapper (or an `environment:`) is required there
+  # rather than merely advisable.
   #
   # `{repo}` becomes the repository's absolute path:
   #   sandbox: "docker run --rm --network none -v {repo}:/w -w /w python:3.12"

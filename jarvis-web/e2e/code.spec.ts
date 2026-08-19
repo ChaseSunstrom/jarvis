@@ -200,6 +200,61 @@ test('a bad repository name is refused before it is sent', async ({ page }) => {
 	await expect(page.getByTestId('repo-create')).toBeEnabled();
 });
 
+test('a forge repository can be cloned from the console', async ({ page }) => {
+	// The other half of "I should be able to create them in the web UI": most
+	// work starts from something that already exists somewhere else.
+	await openCode(page);
+	await reset(page);
+
+	await page.getByTestId('code-clone-repo').click();
+	await expect(page.getByTestId('clone-forge-note')).toContainText('chasesunstrom/jarvis');
+
+	await page.getByTestId('clone-project').fill('chasesunstrom/widgets');
+	await page.getByTestId('clone-environment').selectOption('python');
+	// The local name defaults to the last segment, the way git does.
+	await expect(page.getByTestId('clone-name')).toHaveAttribute('placeholder', 'widgets');
+
+	await page.getByTestId('clone-start').click();
+	await expect(page.getByTestId('code-repo')).toContainText('widgets', { timeout: 10_000 });
+
+	await page.getByTestId('code-repo').selectOption('widgets');
+	await expect(page.getByTestId('code-repo-environment')).toHaveAttribute(
+		'data-networked',
+		'true'
+	);
+});
+
+test('a repository outside the allow-list is refused before it is sent', async ({ page }) => {
+	// The allow-list is the answer to "give access to only certain
+	// repositories". jarvis-core enforces it; this says so without the wait.
+	await openCode(page);
+	await reset(page);
+	await page.getByTestId('code-clone-repo').click();
+
+	await page.getByTestId('clone-project').fill('someone-else/private');
+	await expect(page.getByTestId('clone-project-problem')).toContainText('allow-list');
+	await expect(page.getByTestId('clone-start')).toBeDisabled();
+
+	// A bare name does not say whose, and neither forge would match it.
+	await page.getByTestId('clone-project').fill('jarvis');
+	await expect(page.getByTestId('clone-project-problem')).toContainText('owner/repo');
+
+	// `chasesunstrom/*` covers a whole owner.
+	await page.getByTestId('clone-project').fill('chasesunstrom/anything');
+	await expect(page.getByTestId('clone-project-problem')).toHaveCount(0);
+	await expect(page.getByTestId('clone-start')).toBeEnabled();
+});
+
+test('a read-only forge and a missing token both say so', async ({ page }) => {
+	await openCode(page);
+	await reset(page);
+	await page.getByTestId('code-clone-repo').click();
+
+	await page.getByTestId('clone-forge').selectOption('mirror');
+	await expect(page.getByTestId('clone-forge-note')).toContainText('cannot push branches back');
+	await expect(page.getByTestId('clone-forge-token')).toContainText('No token configured');
+});
+
 test('a repository with no environment says it has no shell', async ({ page }) => {
 	await openCode(page);
 	await reset(page);

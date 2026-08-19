@@ -94,9 +94,13 @@ undo it. Three further refusals, in code:
 
 This is the setting that changes what a coding job *is*.
 
-With **no** environment a job may read, edit, and run the exact strings in that
-repository's `checks:`. There is no shell anywhere. That is the original design
-and it is still the default.
+With **no** environment a job may read, edit, and — on a **read-only**
+repository — run the exact strings in that repository's `checks:`. There is no
+shell anywhere. That is the original design and it is still the default.
+
+On a **writable** repository with no environment it may read and edit only: a
+check runs files the job could have written, so running one on the host would
+hand it the machine. See "What confines a job, exactly" below.
 
 With **an** environment, a job may run *any* command — inside a throwaway
 container whose only visible directory is that one repository. That is what
@@ -263,10 +267,21 @@ nothing outside it is claimed.
 3. **Paths are confined** by `integrations/files/paths.py` — the same resolver,
    with the same symlink check, that the `files:` integration uses. Not a
    second implementation: two path checkers is one path checker and a bug.
-4. **There is no shell.** `run_check` matches a whole string against `checks:`,
-   splits it with `shlex`, and runs it with `create_subprocess_exec`. The model
-   chooses *whether* to run a check, never *what* it is. `pytest -q; curl evil`
-   does not match `pytest -q`.
+4. **There is no shell**, and on a writable repository no host execution at
+   all. `run_check` matches a whole string against `checks:`, splits it with
+   `shlex`, and runs it with `create_subprocess_exec`. The model chooses
+   *whether* to run a check, never *what* it is: `pytest -q; curl evil` does
+   not match `pytest -q`.
+
+   Choosing *whether* is still too much on a repository the job can write,
+   because a check runs FILES out of the working tree — `pytest` imports
+   `conftest.py`, `npm test` runs `package.json`, `make` runs the Makefile —
+   and writing one of those is a single `write_file`. So a **writable**
+   repository with neither an `environment:` nor a `sandbox:` wrapper is not
+   offered `run_check` at all, and the tool refuses if the model names it
+   anyway. Read-only repositories are unaffected: the job cannot have written
+   what the check runs. If your checks stopped running, that is this, and the
+   fix is an `environment:`, a `sandbox:` wrapper, or `writable: false`.
 5. **A job never touches your branch.** It refuses to start on a dirty tree,
    makes `jarvis/<date>-<job>`, works there, and stops. The change reaches your
    branch when a person merges it.
@@ -324,9 +339,21 @@ undone.
 
 ## From the console
 
-`jarvis/code/list`, `jarvis/code/start` and `jarvis/code/result` over the
-websocket; `GET /api/code`, `POST /api/code/jobs`, `GET /api/code/jobs/{id}`
-over REST. See [clients.md](clients.md).
+The **CODE** tab has two buttons above the repository list: **NEW REPOSITORY**
+makes an empty one in the workspace, and **CLONE FROM A FORGE** pulls one down.
+The clone form shows the forge's allow-list before you type and refuses a path
+outside it without a round trip — that refusal is a copy of `permits()`, made
+for the message and never for the decision; jarvis-core refuses independently,
+and `tests/contracts/forge_allow_list.json` is read by both suites so the copy
+cannot drift. A forge with no token says so too: a public clone works without
+one, a private one fails asking for a password.
+
+`jarvis/code/list`, `jarvis/code/start`, `jarvis/code/result`,
+`jarvis/code/create_repo`, `jarvis/code/clone_repo`, `jarvis/code/forget_repo`
+and `jarvis/code/push` over the websocket; `GET /api/code`,
+`POST /api/code/jobs`, `GET /api/code/jobs/{id}`, `POST /api/code/repos`,
+`POST /api/code/clone` and `POST /api/code/push` over REST. See
+[clients.md](clients.md).
 
 ## Services and tools
 

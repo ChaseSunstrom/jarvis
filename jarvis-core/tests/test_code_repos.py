@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,13 @@ from jarvis.integrations.code.repos import (  # noqa: E402
     check_name,
     initial_files,
 )
+from jarvis.core import Jarvis  # noqa: E402
+from jarvis.integrations.code import (  # noqa: E402
+    DOMAIN,
+    CodeConfig,
+    listing_payload,
+)
+from jarvis.integrations.code import DATA_CONFIG  # noqa: E402
 from jarvis.integrations.code.workspace import _run_git  # noqa: E402
 
 pytestmark = pytest.mark.asyncio
@@ -344,3 +352,37 @@ def test_every_name_the_console_would_accept_the_server_accepts_too():
             assert check_name(candidate) == "", (
                 f"the console would accept {candidate!r} and the server refuses it"
             )
+
+
+def test_the_e2e_mock_answers_code_list_with_the_same_keys_as_the_server():
+    """The gap that hid a whole feature.
+
+    `jarvis/code/list` gained `forges` server-side and the e2e mock did not,
+    so the console could not have drawn a clone form against it and no
+    Playwright test could have caught the omission — the page would simply
+    render nothing and pass. A missing key in a mock is invisible in exactly
+    the way a missing key in a real response is not.
+
+    Key names only. The mock's VALUES are fixtures and are supposed to differ;
+    what must not differ is the shape, because the shape is the contract the
+    console is written against.
+    """
+    import re
+
+    mock = Path(__file__).resolve().parents[2] / "tests" / "web" / "mock-ha.mjs"
+    assert mock.is_file(), f"the e2e mock is missing: {mock}"
+    source = mock.read_text(encoding="utf-8")
+
+    block = re.search(r"const codePayload = \(\) => \((\{.*?\n\t\})\)", source, re.S)
+    assert block, "the mock no longer has a single codePayload() helper"
+    mock_keys = set(re.findall(r"^\t\t(\w+):", block.group(1), re.MULTILINE))
+
+    jarvis = Jarvis(Path(tempfile.mkdtemp()))
+    jarvis.data[DOMAIN] = {DATA_CONFIG: CodeConfig()}
+    server_keys = set(listing_payload(jarvis))
+
+    assert mock_keys == server_keys, (
+        "the e2e mock and jarvis-core disagree about what `jarvis/code/list` "
+        f"answers with: only in mock {sorted(mock_keys - server_keys)}, "
+        f"only in server {sorted(server_keys - mock_keys)}"
+    )

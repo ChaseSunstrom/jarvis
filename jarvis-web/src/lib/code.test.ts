@@ -5,11 +5,16 @@
  * the same characters as a removed and an added line, so a naive reader paints
  * every file header as a deletion and an added file looks like a removed one.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	MAX_DIFF_LINES,
 	describeEnvironment,
+	suggestedName,
 	whyNotName,
+	whyNotProject,
+	type CodeForge,
 	type CodeEnvironment,
 	countChanges,
 	describeChecks,
@@ -213,5 +218,91 @@ describe('describeEnvironment', () => {
 
 	it('names the image, so the reader knows what is in it', () => {
 		expect(describeEnvironment(environment({ image: 'gcc:14' }))).toContain('gcc:14');
+	});
+});
+
+describe('whyNotProject', () => {
+	/**
+	 * The console's allow-list check is a copy of jarvis-core's `permits()`,
+	 * so the form can refuse before a round trip. The copy is for the message
+	 * and never for the decision — but a copy that DRIFTS is worse than none,
+	 * because the form accepts what the server rejects and the reader blames
+	 * the form.
+	 *
+	 * So this table is not written here. `tests/contracts/forge_allow_list.json`
+	 * is read by BOTH suites: jarvis-core asserts `permits()` against it in
+	 * `test_the_console_and_the_server_agree_about_the_allow_list`, and this
+	 * asserts the console against the same rows. Neither side owns the
+	 * answers, and a row added to one is a row the other has to satisfy.
+	 */
+	const table = JSON.parse(
+		readFileSync(
+			fileURLToPath(new URL('../../../tests/contracts/forge_allow_list.json', import.meta.url)),
+			'utf-8'
+		)
+	) as { cases: { allow: string[]; project: string; permitted: boolean }[] };
+
+	const forgeWith = (allow: string[], extra: Partial<CodeForge> = {}): CodeForge => ({
+		name: 'work',
+		kind: 'github',
+		host: 'github.com',
+		has_token: true,
+		allow,
+		push: true,
+		...extra
+	});
+
+	it('agrees with jarvis-core on every row of the shared table', () => {
+		expect(table.cases.length).toBeGreaterThanOrEqual(15);
+		// Every row against every combination of the two flags that have
+		// nothing to do with the decision. An early return for "no token" once
+		// answered "permitted" before the allow-list ran, and a table checked
+		// under one flag combination would never have seen it.
+		for (const has_token of [true, false]) {
+			for (const push of [true, false]) {
+				for (const row of table.cases) {
+					const forge = forgeWith(row.allow, { has_token, push });
+					const problem = whyNotProject(forge, row.project);
+					expect(
+						problem === '',
+						`allow=${JSON.stringify(row.allow)} project=${JSON.stringify(row.project)} ` +
+							`has_token=${has_token} push=${push}: ` +
+							`console said ${problem || '<permitted>'}, table says ${row.permitted}`
+					).toBe(row.permitted);
+				}
+			}
+		}
+	});
+
+	it('asks for a forge before it asks for anything else', () => {
+		expect(whyNotProject(null, 'owner/repo')).toContain('forge');
+	});
+
+	it('says which repositories are permitted, not just that this one is not', () => {
+		const problem = whyNotProject(forgeWith(['acme/widgets']), 'other/thing');
+		expect(problem).toContain('acme/widgets');
+	});
+
+	it('does not refuse a public clone from a forge with no token', () => {
+		const forge = { ...forgeWith(['acme/widgets']), has_token: false };
+		expect(whyNotProject(forge, 'acme/widgets')).toBe('');
+	});
+});
+
+describe('suggestedName', () => {
+	it('is the last segment, the way git clone would name it', () => {
+		expect(suggestedName('acme/widgets')).toBe('widgets');
+		expect(suggestedName('group/sub/Thing')).toBe('thing');
+	});
+
+	it('drops a trailing .git, which is not part of the name', () => {
+		expect(suggestedName('acme/widgets.git')).toBe('widgets');
+	});
+
+	it('produces something whyNotName accepts, or nothing at all', () => {
+		for (const project of ['acme/widgets', 'A/B', 'x/y.git', '']) {
+			const name = suggestedName(project);
+			if (name) expect(whyNotName(name)).toBe('');
+		}
 	});
 });

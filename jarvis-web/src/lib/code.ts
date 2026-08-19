@@ -71,11 +71,25 @@ export interface CodeEnvironment {
 	setup: string[];
 }
 
+export interface CodeForge {
+	name: string;
+	/** `github` or `gitlab`. */
+	kind: string;
+	host: string;
+	/** Whether a token is configured. jarvis-core NEVER sends the value. */
+	has_token: boolean;
+	/** The allow-list, verbatim: `owner/repo` or `owner/*`. */
+	allow: string[];
+	/** Whether Jarvis may push its branches back. */
+	push: boolean;
+}
+
 export interface CodeListing {
 	repositories: CodeRepo[];
 	jobs: unknown[];
 	sandboxed: boolean;
 	environments: CodeEnvironment[];
+	forges: CodeForge[];
 	/** Whether `code: workspace:` is set, i.e. whether creation is possible. */
 	can_create: boolean;
 	workspace: string;
@@ -104,6 +118,88 @@ export function whyNotName(name: string): string {
 		return `“${text}” is reserved — it means something else to git or the filesystem.`;
 	}
 	return '';
+}
+
+/**
+ * Whether this forge's allow-list covers `project`, as a sentence or "".
+ *
+ * A deliberate copy of `permits()` in jarvis-core's `forges.py`, for the same
+ * reason as `whyNotName`: the server refuses independently and is the only
+ * thing that decides, but "owner/repo is not on this forge's list" is a fact
+ * the form already has, and making somebody press a button to hear it is
+ * making them wait for an answer that was always available.
+ *
+ * The two are pinned together by
+ * `test_the_console_and_the_server_agree_about_the_allow_list`.
+ */
+export function whyNotProject(forge: CodeForge | null, project: string): string {
+	const text = project.trim();
+	if (!forge) return 'Pick a forge first.';
+	if (!text) return 'Which repository? Give it as owner/repo.';
+	const parts = splitProject(text);
+	if (!parts.length) {
+		return 'Give it as owner/repo — no leading or trailing slash, no scheme, no “..”.';
+	}
+	// A missing token is NOT judged here. A public clone works without one, and
+	// the form says so under the picker; putting it in this function once made
+	// a tokenless forge return "permitted" before the allow-list ran, which is
+	// the one thing this function exists to decide.
+	if (!permits(forge, parts)) {
+		const list = forge.allow.length ? forge.allow.join(', ') : 'nothing yet';
+		return `${text} is not on ${forge.name}’s allow-list. Permitted: ${list}.`;
+	}
+	return '';
+}
+
+/**
+ * `owner/name` into its segments, or [] if it is not one. Mirrors
+ * `split_project()`.
+ *
+ * A leading slash is REFUSED rather than stripped, which is what jarvis-core
+ * does and for its reason: `/etc/passwd` trimmed to `etc/passwd` is a
+ * perfectly well-formed project path, and a form that quietly repairs a
+ * mistake is a form that accepts what the server will reject.
+ */
+function splitProject(project: string): string[] {
+	const text = project.trim();
+	if (!text || text.startsWith('/') || text.endsWith('/')) return [];
+	if (text.includes('..') || text.includes(':') || text.includes('\\')) return [];
+	const parts = text.split('/');
+	if (parts.length < 2 || parts.length > 8) return [];
+	if (!parts.every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part))) return [];
+	return parts;
+}
+
+/** Case-insensitive, and `owner/*` matches a whole owner. Mirrors `permits()`. */
+function permits(forge: CodeForge, parts: string[]): boolean {
+	const wanted = parts.map((p) => p.toLowerCase());
+	return forge.allow.some((pattern) => {
+		const segments = pattern.split('/').map((p) => p.toLowerCase());
+		if (segments.length && segments[segments.length - 1] === '*') {
+			const head = segments.slice(0, -1);
+			return (
+				wanted.length > head.length &&
+				head.every((segment, index) => wanted[index] === segment)
+			);
+		}
+		return (
+			segments.length === wanted.length &&
+			segments.every((segment, index) => wanted[index] === segment)
+		);
+	});
+}
+
+/**
+ * The local name a cloned repository gets if you do not choose one.
+ *
+ * The last path segment, which is what `git clone` itself would do, lowercased
+ * because `whyNotName` refuses capitals and a suggestion the form then rejects
+ * is worse than no suggestion.
+ */
+export function suggestedName(project: string): string {
+	const parts = project.trim().split('/').filter(Boolean);
+	const last = (parts[parts.length - 1] || '').toLowerCase();
+	return last.replace(/\.git$/, '');
 }
 
 /** Mirrors `_RESERVED` in jarvis-core's `repos.py`. */
