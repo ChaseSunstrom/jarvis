@@ -564,6 +564,37 @@ files:
   #   writable: false
 
 # ---------------------------------------------------------------------------
+# SKILLS — procedures, loaded only when they are relevant.
+# ---------------------------------------------------------------------------
+# A skill is a folder with a SKILL.md in it: frontmatter naming it and saying
+# WHEN to use it, then markdown instructions. Anthropic's Agent Skills format,
+# so a skill written for Claude works here.
+#
+# The reason to have them is the context window. Jarvis always sees each
+# skill's name and one line — a thousand characters for the lot — and reads the
+# actual instructions only for the one it picks. Four skills ship with Jarvis
+# describing its own capabilities; drop your own in <config>/skills/<name>/,
+# and one with the same name as a shipped one overrides it.
+#
+# Jarvis can also WRITE one (`create_skill`, Tier 3) when you teach it a
+# procedure worth keeping.
+#
+# See docs/skills.md.
+skills:
+  # Repositories `install_skill` may fetch from. A skill is INSTRUCTIONS THE
+  # MODEL FOLLOWS — it cannot be fenced the way a web page is, because
+  # following it is the point — so the source is an allow-list, installing is
+  # Tier 3, and the result arrives switched OFF until you have read it.
+  sources:
+    - anthropics/skills
+
+  # Switch an installed skill on the moment it lands. Off, deliberately: the
+  # approval card cannot meaningfully show four pages of markdown, so the
+  # console shows the body and you turn it on. Set true if you would rather
+  # trust the allow-list.
+  install_enabled: false
+
+# ---------------------------------------------------------------------------
 # n8n — the outside world's services.
 # ---------------------------------------------------------------------------
 # Point Jarvis at an n8n instance and it can read, write and switch off

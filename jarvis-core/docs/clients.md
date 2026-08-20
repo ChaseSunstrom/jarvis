@@ -99,6 +99,12 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/code/clone_repo` | `forge`, `project` (`owner/name`), optional `name` and `environment`. Clones into the workspace. Refused unless that path is on the forge's allow-list — the console has no more reach here than the model, because the constraint is the operator's configuration rather than who is asking |
 | `jarvis/code/push` | `repo`, `branch`; pushes one `jarvis/…` branch to the forge it came from. Never `main`, never forced, and refused if `origin` was rewritten |
 | `jarvis/code/result` | `task_id`; the branch, the diff, the checks and the tool trail from one finished job |
+| `jarvis/skills/list` | every skill with `source` (`builtin`/`authored`/`installed`/`broken`), `enabled`, `origin` and `chars`, plus the allow-listed `sources` and how big the prompt catalogue currently is. Bodies are NOT included — one row is a line, not a document |
+| `jarvis/skills/get` | `name`; one skill **including its body**. This is how an operator reads an installed skill before switching it on, and it is deliberately the console's privilege: the model gets a body only by calling `open_skill` |
+| `jarvis/skills/set_enabled` | `name`, `enabled`; a disabled skill is absent from the model's catalogue entirely |
+| `jarvis/skills/install` | `reference` as `owner/repo/path`; fetches from an allow-listed repository. Arrives **disabled** unless `skills: install_enabled:` says otherwise. The result carries `strategy` (`archive` or `raw`) and a `caveat` when the fetch was partial |
+| `jarvis/skills/create` | `name`, `description`, `body`; writes one into `<config>/skills/` |
+| `jarvis/skills/forget` | `name`; removes a written or installed skill. A shipped one is refused — switch it off instead |
 | `jarvis/n8n/list` | the workflows on the configured n8n, plus `instance` (`url`, `has_key`, `allow_activate`) — never the API key. `limit` up to 100 |
 | `jarvis/n8n/workflow` | `workflow_id`; one workflow's STRUCTURE — nodes, types, which carry a credential, the edges, and `connections_needed`. Node `parameters` are deliberately absent: people type API keys into them |
 | `jarvis/n8n/check` | `{ok, detail}` — whether this url, this key and this n8n version actually work together. The one honest answer to "is it set up" |

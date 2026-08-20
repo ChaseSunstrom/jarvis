@@ -1,0 +1,212 @@
+{
+  "_comment": [
+    "One table, two implementations. jarvis-core's `parse_reference` +",
+    "`permits` in skills/install.py decide whether a skill may be fetched;",
+    "the console copies the rule into `whyNotReference` so the install form",
+    "can refuse a pasted URL without a round trip. A copy that drifts is",
+    "worse than no copy, because the form would accept what the server then",
+    "rejects and the reader would blame the form. Both suites read THIS",
+    "file, so drift breaks whichever side moved.",
+    "`ok` is 'the server would fetch this'. Everything else \u2014 malformed,",
+    "off the allow-list, a URL \u2014 is one refusal as far as the form is",
+    "concerned, because the form's job is to stop the press, not to grade",
+    "the mistake."
+  ],
+  "cases": [
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf@main",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "  anthropics/skills/skills/pdf  ",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf/",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "/anthropics/skills/skills/pdf",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "ANTHROPICS/SKILLS/skills/pdf",
+      "ok": true
+    },
+    {
+      "sources": [
+        "Anthropics/Skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills",
+        "chasesunstrom/jarvis-skills"
+      ],
+      "reference": "chasesunstrom/jarvis-skills/bin-night",
+      "ok": true
+    },
+    {
+      "sources": [
+        "a-b/c.d"
+      ],
+      "reference": "a-b/c.d/e_f",
+      "ok": true
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "   ",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/",
+      "ok": false
+    },
+    {
+      "sources": [],
+      "reference": "anthropics/skills/skills/pdf",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "some-rando/evil/skills/rm-rf",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "https://github.com/anthropics/skills/tree/main/skills/pdf",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "HTTPS://github.com/anthropics/skills",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "http://anthropics/skills",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/../../etc/passwd",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/.git",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/-leading-dash",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/has space",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/semi;colon",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf@bad branch",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf@..",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ok": false
+    },
+    {
+      "sources": [
+        "anthropics/skills"
+      ],
+      "reference": "anthropics/skills/skills/pdf@",
+      "ok": true
+    }
+  ]
+}

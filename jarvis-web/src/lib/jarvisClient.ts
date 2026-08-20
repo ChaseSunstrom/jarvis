@@ -15,6 +15,7 @@ import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import type { McpServer } from './mcpDraft';
 import type { ScheduledJob } from './schedule';
 import type { CodeListing, CodeResult } from './code';
+import type { SkillDetail, SkillListing, SkillRow } from './skills';
 import type {
 	N8nCheck,
 	N8nExecution,
@@ -833,6 +834,42 @@ export class JarvisClient {
 		environment?: string;
 	}): Promise<CodeListing & { repository: unknown }> {
 		return this.command({ type: 'jarvis/code/clone_repo', ...payload });
+	}
+
+	// --- skills ------------------------------------------------------------
+	listSkills(): Promise<SkillListing> {
+		return this.command({ type: 'jarvis/skills/list' });
+	}
+
+	/**
+	 * One skill INCLUDING its body.
+	 *
+	 * The console's privilege, deliberately: somebody has to read an installed
+	 * skill to decide whether to switch it on, and the model gets a body only
+	 * through `open_skill` and only once it is on.
+	 */
+	getSkill(name: string): Promise<{ skill: SkillDetail }> {
+		return this.command({ type: 'jarvis/skills/get', name });
+	}
+
+	setSkillEnabled(name: string, enabled: boolean): Promise<SkillListing> {
+		return this.command({ type: 'jarvis/skills/set_enabled', name, enabled });
+	}
+
+	installSkill(reference: string): Promise<SkillListing & { skill: SkillRow }> {
+		return this.command({ type: 'jarvis/skills/install', reference });
+	}
+
+	createSkill(payload: {
+		name: string;
+		description: string;
+		body: string;
+	}): Promise<SkillListing & { skill: SkillRow }> {
+		return this.command({ type: 'jarvis/skills/create', ...payload });
+	}
+
+	forgetSkill(name: string): Promise<SkillListing & { note: string }> {
+		return this.command({ type: 'jarvis/skills/forget', name });
 	}
 
 	// --- n8n ---------------------------------------------------------------

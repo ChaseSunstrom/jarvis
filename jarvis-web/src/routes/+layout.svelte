@@ -32,6 +32,7 @@
 		{ href: '/tasks', label: 'TASKS', chord: 'g k' },
 		{ href: '/code', label: 'CODE', chord: 'g c' },
 		{ href: '/n8n', label: 'N8N', chord: 'g n' },
+		{ href: '/skills', label: 'SKILLS', chord: 'g l' },
 		{ href: '/settings', label: 'SETTINGS', chord: 'g s' }
 	];
 

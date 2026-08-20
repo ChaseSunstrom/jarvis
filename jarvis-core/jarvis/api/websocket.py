@@ -721,6 +721,25 @@ class WebSocketHandler:
             context=self._context(),
         )
 
+    # --- skills ----------------------------------------------------------
+    async def _cmd_skills_list(self, msg: dict[str, Any]) -> Any:
+        return common.skills_payload(self.jarvis)
+
+    async def _cmd_skill_get(self, msg: dict[str, Any]) -> Any:
+        return common.skill_payload(self.jarvis, msg.get("name"))
+
+    async def _cmd_skill_enable(self, msg: dict[str, Any]) -> Any:
+        return await common.async_set_skill_enabled(self.jarvis, msg)
+
+    async def _cmd_skill_install(self, msg: dict[str, Any]) -> Any:
+        return await common.async_install_skill(self.jarvis, msg)
+
+    async def _cmd_skill_create(self, msg: dict[str, Any]) -> Any:
+        return await common.async_create_skill(self.jarvis, msg)
+
+    async def _cmd_skill_forget(self, msg: dict[str, Any]) -> Any:
+        return await common.async_forget_skill(self.jarvis, msg.get("name"))
+
     # --- n8n ------------------------------------------------------------
     async def _cmd_n8n_list(self, msg: dict[str, Any]) -> Any:
         return await common.async_n8n_workflows(self.jarvis, msg)
@@ -1153,6 +1172,12 @@ WebSocketHandler._HANDLERS = {
     # Jarvis Code. Starting a job IS a client command, unlike minting a bare
     # task: a coding job has a worker behind it, so the record it creates is
     # one something is driving.
+    "jarvis/skills/list": WebSocketHandler._cmd_skills_list,
+    "jarvis/skills/get": WebSocketHandler._cmd_skill_get,
+    "jarvis/skills/set_enabled": WebSocketHandler._cmd_skill_enable,
+    "jarvis/skills/install": WebSocketHandler._cmd_skill_install,
+    "jarvis/skills/create": WebSocketHandler._cmd_skill_create,
+    "jarvis/skills/forget": WebSocketHandler._cmd_skill_forget,
     "jarvis/n8n/list": WebSocketHandler._cmd_n8n_list,
     "jarvis/n8n/workflow": WebSocketHandler._cmd_n8n_workflow,
     "jarvis/n8n/check": WebSocketHandler._cmd_n8n_check,

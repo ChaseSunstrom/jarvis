@@ -845,6 +845,86 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			setup: []
 		}
 	];
+	// --- skills ---------------------------------------------------------------
+	// Factories again: a spec that removes a skill must not decide what the
+	// next spec's catalogue costs.
+	const freshSkills = () => [
+		{
+			name: 'n8n-workflows',
+			description:
+				'Use when the household asks for something that has to run on a schedule, watch a mailbox, or talk to a service Jarvis has no integration for.',
+			source: 'builtin',
+			enabled: true,
+			license: '',
+			version: '',
+			origin: '',
+			chars: 1840,
+			body: '# n8n workflows\n\nBuild the graph, then hand it over.\n'
+		},
+		{
+			name: 'house-automations',
+			description:
+				'Use when somebody describes a rule the house should follow on its own, in terms of the entities Jarvis already knows about.',
+			source: 'builtin',
+			enabled: true,
+			license: '',
+			version: '',
+			origin: '',
+			chars: 1420,
+			body: '# House automations\n\nTrigger, condition, action.\n'
+		},
+		{
+			// The reason the page exists: installed, and OFF until a person reads it.
+			name: 'pdf',
+			description: 'Use when the job involves reading or filling in a PDF.',
+			source: 'installed',
+			enabled: false,
+			license: 'Apache-2.0',
+			version: '1.0.0',
+			origin: 'anthropics/skills',
+			chars: 2960,
+			body: '# PDF\n\nUse pdfplumber to read, pypdf to write.\n'
+		},
+		{
+			name: 'bin-night',
+			description: 'Use when asked which bin goes out, or to be reminded about it.',
+			source: 'authored',
+			enabled: true,
+			license: '',
+			version: '',
+			origin: '',
+			chars: 380,
+			body: '# Bin night\n\nRecycling on alternating Tuesdays.\n'
+		},
+		{
+			name: 'half-written',
+			description: '',
+			source: 'broken',
+			enabled: false,
+			license: '',
+			version: '',
+			origin: '',
+			chars: 0,
+			problem: "half-written/SKILL.md: the frontmatter has no 'description'."
+		}
+	];
+	let skills = freshSkills();
+	let skillSources = [
+		{ project: 'anthropics/skills', branch: 'main' },
+		{ project: 'ChaseSunstrom/jarvis-skills', branch: 'main' }
+	];
+	let skillInstallEnabled = false;
+
+	/** The listing every skills call answers with, so the console never drifts. */
+	const skillListing = () => ({
+		skills: skills.map(({ body, ...row }) => row),
+		catalogue_chars: skills
+			.filter((s) => s.enabled && s.source !== 'broken')
+			.reduce((n, s) => n + s.name.length + 2 + s.description.length + 1, 0),
+		sources: skillSources,
+		install_enabled: skillInstallEnabled
+	});
+
 	// --- n8n ----------------------------------------------------------------
 	// Factories, so `jarvis/test/n8n_reset` can put an activated workflow back
 	// and a test that empties the instance does not decide what the next one
@@ -1948,6 +2028,114 @@ index 1234567..89abcde 100644
 					n8nWorkflows = freshN8nWorkflows();
 					n8nCheck = msg.check ?? { ok: true, detail: 'Connected to http://n8n.lan:5678.' };
 					ok(msg.id, { instance: n8nInstance });
+					break;
+				}
+
+				// --- skills --------------------------------------------------
+				case 'jarvis/skills/list':
+					ok(msg.id, skillListing());
+					break;
+
+				case 'jarvis/skills/get': {
+					const found = skills.find((s) => s.name === String(msg.name || ''));
+					if (!found) {
+						fail(msg.id, 'not_found', `no skill called '${msg.name}'`);
+						break;
+					}
+					const { problem, ...rest } = found;
+					ok(msg.id, { skill: problem ? { ...rest, problem } : rest });
+					break;
+				}
+
+				case 'jarvis/skills/set_enabled': {
+					const target = skills.find((s) => s.name === String(msg.name || ''));
+					if (!target) {
+						fail(msg.id, 'not_found', `no skill called '${msg.name}'`);
+						break;
+					}
+					target.enabled = Boolean(msg.enabled);
+					ok(msg.id, { note: `${target.name} is ${target.enabled ? 'on' : 'off'}`, ...skillListing() });
+					break;
+				}
+
+				case 'jarvis/skills/install': {
+					const reference = String(msg.reference || '');
+					const project = reference.split('/').slice(0, 2).join('/');
+					if (!skillSources.some((s) => s.project === project)) {
+						fail(msg.id, 'invalid_format', `${project} is not a permitted source`);
+						break;
+					}
+					const name = reference.split('/').filter(Boolean).pop() ?? '';
+					if (skills.some((s) => s.name === name)) {
+						fail(msg.id, 'invalid_format', `there is already a skill called '${name}'`);
+						break;
+					}
+					const row = {
+						name,
+						description: `Use when the job involves ${name}.`,
+						source: 'installed',
+						enabled: skillInstallEnabled,
+						license: 'Apache-2.0',
+						version: '',
+						origin: project,
+						chars: 1200,
+						body: `# ${name}\n\nInstalled from ${project}.\n`
+					};
+					skills.push(row);
+					const { body: _installedBody, ...installedRow } = row;
+					ok(msg.id, { skill: installedRow, ...skillListing() });
+					break;
+				}
+
+				case 'jarvis/skills/create': {
+					const name = String(msg.name || '');
+					if (skills.some((s) => s.name === name)) {
+						fail(msg.id, 'invalid_format', `there is already a skill called '${name}'`);
+						break;
+					}
+					const body = String(msg.body || '');
+					const row = {
+						name,
+						description: String(msg.description || ''),
+						source: 'authored',
+						enabled: true,
+						license: '',
+						version: '',
+						origin: '',
+						chars: body.length,
+						body
+					};
+					skills.push(row);
+					const { body: _authoredBody, ...authoredRow } = row;
+					ok(msg.id, { skill: authoredRow, ...skillListing() });
+					break;
+				}
+
+				case 'jarvis/skills/forget': {
+					const name = String(msg.name || '');
+					const target = skills.find((s) => s.name === name);
+					if (!target) {
+						fail(msg.id, 'invalid_format', `no skill called '${name}'`);
+						break;
+					}
+					if (target.source === 'builtin') {
+						fail(msg.id, 'invalid_format', `${name} ships with Jarvis — switch it off instead`);
+						break;
+					}
+					skills = skills.filter((s) => s.name !== name);
+					ok(msg.id, { note: `removed ${name}`, ...skillListing() });
+					break;
+				}
+
+				/** Put the skills back, and let a test choose the sources. */
+				case 'jarvis/test/skills_reset': {
+					skills = freshSkills();
+					skillSources = msg.sources ?? [
+						{ project: 'anthropics/skills', branch: 'main' },
+						{ project: 'ChaseSunstrom/jarvis-skills', branch: 'main' }
+					];
+					skillInstallEnabled = Boolean(msg.install_enabled);
+					ok(msg.id, skillListing());
 					break;
 				}
 

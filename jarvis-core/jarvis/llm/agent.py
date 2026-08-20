@@ -601,6 +601,40 @@ class ConversationAgent:
             )
         return "\n".join(lines)
 
+    def skills_block(self) -> str:
+        """The skill catalogue: one line each, bodies loaded on demand.
+
+        This is the half of progressive disclosure that lives in the prompt.
+        The model sees every enabled skill's name and description on every
+        turn — a few hundred characters for the lot — and reads the actual
+        instructions only for the one it picks, through `open_skill`.
+
+        The alternative was writing every skill's body into the persona, which
+        is how a local 8B ends up choosing between forty pages and answering
+        worse than it would have with none of them.
+
+        Returns "" when there are no skills, so it appends unconditionally.
+        """
+        registry = self.jarvis.data.get("skills")
+        catalogue = getattr(registry, "catalogue", None)
+        if not callable(catalogue):
+            return ""
+        try:
+            listing = str(catalogue() or "")
+        except Exception:  # a broken registry must not cost the turn
+            _LOGGER.exception("Could not read the skill catalogue")
+            return ""
+        if not listing:
+            return ""
+        return (
+            "SKILLS. These are procedures somebody wrote down for this house. "
+            "Each line is a name and when to use it; the instructions "
+            "themselves are NOT here. When a request matches one, call "
+            "`open_skill` with its name FIRST and follow what it returns — do "
+            "not guess at the procedure from the description alone. If none "
+            "matches, work normally.\n" + listing
+        )
+
     def system_prompt(
         self, query: str = "", semantic: dict[str, float] | None = None
     ) -> str:
@@ -617,6 +651,9 @@ class ConversationAgent:
         toolbox = self.toolbox_rule()
         if toolbox:
             parts.append(toolbox)
+        skills = self.skills_block()
+        if skills:
+            parts.append(skills)
         if areas:
             parts.append(f"Areas in this home: {areas}.")
         parts.append(self.house_summary())

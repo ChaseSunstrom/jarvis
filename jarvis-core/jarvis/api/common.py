@@ -1488,6 +1488,86 @@ async def async_clone_code_repository(
     return {"repository": entry.as_dict(), **code_list_payload(jarvis)}
 
 
+# --- skills ------------------------------------------------------------------
+def _skills(jarvis: "Jarvis") -> Any:
+    from ..integrations.skills import get_registry
+
+    registry = get_registry(jarvis)
+    if registry is None:
+        raise ApiError("unavailable", "this server has no skills integration", 503)
+    return registry
+
+
+def skills_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    from ..integrations.skills import listing_payload
+
+    _skills(jarvis)
+    return listing_payload(jarvis)
+
+
+def skill_payload(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """One skill IN FULL, including its body.
+
+    The console gets the body and the model does not, until it opens the skill
+    — that asymmetry is the point of the whole feature, and it is also how an
+    operator reads an installed skill before switching it on.
+    """
+    registry = _skills(jarvis)
+    skill = registry.get(str(name or ""))
+    if skill is None:
+        raise ApiError("not_found", f"no skill called {name!r}", 404)
+    return {"skill": skill.as_dict(with_body=True)}
+
+
+async def async_set_skill_enabled(
+    jarvis: "Jarvis", data: dict[str, Any]
+) -> dict[str, Any]:
+    registry = _skills(jarvis)
+    payload = data or {}
+    ok, note = await registry.async_set_enabled(
+        str(payload.get("name") or ""), bool(payload.get("enabled"))
+    )
+    if not ok:
+        raise ApiError("not_found", note, 404)
+    return {"note": note, **skills_payload(jarvis)}
+
+
+async def async_install_skill(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    from ..integrations.skills import async_install
+
+    _skills(jarvis)
+    row, why = await async_install(jarvis, str((data or {}).get("reference") or ""))
+    if row is None:
+        raise ApiError("invalid_format", why, 400)
+    return {"skill": row, **skills_payload(jarvis)}
+
+
+async def async_create_skill(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    from ..integrations.skills import async_create
+
+    _skills(jarvis)
+    payload = data or {}
+    row, why = await async_create(
+        jarvis,
+        str(payload.get("name") or ""),
+        str(payload.get("description") or ""),
+        str(payload.get("body") or ""),
+    )
+    if row is None:
+        raise ApiError("invalid_format", why, 400)
+    return {"skill": row, **skills_payload(jarvis)}
+
+
+async def async_forget_skill(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    from ..integrations.skills import async_forget
+
+    _skills(jarvis)
+    ok, note = await async_forget(jarvis, str(name or ""))
+    if not ok:
+        raise ApiError("invalid_format", note, 400)
+    return {"note": note, **skills_payload(jarvis)}
+
+
 # --- n8n --------------------------------------------------------------------
 def _n8n(jarvis: "Jarvis") -> Any:
     from ..integrations.n8n import get_config

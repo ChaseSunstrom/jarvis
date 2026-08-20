@@ -298,6 +298,7 @@ and exits without starting the server.
 - [docs/integrations.md](docs/integrations.md) — writing one, with a full example
 - [docs/clients.md](docs/clients.md) — the REST/websocket contract clients speak
 - [docs/code.md](docs/code.md) — Jarvis Code: what a coding job may and may not do
+- [docs/skills.md](docs/skills.md) — Skills: the catalogue in the prompt, the body on demand, and why an installed one arrives switched off
 - [docs/n8n.md](docs/n8n.md) — n8n: writing workflows for other people’s services, and why Jarvis never touches a credential
 - [docs/voice.md](docs/voice.md) — Wyoming wiring and latency targets
 - [docs/security.md](docs/security.md) — tokens, network posture, the approval gate

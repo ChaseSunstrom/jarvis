@@ -650,6 +650,57 @@ async def code_forget_repo(request: Request, name: str) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.get("/skills")
+async def skills_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.skills_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/skills/{name}")
+async def skill_get(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return common.skill_payload(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/skills")
+async def skill_create(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_create_skill(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/skills/install")
+async def skill_install(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_install_skill(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/skills/enabled")
+async def skill_enabled(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_set_skill_enabled(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/skills/{name}")
+async def skill_forget(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return await common.async_forget_skill(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/n8n")
 async def n8n_list(request: Request) -> dict[str, Any]:
     try:
