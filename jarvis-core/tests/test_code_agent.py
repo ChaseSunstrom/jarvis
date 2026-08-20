@@ -1005,3 +1005,185 @@ async def test_asking_for_a_job_that_never_finished_is_a_clean_404(jarvis, repo_
     await setup_code(jarvis, FakeModel(), repo_dir)
     with pytest.raises(ApiError):
         common.code_result_payload(jarvis, "nope")
+
+
+# ---------------------------------------------------------------------------
+# asking the person who started the job
+# ---------------------------------------------------------------------------
+#
+# The gap this closes: a coding job that hit a genuine fork — which of two
+# interfaces, which library, whether to change something other code depends on
+# — had exactly two options, guess or give up. A guess about which interface
+# somebody meant is a branch nobody wants and a review nobody enjoys.
+#
+# `hold_question` rides the ordinary approval gate, so the question reaches the
+# console and the phone, expires, and cannot be answered twice. What is pinned
+# here is the part specific to a coding job: that the tool is only offered when
+# there is somebody to ask, that an unanswered question does not become a
+# guess, and — the one that would have bitten — that a night spent waiting does
+# not spend the job's wall clock.
+def _registry(jarvis) -> Any:
+    from jarvis.llm.tools import ToolRegistry
+
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    return registry
+
+
+async def _answer_when_asked(registry, reply: str | None) -> asyncio.Task:
+    async def responder():
+        for _ in range(600):
+            await asyncio.sleep(0.005)
+            pending = registry.pending_requests()
+            if pending:
+                await registry.approve_request(
+                    pending[0]["request_id"], reply is not None, reply
+                )
+                return
+
+    return asyncio.ensure_future(responder())
+
+
+async def test_a_job_can_ask_and_gets_a_real_answer_back(jarvis, repo_dir):
+    registry = _registry(jarvis)
+    model = FakeModel(
+        [
+            [call("ask_the_user", question="Which client, httpx or requests?",
+                  choices=["httpx", "requests"])],
+            "used httpx",
+        ]
+    )
+    agent = make_agent(jarvis, repo_dir, model)
+    seen: list[dict] = []
+    from jarvis.llm.tools import EVENT_APPROVAL_REQUIRED
+
+    jarvis.bus.listen(EVENT_APPROVAL_REQUIRED, lambda e: seen.append(e.data))
+
+    responder = await _answer_when_asked(registry, "httpx")
+    run = await agent.execute("add a client", task_id="")
+    await responder
+
+    assert seen and seen[0]["arguments"]["question"].startswith("Which client")
+    # The choices reach the surface, so a phone can draw two buttons instead
+    # of a text box nobody wants to type into.
+    assert seen[0]["choices"] == ["httpx", "requests"]
+    # And the answer came back into the loop, which is the whole point.
+    said = [m for m in model.calls[-1]["messages"] if m.get("role") == "tool"]
+    assert any("httpx" in str(m.get("content")) for m in said)
+    assert run.summary
+
+
+async def test_an_unanswered_question_does_not_become_a_guess(jarvis, repo_dir):
+    """`None` means nobody answered. A job that read that as permission would
+    be worse than one that never asked."""
+    registry = _registry(jarvis)
+    model = FakeModel([[call("ask_the_user", question="Which one?")], "did the safe thing"])
+    agent = make_agent(jarvis, repo_dir, model)
+
+    responder = await _answer_when_asked(registry, None)
+    await agent.execute("do it", task_id="")
+    await responder
+
+    said = [m for m in model.calls[-1]["messages"] if m.get("role") == "tool"]
+    assert any("nobody answered" in str(m.get("content")) for m in said)
+    assert any("conservative" in str(m.get("content")) for m in said)
+
+
+async def test_waiting_all_night_does_not_spend_the_jobs_clock(jarvis, repo_dir):
+    """The bug this prevents: a job asks at midnight, is answered at eight, and
+    then dies on the very next round because the wall clock counted the sleep
+    — throwing away the answer it stopped to get."""
+    registry = _registry(jarvis)
+    model = FakeModel([[call("ask_the_user", question="Which one?")], "done"])
+    agent = make_agent(jarvis, repo_dir, model, max_seconds=60)
+
+    responder = await _answer_when_asked(registry, "the first one")
+    await agent.execute("do it", task_id="")
+    await responder
+
+    # Simulate the night: everything spent so far was waiting.
+    agent._waited = 8 * 60 * 60
+    agent._started -= 8 * 60 * 60
+    assert agent._elapsed() < agent.max_seconds, (
+        "time parked on a question is being charged to the job"
+    )
+
+
+async def test_the_tool_is_not_offered_when_there_is_nobody_to_ask(jarvis, repo_dir):
+    """A tool that always exists and always answers "there is nobody to ask"
+    is a round the model spends for nothing."""
+    jarvis.data.pop("llm_tools", None)
+    model = FakeModel(["done"])
+    agent = make_agent(jarvis, repo_dir, model)
+    names = {t["function"]["name"] for t in agent._tool_schemas()}
+    assert "ask_the_user" not in names
+
+    _registry(jarvis)
+    names = {t["function"]["name"] for t in agent._tool_schemas()}
+    assert "ask_the_user" in names
+
+
+async def test_a_model_that_asks_anyway_is_answered_rather_than_crashed(jarvis, repo_dir):
+    """Some proxies merge tool sets and some models name a tool they saw in an
+    earlier turn. The same argument as `edit_file` on a read-only repo: the
+    rule lives in the code, not only in the schema list."""
+    jarvis.data.pop("llm_tools", None)
+    model = FakeModel([[call("ask_the_user", question="Which one?")], "decided myself"])
+    agent = make_agent(jarvis, repo_dir, model)
+    await agent.execute("do it", task_id="")
+
+    said = [m for m in model.calls[-1]["messages"] if m.get("role") == "tool"]
+    assert any("nobody to ask" in str(m.get("content")) for m in said)
+
+
+async def test_the_task_says_waiting_for_you_rather_than_spinning(jarvis, repo_dir):
+    """`blocked` is a status tasks.py has always defined and the console has
+    always drawn. A job parked on a question is the case it was defined for."""
+    from jarvis.tasks import STATUS_BLOCKED
+
+    registry = _registry(jarvis)
+    task = await jarvis.tasks.async_add("job", kind="code", steps=["plan the work"])
+    model = FakeModel([[call("ask_the_user", question="Which one?")], "done"])
+    agent = make_agent(jarvis, repo_dir, model)
+
+    statuses: list[str] = []
+    jarvis.bus.listen(
+        "jarvis_task_updated", lambda e: statuses.append(e.data["task"]["status"])
+    )
+    responder = await _answer_when_asked(registry, "that one")
+    await agent.execute("do it", task_id=task.id)
+    await responder
+
+    assert STATUS_BLOCKED in statuses
+    # And it goes back to running afterwards, rather than sitting on `blocked`
+    # for the rest of the job.
+    assert statuses[-1] != STATUS_BLOCKED
+
+
+async def test_answering_does_not_rewind_the_progress_bar(jarvis, repo_dir):
+    """Coming back from `blocked` must not mark step 0 running again.
+
+    A job that asked its question on step 3 and then showed "planning the
+    work" the moment somebody answered would read as having thrown the
+    answer away and started over.
+    """
+    registry = _registry(jarvis)
+    task = await jarvis.tasks.async_add(
+        "job", kind="code", steps=["plan the work", "one", "two", "three"]
+    )
+    model = FakeModel(
+        [
+            '["one", "two", "three"]',
+            [call("plan_step", step=3)],
+            [call("ask_the_user", question="Which one?")],
+            "done",
+        ]
+    )
+    agent = make_agent(jarvis, repo_dir, model)
+
+    responder = await _answer_when_asked(registry, "that one")
+    await agent.execute("do it", task_id=task.id)
+    await responder
+
+    steps = jarvis.tasks.get(task.id).steps
+    assert steps[0].status == STATUS_DONE, "the planning step was reopened"

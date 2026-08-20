@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ...tasks import STATUS_DONE, STATUS_RUNNING
+from ...tasks import STATUS_BLOCKED, STATUS_DONE, STATUS_RUNNING
 from .edits import EditError, apply_edit, numbered, search_text
 from .workspace import GitError, PathRefused, Repo, Workspace, branch_name, check_argv
 
@@ -66,6 +66,11 @@ MAX_ROUNDS = 40
 #: making rounds quickly.
 MAX_SECONDS = 20 * 60
 MODEL_TIMEOUT = 240.0
+#: How long a question waits before the job decides for itself. Longer than
+#: the wall clock above on purpose: the clock measures a job WORKING, and a
+#: job that stopped to ask is not spending anything while it waits. Somebody
+#: who reads the question in the morning should still be able to answer it.
+ASK_TTL = 12 * 60 * 60
 MAX_STEPS = 12
 CHECK_TIMEOUT = 300.0
 #: Of one tool result. A model that reads a 5,000-line file has spent its whole
@@ -214,6 +219,10 @@ class CodeAgent:
         self.run = CodeRun(repo=repo.name, instruction="")
         self._task_id = ""
         self._started = 0.0
+        #: Seconds spent waiting on a human, which the wall clock below does
+        #: NOT count. It measures a job working; a job parked on a question is
+        #: spending nothing, and a night's sleep must not be what stops it.
+        self._waited = 0.0
         #: 1-based, the furthest plan step the model has claimed.
         self._plan_at = 0
         #: The environment's `setup:` runs once per job, not per command.
@@ -224,6 +233,7 @@ class CodeAgent:
         self.run = CodeRun(repo=self.repo.name, instruction=instruction)
         self._task_id = task_id
         self._started = time.monotonic()
+        self._waited = 0.0
         self._plan_at = 0
         self._setup_done = False
 
@@ -320,7 +330,7 @@ class CodeAgent:
 
         for round_number in range(self.max_rounds):
             self._check_stopped()
-            if time.monotonic() - self._started > self.max_seconds:
+            if self._elapsed() > self.max_seconds:
                 self.run.stopped_early = True
                 self.run.summary = (
                     f"stopped after {self.max_seconds / 60:.0f} minutes; what was "
@@ -341,7 +351,7 @@ class CodeAgent:
                 # Per CALL, not only per round: ten `sleep 890`s in one
                 # assistant message is ten times the environment's timeout
                 # inside a single round, and the round-level check never runs.
-                if time.monotonic() - self._started > self.max_seconds:
+                if self._elapsed() > self.max_seconds:
                     self.run.stopped_early = True
                     self.run.summary = (
                         f"stopped after {self.max_seconds / 60:.0f} minutes; what "
@@ -390,6 +400,8 @@ class CodeAgent:
                 return await self._do_command(args)
             if name == "plan_step":
                 return await self._do_plan_step(args)
+            if name == "ask_the_user":
+                return await self._do_ask(args)
             return f"there is no tool called {name!r}"
         except PathRefused as err:
             return f"refused: {err}"
@@ -502,6 +514,34 @@ class CodeAgent:
                             }
                         },
                         ["command"],
+                    ),
+                )
+            )
+        if self._can_ask():
+            tools.append(
+                (
+                    "ask_the_user",
+                    "Ask the person who started this job a question, and WAIT for "
+                    "their answer. Use it when the instruction is genuinely "
+                    "ambiguous and the two readings would produce different code "
+                    "— which library to use, which of two call sites they meant, "
+                    "whether to change an interface other code depends on. Do not "
+                    "use it for anything you can find out by reading the "
+                    "repository. They may be asleep: the job waits, so ask once "
+                    "and ask well.",
+                    schema_object(
+                        {
+                            "question": {
+                                "type": "string",
+                                "description": "one clear question, with the context they need",
+                            },
+                            "choices": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "the options, when there is a knowable set",
+                            },
+                        },
+                        ["question"],
                     ),
                 )
             )
@@ -626,6 +666,95 @@ class CodeAgent:
         self.run.checks.append(record)
         head = "passed" if code == 0 else f"failed (exit {code})"
         return f"{wanted}: {head}\n{out[-MAX_RESULT_CHARS:]}"
+
+    def _elapsed(self) -> float:
+        """Time this job has spent WORKING, in seconds.
+
+        Waiting on a person does not count. Without this, a job that asked a
+        question at midnight and was answered at eight would blow its budget
+        on the round after the answer arrived — throwing away the answer it
+        stopped to get, which is worse than never having asked.
+        """
+        return time.monotonic() - self._started - self._waited
+
+    def _can_ask(self) -> bool:
+        """Whether there is anywhere to put a question.
+
+        A tool that always exists and always answers "there is nobody to ask"
+        is a tool the model burns a round on. The registry is what raises the
+        approval, so no registry means no offer.
+        """
+        registry = self.jarvis.data.get("llm_tools")
+        return registry is not None and hasattr(registry, "hold_question")
+
+    async def _do_ask(self, args: dict[str, Any]) -> str:
+        """Put a question in front of a human and block until they answer.
+
+        This is the thing a coding job could not do before. Without it a job
+        that hit a genuine fork had two options — guess, or give up — and a
+        guess about which of two interfaces the user meant is a branch nobody
+        wants. The question rides the ordinary approval gate, so it reaches the
+        console and the phone, expires, and cannot be answered twice.
+
+        The task goes to `blocked` while it waits, which the progress UI draws
+        as "waiting for you" rather than as a spinner that has stopped moving.
+        """
+        registry = self.jarvis.data.get("llm_tools")
+        if registry is None or not hasattr(registry, "hold_question"):
+            return "there is nobody to ask from here; decide for yourself and say so"
+        question = " ".join(str(args.get("question") or "").split())
+        if not question:
+            return "ask a question"
+
+        raw = args.get("choices")
+        choices = [str(c) for c in raw if isinstance(c, (str, int, float))] if isinstance(
+            raw, list
+        ) else []
+
+        await self._blocked(question)
+        waiting_from = time.monotonic()
+        try:
+            said = await registry.hold_question(
+                question, choices=choices, ttl=ASK_TTL, context=None
+            )
+        finally:
+            self._waited += time.monotonic() - waiting_from
+            await self._unblock()
+
+        if said is None:
+            return (
+                "nobody answered, so nothing was decided for you. Pick the most "
+                "conservative option, do that, and say in your summary which "
+                "question went unanswered."
+            )
+        return f"they said: {said}"
+
+    async def _blocked(self, question: str) -> None:
+        """Say on the task that this is waiting for a person, not stuck.
+
+        `blocked` rather than `running` because the console draws them
+        differently on purpose: a solid bar and "waiting for you" against an
+        indeterminate one. A job parked on a question that still showed a
+        spinner would be indistinguishable from one that had hung.
+        """
+        tasks = getattr(self.jarvis, "tasks", None)
+        if tasks is None or not self._task_id:
+            return
+        await tasks.async_update(
+            self._task_id, status=STATUS_BLOCKED, detail=f"waiting for you: {question}"[:200]
+        )
+
+    async def _unblock(self) -> None:
+        """Back to running, without touching the step the job is actually on.
+
+        Deliberately not `_planning(RUNNING)`: that marks step 0, and a job
+        that asked a question on step 3 would visibly rewind its own bar to
+        the planning stage the moment it got an answer.
+        """
+        tasks = getattr(self.jarvis, "tasks", None)
+        if tasks is None or not self._task_id:
+            return
+        await tasks.async_update(self._task_id, status=STATUS_RUNNING, detail="working")
 
     async def _do_plan_step(self, args: dict[str, Any]) -> str:
         """The model says where it is; the bar follows.

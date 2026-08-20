@@ -40,6 +40,17 @@ a configuration fact worth relaying rather than hiding.
 **Never say the work is done before the job has finished.** The job's own
 result is the only thing that knows.
 
+## The job can ask a question
+
+A running job has an `ask_the_user` tool, so it does not have to guess at a
+genuine fork. If a job asks something, it reaches the user as an ordinary
+approval card and the job waits — possibly for hours — until they answer.
+
+What this means for you, in the conversation: when you start a job, it is
+worth saying it may come back with a question. And if the user mentions they
+answered something, do not assume the job is finished — the answer restarts
+it, it does not end it.
+
 ## What it cannot do
 
 - It never commits to the branch the user is on.

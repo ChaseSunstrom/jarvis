@@ -209,6 +209,32 @@ class N8nClient:
         body = await self._request("POST", f"/workflows/{_ident(workflow_id)}/{verb}")
         return body if isinstance(body, dict) else {}
 
+    # --- tags -------------------------------------------------------------
+    async def list_tags(self, *, limit: int = MAX_PAGE) -> list[dict[str, Any]]:
+        body = await self._request("GET", "/tags", params={"limit": limit})
+        data = body.get("data") if isinstance(body, dict) else None
+        return [t for t in data if isinstance(t, dict)] if isinstance(data, list) else []
+
+    async def create_tag(self, name: str) -> dict[str, Any]:
+        body = await self._request("POST", "/tags", json_body={"name": str(name)})
+        return body if isinstance(body, dict) else {}
+
+    async def set_workflow_tags(
+        self, workflow_id: str, tag_ids: list[str]
+    ) -> list[dict[str, Any]]:
+        """Tags are a separate call, not a field on create.
+
+        n8n treats `tags` as read-only on the workflow itself and takes them
+        here as a list of `{id}` — which is why a create that included them
+        silently produced an untagged workflow.
+        """
+        body = await self._request(
+            "PUT",
+            f"/workflows/{_ident(workflow_id)}/tags",
+            json_body=[{"id": _ident(t)} for t in tag_ids],
+        )
+        return body if isinstance(body, list) else []
+
     # --- executions -------------------------------------------------------
     async def executions(
         self, *, workflow_id: str = "", limit: int = 20, status: str = ""

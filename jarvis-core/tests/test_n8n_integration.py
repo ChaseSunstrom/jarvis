@@ -149,6 +149,8 @@ async def test_a_created_workflow_arrives_switched_off_and_uncredentialed(
     def handler(request: httpx.Request) -> httpx.Response:
         import json as _json
 
+        if "/tags" in request.url.path:
+            return httpx.Response(200, json={"data": [{"id": "t1", "name": "jarvis"}]})
         sent.update(_json.loads(request.content))
         return httpx.Response(200, json={"id": "wf-1", "name": sent.get("name")})
 
@@ -161,6 +163,54 @@ async def test_a_created_workflow_arrives_switched_off_and_uncredentialed(
         "a guessed credential id was sent to n8n"
     )
     assert result["active"] is False
+
+
+async def test_the_configured_tag_is_actually_applied(tmp_path: Path):
+    """`tag:` used to be a sentence in the tool result asking the MODEL to ask
+    the USER to tag it. That is not what the config option says it does, and
+    "what did the assistant write" is only a filter in n8n if it is true.
+
+    n8n takes tags in a separate call — they are read-only on the workflow —
+    as a list of ids, so the tag has to be found or made first.
+    """
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        path = request.url.path
+        seen.append((request.method, path))
+        if path.endswith("/api/v1/tags") and request.method == "GET":
+            return httpx.Response(200, json={"data": []})
+        if path.endswith("/api/v1/tags") and request.method == "POST":
+            assert _json.loads(request.content)["name"] == "jarvis"
+            return httpx.Response(200, json={"id": "t9", "name": "jarvis"})
+        if path.endswith("/tags") and request.method == "PUT":
+            assert _json.loads(request.content) == [{"id": "t9"}]
+            return httpx.Response(200, json=[{"id": "t9", "name": "jarvis"}])
+        return httpx.Response(200, json={"id": "wf-1", "name": "x"})
+
+    jarvis, _registry = await make(tmp_path, handler)
+    result, why = await n8n_integration.async_create(jarvis, WORKFLOW)
+
+    assert result is not None, why
+    assert result["tagged"] is True
+    assert ("PUT", "/api/v1/workflows/wf-1/tags") in seen
+
+
+async def test_a_workflow_is_still_reported_when_the_tag_will_not_stick(tmp_path: Path):
+    """The workflow is already written. Refusing to report a successful create
+    because a label did not apply would be the wrong trade."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/tags" in request.url.path:
+            return httpx.Response(500, json={"message": "no"})
+        return httpx.Response(200, json={"id": "wf-1", "name": "x"})
+
+    jarvis, _registry = await make(tmp_path, handler)
+    result, why = await n8n_integration.async_create(jarvis, WORKFLOW)
+    assert result is not None, why
+    assert result["tagged"] is False
 
 
 async def test_the_result_says_what_to_connect_and_where(tmp_path: Path):

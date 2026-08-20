@@ -341,21 +341,18 @@ async def async_create(
     """
     cfg, client = _require(jarvis)
     try:
-        cleaned = clean_workflow(
-            workflow,
-            tag_note=(
-                f"Tag it {cfg.tag!r} in n8n if you want to find everything "
-                "Jarvis wrote." if cfg.tag else ""
-            ),
-        )
+        cleaned = clean_workflow(workflow)
     except WorkflowError as err:
         return None, str(err)
 
     created = await client.create_workflow(cleaned.payload)
+    workflow_id = str(created.get("id") or "")
+    tagged = await _tag(client, cfg.tag, workflow_id)
     result = {
-        "id": str(created.get("id") or ""),
+        "id": workflow_id,
         "name": cleaned.payload["name"],
         "active": False,
+        "tagged": tagged,
         **cleaned.as_dict(),
     }
     _LOGGER.info(
@@ -365,6 +362,38 @@ async def async_create(
         len(cleaned.connections_needed),
     )
     return result, ""
+
+
+async def _tag(client: N8nClient, tag: str, workflow_id: str) -> bool:
+    """Actually apply the configured tag. Best effort, never fatal.
+
+    This used to be a sentence in the tool result asking the model to tell the
+    user to tag it themselves, which is not the same thing as the config
+    option claiming everything Jarvis writes is tagged. n8n takes tags in a
+    separate call — they are read-only on the workflow — as a list of ids, so
+    the tag has to exist first.
+
+    A failure here is logged and swallowed: the workflow is already written,
+    and refusing to report a successful create because a label did not stick
+    would be the wrong trade.
+    """
+    if not tag or not workflow_id:
+        return False
+    try:
+        existing = await client.list_tags()
+        found = next(
+            (t for t in existing if str(t.get("name") or "").lower() == tag.lower()), None
+        )
+        if found is None:
+            found = await client.create_tag(tag)
+        tag_id = str(found.get("id") or "")
+        if not tag_id:
+            return False
+        await client.set_workflow_tags(workflow_id, [tag_id])
+    except N8nError as err:
+        _LOGGER.info("n8n: could not tag %s as %r: %s", workflow_id, tag, err)
+        return False
+    return True
 
 
 async def async_set_active(

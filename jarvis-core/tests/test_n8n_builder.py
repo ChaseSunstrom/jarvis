@@ -639,6 +639,10 @@ async def test_the_builders_workflow_goes_through_the_one_write_path(wired):
     sent: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        # The tag is a separate call — n8n treats tags as read-only on the
+        # workflow — so this handler routes rather than assuming one request.
+        if "/tags" in request.url.path:
+            return httpx.Response(200, json={"data": [{"id": "t1", "name": "jarvis"}]})
         sent.append(json.loads(request.content))
         return httpx.Response(200, json={"id": "wf-9", "name": "Morning orders"})
 
@@ -670,6 +674,8 @@ async def test_the_model_never_gets_the_transcript(wired):
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if "/tags" in request.url.path:
+            return httpx.Response(200, json={"data": [{"id": "t1", "name": "jarvis"}]})
         return httpx.Response(200, json={"id": "wf-9", "name": "Morning orders"})
 
     n8n_integration.get_client(jarvis)._transport = httpx.MockTransport(handler)

@@ -368,6 +368,35 @@ This is why the planning step exists at all. A model that writes down what it
 is going to do makes better changes, but more importantly it is the only
 honest source for a number on a screen.
 
+## When the job needs to ask you something
+
+A job that hits a real fork — which of two libraries, which of two call sites,
+whether to change an interface other code depends on — used to have exactly
+two options: guess, or give up. A guess about which interface somebody meant
+is a branch nobody wants.
+
+So the agent has an `ask_the_user` tool. It raises the ordinary approval
+request, which means the question appears on the console *and* on the phone,
+expires, and can only be answered once. The task moves to `blocked`, which the
+progress UI draws as a solid bar and "waiting for you" rather than a spinner
+that has stopped moving.
+
+Two details that matter:
+
+**Waiting does not spend the job's clock.** `max_seconds` measures a job
+working. A job parked on a question at midnight and answered at eight has
+spent nothing, and charging it for the night would kill it on the round after
+the answer arrived — throwing away the answer it stopped to get.
+
+**Nobody answering is not permission.** If the question expires the job is
+told so explicitly, and told to take the conservative option and name the
+unanswered question in its summary. A worker that read silence as a yes would
+be worse than one that never asked.
+
+The tool is only offered when there is somewhere to put a question, so a job
+running with no tool registry does not spend a round discovering there is
+nobody home.
+
 ## Cancelling
 
 `api/common.py` is careful to say that a cancelled task may still be running if
