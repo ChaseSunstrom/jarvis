@@ -1,9 +1,11 @@
 # Scripts — named action sequences.
 #
-# Each entry becomes BOTH a `script.<name>` entity and a `script.<name>`
-# service. That second half is the interesting one: a script with a
-# `description:` and `fields:` is automatically offered to the LLM as a tool,
-# so this file is how you give Jarvis new abilities without writing Python.
+# Each entry becomes THREE things: a `script.<name>` entity, a `script.<name>`
+# service, and — when it carries a `description:` — a tool called
+# `script_<name>` the model can call directly, with the `fields:` as its
+# arguments. That third one is how this file gives Jarvis new abilities
+# without any Python, and its tier is the script's own reach: `goodnight`
+# locks the front door, so it is held for a human.
 #
 # A script that ends in `stop:` with a `response_variable:` returns structured
 # data to whoever called it — including the model. See `house_status` below.

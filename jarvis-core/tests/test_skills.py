@@ -768,3 +768,49 @@ async def test_the_shipped_recipes_are_briefs_and_not_stale_json(tmp_path: Path)
     # part a model cannot derive from the node catalogue.
     assert text.count("What usually goes wrong") >= 10
     assert '"nodes":' not in text, "a JSON workflow was pasted into the briefs"
+
+
+async def test_the_automation_recipes_are_yaml_that_actually_parses(tmp_path: Path):
+    """A library of broken YAML is worse than none: a model copies a block,
+    the automation is refused, and the reason points at the user's request
+    rather than at the example it came from."""
+    import re
+
+    import yaml
+
+    _jarvis, tools = await make(tmp_path)
+    text = (
+        await tools.get("open_skill").handler(
+            {"name": "house-automations", "file": "recipes.md"}
+        )
+    )["contents"]
+    blocks = re.findall(r"```yaml\n(.*?)```", text, re.S)
+    assert len(blocks) >= 5, "the recipes lost their examples"
+    for block in blocks:
+        yaml.safe_load(block)
+
+
+async def test_the_automation_recipes_name_the_trap_in_each_shape(tmp_path: Path):
+    """The traps are the reason to read it. Anybody can write a motion-light
+    automation; `mode: restart` is the line that stops it leaving somebody
+    standing in the dark, and no node catalogue or schema tells you that."""
+    _jarvis, tools = await make(tmp_path)
+    text = (
+        await tools.get("open_skill").handler(
+            {"name": "house-automations", "file": "recipes.md"}
+        )
+    )["contents"]
+    assert text.count("**The trap**") >= 8
+    assert "mode: restart" in text
+    assert "sun` is not a trigger platform" in text
+
+
+async def test_the_automations_skill_says_to_run_what_exists_first(tmp_path: Path):
+    """The "consistent and fast" half. A script somebody tuned beats six
+    service calls that look the same until the day they do not."""
+    _jarvis, tools = await make(tmp_path)
+    body = (await tools.get("open_skill").handler({"name": "house-automations"}))[
+        "instructions"
+    ]
+    assert "run_script" in body
+    assert "the second time" in body

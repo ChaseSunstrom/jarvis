@@ -622,15 +622,39 @@ async def test_unreachable_services_degrade_instead_of_failing(example_copy: Pat
 
 
 async def test_scripts_that_carry_metadata_become_llm_tools(example_copy: Path) -> None:
-    """description + fields is what promotes a script into the tool surface."""
+    """description + fields is what promotes a script into the tool surface.
+
+    This test used to assert only that a SERVICE existed, while its name
+    claimed something much larger — and the larger thing was not true. Six
+    places in the documentation said a described script becomes an LLM tool
+    automatically; nothing did it, `jarvis.data["scripts"]` was written for a
+    consumer that was never written, and the model got one generic
+    `run_script` that takes no arguments and discards the response.
+
+    So the assertion now reaches the registry the model is actually handed.
+    """
+    from jarvis.integrations.script import TOOL_PREFIX
+
     config = load_config(example_copy)
     jarvis = await _boot(example_copy)
     try:
+        registry = jarvis.data.get("llm_tools")
+        assert registry is not None, "no tool registry to check against"
+        offered = {t["function"]["name"] for t in registry.as_openai_schema()}
+
         for name, script in config["script"].items():
             assert script.get("description"), f"script.{name} has no description"
             assert jarvis.services.has_service("script", name)
-        # house_status returns structured data rather than just acting.
+            assert f"{TOOL_PREFIX}{name}" in offered, (
+                f"script.{name} has a description and is not offered to the model"
+            )
+
+        # house_status returns structured data rather than just acting — and
+        # the point of a per-script tool is that the model receives it.
         assert config["script"]["house_status"]["sequence"][-1]["response_variable"]
+        got = await registry.call(f"{TOOL_PREFIX}house_status", {}, None)
+        assert got["status"] == "ok"
+        assert isinstance(got["result"], dict), "the response_variable was discarded"
     finally:
         await jarvis.async_stop()
 

@@ -617,12 +617,25 @@ goodnight:
       response_variable: result
 ```
 
-Each entry becomes both a `script.<name>` entity and a `script.<name>` service.
-That second half matters: a script with a `description:` and `fields:` is
-offered to the LLM as a tool automatically. Ending in `stop:` with a
-`response_variable:` returns structured data to the caller, model included.
+Each entry becomes a `script.<name>` entity, a `script.<name>` service, and —
+when it carries a `description:` — a tool called `script_<name>` that the
+model can call directly. The `fields:` become its arguments, and ending in
+`stop:` with a `response_variable:` returns structured data to whoever called
+it, model included.
 
-This is how you give Jarvis new abilities without writing Python.
+This is how you give Jarvis new abilities without writing Python, and it is
+the cheap way to make a repeated job fast and consistent: six service calls
+the model works out afresh every time become one call, in the order you set.
+
+**The tool's tier is the script's own reach.** A script that locks a door or
+calls a gated service is held for a human; one that dims a light is not.
+Whatever the same calls would need on their own, the script needs — putting
+them in YAML is not a way around a gate.
+
+`description:` is the opt-in. Leave it off and the script is a private
+routine: still an entity, still a service, still runnable by name through the
+generic `run_script` tool, just not offered to the model as something to reach
+for.
 
 ## `scene:`
 

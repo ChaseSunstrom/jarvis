@@ -18,6 +18,49 @@ services.
   user describes a LOOK rather than an event.
 - **Script** — a sequence to run on demand, with no trigger of its own.
 
+## Run what already exists before you build anything
+
+Scripts and scenes are in your prompt with everything else — `script.goodnight`,
+`scene.movie_night`. If one is there, **run it**. Do not compose six service
+calls that do nearly the same thing: the script is what somebody tuned, and
+your composition is a guess that looks identical right up until it is not.
+
+A script the household wrote a description for is **its own tool**, called
+`script_<name>` — with its own arguments, and it hands back whatever the
+script reports. Look for one before you look for anything else. For the rest,
+`run_script` takes the name.
+
+One call, the same order every time, and it finishes faster than you can
+reason out the sequence.
+
+## Offer to save a routine the second time
+
+If the same sequence of actions has been asked for twice, say so and offer to
+make it a script. That is the whole "consistent and fast" argument: one call
+instead of six, the same order every time, and a name the household can say
+out loud.
+
+Give it a `description:` when you write it, because that is what turns it
+into a tool you can call next time rather than a routine somebody has to
+remember. And `fields:` for anything that varies — a goodnight that takes
+`delay_minutes` is one script instead of three.
+
+Do not make one unasked. A script is persistent and shows up in the house's
+own list; adding one nobody agreed to is clutter with your name on it.
+
+## Twelve worked routines, beside this file
+
+`open_skill` with `file: "recipes.md"` gets you the ones worth having —
+goodnight, leaving and arriving, announce, a status script, motion lights,
+something-left-on, away-and-something-moved, an appliance finishing, evening
+wind-down, an expiring guest mode — each with real YAML and, more usefully,
+the trap in that particular shape.
+
+Those traps are the reason to read it: `mode: restart` is what makes a motion
+timer extend instead of stack, `sun` is not a trigger platform, a washing
+machine drops below five watts several times mid-cycle, and an away-alert
+without its condition fires every time somebody comes home.
+
 ## Before you create one
 
 1. `list_entities` — use real entity ids. An automation naming an entity that

@@ -223,6 +223,8 @@ numeric. Use `{%- … -%}`. HA is more forgiving here than Jarvis is.
 
 **Service responses are more available.** `history.get`, `history.stats`,
 `logbook.get`, `voice.say`, `scene.apply` and any script ending in `stop:` with
-a `response_variable:` return data to the caller. Scripts that return data
-become LLM tools automatically, which is worth exploiting rather than working
-around.
+a `response_variable:` return data to the caller. A script that carries a
+`description:` is offered to the model as `script_<name>` with its `fields:`
+as arguments and that response as its result, which is worth exploiting
+rather than working around — it is the cheapest way to give the assistant a
+verb it does not have.

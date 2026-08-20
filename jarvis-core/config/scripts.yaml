@@ -1,9 +1,15 @@
 # Scripts you keep in version control — named action sequences.
 #
-# Each entry becomes BOTH a `script.<name>` entity and a `script.<name>`
-# service. That second half is the interesting one: a script with a
-# `description:` and `fields:` is automatically offered to the LLM as a tool,
-# so writing one here is how you teach Jarvis a new verb without any Python.
+# Each entry becomes THREE things: a `script.<name>` entity, a `script.<name>`
+# service, and — when it carries a `description:` — a tool called
+# `script_<name>` that the model can call directly, with the `fields:` as its
+# arguments and any `stop:` response as its result. That third one is how you
+# teach Jarvis a new verb without any Python.
+#
+# Its tier is the script's own reach: one that locks a door is held for a
+# human, one that dims a light is not. Leave `description:` off and the script
+# is private — still an entity, still a service, still runnable through
+# `run_script`, just not offered to the model.
 #
 # Empty on purpose — see automations.yaml above for why, and
 # examples/house/scripts.yaml for five working ones.

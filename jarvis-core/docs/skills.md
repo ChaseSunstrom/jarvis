@@ -54,10 +54,12 @@ override the house conventions Jarvis ships with. The same rule
                         called again with a
                         `file`
 
-The third level is what makes a large reference usable. The shipped
-`n8n-workflows` skill has a `recipes.md` beside it with twelve worked
-workflow briefs — nobody needs those until they are building one of them, and
-loading them into the body would make every n8n turn carry ten kilobytes.
+The third level is what makes a large reference usable. Two shipped skills
+use it: `n8n-workflows/recipes.md` has twelve worked workflow briefs, and
+`house-automations/recipes.md` has twelve routines with the YAML and the trap
+in each shape. Nobody needs either until they are building one, and putting
+them in the bodies would make every automation turn carry seven kilobytes and
+every n8n turn ten.
 
 `open_skill` on a skill that has files names them and says how to ask. A file
 is read from that skill's own folder and nowhere else: the path is resolved
@@ -74,9 +76,10 @@ Eight, one per capability surface: `house-automations`, `n8n-workflows`,
 own capabilities, written as skills so the persona does not have to carry
 them and so you can override any of them.
 
-Their descriptions cost about two thousand characters of every prompt and
-cover about eighteen thousand characters of instructions — the ratio is the
-whole feature. Every one of them is the answer to a specific way a model gets
+Their descriptions cost about two thousand characters of every prompt. Behind
+them sit twenty thousand characters of instructions and another seventeen
+thousand of reference files, none of which is loaded until something asks —
+and that ratio is the whole feature. Every one of them is the answer to a specific way a model gets
 this wrong: reaching for `schedule_task` to turn a light off at eleven,
 answering a comparison from three stitched-together searches instead of
 starting a research run, writing a note about something already in the state

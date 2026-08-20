@@ -39,7 +39,7 @@ default.
 |---|---|
 | `configuration.yaml` | `demo:` devices, six areas, template sensors, a person, input helpers, and an `llm.expose` list naming real entity ids |
 | `automations.yaml` | motion light, evening wind-down, night mode, door-opened-while-away, high power draw, guest-mode expiry, startup notice, phone location webhook |
-| `scripts.yaml` | `goodnight`, `good_morning`, `movie_time`, `announce`, `house_status` — the last two carry `description:` and `fields:`, so they become LLM tools |
+| `scripts.yaml` | `goodnight`, `good_morning`, `movie_time`, `announce`, `house_status` — every one carries a `description:`, so each is offered to the model as `script_<name>`; `announce` and `house_status` also declare `fields:` and a `stop:` response |
 | `scenes.yaml` | named states spanning lights, covers, locks and climate |
 | `packages-laundry.yaml` | one self-contained feature — helper, template sensor, automation and script in one file. Copy to `packages/laundry.yaml` |
 | `example.tool.yaml` | a YAML-defined LLM tool. Copy to `tools/` |
