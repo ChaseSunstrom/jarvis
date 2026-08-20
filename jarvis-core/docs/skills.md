@@ -49,9 +49,19 @@ override the house conventions Jarvis ships with. The same rule
 
 ### Shipped
 
-`n8n-workflows`, `house-automations`, `coding-jobs`, `writing-skills`. These
-are the procedures for Jarvis's own capabilities, written as skills so the
-persona does not have to carry them and so you can override any of them.
+Eight, one per capability surface: `house-automations`, `n8n-workflows`,
+`coding-jobs`, `finding-things-out`, `remembering`, `later-and-repeating`,
+`adding-tools`, and `writing-skills`. These are the procedures for Jarvis's
+own capabilities, written as skills so the persona does not have to carry
+them and so you can override any of them.
+
+Their descriptions cost about two thousand characters of every prompt and
+cover about eighteen thousand characters of instructions — the ratio is the
+whole feature. Every one of them is the answer to a specific way a model gets
+this wrong: reaching for `schedule_task` to turn a light off at eleven,
+answering a comparison from three stitched-together searches instead of
+starting a research run, writing a note about something already in the state
+machine, or hand-rolling an HTTP tool for a service n8n has a node for.
 
 ### Written
 
