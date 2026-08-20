@@ -1597,7 +1597,10 @@ async def async_n8n_check(jarvis: "Jarvis") -> dict[str, Any]:
     from ..integrations.n8n import async_probe
 
     _n8n(jarvis)
-    return await async_probe(jarvis)
+    # Deep, because CHECK is the button somebody presses when it is not
+    # working, and "n8n: no" sends them to the wrong half. Three lines —
+    # public API, login, AI builder — each with the reason it is not there.
+    return await async_probe(jarvis, deep=True)
 
 
 async def async_n8n_workflows(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
@@ -1663,6 +1666,48 @@ async def async_n8n_executions(jarvis: "Jarvis", data: dict[str, Any]) -> dict[s
     except N8nError as err:
         raise ApiError("upstream_error", str(err), 502) from err
     return {"executions": runs}
+
+
+async def async_n8n_build(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Start a build with n8n's own AI builder, from the console.
+
+    Not gated the way the tool is: this request carried a bearer token, and a
+    tool call may have been shaped by a page the model read. The same
+    asymmetry as the console's own coding-job button.
+    """
+    from ..integrations.n8n import async_build_with_ai
+
+    _n8n(jarvis)
+    started = await async_build_with_ai(
+        jarvis, str((data or {}).get("instruction") or ""), source="console"
+    )
+    if isinstance(started, str):
+        raise ApiError("invalid_format", started, 400)
+    return {"task": started.as_dict()}
+
+
+def n8n_build_transcript(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
+    """What n8n's builder and the household said to each other.
+
+    Read-only, and for the console alone. The model gets one sentence — this
+    is prose composed by a different AI, and a tool result is read as
+    instructions-adjacent text.
+    """
+    from ..integrations.n8n import transcript_of
+
+    _n8n(jarvis)
+    return {"task_id": str(task_id or ""), "transcript": transcript_of(jarvis, task_id)}
+
+
+async def async_n8n_health(jarvis: "Jarvis", workflow_id: str) -> dict[str, Any]:
+    """Is one workflow actually working — connected, on, and running?"""
+    from ..integrations.n8n import N8nError, async_health
+
+    _n8n(jarvis)
+    try:
+        return await async_health(jarvis, str(workflow_id or ""))
+    except N8nError as err:
+        raise ApiError("upstream_error", str(err), 502) from err
 
 
 async def async_push_code_branch(

@@ -38,6 +38,26 @@ node names, types, which nodes carry a credential, and the edges. It does not
 return `parameters`, because that is where people type an API key into an HTTP
 header field, and a read of a workflow must not be a read of somebody's secret.
 
+## The optional login
+
+    n8n:
+      login:
+        email: !env_var N8N_LOGIN_EMAIL ""
+        password: !env_var N8N_LOGIN_PASSWORD ""
+
+Off by default and never required. n8n has two HTTP surfaces — `/api/v1`,
+opened by the API key, and `/rest`, opened only by a session cookie — and
+three things live on the second one: the instance's settings (which say
+whether its AI builder is licensed), the node type catalogue (which is how a
+model stops inventing node names), and the AI builder itself.
+
+Say plainly what that costs: **a login is strictly more powerful than an API
+key.** A session also authenticates `/api/v1`, while a key never authenticates
+`/rest`, and `/rest` includes the endpoint that mints API keys. Use a
+dedicated non-owner n8n user, and put the password in the environment rather
+than the file. Everything still works without it; only the three things above
+are missing, and each of them says so by name.
+
 ## Activation
 
 Off by default. Activating is the moment a workflow becomes live, and a
@@ -65,11 +85,20 @@ thinks that particular workflow deserves.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .capabilities import N8nCapabilities
 from .client import DEFAULT_TIMEOUT, N8nClient, N8nError
+from .builder import BuilderClient
+from .health import async_health
+from .nodes import NodeCatalogue
+from .nodes import load as load_catalogue
+from .nodes import validate as validate_workflow
+from .relay import run_in_background, synthetic_workflow_id
+from .session import DEFAULT_REST_PATH, N8nSession
 from .workflows import (
     WorkflowError,
     clean_workflow,
@@ -87,6 +116,14 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "n8n"
 DATA_CONFIG = "config"
 DATA_CLIENT = "client"
+DATA_SESSION = "session"
+DATA_CAPABILITIES = "capabilities"
+DATA_CATALOGUE = "catalogue"
+DATA_RELAYS = "relays"
+DATA_TRANSCRIPTS = "transcripts"
+
+#: The task kind, so the console can tell a build apart from a coding job.
+KIND = "n8n_build"
 
 #: Applied to every workflow Jarvis creates, so "what did the assistant write"
 #: is one filter in n8n's own UI rather than an archaeology exercise.
@@ -96,11 +133,47 @@ __all__ = [
     "DOMAIN",
     "N8nConfig",
     "N8nError",
+    "N8nLogin",
     "async_setup",
+    "async_catalogue",
+    "async_health",
+    "async_build_with_ai",
+    "get_capabilities",
     "get_client",
     "get_config",
+    "get_session",
     "listing_payload",
 ]
+
+
+@dataclass
+class N8nLogin:
+    """The optional `/rest` login. See the module docstring for what it costs."""
+
+    email: str = ""
+    password: str = ""
+    #: A TOTP code, for an account with 2FA on. Of limited use in a config
+    #: file — it expires in thirty seconds — but it makes a one-off probe
+    #: possible, and the sentence that suggests it says so.
+    mfa_code: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.email and self.password)
+
+    @classmethod
+    def from_config(cls, data: Any) -> "N8nLogin":
+        raw = data if isinstance(data, dict) else {}
+        return cls(
+            email=str(raw.get("email") or raw.get("user") or "").strip(),
+            password=str(raw.get("password") or ""),
+            mfa_code=str(raw.get("mfa_code") or raw.get("mfa") or "").strip(),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        # Never the password, and never the code either — a TOTP is a
+        # credential for the thirty seconds it is worth anything.
+        return {"email": self.email, "has_password": bool(self.password)}
 
 
 @dataclass
@@ -111,6 +184,11 @@ class N8nConfig:
     #: May Jarvis switch a workflow ON? Deactivating never needs this.
     allow_activate: bool = False
     tag: str = DEFAULT_TAG
+    login: N8nLogin = field(default_factory=N8nLogin)
+    #: n8n's REST prefix, which `N8N_ENDPOINT_REST` can move. Configurable
+    #: rather than assumed, because an instance behind a path rewrite answers
+    #: 404 for everything and 404 reads as "too old".
+    rest_path: str = DEFAULT_REST_PATH
 
     @property
     def configured(self) -> bool:
@@ -129,6 +207,8 @@ class N8nConfig:
             timeout=max(1.0, min(timeout, 300.0)),
             allow_activate=bool(data.get("allow_activate")),
             tag=str(data.get("tag") or DEFAULT_TAG).strip(),
+            login=N8nLogin.from_config(data.get("login")),
+            rest_path=str(data.get("rest_path") or DEFAULT_REST_PATH).strip(),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -140,6 +220,7 @@ class N8nConfig:
             "allow_activate": self.allow_activate,
             "tag": self.tag,
             "configured": self.configured,
+            "login": self.login.as_dict(),
         }
 
 
@@ -159,6 +240,30 @@ def get_client(jarvis: "Jarvis") -> N8nClient | None:
     return client if isinstance(client, N8nClient) else None
 
 
+def get_session(jarvis: "Jarvis") -> N8nSession | None:
+    store = jarvis.data.get(DOMAIN)
+    if not isinstance(store, dict):
+        return None
+    session = store.get(DATA_SESSION)
+    return session if isinstance(session, N8nSession) else None
+
+
+def get_capabilities(jarvis: "Jarvis") -> N8nCapabilities | None:
+    store = jarvis.data.get(DOMAIN)
+    if not isinstance(store, dict):
+        return None
+    caps = store.get(DATA_CAPABILITIES)
+    return caps if isinstance(caps, N8nCapabilities) else None
+
+
+def get_catalogue(jarvis: "Jarvis") -> NodeCatalogue | None:
+    store = jarvis.data.get(DOMAIN)
+    if not isinstance(store, dict):
+        return None
+    catalogue = store.get(DATA_CATALOGUE)
+    return catalogue if isinstance(catalogue, NodeCatalogue) else None
+
+
 def _require(jarvis: "Jarvis") -> tuple[N8nConfig, N8nClient]:
     cfg = get_config(jarvis)
     client = get_client(jarvis)
@@ -174,7 +279,21 @@ def _require(jarvis: "Jarvis") -> tuple[N8nConfig, N8nClient]:
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     cfg = N8nConfig.from_config(config)
     client = N8nClient(cfg.url, cfg.api_key, timeout=cfg.timeout)
-    jarvis.data[DOMAIN] = {DATA_CONFIG: cfg, DATA_CLIENT: client}
+    session = N8nSession(
+        cfg.url,
+        cfg.login.email,
+        cfg.login.password,
+        mfa_code=cfg.login.mfa_code,
+        rest_path=cfg.rest_path,
+        timeout=cfg.timeout,
+    )
+    jarvis.data[DOMAIN] = {
+        DATA_CONFIG: cfg,
+        DATA_CLIENT: client,
+        DATA_SESSION: session,
+        DATA_CAPABILITIES: N8nCapabilities(client=client, session=session),
+        DATA_CATALOGUE: NodeCatalogue(),
+    }
 
     _register_services(jarvis)
     _register_tools(jarvis)
@@ -282,12 +401,120 @@ async def async_executions(
     ]
 
 
-async def async_probe(jarvis: "Jarvis") -> dict[str, Any]:
+async def async_catalogue(jarvis: "Jarvis", *, force: bool = False) -> NodeCatalogue:
+    """This instance's node types, harvested and — with a login — catalogued.
+
+    Cached on `jarvis.data` rather than rebuilt per call, because the harvest
+    reads fifty workflows and a model that asks twice in one turn should not
+    pay for it twice.
+    """
+    store = jarvis.data.get(DOMAIN)
+    catalogue = await load_catalogue(
+        get_client(jarvis),
+        get_session(jarvis),
+        existing=get_catalogue(jarvis),
+        force=force,
+    )
+    if isinstance(store, dict):
+        store[DATA_CATALOGUE] = catalogue
+    return catalogue
+
+
+async def async_validate(jarvis: "Jarvis", workflow: Any) -> dict[str, Any]:
+    """Check a workflow without writing it. A report, never a refusal."""
+    catalogue = await async_catalogue(jarvis)
+    return validate_workflow(workflow, catalogue)
+
+
+async def async_build_with_ai(
+    jarvis: "Jarvis", instruction: str, *, source: str = ""
+) -> "Any":
+    """Hand a request to n8n's own AI builder. Returns a `Task` or a sentence.
+
+    Fire-and-forget on purpose: the builder can stop to ask questions, and a
+    question cannot be answered inside the turn that asked it. See relay.py.
+    """
+    said = " ".join(str(instruction or "").split())[:2000]
+    if not said:
+        return "I need to know what the workflow should do."
+
+    cfg = get_config(jarvis)
+    session = get_session(jarvis)
+    caps = get_capabilities(jarvis)
+    if cfg is None or session is None or caps is None:
+        return "the n8n integration is not set up on this server"
+    if not cfg.configured:
+        return (
+            "No n8n instance is configured. Set `n8n: url:` in "
+            "configuration.yaml."
+        )
+
+    await caps.refresh()
+    if not caps.builder.available:
+        return caps.builder.detail or "n8n's AI builder is not available here."
+
+    registry = getattr(jarvis, "tasks", None)
+    if registry is None:  # pragma: no cover - core always builds one
+        return "this server has no task registry, so nothing could report progress"
+
+    task = await registry.async_add(
+        f"n8n builder: {said}",
+        kind=KIND,
+        steps=["ask n8n's builder"],
+        open_ended=True,
+        source=source,
+        detail="asking n8n's builder",
+    )
+    catalogue = await async_catalogue(jarvis)
+    builder = BuilderClient(
+        session, capabilities=caps, workflow_id=synthetic_workflow_id()
+    )
+    store = jarvis.data.get(DOMAIN)
+    relays = store.setdefault(DATA_RELAYS, {}) if isinstance(store, dict) else {}
+    run = asyncio.ensure_future(
+        run_in_background(
+            jarvis, task, said, builder=builder, node_types=catalogue.listing(limit=60)
+        )
+    )
+    relays[task.id] = run
+    run.add_done_callback(lambda _f, tid=task.id: relays.pop(tid, None))
+    return task
+
+
+def transcript_of(jarvis: "Jarvis", task_id: str) -> list[dict[str, str]]:
+    """What the builder and the household said to each other.
+
+    For the console only. The model gets one sentence: this is prose written
+    by a different AI, and a tool result is read as instructions-adjacent text.
+    """
+    store = jarvis.data.get(DOMAIN)
+    if not isinstance(store, dict):
+        return []
+    rows = store.get(DATA_TRANSCRIPTS) or {}
+    found = rows.get(str(task_id or "")) if isinstance(rows, dict) else None
+    return list(found) if isinstance(found, list) else []
+
+
+async def async_probe(jarvis: "Jarvis", *, deep: bool = False) -> dict[str, Any]:
+    """"Does this work?" — one line, or three.
+
+    The shallow answer is the public API alone, which is what the console has
+    always shown and what every ordinary tool depends on. The deep one logs in
+    and asks the instance about itself, so CHECK can say which of the three
+    layers is the broken one instead of "n8n: no".
+    """
     cfg = get_config(jarvis)
     client = get_client(jarvis)
     if cfg is None or client is None:
         return {"ok": False, "detail": "the n8n integration is not set up on this server"}
-    return await client.probe()
+    result = await client.probe()
+    if not deep:
+        return result
+    caps = get_capabilities(jarvis)
+    if caps is None:
+        return result
+    await caps.refresh(force=True)
+    return {**result, "capabilities": caps.as_dict(), "summary": caps.summary()}
 
 
 def listing_payload(jarvis: "Jarvis") -> dict[str, Any]:
@@ -435,6 +662,151 @@ def _register_tools(jarvis: "Jarvis") -> None:
             {"id": {"type": "string", "description": "the workflow id"}}, ["id"]
         ),
         handler=tool_get,
+        tier=TIER_DIRECT,
+    )
+
+    async def tool_node_types(args: dict[str, Any], context: Any = None) -> Any:
+        try:
+            catalogue = await async_catalogue(jarvis)
+        except N8nError as err:
+            return {"status": "error", "error": str(err)}
+        rows = catalogue.listing(search=str(args.get("search") or ""))
+        if not rows:
+            return {
+                "status": "ok",
+                "node_types": [],
+                "note": (
+                    "Jarvis could not read this instance's node types. Write "
+                    "the workflow from what you know and it will still be "
+                    "checked when it is created."
+                ),
+            }
+        return {
+            "status": "ok",
+            "node_types": rows,
+            "source": catalogue.source,
+            "note": (
+                "These are the node types this instance actually has, at the "
+                "newest version it has. Use these exact strings and versions."
+            ),
+        }
+
+    registry.register(
+        name="list_n8n_node_types",
+        description=(
+            "List the node types this n8n instance actually has, with the "
+            "version number to write. Call this BEFORE writing workflow JSON: "
+            "node type names and versions differ between n8n installs, and a "
+            "workflow naming one that is not there saves without complaint "
+            "and then does nothing. Pass `search` to narrow it (e.g. 'gmail')."
+        ),
+        parameters=schema_object(
+            {"search": {"type": "string", "description": "narrow it, e.g. 'slack'"}}, []
+        ),
+        handler=tool_node_types,
+        tier=TIER_DIRECT,
+    )
+
+    async def tool_validate(args: dict[str, Any], context: Any = None) -> Any:
+        try:
+            report = await async_validate(jarvis, args.get("workflow"))
+        except N8nError as err:
+            return {"status": "error", "error": str(err)}
+        return {"status": "ok", **report}
+
+    registry.register(
+        name="check_n8n_workflow",
+        description=(
+            "Check workflow JSON without creating anything: node types that do "
+            "not exist here, versions that are too new, a missing trigger, and "
+            "which credentials a person would have to attach. Returns findings, "
+            "not a verdict — fix the errors and call create_n8n_workflow. Free "
+            "and instant, so use it before asking the user to approve one."
+        ),
+        parameters=schema_object(
+            {"workflow": {"type": "object", "description": "n8n workflow JSON"}},
+            ["workflow"],
+        ),
+        handler=tool_validate,
+        # Tier 1: it writes nothing and reads only structure. The whole value
+        # is that a model can iterate on its own JSON without spending an
+        # approval to discover a typo.
+        tier=TIER_DIRECT,
+    )
+
+    if cfg.login.configured:
+        # Registered only when a login exists. There is no hide-from-the-model
+        # mechanism, so a tool that is always present is a tool the model will
+        # try — and "the AI builder is not configured" is a worse answer than
+        # never offering it.
+        async def tool_build_with_ai(args: dict[str, Any], context: Any = None) -> Any:
+            caps = get_capabilities(jarvis)
+            started = await async_build_with_ai(
+                jarvis, str(args.get("instruction") or ""), source="conversation"
+            )
+            if isinstance(started, str):
+                if caps is not None and not caps.builder.available:
+                    return caps.instead()
+                return {"status": "error", "error": started}
+            return {
+                "status": "started",
+                "task_id": started.id,
+                "message": (
+                    "n8n's own workflow builder is working on it now. Tell the "
+                    "user it is under way and that it may come back with a "
+                    "question they will be asked to answer. Progress is on the "
+                    "n8n page. Do not invent a workflow — there is none yet."
+                ),
+            }
+
+        registry.register(
+            name="build_n8n_workflow_with_ai",
+            description=(
+                "Hand a workflow request to n8n's OWN AI builder, which knows "
+                "this instance's nodes and expression language first-hand. Use "
+                "it for a workflow that is complicated or involves a service "
+                "you are unsure how to wire; write simple ones yourself with "
+                "create_n8n_workflow. It runs in the background and may stop "
+                "to ask the user a question. The workflow it produces still "
+                "arrives switched off with no credentials attached."
+            ),
+            parameters=schema_object(
+                {
+                    "instruction": {
+                        "type": "string",
+                        "description": "what the workflow should do, in plain words",
+                    }
+                },
+                ["instruction"],
+            ),
+            handler=tool_build_with_ai,
+            # Tier 3 for the same reason `create_n8n_workflow` is: it ends in a
+            # program written into somebody's automation platform. And no
+            # service twin — an automation firing at 3am that puts questions on
+            # a lock screen is not a feature.
+            tier=TIER_APPROVAL,
+        )
+
+    async def tool_health(args: dict[str, Any], context: Any = None) -> Any:
+        try:
+            return {"status": "ok", **await async_health(jarvis, str(args.get("id") or ""))}
+        except N8nError as err:
+            return {"status": "error", "error": str(err)}
+
+    registry.register(
+        name="check_n8n_health",
+        description=(
+            "Is a workflow actually working? Joins three things: whether its "
+            "credentials are attached, whether it is switched on, and whether "
+            "it has run and succeeded. Use this when somebody asks about a "
+            "workflow you set up earlier — 'did that run?', 'is that working?' "
+            "— instead of saying you cannot tell. Reads run status and timing "
+            "only, never what went through the workflow."
+        ),
+        parameters=schema_object(
+            {"id": {"type": "string", "description": "the workflow id"}}, ["id"]
+        ),
+        handler=tool_health,
         tier=TIER_DIRECT,
     )
 

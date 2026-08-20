@@ -757,6 +757,15 @@ class WebSocketHandler:
     async def _cmd_n8n_executions(self, msg: dict[str, Any]) -> Any:
         return await common.async_n8n_executions(self.jarvis, msg)
 
+    async def _cmd_n8n_build(self, msg: dict[str, Any]) -> Any:
+        return await common.async_n8n_build(self.jarvis, msg)
+
+    async def _cmd_n8n_transcript(self, msg: dict[str, Any]) -> Any:
+        return common.n8n_build_transcript(self.jarvis, msg.get("task_id"))
+
+    async def _cmd_n8n_health(self, msg: dict[str, Any]) -> Any:
+        return await common.async_n8n_health(self.jarvis, msg.get("workflow_id"))
+
     async def _cmd_code_list(self, msg: dict[str, Any]) -> Any:
         return common.code_list_payload(self.jarvis)
 
@@ -1183,6 +1192,9 @@ WebSocketHandler._HANDLERS = {
     "jarvis/n8n/check": WebSocketHandler._cmd_n8n_check,
     "jarvis/n8n/set_active": WebSocketHandler._cmd_n8n_set_active,
     "jarvis/n8n/executions": WebSocketHandler._cmd_n8n_executions,
+    "jarvis/n8n/build": WebSocketHandler._cmd_n8n_build,
+    "jarvis/n8n/transcript": WebSocketHandler._cmd_n8n_transcript,
+    "jarvis/n8n/health": WebSocketHandler._cmd_n8n_health,
     "jarvis/code/list": WebSocketHandler._cmd_code_list,
     "jarvis/code/start": WebSocketHandler._cmd_code_start,
     "jarvis/code/create_repo": WebSocketHandler._cmd_code_create_repo,

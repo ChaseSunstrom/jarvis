@@ -966,7 +966,63 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	];
 	let n8nInstance = freshN8nInstance();
 	let n8nWorkflows = freshN8nWorkflows();
-	let n8nCheck = { ok: true, detail: 'Connected to http://n8n.lan:5678.' };
+	//
+	// CHECK answers three lines, not one: the public API, the optional /rest
+	// login, and whether this instance's licence includes n8n's AI builder.
+	// The default is the state most self-hosted users are actually in — a
+	// model wired up, and the feature not licensed.
+	const freshN8nCheck = () => ({
+		ok: true,
+		detail: 'Connected to http://n8n.lan:5678.',
+		capabilities: {
+			api: { available: true, reason: '', detail: 'Connected to http://n8n.lan:5678.' },
+			login: {
+				available: true,
+				reason: '',
+				detail: 'Logged in to http://n8n.lan:5678 as jarvis@example.com.'
+			},
+			builder: {
+				available: false,
+				reason: 'licence',
+				detail:
+					'A model is wired up to n8n\'s AI builder, but the instance\'s licence does not include the feature — those are two separate switches and only the first one is yours. Jarvis will write workflows itself instead, which works on every n8n.'
+			},
+			checked_at: 1_770_000_000
+		}
+	});
+	let n8nCheck = freshN8nCheck();
+	let n8nTranscripts = {};
+	let n8nHealth = {
+		'wf-receipts': {
+			workflow_id: 'wf-receipts',
+			name: 'File the receipt',
+			active: false,
+			healthy: false,
+			summary: "Not connected yet: it still needs gmailOAuth2 for 'Gmail'. It is also switched off.",
+			connections_needed: [{ node: 'Gmail', credential_type: 'gmailOAuth2' }],
+			runs: 0,
+			failures: 0,
+			running_now: 0,
+			last_status: '',
+			last_run: '',
+			next_step:
+				'In n8n: Credentials -> New, make the credential, then open the workflow and attach it to that node.'
+		},
+		'wf-nightly': {
+			workflow_id: 'wf-nightly',
+			name: 'Nightly backup',
+			active: true,
+			healthy: true,
+			summary: 'Working: switched on, connected, and the last 2 runs succeeded.',
+			connections_needed: [],
+			runs: 2,
+			failures: 0,
+			running_now: 0,
+			last_status: 'success',
+			last_run: '2026-02-01T02:00:00Z',
+			next_step: ''
+		}
+	};
 	const n8nRuns = [
 		{
 			id: 'run-1',
@@ -2022,11 +2078,57 @@ index 1234567..89abcde 100644
 					});
 					break;
 
+				case 'jarvis/n8n/health': {
+					const found = n8nHealth[String(msg.workflow_id || '')];
+					if (!found) {
+						fail(msg.id, 'not_found', `no workflow ${msg.workflow_id}`);
+						break;
+					}
+					ok(msg.id, found);
+					break;
+				}
+
+				case 'jarvis/n8n/build': {
+					if (!n8nCheck.capabilities?.builder?.available) {
+						fail(msg.id, 'invalid_format', n8nCheck.capabilities?.builder?.detail ?? 'no builder');
+						break;
+					}
+					const taskId = `build-${Object.keys(n8nTranscripts).length + 1}`;
+					n8nTranscripts[taskId] = [
+						{ role: 'builder', text: 'Looking at the nodes you have.' },
+						{ role: 'tool', text: 'search_nodes' },
+						{ role: 'builder', text: 'Which mailbox should it watch?' },
+						{ role: 'you', text: 'the work one' }
+					];
+					ok(msg.id, {
+						task: {
+							id: taskId,
+							kind: 'n8n_build',
+							title: `n8n builder: ${msg.instruction}`,
+							status: 'running',
+							steps: [{ title: "ask n8n's builder", status: 'running', detail: '' }],
+							detail: "asking n8n's builder",
+							open_ended: true,
+							created: 1_770_000_000,
+							updated: 1_770_000_000
+						}
+					});
+					break;
+				}
+
+				case 'jarvis/n8n/transcript':
+					ok(msg.id, {
+						task_id: String(msg.task_id || ''),
+						transcript: n8nTranscripts[String(msg.task_id || '')] ?? []
+					});
+					break;
+
 				/** Put n8n back, and let a test see the unconfigured wording. */
 				case 'jarvis/test/n8n_reset': {
 					n8nInstance = { ...freshN8nInstance(), ...(msg.instance ?? {}) };
 					n8nWorkflows = freshN8nWorkflows();
-					n8nCheck = msg.check ?? { ok: true, detail: 'Connected to http://n8n.lan:5678.' };
+					n8nCheck = msg.check ?? freshN8nCheck();
+					n8nTranscripts = {};
 					ok(msg.id, { instance: n8nInstance });
 					break;
 				}

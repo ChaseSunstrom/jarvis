@@ -24,15 +24,22 @@
 	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import {
+		canUseBuilder,
+		capabilityLines,
 		describeActive,
 		describeConnections,
 		describeInstance,
+		describeSpeaker,
+		healthTone,
 		newestFirst,
 		runTone,
+		whyNoBuilder,
 		type N8nCheck,
 		type N8nExecution,
 		type N8nGraph,
+		type N8nHealth,
 		type N8nInstance,
+		type N8nTranscriptLine,
 		type N8nWorkflow
 	} from '$lib/n8n';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
@@ -54,8 +61,17 @@
 	let graph = $state<N8nGraph | null>(null);
 	let runs = $state<N8nExecution[]>([]);
 	let busy = $state('');
+	let health = $state<N8nHealth | null>(null);
+	let checkingHealth = $state(false);
+	let instruction = $state('');
+	let building = $state(false);
+	let buildTask = $state('');
+	let transcript = $state<N8nTranscriptLine[]>([]);
 
 	const configured = $derived(!!instance?.configured);
+	const layers = $derived(capabilityLines(check));
+	const builderReady = $derived(canUseBuilder(check));
+	const builderProblem = $derived(whyNoBuilder(check));
 	const needed = $derived(graph?.connections_needed ?? []);
 	const connectLine = $derived(describeConnections(needed));
 
@@ -76,6 +92,7 @@
 		opened = id;
 		graph = null;
 		runs = [];
+		health = null;
 		try {
 			graph = (await conn.client.getN8nWorkflow(id)).workflow;
 			runs = newestFirst((await conn.client.listN8nExecutions(id, 10)).executions ?? []);
@@ -100,6 +117,49 @@
 			toasts.error(`Could not switch ${workflow.name}`, describeError(e));
 		} finally {
 			busy = '';
+		}
+	}
+
+	async function runHealth(id: string): Promise<void> {
+		if (!conn || checkingHealth) return;
+		checkingHealth = true;
+		health = null;
+		try {
+			health = await conn.client.n8nHealth(id);
+		} catch (e) {
+			err = describeError(e);
+		} finally {
+			checkingHealth = false;
+		}
+	}
+
+	async function build(): Promise<void> {
+		if (!conn || building || !instruction.trim()) return;
+		building = true;
+		err = '';
+		transcript = [];
+		try {
+			const started = await conn.client.buildN8nWorkflow(instruction.trim());
+			buildTask = started.task.id;
+			instruction = '';
+			toasts.success(
+				"n8n's builder is working on it",
+				'It may stop to ask you something — that arrives as an approval.'
+			);
+		} catch (e) {
+			err = describeError(e);
+			toasts.error('Could not start the build', describeError(e));
+		} finally {
+			building = false;
+		}
+	}
+
+	async function readTranscript(): Promise<void> {
+		if (!conn || !buildTask) return;
+		try {
+			transcript = (await conn.client.n8nTranscript(buildTask)).transcript ?? [];
+		} catch (e) {
+			err = describeError(e);
 		}
 	}
 
@@ -221,6 +281,25 @@
 			>
 				{check.detail}
 			</p>
+			<!--
+				Three lines, not one. The public API, the optional login and the AI
+				builder fail independently and for different reasons, and a single
+				"n8n: no" sends somebody to the wrong half of their setup.
+			-->
+			{#if layers.length > 1}
+				<div class="layers" data-testid="n8n-layers">
+					{#each layers as layer (layer.label)}
+						<div
+							class="layer"
+							data-testid="n8n-layer-{layer.label.toLowerCase().replace(/ /g, '-')}"
+							data-available={layer.available ? 'true' : 'false'}
+						>
+							<span class="layer-name">{layer.label}</span>
+							<span class="layer-detail">{layer.detail}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 		{#if configured && !instance?.allow_activate}
 			<p class="hint" data-testid="n8n-activate-note">
@@ -229,6 +308,83 @@
 			</p>
 		{/if}
 	</section>
+
+	{#if configured && check}
+		<!--
+			Only after CHECK, and only when the licence actually allows it. A form
+			that submits into a 403 is worse than no form — and somebody who wired
+			a model up to n8n and did not get the feature deserves the sentence
+			saying which of the two switches is missing, not a button that fails.
+		-->
+		<section class="panel" data-testid="n8n-builder">
+			<div class="panel-head">
+				<span>Ask n8n's builder</span>
+				<span class="muted">{builderReady ? 'available' : 'not available here'}</span>
+			</div>
+
+			{#if builderReady}
+				<label for="n8n-instruction">What should the workflow do?</label>
+				<textarea
+					id="n8n-instruction"
+					rows="3"
+					data-testid="n8n-instruction"
+					placeholder="Every morning at 8, email me yesterday's orders from the shop"
+					bind:value={instruction}
+				></textarea>
+				<div class="row">
+					<button
+						type="button"
+						class="btn"
+						data-testid="n8n-build"
+						disabled={building || !instruction.trim()}
+						onclick={build}
+					>
+						{building ? 'STARTING…' : 'BUILD IT'}
+					</button>
+					<span class="hint">
+						It runs in the background and <strong>may stop to ask you something</strong>,
+						which arrives as an approval. What it produces still arrives switched
+						off, with no credentials attached.
+					</span>
+				</div>
+				{#if buildTask}
+					<p class="notice" data-testid="n8n-build-started">
+						Started as task <code>{buildTask}</code>. Its progress is on the Tasks page.
+					</p>
+					<div class="row">
+						<button
+							type="button"
+							class="btn ghost"
+							data-testid="n8n-transcript"
+							onclick={readTranscript}
+						>
+							READ THE TRANSCRIPT
+						</button>
+						<span class="hint">
+							What the builder said, in its own words. Jarvis's model is given one
+							sentence instead — this is prose written by a different AI.
+						</span>
+					</div>
+					{#if transcript.length}
+						<div class="editor" data-testid="n8n-transcript-lines">
+							{#each transcript as line, i (i)}
+								<p class="line" data-role={line.role}>
+									<span class="who">{describeSpeaker(line.role)}</span>
+									<span>{line.text}</span>
+								</p>
+							{/each}
+						</div>
+					{/if}
+				{/if}
+			{:else}
+				<p class="hint" data-testid="n8n-builder-problem">{builderProblem}</p>
+				<p class="hint">
+					This is not a fault to work around. Jarvis writes workflows itself, which
+					works on every n8n — just ask it for one.
+				</p>
+			{/if}
+		</section>
+	{/if}
 
 	{#if configured}
 		<section class="panel" data-testid="n8n-workflows">
@@ -316,6 +472,36 @@
 											{/each}
 										</ul>
 									{/if}
+
+									<!--
+										"Is this working?" is three separate reads — connected,
+										switched on, has it run — and joining them is the only way
+										to see the state that matters: on, connected, and never
+										run. That one looks identical to working from every other
+										angle, and it is what a schedule in the wrong timezone
+										does.
+									-->
+									<div class="row">
+										<button
+											type="button"
+											class="btn ghost"
+											data-testid="n8n-health-{workflow.id}"
+											disabled={checkingHealth}
+											onclick={() => runHealth(workflow.id)}
+										>
+											{checkingHealth ? 'CHECKING…' : 'IS IT WORKING?'}
+										</button>
+									</div>
+									{#if health && health.workflow_id === workflow.id}
+										<p
+											class={health.healthy ? 'notice' : 'err'}
+											data-testid="n8n-health-result"
+											data-tone={healthTone(health)}
+										>
+											{health.summary}
+											{#if health.next_step}<br /><span class="muted">{health.next_step}</span>{/if}
+										</p>
+									{/if}
 								{/if}
 							</div>
 						{/if}
@@ -327,6 +513,46 @@
 {/if}
 
 <style>
+	.layers {
+		display: grid;
+		gap: var(--jv-space-2);
+		margin-top: var(--jv-space-2);
+	}
+	.layer {
+		display: grid;
+		grid-template-columns: 8rem 1fr;
+		gap: var(--jv-space-3);
+		font-size: var(--jv-fs-2xs);
+		border-left: 2px solid var(--jv-line);
+		padding-left: var(--jv-space-3);
+	}
+	.layer[data-available='true'] {
+		border-left-color: var(--jv-accent);
+	}
+	.layer-name {
+		font-family: var(--jv-font-chrome);
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+	.layer-detail {
+		color: var(--jv-text-dim);
+	}
+	.line {
+		display: grid;
+		grid-template-columns: 8rem 1fr;
+		gap: var(--jv-space-3);
+		margin: 0 0 var(--jv-space-2);
+		font-size: var(--jv-fs-2xs);
+	}
+	.line .who {
+		font-family: var(--jv-font-chrome);
+		color: var(--jv-text-dim);
+	}
+	/* Words written by a different AI, on somebody else's machine. Marked, so
+	   they do not read as Jarvis's own. */
+	.line[data-role='builder'] .who {
+		color: var(--jv-warn);
+	}
 	.snippet {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);

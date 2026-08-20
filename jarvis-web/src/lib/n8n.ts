@@ -24,6 +24,8 @@ export interface N8nInstance {
 	allow_activate: boolean;
 	tag: string;
 	configured: boolean;
+	/** Present only when the backend knows about the optional `/rest` login. */
+	login?: N8nInstanceLogin;
 }
 
 export interface N8nWorkflow {
@@ -65,9 +67,57 @@ export interface N8nExecution {
 	mode: string;
 }
 
+/** One layer of "does this work", with the reason it does not. */
+export interface N8nCapability {
+	available: boolean;
+	/**
+	 * A slug from a closed set: "", "unconfigured", "credentials", "mfa",
+	 * "licence", "too old", "unreachable", "not set up", "bot filter". The
+	 * console reads it to choose an emphasis; the detail is what it shows.
+	 */
+	reason: string;
+	detail: string;
+}
+
+export interface N8nCapabilities {
+	api: N8nCapability;
+	login: N8nCapability;
+	builder: N8nCapability;
+	checked_at: number;
+}
+
 export interface N8nCheck {
 	ok: boolean;
 	detail: string;
+	/** Absent on a backend older than the three-layer probe. */
+	capabilities?: N8nCapabilities;
+	summary?: string;
+}
+
+export interface N8nInstanceLogin {
+	email: string;
+	has_password: boolean;
+}
+
+export interface N8nHealth {
+	workflow_id: string;
+	name: string;
+	active: boolean;
+	healthy: boolean;
+	summary: string;
+	connections_needed: N8nConnectionNeeded[];
+	runs: number;
+	failures: number;
+	running_now: number;
+	last_status: string;
+	last_run: string;
+	next_step: string;
+}
+
+export interface N8nTranscriptLine {
+	/** "builder", "tool", or "you". */
+	role: string;
+	text: string;
 }
 
 /**
@@ -135,4 +185,104 @@ export function runTone(status: string): RunTone {
 /** Newest first, which is the order anybody wants runs in. */
 export function newestFirst(runs: readonly N8nExecution[]): N8nExecution[] {
 	return [...runs].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+}
+
+/**
+ * The three-line answer to "does this work?", in the order to fix them.
+ *
+ * Not one line, because the three layers fail independently and for different
+ * reasons: an API key can be wrong while the login is fine, and the AI builder
+ * can be missing while both work. A single "n8n: no" sends somebody to the
+ * wrong half of their setup.
+ *
+ * Older backends answer CHECK with `{ok, detail}` and no capabilities. That is
+ * not an error — it is a jarvis-core that predates the probe — so this returns
+ * the one line it does have rather than inventing two empty ones.
+ */
+export interface CapabilityLine {
+	label: string;
+	available: boolean;
+	detail: string;
+	/** True when this line is the reason the ones below it are unavailable. */
+	blocking: boolean;
+}
+
+export function capabilityLines(check: N8nCheck | null): CapabilityLine[] {
+	if (!check) return [];
+	const caps = check.capabilities;
+	if (!caps) {
+		return [{ label: 'n8n', available: check.ok, detail: check.detail, blocking: !check.ok }];
+	}
+	return [
+		{
+			label: 'Public API',
+			available: caps.api.available,
+			detail: caps.api.detail,
+			// The one everything else depends on: with no API key there is no
+			// workflow list, and the other two lines are beside the point.
+			blocking: !caps.api.available
+		},
+		{
+			label: 'Login',
+			available: caps.login.available,
+			detail: caps.login.detail,
+			blocking: false
+		},
+		{
+			label: 'AI builder',
+			available: caps.builder.available,
+			detail: caps.builder.detail,
+			blocking: false
+		}
+	];
+}
+
+/**
+ * Whether to offer the "ask n8n's builder" box at all.
+ *
+ * A form that submits into a 403 is worse than no form. The reason is shown
+ * either way — somebody who set up a model and did not get the feature should
+ * be told which of the two switches is missing, not left wondering.
+ */
+export function canUseBuilder(check: N8nCheck | null): boolean {
+	return Boolean(check?.capabilities?.builder.available);
+}
+
+/**
+ * Why the builder box is absent, phrased for the person who expected it.
+ *
+ * "" when it is available, or when nothing has been checked yet — an absence
+ * before CHECK is not a finding.
+ */
+export function whyNoBuilder(check: N8nCheck | null): string {
+	const builder = check?.capabilities?.builder;
+	if (!builder || builder.available) return '';
+	return builder.detail;
+}
+
+/** How a health verdict should be coloured. Same vocabulary as a run. */
+export function healthTone(health: N8nHealth | null): RunTone {
+	if (!health) return 'idle';
+	if (health.healthy) return health.running_now ? 'busy' : 'good';
+	return health.failures ? 'bad' : 'idle';
+}
+
+/**
+ * A transcript line's speaker, as something to label.
+ *
+ * The `builder` role is the one that matters: those words were written by a
+ * different AI, on somebody else's machine, and the page should say so rather
+ * than letting them read as Jarvis's own.
+ */
+export function describeSpeaker(role: string): string {
+	switch (role) {
+		case 'builder':
+			return "n8n's builder";
+		case 'tool':
+			return 'it ran';
+		case 'you':
+			return 'you';
+		default:
+			return role || '—';
+	}
 }

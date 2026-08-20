@@ -637,6 +637,33 @@ n8n:
   # make" is one filter in n8n rather than archaeology.
   tag: jarvis
 
+  # OPTIONAL, and a real escalation — read this before setting it.
+  #
+  # n8n has two HTTP surfaces. `/api/v1` is opened by the API key above.
+  # `/rest`, which is what n8n's own UI talks to, is opened only by a session
+  # cookie, and three things live there: the instance settings, the full node
+  # type catalogue, and n8n's own AI workflow builder.
+  #
+  # A login is strictly MORE POWERFUL than an API key, and the asymmetry runs
+  # one way: a session also authenticates /api/v1, while a key never
+  # authenticates /rest — and /rest includes the endpoint that mints API keys.
+  # So: make a dedicated non-owner n8n user for Jarvis, and keep the password
+  # in the environment rather than in this file.
+  #
+  # Everything works without this. Only those three things are missing, and
+  # each says so by name rather than failing vaguely.
+  login:
+    email: !env_var N8N_LOGIN_EMAIL ""
+    password: !env_var N8N_LOGIN_PASSWORD ""
+    # A TOTP code, if the account has two-factor on. Of limited use in a file
+    # — it expires in thirty seconds — but it makes a one-off probe possible.
+    mfa_code: ""
+
+  # n8n's REST prefix, which N8N_ENDPOINT_REST can move. Set it only if you
+  # have: an instance behind a path rewrite answers 404 for everything, and a
+  # 404 otherwise reads as "this n8n is too old".
+  rest_path: /rest
+
 # ---------------------------------------------------------------------------
 # MCP — anybody else's tools, inside Jarvis.
 # ---------------------------------------------------------------------------

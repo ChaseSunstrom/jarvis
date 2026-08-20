@@ -773,6 +773,13 @@ class PendingRequest:
     #: words. Carried to every consent surface so a human can see it.
     tainted: bool = False
 
+    #: Set only for a HELD QUESTION — one raised by `hold_question` from a
+    #: background job rather than by the model mid-turn. Resolving it hands the
+    #: answer straight back to the coroutine that is waiting, and to nobody
+    #: else. Deliberately absent from `as_dict()`: the answer a human types is
+    #: point-to-point, and `as_dict()` is what gets broadcast.
+    future: "asyncio.Future[str | None] | None" = None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.id,
@@ -1163,6 +1170,9 @@ class ToolRegistry:
                 "request_id": request_id,
                 "error": "unknown, expired or already-used approval request",
             }
+        if request.future is not None:
+            return self._settle_held(request, approved, answer)
+
         if not approved:
             self._fire(
                 EVENT_APPROVAL_RESOLVED,
@@ -1202,6 +1212,121 @@ class ToolRegistry:
             "result": result,
         }
 
+    # --- questions raised from outside a turn -----------------------------
+    async def hold_question(
+        self,
+        question: str,
+        *,
+        choices: Sequence[str] = (),
+        context: Any = None,
+        ttl: float | None = None,
+        tainted: bool = False,
+        label: str = "ask_user",
+    ) -> str | None:
+        """Ask a person something from OUTSIDE a model turn, and wait.
+
+        ## Why this is not a tool
+
+        A tool cannot do this. `call()` sees a Tier-3 tool, raises the request
+        and returns `approval_required` *immediately*; the turn then ends. When
+        the human answers minutes later the answer goes to whoever called the
+        approve API. There is no round of the conversation in which a tool
+        could read it. So a background job — a coding job, a workflow build,
+        a long piece of research — has exactly two options today: guess, or
+        give up. Both are worse than asking.
+
+        This is a registry METHOD rather than a registered tool on purpose.
+        `as_openai_schema()` returns every tool there is; there is no
+        hide-from-the-model mechanism. A `relay_question` tool would therefore
+        be model-callable, and a model calling it with an invented ticket would
+        put a consent card in front of a human with nothing behind it. A method
+        is invisible by construction.
+
+        ## What it reuses, and why that matters
+
+        It builds the same `PendingRequest` the approval gate builds, so the
+        console draws the question card, the phone bridge relays it to a lock
+        screen, the expiry clock applies, the single-use pop applies, and the
+        taint mark is shown — on three surfaces, with no change to any of them.
+
+        Returns what the human said, `""` if they approved without typing
+        anything, or `None` if they denied it or it expired. A caller that
+        cannot proceed without an answer should treat `None` as "stop", never
+        as "assume". Cancellation is NOT swallowed — a job being torn down at
+        shutdown propagates `CancelledError` like any other await, and the
+        question comes down with it.
+        """
+        said = " ".join(str(question or "").split())[:MAX_QUESTION_CHARS]
+        if not said:
+            raise ValueError("a held question needs a question")
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str | None] = loop.create_future()
+        window = self.approval_ttl if ttl is None else max(1.0, float(ttl))
+        now = time.time()
+        request = PendingRequest(
+            id=uuid.uuid4().hex[:12],
+            tool=str(label or "ask_user"),
+            arguments={"question": said},
+            tier=TIER_APPROVAL,
+            created=now,
+            expires_at=now + window,
+            context=context,
+            answerable="answer",
+            choices=_choice_list({"choices": list(choices)}),
+            # `tainted` is an argument here rather than only a lookup because
+            # a caller can KNOW the provenance is untrusted — a question
+            # composed by some other AI, say — where `_is_tainted` could only
+            # infer it from the turn, and there is no turn.
+            tainted=bool(tainted) or self._is_tainted(context),
+            future=future,
+        )
+        self._pending[request.id] = request
+        payload = request.as_dict()
+        payload["description"] = "A background job is asking you something."
+        self._fire(EVENT_APPROVAL_REQUIRED, payload, context)
+        _LOGGER.info("Holding a question from a background job (%s)", request.id)
+
+        try:
+            # Two clocks, on purpose. `purge_expired` wakes the waiter when
+            # something else happens to sweep; this one wakes it when nothing
+            # does. Whichever fires first, the request is gone afterwards.
+            return await asyncio.wait_for(future, timeout=window)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            # Including on cancellation: a consent card for a job that no
+            # longer exists is worse than no card.
+            self._pending.pop(request.id, None)
+
+    def _settle_held(
+        self, request: PendingRequest, approved: bool, answer: Any
+    ) -> dict[str, Any]:
+        """Hand a held question's answer to the coroutine waiting for it.
+
+        The answer goes into the future and NOWHERE else. The resolved event
+        carries the same fields it carries for an action — what was asked, and
+        whether it was approved — and never what was said. Those events reach
+        every `subscribe_events` subscriber, which through the console's relay
+        is anything that can open a socket; broadcasting a reply that could be
+        an address, a code or a password would turn a consent surface into a
+        leak.
+        """
+        future = request.future
+        said = "" if answer is None else str(answer)[:MAX_ANSWER_CHARS]
+        if future is not None and not future.done():
+            future.set_result(said if approved else None)
+        self._fire(
+            EVENT_APPROVAL_RESOLVED,
+            {**request.as_dict(), "approved": bool(approved)},
+            request.context,
+        )
+        return {
+            "status": "answered" if approved else "denied",
+            "request_id": request.id,
+            "tool": request.tool,
+        }
+
     def announce(self, event_type: str, data: dict[str, Any], context: Any = None) -> None:
         """Fire a tool-lifecycle event. Public because the agent runs the loop.
 
@@ -1226,7 +1351,11 @@ class ToolRegistry:
         moment = time.time() if now is None else now
         stale = [rid for rid, r in self._pending.items() if r.expires_at <= moment]
         for rid in stale:
-            del self._pending[rid]
+            request = self._pending.pop(rid)
+            # A held question that expires must WAKE its waiter, not leave a
+            # background job parked on a future nobody will ever resolve.
+            if request.future is not None and not request.future.done():
+                request.future.set_result(None)
         return len(stale)
 
     # --- plumbing ---------------------------------------------------------

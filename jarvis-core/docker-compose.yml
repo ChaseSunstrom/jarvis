@@ -155,6 +155,14 @@ services:
       # configuration.yaml). Settings -> n8n API -> Create an API key.
       # Unset means the n8n tools answer "point me at an n8n" and do nothing.
       - N8N_API_KEY=${N8N_API_KEY:-}
+      # An n8n LOGIN, which is optional and buys three things the API key
+      # cannot reach: the instance settings, the node type catalogue, and
+      # n8n's own AI workflow builder. It is also strictly more powerful than
+      # the key — a session authenticates both surfaces, a key only one — so
+      # use a dedicated non-owner n8n user. Unset means Jarvis writes
+      # workflows itself, which works on every n8n.
+      - N8N_LOGIN_EMAIL=${N8N_LOGIN_EMAIL:-}
+      - N8N_LOGIN_PASSWORD=${N8N_LOGIN_PASSWORD:-}
     depends_on:
       jarvis-config-init:
         condition: service_completed_successfully

@@ -135,3 +135,117 @@ test('N8N is in the nav and reachable by its chord', async ({ page }) => {
 	await page.keyboard.press('n');
 	await expect(page).toHaveURL(/\/n8n$/, { timeout: 10_000 });
 });
+
+// ---------------------------------------------------------------------------
+// the three-layer CHECK, and n8n's own AI builder
+// ---------------------------------------------------------------------------
+test('CHECK says which of the three layers is missing, not just that it failed', async ({
+	page
+}) => {
+	// The state most self-hosted users are actually in: API key fine, login
+	// fine, and the AI builder gated behind a licence they do not have. A
+	// single "n8n: no" would send them to check the key.
+	await openN8n(page);
+	await page.getByTestId('n8n-check').click();
+
+	const layers = page.getByTestId('n8n-layers');
+	await expect(layers).toBeVisible(OPEN);
+	await expect(page.getByTestId('n8n-layer-public-api')).toHaveAttribute(
+		'data-available',
+		'true'
+	);
+	await expect(page.getByTestId('n8n-layer-login')).toHaveAttribute('data-available', 'true');
+	const builder = page.getByTestId('n8n-layer-ai-builder');
+	await expect(builder).toHaveAttribute('data-available', 'false');
+	await expect(builder).toContainText('two separate switches');
+});
+
+test('the builder box is not offered when the licence does not include it', async ({ page }) => {
+	// A form that submits into a 403 is worse than no form — and the reason is
+	// shown either way, because somebody who wired up a model deserves to know
+	// which of the two switches they are missing.
+	await openN8n(page);
+	await expect(page.getByTestId('n8n-builder')).toHaveCount(0);
+
+	await page.getByTestId('n8n-check').click();
+	await expect(page.getByTestId('n8n-builder')).toBeVisible(OPEN);
+	await expect(page.getByTestId('n8n-build')).toHaveCount(0);
+	await expect(page.getByTestId('n8n-builder-problem')).toContainText('licence');
+});
+
+test('a licensed instance can hand a request to n8n’s builder', async ({ page }) => {
+	await page.goto('/n8n');
+	await tell(page, {
+		type: 'jarvis/test/n8n_reset',
+		check: {
+			ok: true,
+			detail: 'Connected to http://n8n.lan:5678.',
+			capabilities: {
+				api: { available: true, reason: '', detail: 'Connected.' },
+				login: { available: true, reason: '', detail: 'Logged in.' },
+				builder: { available: true, reason: '', detail: 'n8n says its AI builder is licensed.' },
+				checked_at: 1
+			}
+		}
+	});
+	await openN8n(page);
+	await page.getByTestId('n8n-check').click();
+
+	await page.getByTestId('n8n-instruction').fill('Every morning email me the orders');
+	await page.getByTestId('n8n-build').click();
+
+	// It returns at once, because the builder can stop to ask a question and a
+	// question cannot be answered inside the request that raised it.
+	const started = page.getByTestId('n8n-build-started');
+	await expect(started).toBeVisible(OPEN);
+	await expect(started).toContainText('Tasks page');
+
+	await tell(page, { type: 'jarvis/test/n8n_reset' });
+});
+
+test('the builder transcript is marked as somebody else’s words', async ({ page }) => {
+	await page.goto('/n8n');
+	await tell(page, {
+		type: 'jarvis/test/n8n_reset',
+		check: {
+			ok: true,
+			detail: 'Connected.',
+			capabilities: {
+				api: { available: true, reason: '', detail: 'Connected.' },
+				login: { available: true, reason: '', detail: 'Logged in.' },
+				builder: { available: true, reason: '', detail: 'licensed' },
+				checked_at: 1
+			}
+		}
+	});
+	await openN8n(page);
+	await page.getByTestId('n8n-check').click();
+	await page.getByTestId('n8n-instruction').fill('do a thing');
+	await page.getByTestId('n8n-build').click();
+	await expect(page.getByTestId('n8n-build-started')).toBeVisible(OPEN);
+
+	await page.getByTestId('n8n-transcript').click();
+	const lines = page.getByTestId('n8n-transcript-lines');
+	await expect(lines).toBeVisible(OPEN);
+	// Prose from a different AI, labelled as such rather than reading as
+	// Jarvis's own voice.
+	await expect(lines).toContainText("n8n's builder");
+	await expect(lines).toContainText('Which mailbox');
+
+	await tell(page, { type: 'jarvis/test/n8n_reset' });
+});
+
+test('"is it working?" answers the question the workflow list cannot', async ({ page }) => {
+	// Connected, switched on, and never run looks identical to working from
+	// every other angle — and it is what a schedule in the wrong timezone
+	// does. This is the only place the three reads are joined.
+	await openN8n(page);
+	await page.getByTestId('n8n-open-wf-receipts').click();
+	await expect(page.getByTestId('n8n-detail-wf-receipts')).toBeVisible(OPEN);
+
+	await page.getByTestId('n8n-health-wf-receipts').click();
+	const result = page.getByTestId('n8n-health-result');
+	await expect(result).toBeVisible(OPEN);
+	await expect(result).toContainText('Not connected yet');
+	await expect(result).toContainText('Credentials -> New');
+});

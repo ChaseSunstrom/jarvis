@@ -56,16 +56,26 @@ class N8nError(RuntimeError):
     """Anything that went wrong, already phrased for a person."""
 
 
-def redact(text: Any, key: str) -> str:
-    """The API key never appears in something Jarvis quotes back.
+def redact(text: Any, *secrets: str) -> str:
+    """No credential appears in something Jarvis quotes back.
 
     httpx puts the request in its exception messages, the integration puts the
     exception in a tool result, and a tool result is read by the model and
     shown in the console. Three hops from a header to a transcript.
+
+    Takes all of them, not only the API key, because there are three now: the
+    key, the login password, and the session cookie. The cookie is the worst
+    of the three to leak — it is a bearer credential for the entire instance,
+    including the endpoint that mints API keys.
     """
     said = str(text or "")
-    if key and len(key) >= 8:
-        said = said.replace(key, "***")
+    for secret in secrets:
+        text_secret = str(secret or "")
+        # Short strings are skipped on purpose: a two-character "key" would
+        # turn every occurrence of those letters in an error message into
+        # asterisks, and an unreadable error is its own kind of failure.
+        if len(text_secret) >= 8:
+            said = said.replace(text_secret, "***")
     return said
 
 

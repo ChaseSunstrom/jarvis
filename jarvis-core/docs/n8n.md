@@ -103,7 +103,11 @@ has to be installed first.
 |---|---|---|
 | `list_n8n_workflows` | 1 | names, ids, active or not |
 | `read_n8n_workflow` | 1 | one workflow's structure |
+| `list_n8n_node_types` | 1 | which nodes this instance actually has |
+| `check_n8n_workflow` | 1 | a dry run: what is wrong with this JSON |
+| `check_n8n_health` | 1 | is a workflow connected, on, and running |
 | `create_n8n_workflow` | **3** | writes it, switched off |
+| `build_n8n_workflow_with_ai` | **3** | hands it to n8n's own builder |
 | `deactivate_n8n_workflow` | **3** | switches one off |
 | `activate_n8n_workflow` | **3** | only with `allow_activate: true` |
 
@@ -119,6 +123,115 @@ automation asking for either is held for a human exactly as the tool is.
 `n8n.list`, `n8n.get`, `n8n.executions` and `n8n.check` are not gated — holding
 an automation every time it asked which workflows exist would be a
 confirmation nobody can act on.
+
+`build_n8n_workflow_with_ai` has **no service form at all**. It can stop to ask
+the household a question, and an automation firing at three in the morning
+that puts questions on a lock screen is not a feature. What it produces still
+goes through `create_n8n_workflow`'s write path, so the write is gated twice.
+
+## Grounding: what this n8n actually has
+
+A model writing n8n JSON is writing against a catalogue it has never seen. It
+knows from training that there is a Slack node, so it writes
+`n8n-nodes-base.slack` at version 2 — and this box has 2.2, or has it under a
+different package, or does not have it at all because nobody installed the
+community node. n8n saves the workflow, draws a red box, and the failure turns
+up days later as "the thing you set up does nothing".
+
+So `list_n8n_node_types` reads the vocabulary of *this* instance from two
+places:
+
+- **Harvested** from the workflows already on it, through the API key Jarvis
+  already has. This is the better signal of the two — it is what this box
+  actually runs, at the versions it runs them.
+- **Catalogued** from `GET /rest/types/nodes.json`, which needs the optional
+  login below and is the full list n8n's own editor loads.
+
+`check_n8n_workflow` is a free dry run against that: node types this instance
+does not have, versions newer than it has, a missing trigger, and which
+credentials somebody will have to attach. It returns findings rather than a
+verdict, so a model can fix its own JSON in the next round instead of spending
+an approval to discover a typo.
+
+## Closing the loop: did it actually work?
+
+`check_n8n_health` joins three things that already existed separately and had
+never been asked together: whether the credentials are attached, whether the
+workflow is switched on, and whether it has run. The interesting answer is the
+third state — *connected, on, and it has never run* — which is what a schedule
+in the wrong timezone looks like and is invisible from anywhere else.
+
+It reads run status and timing only. It never passes `includeData`, because
+that returns the body of every email and invoice that went through the
+workflow.
+
+## n8n's own AI builder
+
+    n8n:
+      login:
+        email: !env_var N8N_LOGIN_EMAIL ""
+        password: !env_var N8N_LOGIN_PASSWORD ""
+
+Optional, off by default, and it buys three things: the instance settings, the
+full node catalogue, and n8n's own AI workflow builder — all of which live on
+`/rest`, which a session cookie opens and an API key cannot.
+
+**Say what that costs.** An n8n password is strictly more powerful than an n8n
+API key, and the asymmetry runs one way: a session also authenticates
+`/api/v1`, while a key never authenticates `/rest`, and `/rest` includes the
+endpoint that mints API keys. Use a **dedicated non-owner n8n user**, and put
+the password in the environment rather than in the file.
+
+### Whether the builder is even available to you
+
+Probably not, and it is worth knowing why before you spend an evening on it.
+n8n's AI builder is gated by a signed licence certificate, checked by a
+middleware that runs before the route. Two settings sound like they turn it on
+and only one of them is yours:
+
+| | what it means | who decides |
+|---|---|---|
+| `aiBuilder.setup` | is a model wired up | you, with an env var |
+| `aiBuilder.enabled` | is the feature licensed | the certificate |
+
+If you have pointed n8n's AI settings at your own local model, you have set the
+first one. That does not set the second. **CHECK says which**, in one sentence,
+rather than "the AI builder failed":
+
+```bash
+python3 scripts/check-n8n.py
+python3 scripts/check-n8n.py --builder    # opens a real conversation, once
+```
+
+When it is not available Jarvis writes the workflow itself, which works on
+every n8n and is what `list_n8n_node_types` and `check_n8n_workflow` exist to
+make good. The model is told so in a sentence it can act on in the same turn,
+rather than the tool quietly doing something else and reporting work it did
+not do.
+
+### How the relay works when it is available
+
+The builder can **interrupt** — stop to ask a question, propose a plan, or ask
+permission to fetch a URL — and wait for an answer. A tool cannot answer that:
+a Tier-3 tool raises an approval, returns, and the turn ends. So
+`build_n8n_workflow_with_ai` starts a **background task** and returns
+immediately, and that task owns the conversation.
+
+When the builder asks something, it arrives as an ordinary approval card — on
+the console and on the phone — and the task goes to `blocked`, which the
+progress UI draws as "waiting for you" rather than a spinner. Every relayed
+question is marked as coming from an outside source, unconditionally: the words
+were composed by a different AI and are about to be rendered on somebody's lock
+screen.
+
+Three things the relay does not get to bend:
+
+- the workflow goes through `create_n8n_workflow`'s path, so a builder that
+  sets `active: true` or guesses a credential id is not setting anything
+- an unanswered permission-to-fetch resolves to **deny**, never to a domain
+  and never to everything
+- the transcript stays on the task for the console; the model gets one
+  sentence and the list of credentials to connect
 
 ## What is deliberately missing
 

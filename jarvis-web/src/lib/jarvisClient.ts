@@ -20,7 +20,9 @@ import type {
 	N8nCheck,
 	N8nExecution,
 	N8nGraph,
+	N8nHealth,
 	N8nInstance,
+	N8nTranscriptLine,
 	N8nWorkflow
 } from './n8n';
 
@@ -914,6 +916,40 @@ export class JarvisClient {
 
 	listN8nExecutions(id = '', limit = 20): Promise<{ executions: N8nExecution[] }> {
 		return this.command({ type: 'jarvis/n8n/executions', workflow_id: id, limit });
+	}
+
+	/**
+	 * Is one workflow actually working — connected, on, and running?
+	 *
+	 * Reads run status and timing only. jarvis-core never asks n8n for
+	 * execution DATA, which would be the contents of every email and invoice
+	 * that went through the workflow.
+	 */
+	n8nHealth(id: string): Promise<N8nHealth> {
+		return this.command({ type: 'jarvis/n8n/health', workflow_id: id });
+	}
+
+	/**
+	 * Hand a request to n8n's OWN AI builder.
+	 *
+	 * Returns as soon as the job is booked, because the builder can stop to
+	 * ask a question and a question cannot be answered inside the request that
+	 * raised it. Those questions arrive as ordinary approval cards, and the
+	 * task sits at `blocked` — "waiting for you" — until one is answered.
+	 */
+	buildN8nWorkflow(instruction: string): Promise<{ task: TaskRow }> {
+		return this.command({ type: 'jarvis/n8n/build', instruction });
+	}
+
+	/**
+	 * What the builder and the household said to each other.
+	 *
+	 * Console-only, deliberately: it is prose composed by a different AI, and
+	 * the model gets one sentence instead. Reading it here needs a bearer
+	 * token, which is the same asymmetry as reading a skill's body.
+	 */
+	n8nTranscript(taskId: string): Promise<{ task_id: string; transcript: N8nTranscriptLine[] }> {
+		return this.command({ type: 'jarvis/n8n/transcript', task_id: taskId });
 	}
 
 	/** Drop it from the listing. jarvis-core does NOT delete the files. */

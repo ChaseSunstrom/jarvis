@@ -164,6 +164,12 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     # automation cannot call these at all.
     "create_tool": None,
     "ask_user": None,
+    # Hands a request to n8n's own AI builder as a background job. No service
+    # form on purpose: it can stop to ask the household a question, and an
+    # automation firing at three in the morning that puts questions on a lock
+    # screen is not a feature. `create_n8n_workflow` above is what actually
+    # writes the result, so the write is gated twice.
+    "build_n8n_workflow_with_ai": None,
     # `lock_control` is Tier 3 *and* `domain="lock"`, so the service form
     # (`lock.lock` / `lock.unlock`) is already covered by GATED_DOMAINS.
     "lock_control": None,

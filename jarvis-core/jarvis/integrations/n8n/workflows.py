@@ -41,9 +41,11 @@ __all__ = [
     "MAX_WORKFLOW_BYTES",
     "WorkflowError",
     "CleanWorkflow",
+    "SETTINGS_KEYS",
     "clean_workflow",
     "describe_graph",
     "needed_connections",
+    "strip_for_update",
     "summarise",
 ]
 
@@ -224,10 +226,86 @@ def _position(value: Any) -> list[Any]:
     return [0, 0]
 
 
+#: Every key n8n's own `workflowSettings.yml` schema accepts. The schema is
+#: `additionalProperties: false`, so this list is not advice — one invented key
+#: and the whole POST comes back 400 with a message about a property nobody
+#: recognises, on a workflow a human already approved.
+SETTINGS_KEYS = frozenset(
+    {
+        "timezone",
+        "errorWorkflow",
+        "callerIds",
+        "callerPolicy",
+        "saveDataErrorExecution",
+        "saveDataSuccessExecution",
+        "saveManualExecutions",
+        "saveExecutionProgress",
+        "executionTimeout",
+        "executionOrder",
+        "timeSavedPerExecution",
+        "availableInMCP",
+    }
+)
+
+
 def _settings(value: Any) -> dict[str, Any]:
-    settings = dict(value) if isinstance(value, dict) else {}
+    """The settings block, reduced to keys n8n will accept.
+
+    Dropping rather than refusing, on purpose. A model that added
+    `"retryOnFail": true` here — a real n8n setting, but a NODE setting —
+    wrote something reasonable in the wrong place, and losing the key costs
+    nothing while a refusal costs an approval round trip.
+    """
+    raw = value if isinstance(value, dict) else {}
+    settings = {str(k): v for k, v in raw.items() if str(k) in SETTINGS_KEYS}
     settings.setdefault("executionOrder", "v1")
     return settings
+
+
+#: What a GET returns and a PUT will not take. n8n's update schema is closed
+#: too, and a fetched workflow carries a dozen server-owned fields — so the
+#: obvious GET, change one thing, PUT round trip is a guaranteed 400.
+NOT_ON_UPDATE = frozenset(
+    {
+        "id",
+        "active",
+        "tags",
+        "versionId",
+        "activeVersionId",
+        "versionCounter",
+        "sourceWorkflowId",
+        "createdAt",
+        "updatedAt",
+        "isArchived",
+        "triggerCount",
+        "meta",
+        "pinData",
+        "shared",
+        "homeProject",
+        "sharedWithProjects",
+        "scopes",
+        "usedCredentials",
+        "staticData",
+    }
+)
+
+
+def strip_for_update(workflow: Any) -> dict[str, Any]:
+    """A fetched workflow, reduced to what `PUT /workflows/{id}` accepts.
+
+    Four keys, same as create. Written as a subtraction from a known list
+    rather than a projection so that a field n8n adds in a future version is
+    at least *visible* in the diff of this file when it starts causing 400s —
+    but the return is a projection anyway, because a closed schema means an
+    unknown field is a rejection and there is no upside to forwarding one.
+    """
+    raw = workflow if isinstance(workflow, dict) else {}
+    return {
+        "name": str(raw.get("name") or ""),
+        "nodes": raw.get("nodes") or [],
+        "connections": raw.get("connections") or {},
+        "settings": _settings(raw.get("settings")),
+    }
 
 
 def _connections(value: Any, names: set[str]) -> dict[str, Any]:

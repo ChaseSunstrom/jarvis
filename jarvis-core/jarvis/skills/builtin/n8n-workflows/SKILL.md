@@ -20,6 +20,18 @@ If you need to change an existing one, `read_n8n_workflow` gives you its shape
 **not** give you node parameters, and that is deliberate: people type API keys
 into them.
 
+## Find out what this n8n actually has, first
+
+`list_n8n_node_types` tells you which node types exist on THIS instance and at
+which version. Call it before writing anything. Node names and versions differ
+between installs, and a workflow naming one that is not there saves without
+complaint and then does nothing — the failure turns up days later as "the
+thing you set up doesn't work".
+
+Use the exact strings and version numbers it returns. If the node you want is
+not listed, say so and suggest the community package rather than guessing a
+name that looks plausible.
+
 ## Writing one
 
 `create_n8n_workflow` takes ordinary n8n workflow JSON: `name`, `nodes`,
@@ -31,6 +43,45 @@ into them.
 - Every `connections` entry must name nodes that exist.
 - Give each node a `position` like `[220, 300]` so the canvas is readable.
 - Start with a trigger node unless the user wants a sub-workflow.
+
+## Check it before you ask for approval
+
+`check_n8n_workflow` is free, instant, and needs no approval. It reports node
+types this instance does not have, versions newer than it has, a missing
+trigger, and which credentials somebody will have to attach. Fix what it finds
+and check again.
+
+Do this every time. Creating a workflow costs the user an approval, and
+spending one to discover a typo wastes their attention on something you could
+have found yourself.
+
+## When the workflow is complicated
+
+`build_n8n_workflow_with_ai` hands the request to n8n's own AI builder, which
+knows this instance's nodes and expression language first-hand. Use it when
+the workflow is genuinely involved, or when it touches a service you are not
+confident wiring; write the simple ones yourself.
+
+It runs in the background and **may come back with a question for the user**,
+which they will see as an ordinary approval card. So tell them it is under way
+and that it may ask them something. Do not describe a workflow — there is none
+yet — and do not wait for it in the same turn.
+
+If it answers that the builder is not available here, that is not a failure to
+apologise for: n8n's builder is licensed separately and most self-hosted
+instances do not have it. Write the workflow yourself instead, which is what
+the two tools above are for.
+
+## Answering "did that actually work?"
+
+`check_n8n_health` on a workflow id. It says whether the credentials are
+attached, whether it is switched on, and whether it has run and succeeded.
+Use it whenever somebody asks about something you set up earlier rather than
+saying you cannot tell.
+
+The answer worth watching for is *connected, switched on, and never run* —
+that usually means a schedule in the wrong timezone or a webhook nobody is
+calling, and it looks identical to working from every other angle.
 
 ## Credentials — the part to get right
 

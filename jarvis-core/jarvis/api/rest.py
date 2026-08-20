@@ -734,6 +734,31 @@ async def n8n_set_active(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.post("/n8n/build")
+async def n8n_build(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_n8n_build(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/n8n/build/{task_id}")
+async def n8n_build_transcript(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return common.n8n_build_transcript(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/n8n/workflows/{workflow_id}/health")
+async def n8n_health(request: Request, workflow_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_n8n_health(get_jarvis(request), workflow_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/n8n/executions")
 async def n8n_executions(request: Request) -> dict[str, Any]:
     try:
