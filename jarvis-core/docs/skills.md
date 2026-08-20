@@ -45,6 +45,25 @@ A local skill with the same name as a shipped one **wins**, which is how you
 override the house conventions Jarvis ships with. The same rule
 `configuration.yaml` follows everywhere else.
 
+## Three levels, not two
+
+    the description     in every prompt          ~30 characters
+    the body            when open_skill is       ~2,000 characters
+                        called for that skill
+    a reference file    when open_skill is       as big as it needs to be
+                        called again with a
+                        `file`
+
+The third level is what makes a large reference usable. The shipped
+`n8n-workflows` skill has a `recipes.md` beside it with twelve worked
+workflow briefs — nobody needs those until they are building one of them, and
+loading them into the body would make every n8n turn carry ten kilobytes.
+
+`open_skill` on a skill that has files names them and says how to ask. A file
+is read from that skill's own folder and nowhere else: the path is resolved
+and compared rather than inspected, because a skill can be installed from a
+repository, which makes the filename in its body a stranger's.
+
 ## The three ways one arrives
 
 ### Shipped

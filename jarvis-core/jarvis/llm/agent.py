@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..bus import Context
 from ..state import split_entity_id
+from .deliberation import Assessment, assess
 from .history import ConversationArchive
 from .memory import ConversationStore
 from .ollama import DEFAULT_MODEL, ChatResult, OllamaClient, OllamaError
@@ -284,6 +285,10 @@ class ConversationResult:
     #: True when the model asked for reasoning on this turn. Also the flag the
     #: remaining rounds read — see `THINK_TOOL_NAME`.
     escalated: bool = False
+    #: Why the AGENT decided this turn was worth thinking about, before the
+    #: model was called at all. "" on the overwhelming majority of turns, and
+    #: that is the design — see `llm/deliberation.py`.
+    deliberated: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -294,6 +299,7 @@ class ConversationResult:
             "error": self.error,
             "thinking": self.thinking,
             "escalated": self.escalated,
+            "deliberated": self.deliberated,
         }
 
     def as_conversation_response(self, language: str = "en") -> dict[str, Any]:
@@ -472,6 +478,7 @@ class ConversationAgent:
         think: bool | None = None,
         archive: ConversationArchive | None = None,
         allow_think_escalation: bool = True,
+        deliberate: bool = True,
     ) -> None:
         self.jarvis = jarvis
         self.client = client
@@ -502,6 +509,15 @@ class ConversationAgent:
         #: off for anyone who would rather the latency be predictable than the
         #: hard turns be better.
         self.can_escalate_think = bool(allow_think_escalation) and think is False
+        #: Whether the AGENT may raise reasoning for a turn that LOOKS
+        #: complicated, before the model has seen it.
+        #:
+        #: On, because the turns that most need working out are exactly the
+        #: ones a model dives into instead of asking. Costs nothing on a simple
+        #: turn — the decision is a handful of regexes on the string the user
+        #: just said, and it takes no extra round trip. `llm: deliberate:
+        #: false` turns it off for anyone who wants latency to be flat.
+        self.deliberate = bool(deliberate)
         #: How many times one round may be attempted, and the first backoff.
         #: Only ever used before a token has reached the user — see
         #: `_Round.stream`. Two attempts covers the overwhelmingly common case
@@ -742,11 +758,23 @@ class ConversationAgent:
             *conversation.messages(),
             {"role": "user", "content": message},
         ]
+        # Decided here, in code, before the first model call — so a turn that
+        # needs working out gets it WITHOUT the extra round trip a classifier
+        # call would cost, and a turn that does not is untouched. The bias is
+        # heavily towards "does not": see `llm/deliberation.py`.
+        shape = assess(message) if self.deliberate and not self.think else Assessment()
+        if shape.deliberate:
+            result.escalated = True
+            result.deliberated = shape.why
+            _LOGGER.info("Thinking this one through: %s", shape.why)
+            messages.append({"role": "system", "content": shape.note()})
+
         schema = list(self.tools.as_openai_schema())
-        # Offered only when it can do something. With `think` already true or
-        # left at the model's default, escalating is a no-op — and a tool that
-        # does nothing is a tool the model wastes a round discovering.
-        if self.can_escalate_think:
+        # Offered only when it can do something. With `think` already true, or
+        # already raised just above, or left at the model's default, escalating
+        # is a no-op — and a tool that does nothing is a tool the model wastes
+        # a round discovering.
+        if self.can_escalate_think and not result.escalated:
             schema.append(THINK_TOOL_SCHEMA)
         context = Context(origin="llm")
         pieces: list[str] = []

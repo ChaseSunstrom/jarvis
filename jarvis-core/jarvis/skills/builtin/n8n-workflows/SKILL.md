@@ -20,6 +20,23 @@ If you need to change an existing one, `read_n8n_workflow` gives you its shape
 **not** give you node parameters, and that is deliberate: people type API keys
 into them.
 
+## Twelve worked briefs, beside this file
+
+`open_skill` with `file: "recipes.md"` gets you a dozen workflows worth
+having, each with its trigger, its steps, the credentials somebody will have
+to attach, and — the useful part — the thing that usually goes wrong with
+that particular shape.
+
+Read it when the request resembles one of them: a morning briefing, filing
+receipts from email, telling the house when an outside thing happens, a
+digest of what failed, a backup, watching a page, a form, a file drop, saving
+a message, summarising something long, reconciling two lists, or a
+sub-workflow other workflows call.
+
+They are briefs rather than JSON on purpose: JSON goes stale the moment n8n
+bumps a node version, and `list_n8n_node_types` tells you the versions this
+instance actually has.
+
 ## Find out what this n8n actually has, first
 
 `list_n8n_node_types` tells you which node types exist on THIS instance and at

@@ -129,6 +129,31 @@ the household a question, and an automation firing at three in the morning
 that puts questions on a lock screen is not a feature. What it produces still
 goes through `create_n8n_workflow`'s write path, so the write is gated twice.
 
+## Twelve worked recipes
+
+`jarvis-core/jarvis/skills/builtin/n8n-workflows/recipes.md` is a library of
+workflows worth having, written as briefs rather than as JSON: a morning
+briefing, filing receipts from email, telling the house when an outside thing
+happens, a weekly digest of what failed, backups, watching a page, a form
+handler, a file drop, saving a message, summarising something long,
+reconciling two lists, and a sub-workflow other workflows call.
+
+Each names its trigger, its steps, the credentials somebody will have to
+attach, and the thing that usually goes wrong with that particular shape —
+the timezone on a schedule, the test-versus-production webhook URL, a file
+trigger that re-triggers itself, a delete that runs when the upload failed.
+That last part is what a node catalogue cannot tell you.
+
+They are briefs and not JSON on purpose: pasted JSON goes stale the moment
+n8n bumps a node version, and a model copying it produces a workflow that
+saves and does nothing.
+
+**Read it yourself** — it is a plain markdown file, and it is written to be
+handed to an assistant as a brief. **Jarvis reads it too**, through
+`open_skill` with `file: "recipes.md"`, which is the third level of
+disclosure: nobody pays for ten kilobytes of recipes until somebody is
+actually building one.
+
 ## Grounding: what this n8n actually has
 
 A model writing n8n JSON is writing against a catalogue it has never seen. It

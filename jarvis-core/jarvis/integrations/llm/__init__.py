@@ -389,6 +389,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         # judges needs working out. Off makes the latency predictable at the
         # cost of the hard turns; see `THINK_TOOL_NAME` in llm/agent.py.
         allow_think_escalation=bool(options.get("allow_think_escalation", True)),
+        deliberate=bool(options.get("deliberate", True)),
     )
 
     jarvis.data[DOMAIN] = agent

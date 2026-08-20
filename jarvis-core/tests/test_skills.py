@@ -628,3 +628,143 @@ async def test_a_wrong_branch_is_not_papered_over_by_the_fallback(tmp_path: Path
     assert row is None
     assert "branch" in why
     assert seen == ["codeload.github.com"], "it fell back on a definite answer"
+
+
+# ---------------------------------------------------------------------------
+# reference files — the third level of disclosure
+# ---------------------------------------------------------------------------
+#
+# The body cap tells an author to "move the detail into files beside
+# SKILL.md", and `open_skill` handed back a `files_at` path. Nothing could
+# read from it. The advice named a place that did not exist as far as the
+# model was concerned, which is a worse failure than not offering it: an
+# author follows it, and the detail becomes unreachable.
+#
+# So there are three levels now. The description costs every prompt, the body
+# costs an open, and a reference file costs a second one — which is exactly
+# right for a twelve-recipe library nobody needs until they are building the
+# thing it is about.
+def _skill_with_files(tmp_path: Path, **files: str):
+    from jarvis.skills.model import load_skill
+
+    folder = tmp_path / "skills" / "recipes-skill"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: recipes-skill\ndescription: Use when testing reference files, "
+        "which needs a description of at least twelve characters.\n---\n\n# Body\n",
+        encoding="utf-8",
+    )
+    for name, text in files.items():
+        (folder / name).write_text(text, encoding="utf-8")
+    return load_skill(folder)
+
+
+def test_a_skill_lists_the_files_beside_it(tmp_path: Path):
+    skill = _skill_with_files(tmp_path, **{"recipes.md": "# Recipes", "notes.txt": "x"})
+    # SKILL.md is not offered: it is the body, already in hand.
+    assert skill.files() == ["notes.txt", "recipes.md"]
+
+
+def test_a_skill_with_no_extra_files_offers_none(tmp_path: Path):
+    assert _skill_with_files(tmp_path).files() == []
+
+
+def test_a_reference_file_can_be_read(tmp_path: Path):
+    skill = _skill_with_files(tmp_path, **{"recipes.md": "# Twelve recipes\n"})
+    assert "Twelve recipes" in skill.read("recipes.md")
+
+
+def test_a_reference_file_cannot_walk_out_of_the_folder(tmp_path: Path):
+    """A skill can be installed from a repository, so the filename in its body
+    is a stranger's. `../../etc/passwd` in a SKILL.md would otherwise be a
+    file read on the host, performed by the model, on request."""
+    from jarvis.skills.model import SkillError
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("do not read me", encoding="utf-8")
+    skill = _skill_with_files(tmp_path, **{"recipes.md": "ok"})
+
+    for attempt in ("../../secret.txt", "../secret.txt", "/etc/passwd", ""):
+        with pytest.raises(SkillError):
+            skill.read(attempt)
+
+
+def test_a_symlink_out_of_the_folder_is_refused_too(tmp_path: Path):
+    """Resolving before comparing is what makes this hold — a check on the
+    string would pass a name with no dots in it at all."""
+    from jarvis.skills.model import SkillError
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("do not read me", encoding="utf-8")
+    skill = _skill_with_files(tmp_path, **{"recipes.md": "ok"})
+    link = Path(skill.path) / "innocent.md"
+    link.symlink_to(secret)
+
+    with pytest.raises(SkillError) as err:
+        skill.read("innocent.md")
+    assert "own folder" in str(err.value)
+
+
+def test_a_missing_file_says_what_there_is(tmp_path: Path):
+    from jarvis.skills.model import SkillError
+
+    skill = _skill_with_files(tmp_path, **{"recipes.md": "ok"})
+    with pytest.raises(SkillError) as err:
+        skill.read("nope.md")
+    assert "recipes.md" in str(err.value)
+
+
+def test_a_huge_reference_file_is_clipped_rather_than_refused(tmp_path: Path):
+    from jarvis.skills.model import MAX_FILE_CHARS
+
+    skill = _skill_with_files(tmp_path, **{"big.md": "x" * (MAX_FILE_CHARS + 5000)})
+    got = skill.read("big.md")
+    assert len(got) < MAX_FILE_CHARS + 500
+    assert "Split it into smaller files" in got
+
+
+async def test_open_skill_names_the_files_rather_than_only_pointing_at_them(tmp_path: Path):
+    _jarvis, tools = await make(tmp_path)
+    got = await tools.get("open_skill").handler({"name": "n8n-workflows"})
+    assert got["status"] == "ok"
+    assert "recipes.md" in got["files"]
+    assert "open_skill" in got["note"]
+
+
+async def test_open_skill_reads_a_reference_file(tmp_path: Path):
+    _jarvis, tools = await make(tmp_path)
+    got = await tools.get("open_skill").handler(
+        {"name": "n8n-workflows", "file": "recipes.md"}
+    )
+    assert got["status"] == "ok"
+    assert "Morning briefing" in got["contents"]
+    # The body is NOT sent along with it: that would undo the saving.
+    assert "instructions" not in got
+
+
+async def test_open_skill_refuses_a_traversal(tmp_path: Path):
+    _jarvis, tools = await make(tmp_path)
+    got = await tools.get("open_skill").handler(
+        {"name": "n8n-workflows", "file": "../../../etc/passwd"}
+    )
+    assert got["status"] == "error"
+    assert "own folder" in got["error"]
+
+
+async def test_the_shipped_recipes_are_briefs_and_not_stale_json(tmp_path: Path):
+    """A pasted workflow JSON goes stale the moment n8n bumps a node version,
+    and a model copying one produces a workflow that saves and does nothing.
+    The library is written as briefs for that reason, and this is the
+    assertion that keeps somebody from "helpfully" adding JSON later."""
+    _jarvis, tools = await make(tmp_path)
+    text = (
+        await tools.get("open_skill").handler(
+            {"name": "n8n-workflows", "file": "recipes.md"}
+        )
+    )["contents"]
+    assert "list_n8n_node_types" in text
+    assert "check_n8n_workflow" in text
+    # Each brief says what usually goes wrong with that shape, which is the
+    # part a model cannot derive from the node catalogue.
+    assert text.count("What usually goes wrong") >= 10
+    assert '"nodes":' not in text, "a JSON workflow was pasted into the briefs"

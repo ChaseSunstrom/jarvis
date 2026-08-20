@@ -429,12 +429,36 @@ def _register_tools(jarvis: "Jarvis") -> None:
                     "SKILLS page if the user wants it on."
                 ),
             }
-        return {
+        wanted_file = str(args.get("file") or "").strip()
+        if wanted_file:
+            try:
+                return {
+                    "status": "ok",
+                    "name": skill.name,
+                    "file": wanted_file,
+                    "contents": skill.read(wanted_file),
+                }
+            except SkillError as err:
+                return {"status": "error", "error": str(err)}
+
+        files = skill.files()
+        result = {
             "status": "ok",
             "name": skill.name,
             "instructions": skill.body,
             "files_at": skill.path,
         }
+        if files:
+            # Named rather than only pointed at. `files_at` was a path the
+            # model had no way to read, which made the advice in
+            # `MAX_BODY_CHARS` — "move the detail into files beside SKILL.md" —
+            # a promise nothing kept.
+            result["files"] = files
+            result["note"] = (
+                "This skill has reference files. Call open_skill again with "
+                f"`file` set to one of: {', '.join(files)}."
+            )
+        return result
 
     registry_obj.register(
         name="open_skill",
@@ -442,10 +466,21 @@ def _register_tools(jarvis: "Jarvis") -> None:
             "Read one skill's full instructions, by name. The skill list in "
             "your prompt gives only names and when to use them — this is how "
             "you get the actual procedure. Call it BEFORE doing the kind of "
-            "work a skill covers, and then follow what it says."
+            "work a skill covers, and then follow what it says. Some skills "
+            "name reference files; pass `file` to read one of those."
         ),
         parameters=schema_object(
-            {"name": {"type": "string", "description": "the skill's name"}}, ["name"]
+            {
+                "name": {"type": "string", "description": "the skill's name"},
+                "file": {
+                    "type": "string",
+                    "description": (
+                        "a reference file beside the skill, from the `files` "
+                        "list a plain open returns"
+                    ),
+                },
+            },
+            ["name"],
         ),
         handler=tool_open,
         # Reading a procedure the operator installed. If this needed approval

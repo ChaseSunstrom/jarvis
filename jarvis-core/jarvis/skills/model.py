@@ -70,6 +70,10 @@ MIN_DESCRIPTION_CHARS = 12
 #: A body is loaded into one turn's context on demand. Big is fine; unbounded
 #: is a downloaded file deciding how much of the window it takes.
 MAX_BODY_CHARS = 60_000
+#: One reference file, as handed to the model. Larger than a body because a
+#: file is asked for deliberately and one at a time, and smaller than "all of
+#: it" because a tool result competes with the conversation for context.
+MAX_FILE_CHARS = 40_000
 MAX_NAME_CHARS = 64
 
 #: Lowercase, because a skill name is a directory name and a case-insensitive
@@ -135,6 +139,63 @@ class Skill:
     @property
     def origin(self) -> str:
         return str(self.extra.get("origin") or "")
+
+    def files(self) -> list[str]:
+        """The other files in this skill's folder, as names to ask for.
+
+        Only files, only the top level, and never `SKILL.md` itself — that is
+        the body, and offering it as a file to open would be one more round
+        for something already in hand.
+        """
+        if not self.path:
+            return []
+        try:
+            root = Path(self.path)
+            return sorted(
+                entry.name
+                for entry in root.iterdir()
+                if entry.is_file() and entry.name != SKILL_FILE
+            )
+        except OSError:
+            return []
+
+    def read(self, filename: Any) -> str:
+        """One file beside `SKILL.md`. Raises `SkillError`.
+
+        `MAX_BODY_CHARS` tells an author to "move the detail into files beside
+        SKILL.md" — this is the half that makes that true. Without it the
+        advice named a place nothing could read from.
+
+        Confined to the folder, by resolving and comparing rather than by
+        inspecting the string: a skill can be installed from a repository, so
+        the filename in its body is a stranger's, and `../../etc/passwd` in a
+        SKILL.md would otherwise be a file read on the host.
+        """
+        wanted = str(filename or "").strip()
+        if not wanted or not self.path:
+            raise SkillError("which file?")
+        root = Path(self.path).resolve()
+        target = (root / wanted).resolve()
+        if target == root or root not in target.parents:
+            raise SkillError(
+                f"{wanted!r} is not inside {self.name}. A skill may only read "
+                "files in its own folder."
+            )
+        if not target.is_file():
+            offered = ", ".join(self.files()) or "none"
+            raise SkillError(
+                f"{self.name} has no file called {wanted!r}. It has: {offered}."
+            )
+        try:
+            text = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as err:
+            raise SkillError(f"could not read {wanted!r}: {err}") from None
+        if len(text) > MAX_FILE_CHARS:
+            return text[:MAX_FILE_CHARS] + (
+                f"\n\n[… {len(text) - MAX_FILE_CHARS} more characters. "
+                "Split it into smaller files if all of it matters.]"
+            )
+        return text
 
     def as_dict(self, *, with_body: bool = False) -> dict[str, Any]:
         row: dict[str, Any] = {

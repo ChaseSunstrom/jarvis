@@ -235,6 +235,20 @@ llm:
   # turns be better. It does nothing unless `think:` above is false.
   allow_think_escalation: true
 
+  # ...and Jarvis decides too, before the model has seen the turn.
+  #
+  # The trouble with the line above is that the model has to notice, and the
+  # turns that most need working out are exactly the ones it dives into instead
+  # of asking. So the shape of what you said is scored first — in code, in
+  # microseconds, with no extra request — and a turn that has a sequence, a
+  # condition, a judgement, a typed-out list, or two capability areas to join
+  # up gets reasoning raised for it automatically.
+  #
+  # It is biased hard towards leaving turns alone: a false positive would cost
+  # every "turn the kitchen light off" a reasoning block, which is the thing
+  # `think: false` exists to prevent. Set false for flat latency.
+  deliberate: true
+
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.
   max_tool_rounds: 5
