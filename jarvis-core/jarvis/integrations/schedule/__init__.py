@@ -89,6 +89,10 @@ KINDS = (KIND_NOTIFY, KIND_RESEARCH, KIND_SERVICE, KIND_CODE)
 #: through a delay, arriving with no turn to attribute it to — and a coding job
 #: is the same shape with a repository on the end of it. Starting one directly
 #: is Tier 3 and asks a human; scheduling one must not be the way round that.
+#: Kinds slow enough to belong in the engine's queue rather than firing on
+#: the spot. A reminder must not wait behind a twenty-minute coding job.
+QUEUED_KINDS = frozenset({"research", "code"})
+
 MODEL_KINDS = (KIND_NOTIFY, KIND_RESEARCH)
 
 MAX_JOBS = 200
@@ -443,7 +447,16 @@ class ScheduleManager:
                 break
 
     async def _async_fire(self, job: Job, *, late: bool) -> None:
-        """Run one job, as a task on the registry so it is visible."""
+        """Run one job, as a task on the registry so it is visible.
+
+        The SLOW kinds go through the engine: a scheduled research run and a
+        coding job that fall in the same minute are two conversations against
+        one model server, and the queue is what stops a third from making all of
+        them slow. `notify` and `service` do not — a reminder queued behind a
+        twenty-minute coding job is a reminder that arrives after the thing it
+        was reminding you about, which is a worse failure than an unqueued one.
+        """
+        engine = getattr(self.jarvis, "taskengine", None) if job.kind in QUEUED_KINDS else None
         registry = getattr(self.jarvis, "tasks", None)
         task = None
         if registry is not None:
@@ -453,7 +466,20 @@ class ScheduleManager:
                 source=job.source or "schedule",
                 detail=("running late" if late else describe_when(job.when)),
             )
+            if engine is not None:
+                async def _worker(_task_id: str, job=job, late=late) -> None:
+                    await self._async_fire_now(job, late=late, task_id=_task_id)
+
+                if engine.submit(task.id, _worker, kind="scheduled"):
+                    return
             await registry.async_update(task.id, status=STATUS_RUNNING)
+
+        await self._async_fire_now(job, late=late, task_id=task.id if task else "")
+
+    async def _async_fire_now(self, job: Job, *, late: bool, task_id: str = "") -> None:
+        """The firing itself, once a slot is free."""
+        registry = getattr(self.jarvis, "tasks", None)
+        task = registry.get(task_id) if registry is not None and task_id else None
 
         job.last_at = time.time()
         try:

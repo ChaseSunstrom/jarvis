@@ -115,6 +115,12 @@ async def settle(jarvis) -> None:
     manager = get_manager(jarvis)
     if manager is not None:
         await manager.async_drain(timeout=10)
+    # The slow kinds (research, code) are handed to the task engine rather than
+    # run where they fire, so "whatever the manager just set off" now includes
+    # whatever the engine picked up.
+    engine = getattr(jarvis, "taskengine", None)
+    if engine is not None:
+        await engine.async_drain(timeout=10)
     await jarvis.async_block_till_done()
 
 

@@ -716,6 +716,9 @@ class WebSocketHandler:
             self.jarvis, str(msg.get("task_id") or ""), int(msg.get("limit") or 200)
         )
 
+    async def _cmd_task_retry(self, msg: dict[str, Any]) -> Any:
+        return await common.async_retry_task(self.jarvis, str(msg.get("task_id") or ""))
+
     async def _cmd_task_cancel(self, msg: dict[str, Any]) -> Any:
         return await common.async_cancel_task(self.jarvis, str(msg.get("task_id") or ""))
 
@@ -1151,6 +1154,7 @@ WebSocketHandler._HANDLERS = {
     "jarvis/dashboards/delete": WebSocketHandler._cmd_dashboards_delete,
     "jarvis/metrics/sources": WebSocketHandler._cmd_metrics_sources,
     "jarvis/metrics/query": WebSocketHandler._cmd_metrics_query,
+    "jarvis/tasks/retry": WebSocketHandler._cmd_task_retry,
     "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
     "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,
     "jarvis/tasks/clear_finished": WebSocketHandler._cmd_task_clear_finished,

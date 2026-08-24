@@ -19,6 +19,7 @@ from .services import ServiceRegistry
 from .settings import SettingsOverlay
 from .state import StateMachine
 from .store import Store
+from .taskengine import TaskEngine
 from .tasks import STORE_KEY as TASKS_STORE_KEY, TaskRegistry
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,6 +48,12 @@ class Jarvis:
         # integration to find it, nor be ordered after one that might not be
         # configured.
         self.tasks = TaskRegistry(self, Store(self.config_dir, TASKS_STORE_KEY))
+        # And the thing that actually runs what the registry records. Beside it
+        # for the same reason: every kind of slow work goes through one queue,
+        # and a worker should not have to find an integration to be run by it.
+        # `llm.max_concurrent` sets the width; the engine is built with the
+        # default and re-sized when that integration sets up.
+        self.taskengine = TaskEngine(self, self.tasks)
         # An attribute beside the registries rather than a `data` key: the
         # reload services have to reach it without importing an integration,
         # and it has the same lifecycle as the rest of the core infrastructure.
@@ -128,6 +135,10 @@ class Jarvis:
         # setup finds a loaded list — and so a task interrupted by the last
         # shutdown is marked as such before a surface can read it half-loaded.
         await self.tasks.async_load()
+        # The queue lives in the same store as the tasks, so work that was
+        # WAITING when the process died is still waiting. Work that was running
+        # is only resumed if it said it was idempotent (see taskengine.py).
+        self.taskengine.load(await self.tasks.store.load() or {})
         # Rebinding the local on purpose — see async_install_config. Both the
         # areas loop below and async_setup_integrations must see the overlay.
         config = await self.async_install_config(config, package_provenance)
@@ -154,6 +165,7 @@ class Jarvis:
         if not self.is_running:
             return
         self.is_running = False
+        await self.taskengine.async_stop()
         await self.bus.async_fire(EVENT_JARVIS_STOP)
         for callback in reversed(self._shutdown_callbacks):
             try:

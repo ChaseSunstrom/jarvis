@@ -167,12 +167,34 @@ async def test_work_that_did_not_survive_says_so_instead_of_running_for_ever(jar
     assert restored.steps[1].status == STATUS_QUEUED
 
 
-async def test_a_queued_task_also_did_not_survive(jarvis):
+async def test_a_queued_task_survives_because_the_queue_does(jarvis):
+    """This used to assert the opposite, and the opposite used to be right.
+
+    While nothing ran queued work, "queued" in the store meant "recorded, and
+    nobody will ever pick this up", so erroring it on load was the honest
+    answer. The task engine persists its queue alongside this list, so work that
+    was WAITING really is still waiting — and `TaskEngine.load` is what fails a
+    queued task the queue no longer mentions, because it is the only thing that
+    knows.
+    """
     registry = _registry(jarvis)
     task = await registry.async_add("Never started")
     reborn = _registry(jarvis)
     await reborn.async_load()
+    assert reborn.get(task.id).status == STATUS_QUEUED
+
+
+async def test_a_queued_task_nothing_has_any_more_is_failed_by_the_engine(jarvis):
+    from jarvis.taskengine import TaskEngine
+
+    registry = _registry(jarvis)
+    task = await registry.async_add("orphaned")
+    reborn = _registry(jarvis)
+    await reborn.async_load()
+    # No queue entry for it: whatever was going to run it is gone.
+    TaskEngine(jarvis, reborn).load({"queue": []})
     assert reborn.get(task.id).status == STATUS_ERROR
+    assert "nothing has it" in reborn.get(task.id).error
 
 
 async def test_a_finished_task_is_restored_untouched(jarvis):

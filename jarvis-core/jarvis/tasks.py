@@ -322,14 +322,22 @@ class Task:
     def restored(self) -> "Task":
         """What this task becomes when the process that was running it died.
 
-        A task left `running` or `queued` in the store did NOT survive — the
-        thing driving it is gone. Marking it errored on load is the honest
-        answer and the actionable one: the alternative is a task that sits at
-        "running" for ever and a user who cannot tell a slow job from a dead
-        one. `blocked` is left alone: it was waiting on a person, and it still
-        is.
+        A task left `running` did NOT survive: the thing driving it is gone.
+        Marking it errored is the honest answer and the actionable one — the
+        alternative is a task that sits at "running" for ever and a user who
+        cannot tell a slow job from a dead one.
+
+        `queued` is now left alone, and that is a change: until there was a task
+        engine, "queued" meant "recorded, and nothing will ever pick this up",
+        so erroring it was right. The engine persists its queue with this list,
+        so work that was WAITING really is still waiting. Anything queued that
+        the engine does not have is failed by `TaskEngine.load`, which is the
+        only place that knows.
+
+        `blocked` is left alone for the reason it always was: it was waiting on
+        a person, and it still is.
         """
-        if self.status in (STATUS_QUEUED, STATUS_RUNNING):
+        if self.status == STATUS_RUNNING:
             self.status = STATUS_ERROR
             self.error = self.error or "interrupted when Jarvis restarted"
             for step in self.steps:
@@ -365,9 +373,16 @@ class TaskRegistry:
         if self.store is None:
             return
         try:
-            await self.store.save(
-                {"tasks": [{**t.as_dict(), "log": [e.as_dict() for e in t.log]} for t in self.tasks]}
-            )
+            payload: dict[str, Any] = {
+                "tasks": [{**t.as_dict(), "log": [e.as_dict() for e in t.log]} for t in self.tasks]
+            }
+            # The engine's queue rides with the tasks, in one file, written
+            # atomically: a queue saved separately can disagree with the list it
+            # refers to, and the disagreement only shows up after a crash.
+            engine = getattr(self.jarvis, "taskengine", None)
+            if engine is not None:
+                payload.update(engine.as_dict())
+            await self.store.save(payload)
         except Exception:  # pragma: no cover - a full disk is not a task failure
             _LOGGER.exception("Could not save the task list")
 

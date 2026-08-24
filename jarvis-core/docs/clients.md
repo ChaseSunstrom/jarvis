@@ -83,6 +83,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/conversation/rename` | `conversation_id`, `title`; a name of your own instead of the first sentence |
 | `jarvis/tasks/list` | every tracked job, newest first: `{tasks: [...]}`. `kind` filters, `active: true` hides finished ones. Each row carries its own steps and a derived `fraction`, so a list of progress bars is one request rather than one per bar |
 | `jarvis/tasks/get` | `task_id`; one task in full |
+| `jarvis/tasks/retry` | `task_id`; put a finished task back on the queue. Refuses one whose kind this server cannot rebuild, rather than being a button that does nothing |
 | `jarvis/tasks/log` | `task_id`, `limit`; the task's replayable history — every tool call, every line of output, oldest first. The activity events are fire-and-forget, so a client that opens a task's page two minutes in has missed them; this is how it catches up. See `tests/contracts/task_events.json`. |
 | `jarvis/dashboards/list` | every dashboard this token may see: the ones it saved, plus the shared and shipped ones |
 | `jarvis/dashboards/save` | `dashboard`; create or replace one. The server stamps the owner from the token — a client cannot save a board as somebody else |

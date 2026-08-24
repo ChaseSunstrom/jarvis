@@ -1283,6 +1283,31 @@ def task_get_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
     return {"task": task.as_dict()}
 
 
+async def async_retry_task(jarvis: Any, task_id: str) -> dict[str, Any]:
+    """Put a finished task back on the queue.
+
+    The button somebody presses after fixing whatever broke — a model server
+    that was down, a repository that was dirty. Only work whose kind the engine
+    can rebuild is retryable; anything else would be a button that does nothing,
+    so it says so instead.
+    """
+    engine = getattr(jarvis, "taskengine", None)
+    if engine is None:
+        raise ApiError("unsupported", "this backend has no task engine", 501)
+    task = _task_registry(jarvis).get(str(task_id or ""))
+    if task is None:
+        raise ApiError("not_found", f"no task {task_id!r}", 404)
+    if not task.finished:
+        raise ApiError("invalid_format", "that task has not finished", 400)
+    if not engine.retry(task.id):
+        raise ApiError(
+            "unsupported",
+            f"nothing on this server knows how to run {task.kind!r} work again",
+            400,
+        )
+    return {"task": task.as_dict(), "queued": True}
+
+
 async def async_delete_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
     """Forget one task. Does not stop it — see the note on cancel below."""
     registry = _task_registry(jarvis)

@@ -1936,6 +1936,45 @@ def register_builtin_tools(
         handler=_get_user_context,
     )
 
+    def _background_worker(description: str, task_id: str):
+        """One turn, driven by the engine instead of by somebody waiting.
+
+        "Look into X and tell me later" is a conversation turn nobody is sitting
+        in front of — not a new kind of work — so it runs through the same agent
+        with the same tools and the same round limit, and reports through the
+        task it was given.
+        """
+
+        async def run(_task_id: str) -> None:
+            agent = jarvis.data.get("llm_agent")
+            registry_tasks = getattr(jarvis, "tasks", None)
+            if agent is None:
+                raise RuntimeError("there is no conversation agent on this server")
+            if registry_tasks is not None:
+                await registry_tasks.async_update(
+                    task_id, add_steps=["work on it", "write it up"], detail="working"
+                )
+                registry_tasks.raise_if_cancelled(task_id)
+                await registry_tasks.async_update(task_id, step=0, step_status="running")
+            result = await agent.converse(
+                f"{description}\n\n(This is background work: nobody is waiting on this "
+                "reply. Do it, then summarise what you found in a few sentences.)",
+                conversation_id=f"background-{task_id}",
+            )
+            answer = getattr(result, "text", None) or str(result)
+            if registry_tasks is not None:
+                registry_tasks.raise_if_cancelled(task_id)
+                await registry_tasks.async_update(
+                    task_id,
+                    step=0,
+                    step_status="done",
+                    status="done",
+                    result=answer[:4000],
+                    detail="done",
+                )
+
+        return run
+
     # --- run_background_task (tier 2) -------------------------------------
     #
     # This used to be an empty seam, and the shape of the lie is worth keeping
@@ -1952,10 +1991,12 @@ def register_builtin_tools(
     # listening — nothing was, but breaking a published event to fix a
     # different bug is its own mistake.
     #
-    # What it STILL does not do is execute the work: there is no worker yet.
-    # So the honest answer to the model is "recorded", not "started", and the
-    # message says a person will see it rather than that a result is coming.
-    # Overstating this again would recreate the bug with more machinery.
+    # And it now RUNS. `jarvis.taskengine` takes the work, queues it behind
+    # whatever else is going on, and drives it — which is why the answer to the
+    # model is "started" rather than "recorded". The work itself is one
+    # conversation turn with the tools this registry already offers, bounded by
+    # the same round limit as any other turn: "look into X and tell me later"
+    # is a turn somebody is not waiting for, not a new kind of thing.
     async def _run_background_task(args: dict[str, Any], context: Any) -> Any:
         description = str(args.get("description") or args.get("task") or "").strip()
         if not description:
@@ -1994,14 +2035,34 @@ def register_builtin_tools(
                     "was not recorded — tell the user you cannot take it on"
                 ),
             }
+        started = False
+        engine = getattr(jarvis, "taskengine", None)
+        if engine is not None:
+            started = engine.submit(
+                task_id,
+                _background_worker(description, task_id),
+                kind="background",
+                retries=1,
+                payload={"description": description},
+            )
+        if not started:
+            await tasks.async_update(
+                task_id,
+                status="error",
+                error="the queue is full; nothing was started",
+            )
+            return {
+                "status": "error",
+                "error": "too much is already queued — say so rather than promising this",
+            }
         return {
-            "status": "recorded",
+            "status": "started",
             "task_id": task_id,
             "description": description,
             "message": (
-                "Noted on the task list, where the user can see it. Nothing is "
-                "running it yet, so do NOT tell them it is under way or that a "
-                "result is coming — say it has been written down."
+                "Queued and being worked on. It appears on the task list with "
+                "its progress, and the result lands there. Say it is under way "
+                "— briefly — and do not invent what it will find."
             ),
         }
 

@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_LOGGER = logging.getLogger(__name__)
 
 OPENCODE_TIMEOUT = 15 * 60
 DIFF_LIMIT = 512 * 1024
@@ -104,10 +107,57 @@ class CodeJobRunner:
         safe_repo_dir(self.workspace, repo)  # raises on traversal
         job = CodeJob(uuid.uuid4().hex[:12], repo, instruction)
         self.jobs[job.job_id] = job
+        self.persist(job)
         return job
+
+    # --- surviving a restart -------------------------------------------------
+    #
+    # Jobs lived in a dict and nothing else. A restart forgot every one of them:
+    # a client polling `/code_task/{id}` got a 404 for work that had finished
+    # minutes earlier, and the diff was sitting on disk beside a record that no
+    # longer existed. `load_persisted` was written for this and never called.
+
+    def _record_path(self, job_id: str) -> Path:
+        return self.jobs_dir / f"{job_id}.json"
+
+    def persist(self, job: CodeJob) -> None:
+        """Write one job's record beside its diff. Best effort, never fatal."""
+        try:
+            self._record_path(job.job_id).write_text(json.dumps({**job.public(), "created": job.created}))
+        except OSError:
+            _LOGGER.exception("could not persist job %s", job.job_id)
+
+    def load_persisted(self) -> int:
+        """Read every job record back. Returns how many were restored."""
+        restored = 0
+        for path in sorted(self.jobs_dir.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                _LOGGER.warning("ignoring unreadable job record %s", path.name)
+                continue
+            job_id = str(raw.get("job_id") or "")
+            if not job_id or job_id in self.jobs:
+                continue
+            job = CodeJob(job_id, str(raw.get("repo") or ""), str(raw.get("instruction") or ""))
+            # A job that was RUNNING when the process died is not running now,
+            # and saying otherwise leaves a client polling for ever.
+            status = str(raw.get("status") or "queued")
+            job.status = "error" if status in ("queued", "running") else status
+            if job.status == "error" and not raw.get("error"):
+                job.error = "the orchestrator restarted while this job was running"
+            else:
+                job.error = str(raw.get("error") or "")
+            job.summary = str(raw.get("summary") or "")
+            job.diff_stat = str(raw.get("diff_stat") or "")
+            job.diff_path = str(raw.get("diff_path") or "")
+            self.jobs[job_id] = job
+            restored += 1
+        return restored
 
     async def run(self, job: CodeJob) -> None:
         job.status = "running"
+        self.persist(job)
         try:
             repo_dir = safe_repo_dir(self.workspace, job.repo)
             if not repo_dir.is_dir():
@@ -145,6 +195,10 @@ class CodeJobRunner:
             job.status = "error"
             job.error = str(e)
         finally:
+            # On disk before the notification goes out: a client told the job is
+            # done and then handed a 404 by a restarted orchestrator is worse
+            # than one told a little late.
+            self.persist(job)
             await self._notify(job)
 
     async def _notify(self, job: CodeJob) -> None:

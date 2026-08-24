@@ -15,7 +15,12 @@ check "cooperative cancel reaches the worker" grep -q 'raise_if_cancelled' "$COR
 check "queued work is persisted and resumed after a restart" grep -qiE 'resume|recover' "$CORE/taskengine.py"
 check "run_background_task really runs work (through the engine)" grep -q 'TaskEngine\|taskengine' "$CORE/llm/tools.py"
 check "scheduled jobs go through the engine" grep -q 'TaskEngine\|taskengine' "$CORE/integrations/schedule/__init__.py"
-check_not "code job results are no longer memory-only (MAX_KEPT)" grep -n 'MAX_KEPT' "$CORE/integrations/code/__init__.py"
+# The cap stayed (a store is not unbounded either); what changed is that the
+# runs are written down. The check is that they survive, not that a constant
+# was deleted.
+check "code job results are written down, not memory-only" \
+    grep -qE 'async def async_load_results' "$CORE/integrations/code/__init__.py"
+check "…and are loaded again at startup" grep -qE 'await async_load_results' "$CORE/integrations/code/__init__.py"
 check "orchestrator jobs are reloaded after a restart" grep -q 'load_persisted()' jarvis-orchestrator/app/main.py
 check "WS/REST can retry a failed task" grep -q '"jarvis/tasks/retry"' "$CORE/api/websocket.py"
 check "task engine documented" test -f jarvis-core/docs/tasks.md

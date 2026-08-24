@@ -22,6 +22,14 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   OpenAI-compatible server serves it) instead of Ollama-only `/api/ps`.
 
 ### Added
+- M10 (task engine): `jarvis/taskengine.py` — a bounded queue with a concurrency cap
+  (`llm.max_concurrent`, default 2, because every worker ends up talking to one model server),
+  retries with jittered backoff, cooperative cancellation that is not a failure, and a queue
+  persisted beside the task list so work that was waiting is still waiting after a restart.
+  `run_background_task` now actually runs the work; scheduled research and coding jobs queue
+  (reminders do not); finished code runs and their diffs are written down instead of living in
+  memory; the orchestrator reloads its jobs (`load_persisted` had never been called);
+  `jarvis/tasks/retry` puts a finished task back on the queue.
 - M09: `llm: local_only:` (default on) resolves the model server's URL at startup and refuses
   a public address — "100 % local" was a promise nothing verified.
 - M06 (InfluxDB): `metrics/sources/influx.py` reads an InfluxDB the operator already runs —

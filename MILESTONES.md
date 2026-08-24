@@ -161,7 +161,7 @@ files both would touch, which the integrating session merges.
     client (no `/api/chat`, no `ollama/` prefix); hermes recovery tests stay green.
   - Verify: `bash scripts/verify/m09-llm.sh`
 
-- [ ] **M10 — Task engine** · size L · deps M04, M09
+- [x] **M10 — Task engine** · size L · deps M04, M09
   - Scope: `jarvis-core/jarvis/taskengine.py` — bounded FIFO queue with a concurrency cap and
     priority, workers that run `run_background_task` work, retries with exponential backoff and
     jitter per task policy, `raise_if_cancelled` in every worker, queued work persisted and

@@ -598,10 +598,12 @@ async def test_run_background_task_returns_immediately_and_fires_an_event(tmp_pa
         "run_background_task", {"description": "Draft the quarterly report"}
     )
 
-    # "recorded", not "started". Nothing runs the work yet, and the previous
-    # word — with the message "the result arrives later" — is what made this an
-    # empty seam: the model promised a result the system could never produce.
-    assert result["status"] == "recorded"
+    # "started", and this time the word is true: `jarvis.taskengine` has the
+    # work queued behind whatever else is running. The word was "recorded" for
+    # as long as nothing executed it — the honest answer while the seam was
+    # empty — and it moved when the engine landed, not before.
+    assert result["status"] == "started"
+    assert jarvis.taskengine.status()["queued"] >= 1
     assert result["task_id"]
     assert seen and seen[0]["description"] == "Draft the quarterly report"
     assert seen[0]["task_id"] == result["task_id"]
@@ -620,36 +622,40 @@ async def test_run_background_task_returns_immediately_and_fires_an_event(tmp_pa
     await shutdown(jarvis)
 
 
-async def test_the_background_tool_does_not_claim_work_is_under_way(tmp_path):
+async def test_the_background_tool_promises_exactly_what_it_does(tmp_path):
     """The exact wording is the fix, so it is the thing under test.
 
-    `run_background_task` records; nothing executes it. A message that implies
-    otherwise recreates the original bug with more machinery behind it — the
-    user is told to expect a result, and no result is coming.
+    The original bug was a promise nothing could keep: `run_background_task`
+    fired an event nobody listened to and told the model to say a result was
+    coming. The message then said the opposite — "nothing is running it" —
+    which was honest while the seam was empty and is now the wrong sentence,
+    because the engine does run it.
+
+    So what is pinned here is that the message matches the machinery: it says
+    the work is under way, points at where the result will appear, and does not
+    invent what the work will find.
     """
     jarvis, _ = await build_house(tmp_path)
     registry = make_registry(jarvis)
     result = await registry.call("run_background_task", {"description": "Wash the car"})
 
     # The status word is the load-bearing part and what a caller branches on.
-    # "started" was the old lie.
-    assert result["status"] == "recorded"
+    assert result["status"] == "started"
 
-    # A blacklist of phrases is the wrong instrument here, and the first
-    # version of this test proved it: the message says "do NOT tell them it is
-    # under way", and a substring search cannot tell an instruction from its
-    # own negation. So assert what the message must DO — forbid the claim and
-    # say what actually happened — rather than which words it may not contain.
+    # It is really queued: the claim is checked against the engine, not against
+    # the wording.
+    assert result["task_id"] in jarvis.taskengine.status()["waiting"] or jarvis.taskengine.status()[
+        "running"
+    ] >= 1
+
     message = result["message"].lower()
+    assert "task list" in message, f"the message does not say where to look: {message!r}"
+    assert "under way" in message or "queued" in message, message
+    # And it still forbids the one thing the model must not do: describe a
+    # result it has not got.
     assert "do not" in message or "don't" in message, (
         f"the message forbids nothing: {message!r}"
     )
-    assert "not" in message and "running" in message, message
-    assert "task list" in message or "written down" in message, (
-        f"the message never says what DID happen: {message!r}"
-    )
-    await shutdown(jarvis)
-
 
 async def test_a_server_with_no_task_list_refuses_the_work_instead_of_losing_it(tmp_path):
     """Accepting work that vanishes is the failure this whole change is about."""

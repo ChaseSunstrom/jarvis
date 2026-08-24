@@ -96,6 +96,7 @@ from pathlib import Path
 from ...services import ServiceCall
 from ...tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
 from .agent import CodeAgent, CodeRun, MAX_ROUNDS, Stopped
+from ...store import Store
 from .repos import RepoStore, check_name
 from .forges import Forge, forge_from_dict, permits, split_project
 from .sandbox import Environment, environment_from_dict
@@ -119,9 +120,17 @@ DATA_RESULTS = "results"
 DATA_REPOS = "repos"
 
 MAX_INSTRUCTION_CHARS = 2000
-#: Finished runs kept in memory for the console to open. The task itself
-#: outlives this; what expires is the diff, which is the large part.
-MAX_KEPT = 20
+#: Finished runs kept, with their diffs, in `<config>/.storage/code-runs.json`.
+#:
+#: They used to live in memory only, capped at twenty: the console said "no
+#: longer held in memory" for anything older, and a restart lost every diff
+#: including the one somebody had left open in a tab. A diff is the ENTIRE
+#: output of a coding job — losing it means the job may as well not have run —
+#: so it is written down, and the cap is a size the store can carry rather than
+#: a number that fits in a process.
+MAX_KEPT = 100
+RESULTS_STORE_KEY = "code-runs"
+RESULTS_STORE_VERSION = 1
 
 #: Where Jarvis may create repositories when the operator has not said.
 #:
@@ -300,7 +309,6 @@ def get_config(jarvis: "Jarvis") -> CodeConfig | None:
 
 
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
-    from ...store import Store
     from .repos import STORE_KEY
 
     cfg = CodeConfig.from_config(config)
@@ -310,6 +318,8 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     store.setdefault(DATA_RESULTS, {})
 
     repos = RepoStore(Store(jarvis.config_dir, STORE_KEY), cfg.workspace)
+    # Diffs from before the last restart, so an open tab still resolves.
+    await async_load_results(jarvis)
     await repos.async_load()
     store[DATA_REPOS] = repos
     # Everything Jarvis made joins the same registry as everything declared, so
@@ -1010,11 +1020,58 @@ def one_line_result(run: CodeRun) -> str:
     return " · ".join(parts)[:500]
 
 
+def _results_store(jarvis: "Jarvis") -> Store:
+    store = _store(jarvis).get("results_store")
+    if store is None:
+        store = Store(jarvis.config_dir, RESULTS_STORE_KEY, RESULTS_STORE_VERSION)
+        _store(jarvis)["results_store"] = store
+    return store
+
+
 def _keep(jarvis: "Jarvis", task_id: str, run: CodeRun) -> None:
+    """Remember one finished run, and write it down.
+
+    In memory for the console to open now, and on disk so it is still there
+    after a restart — which is what "the diff is the whole output" requires.
+    """
     results: dict[str, CodeRun] = _store(jarvis).setdefault(DATA_RESULTS, {})
     results[task_id] = run
     while len(results) > MAX_KEPT:
         results.pop(next(iter(results)))
+    jarvis.async_create_task(_async_save_results(jarvis))
+
+
+async def _async_save_results(jarvis: "Jarvis") -> None:
+    results: dict[str, CodeRun] = _store(jarvis).get(DATA_RESULTS) or {}
+    payload = {
+        "runs": {
+            task_id: {**run.as_dict(), "diff": run.diff}
+            for task_id, run in list(results.items())[-MAX_KEPT:]
+        }
+    }
+    try:
+        await _results_store(jarvis).save(payload)
+    except Exception:  # pragma: no cover - a full disk is not a job failure
+        _LOGGER.exception("code: could not write the run history")
+
+
+async def async_load_results(jarvis: "Jarvis") -> int:
+    """Bring finished runs back after a restart. Returns how many."""
+    data = await _results_store(jarvis).load() or {}
+    results: dict[str, CodeRun] = _store(jarvis).setdefault(DATA_RESULTS, {})
+    for task_id, raw in (data.get("runs") or {}).items():
+        if not isinstance(raw, dict) or task_id in results:
+            continue
+        run = CodeRun(repo=str(raw.get("repo") or ""), instruction=str(raw.get("instruction") or ""))
+        for field_name in ("branch", "summary", "diff"):
+            if isinstance(raw.get(field_name), str):
+                setattr(run, field_name, raw[field_name])
+        if isinstance(raw.get("checks"), list):
+            run.checks = raw["checks"]
+        if isinstance(raw.get("commands"), list):
+            run.commands = raw["commands"]
+        results[task_id] = run
+    return len(results)
 
 
 def result_payload(jarvis: "Jarvis", task_id: str) -> dict[str, Any] | None:

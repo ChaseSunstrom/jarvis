@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -57,6 +58,17 @@ async def lifespan(app: FastAPI):
     app.state.coder = CodeJobRunner(
         WORKSPACE, CODER_MODEL, HA_WEBHOOK_URL or None
     )
+    # Bring finished and in-flight jobs back. `load_persisted` existed since the
+    # runner was written and nothing called it, so every restart silently forgot
+    # every job: a client polling `/code_task/{id}` got a 404 for work that had
+    # finished minutes earlier, with the diff sitting on disk beside a record
+    # that no longer existed.
+    try:
+        restored = app.state.coder.load_persisted()
+        if restored:
+            logging.getLogger(__name__).info("reloaded %d code job(s)", restored)
+    except Exception:  # pragma: no cover - a bad record is not a boot failure
+        logging.getLogger(__name__).exception("could not reload persisted code jobs")
     yield
 
 
