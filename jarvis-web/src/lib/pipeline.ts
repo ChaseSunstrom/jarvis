@@ -38,6 +38,14 @@ export interface PipelineCallbacks {
 	/** Full response text from intent-end. */
 	onResponse?: (text: string) => void;
 	/**
+	 * The remembered notes this turn was given, from `intent-end`.
+	 *
+	 * "Why did it say that?" answered with the entries the model READ. Asking
+	 * the model instead produces a plausible account of notes it may never
+	 * have seen.
+	 */
+	onMemoryUsed?: (notes: { id: string; text: string }[]) => void;
+	/**
 	 * A tool call starting. Fired BEFORE the call runs, so a tool that takes
 	 * nine seconds is visible for nine seconds rather than reported once it is
 	 * over.
@@ -339,6 +347,8 @@ export class PipelineClient {
 				const output = ev.data?.intent_output;
 				const speech = output?.response?.speech?.plain?.speech ?? '';
 				if (output?.conversation_id) this.conversationId = output.conversation_id;
+				const used = output?.response?.data?.memory_used;
+				if (Array.isArray(used) && used.length) this.cb.onMemoryUsed?.(used);
 				this.cb.onResponse?.(speech);
 				break;
 			}

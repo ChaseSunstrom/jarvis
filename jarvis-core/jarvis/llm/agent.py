@@ -1120,9 +1120,21 @@ class ConversationAgent:
                 # do it properly — noticing and saying nothing would leave the
                 # user with a promise and no job.
                 if not nudged and offered:
+                    # Only tools this turn has NOT already called. A model that
+                    # called `run_background_task` in round one and then said
+                    # so in round three is reporting, not pretending — and
+                    # nudging it produced exactly the argument you would
+                    # expect: "the call was in fact made on my last turn, so I
+                    # shall not run it again", which is the answer the user got
+                    # instead of theirs.
+                    already = {str(call.get("name") or "") for call in result.tool_calls}
                     narrated = narrated_tool_call(
                         "".join(said) + "\n" + (result.thinking or ""),
-                        (_tool_name(t) for t in offered),
+                        (
+                            name
+                            for name in (_tool_name(t) for t in offered)
+                            if name not in already
+                        ),
                     )
                     if narrated:
                         nudged = True

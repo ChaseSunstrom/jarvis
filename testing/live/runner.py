@@ -592,6 +592,24 @@ class Runner:
                         f"{want_note['citations_at_least']}"
                     )
 
+        want_note_moment = expect.get("notification")
+        if want_note_moment:
+            moment = await observer.wait_for_notification(
+                title_contains=str(want_note_moment.get("title_contains") or ""),
+                kind=str(want_note_moment.get("kind") or ""),
+                timeout=float(want_note_moment.get("within") or 120.0),
+            )
+            if moment is None:
+                have = [row.get("title") for row in await observer.notifications()]
+                fail(f"no notification matching {want_note_moment} was recorded; had {have}")
+            elif want_note_moment.get("source") and moment.get("source") != want_note_moment[
+                "source"
+            ]:
+                fail(
+                    f"the notification says it came from {moment.get('source')!r}, "
+                    f"expected {want_note_moment['source']!r}"
+                )
+
         want_memory = expect.get("memory")
         if want_memory:
             recalls = str(want_memory.get("recalls") or "")

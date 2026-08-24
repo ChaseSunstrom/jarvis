@@ -1450,6 +1450,68 @@ def _mcp(jarvis: "Jarvis") -> Any:
     return manager
 
 
+def _briefing(jarvis: "Jarvis") -> Any:
+    manager = jarvis.data.get("briefing")
+    if manager is None:
+        raise ApiError("not_configured", "the briefing integration is not set up", 400)
+    return manager
+
+
+def briefing_settings_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    return {"briefing": _briefing(jarvis).settings()}
+
+
+def briefing_configure(jarvis: "Jarvis", changes: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return {"briefing": _briefing(jarvis).configure(changes)}
+    except ValueError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+
+
+def _notifications(jarvis: "Jarvis") -> Any:
+    store = jarvis.data.get("notifications")
+    if store is None:
+        raise ApiError("not_configured", "the notifications integration is not set up", 400)
+    return store
+
+
+def notifications_payload(jarvis: "Jarvis", unread_only: bool = False,
+                          limit: int = 100) -> dict[str, Any]:
+    store = _notifications(jarvis)
+    return {
+        "notifications": store.listing(unread_only=unread_only, limit=limit),
+        "unread": store.unread,
+    }
+
+
+async def async_notification_read(jarvis: "Jarvis", entry_id: str = "",
+                                  everything: bool = False) -> dict[str, Any]:
+    return await _notifications(jarvis).async_mark_read(
+        entry_id=entry_id, everything=everything
+    )
+
+
+async def async_notification_dismiss(jarvis: "Jarvis", entry_id: str = "",
+                                     everything: bool = False) -> dict[str, Any]:
+    return await _notifications(jarvis).async_dismiss(
+        entry_id=entry_id, everything=everything
+    )
+
+
+def conversation_search_payload(jarvis: "Jarvis", query: str,
+                                limit: int = 20) -> dict[str, Any]:
+    """Threads containing `query`, with the line that matched.
+
+    The match is what makes it useful: a person searching for "blue tin" wants
+    the sentence, and the conversation it belongs to is what they click.
+    """
+    agent = jarvis.data.get("llm")
+    archive = getattr(agent, "archive", None)
+    if archive is None:
+        raise ApiError("not_configured", "there is no conversation archive", 400)
+    return {"query": query, "results": archive.search(query, limit=limit)}
+
+
 def _notes(jarvis: "Jarvis") -> Any:
     store = jarvis.data.get("notes")
     if store is None:

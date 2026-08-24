@@ -18,7 +18,10 @@ check "the reply carries its memory trace" grep -q 'memory_used' "$CORE/llm/agen
 require_file jarvis-web/src/lib/components/Notifications.svelte
 require_file jarvis-web/src/lib/components/Moment.svelte
 check "the console shows why a reply used memory" grep -rqi 'memory_used\|why am I seeing' jarvis-web/src
-check "Android renders the notification record" grep -rq 'jarvis_notification\|notifications/list' android-app/app/src/main/kotlin
+check "Android renders the notification record" \
+    grep -rq 'jarvis_notification\|notifications/list' android-app/app/src/main/kotlin
+check_sh "and the phone's board agrees with the server's" \
+    'python3 android-app/tools/moments_test.py 2>&1 | tail -1' 
 check "mock backend serves notifications + conversation search" grep -q 'jarvis/notifications/' tests/web/mock-ha.mjs
 require_file testing/e2e/test_threads.py
 require_file testing/e2e/test_continuity.py

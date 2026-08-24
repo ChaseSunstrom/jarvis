@@ -312,6 +312,12 @@ sun:
 demo:
   create_areas: true
 
+# The record of everything Jarvis says without being asked. On here because
+# the live rig asserts on it: a notification that exists only as a log line is
+# a notification nobody got, and that was the state of things before M17.
+notifications:
+  max_entries: 200
+
 # Notes: documents on disk. On in the harness house because the live rig and
 # the research eval both write one, and because a research report landing in
 # `memory` instead is exactly the mistake this integration exists to prevent.

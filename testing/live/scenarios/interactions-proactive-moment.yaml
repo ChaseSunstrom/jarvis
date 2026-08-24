@@ -3,16 +3,31 @@ capability: interactions
 gated-on: M17
 intent: >
   Something arriving without being asked for, and arriving properly: as a
-  moment on the surface the person is looking at, recorded so it can be found
-  afterwards. A notification that exists only as a log line is a notification
-  nobody got.
+  record that outlives the moment it was sent. A notification that exists only
+  as a log line is a notification nobody got — "what did you tell me earlier?"
+  had no answer at all before this.
+
+  The scenario starts a real background job and then asserts on the RECORD,
+  because the record is the capability. The record also carries the bus event
+  that produced it, which is what makes "why am I seeing this?" answerable with
+  a fact rather than with a sentence the model wrote about itself.
 variants: [text]
 turns:
-  - say: "Tell me when the background job about the downstairs lights is done."
+  # Explicitly asked for in the background. An earlier version described a long
+  # job and let the model decide; in a demo house with three sensors, answering
+  # inline was the CORRECT choice, and the scenario was testing the model's
+  # judgement about a house it does not have rather than the record.
+  - say: >
+      Put this in the background rather than answering now: go through every
+      sensor in the house, work out which ones look wrong, and write it up.
+      Tell me when it is done.
     expect:
-      task: {kind: background, within: 60}
-  - say: "What have you told me about recently?"
-    wait: 60
+      task: {kind: background, within: 45}
+      reply_means: "says the work is under way and that it will report back"
+  - say: "Is that finished yet?"
+    wait: 45
     expect:
-      reply_contains: ["lights"]
-      reply_means: "lists the announcement it made about the finished job"
+      notification:
+        kind: task
+        source: jarvis_task_completed
+        within: 240

@@ -113,10 +113,43 @@
 		{#if message.error}
 			<p class="error" role="alert" data-testid="chat-error">{message.error}</p>
 		{/if}
+
+		{#if message.memoryUsed?.length}
+			<!--
+			  Why this answer, in the only honest form: the notes the model was
+			  actually given. Collapsed, because it is provenance rather than
+			  content — and present, because personalisation nobody can inspect
+			  is indistinguishable from a machine making things up about them.
+			-->
+			<details class="why" data-testid="chat-memory-used">
+				<summary>WHY THIS ANSWER · {message.memoryUsed.length} remembered</summary>
+				<ul>
+					{#each message.memoryUsed as note, index (index)}
+						<li>{note}</li>
+					{/each}
+				</ul>
+			</details>
+		{/if}
 	</div>
 </article>
 
 <style>
+	.why {
+		margin-top: var(--jv-space-2);
+	}
+	.why summary {
+		color: var(--jv-text-faint);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-xs);
+		letter-spacing: var(--jv-track-chrome);
+		cursor: pointer;
+	}
+	.why ul {
+		margin: var(--jv-space-1) 0 0;
+		padding-left: var(--jv-space-4);
+		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-xs);
+	}
 	.msg {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);

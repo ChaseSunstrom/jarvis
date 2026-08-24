@@ -243,7 +243,7 @@ files both would touch, which the integrating session merges.
     note (`tests/test_notes_voice.py`), `e2e/notes.spec.ts`.
   - Verify: `bash scripts/verify/m16-notes.sh`
 
-- [ ] **M17 — User interactions: threads, continuity, proactive moments** · size L · deps M15, M12
+- [x] **M17 — User interactions: threads, continuity, proactive moments** · size L · deps M15, M12
   - Scope: threads — `ConversationArchive` keeps tool results, gains `jarvis/conversation/search`
     (FTS over turns), and resumes with prior context after a restart; continuity — one
     conversation id across surfaces (the desktop/Android clients open a named thread and both

@@ -172,6 +172,29 @@ class Observer:
             return ""
         return str(((answer or {}).get("note") or {}).get("body") or "")
 
+    async def notifications(self) -> list[dict[str, Any]]:
+        """Every proactive message the server has recorded."""
+        try:
+            answer = await self.client.command("jarvis/notifications/list")
+        except Exception:  # noqa: BLE001 - a build without them fails the assertion
+            return []
+        return list((answer or {}).get("notifications") or [])
+
+    async def wait_for_notification(self, title_contains: str = "", kind: str = "",
+                                    timeout: float = 120.0) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for row in await self.notifications():
+                if kind and row.get("kind") != kind:
+                    continue
+                if title_contains and title_contains.lower() not in str(
+                    row.get("title") or ""
+                ).lower():
+                    continue
+                return row
+            await asyncio.sleep(0.5)
+        return None
+
     async def memories(self, query: str = "") -> list[dict[str, Any]]:
         try:
             answer = await self.client.command(

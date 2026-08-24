@@ -500,6 +500,58 @@ class BriefingManager:
         self.last: dict[str, Any] = {}
         self._task: asyncio.Task | None = None
 
+    # --- what the console reads and writes --------------------------------
+    def settings(self) -> dict[str, Any]:
+        """The briefing as a console form: when, and what is in it."""
+        return {
+            "morning": self.schedule["morning"].strftime("%H:%M")
+            if "morning" in self.schedule
+            else "",
+            "evening": self.schedule["evening"].strftime("%H:%M")
+            if "evening" in self.schedule
+            else "",
+            "include": list(self.builder.include),
+            "available": list(DEFAULT_SECTIONS),
+            "importance": self.importance,
+        }
+
+    def configure(self, changes: dict[str, Any]) -> dict[str, Any]:
+        """Change the schedule or the sections, now.
+
+        Runtime rather than a config-file edit, because "at seven, not at six"
+        and "stop telling me about the calendar" are the two things anybody
+        wants to change about a briefing and neither is worth an SSH session.
+        The change is not written back to `configuration.yaml`: that file is the
+        operator's, and a service that rewrote it would fight whoever edits it.
+        A restart therefore returns to the configured values, which is the
+        honest behaviour and is what `settings()['from_config']` says.
+        """
+        for kind in ("morning", "evening"):
+            if kind not in changes:
+                continue
+            raw = changes.get(kind)
+            if raw in (None, False, "", "off"):
+                self.schedule.pop(kind, None)
+                continue
+            parsed = parse_time(raw)
+            if parsed is None:
+                raise ValueError(f"{kind}: {raw!r} is not a time like 07:00")
+            self.schedule[kind] = parsed
+        if "include" in changes:
+            wanted = changes.get("include") or []
+            if isinstance(wanted, str):
+                wanted = [part.strip() for part in wanted.split(",")]
+            sections = [str(s).strip().lower() for s in wanted if str(s).strip()]
+            unknown = [s for s in sections if s not in DEFAULT_SECTIONS]
+            if unknown:
+                raise ValueError(f"no such section(s): {', '.join(unknown)}")
+            self.builder.include = sections
+        if "importance" in changes:
+            self.importance = str(changes.get("importance") or "low")
+        # The loop reads `self.schedule` on every tick, so a new time takes
+        # effect at the next one — no restart, and no second scheduler.
+        return self.settings()
+
     # --- generate / deliver ----------------------------------------------
     def generate(
         self,

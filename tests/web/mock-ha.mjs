@@ -1083,6 +1083,34 @@ index 1234567..89abcde 100644
 	/** Read only from the mock's own "config"; no frame may set it. */
 	let mcpAllowStdio = false;
 
+	// What Jarvis said while nobody was looking. One read and one not, because
+	// the unread count is the thing the badge draws and an inbox where
+	// everything is unread never exercises it.
+	let notifications = [
+		{
+			id: "note1",
+			kind: "task",
+			title: "Finished: research on heat pumps",
+			body: "Three sources agree that flow temperature is what matters.",
+			at: Date.now() / 1000 - 600,
+			read: false,
+			source: "jarvis_task_completed",
+			link: "/tasks",
+			task_id: "task-7"
+		},
+		{
+			id: "note2",
+			kind: "briefing",
+			title: "Morning briefing",
+			body: "Cold today; the bins go out.",
+			at: Date.now() / 1000 - 7200,
+			read: true,
+			source: "briefing_ready",
+			link: "/",
+			task_id: ""
+		}
+	];
+
 	// Notes: documents, on disk, in markdown. One written by a person and one
 	// written by Jarvis's research, because telling those apart matters on the
 	// page — and because a research report in `memory` instead of here is the
@@ -1893,6 +1921,50 @@ index 1234567..89abcde 100644
 						job.last_result = String(msg.reason || 'missed while Jarvis was not running');
 					}
 					ok(msg.id, { jobs: [...scheduled.values()] });
+					break;
+				}
+
+				// --- notifications -------------------------------------------
+				case 'jarvis/notifications/list':
+					ok(msg.id, {
+						notifications: notifications.filter((n) => !msg.unread || !n.read),
+						unread: notifications.filter((n) => !n.read).length
+					});
+					break;
+
+				case 'jarvis/notifications/read': {
+					let read = 0;
+					for (const note of notifications) {
+						if ((msg.all || note.id === String(msg.notification_id || '')) && !note.read) {
+							note.read = true;
+							read += 1;
+						}
+					}
+					ok(msg.id, { read, unread: notifications.filter((n) => !n.read).length });
+					break;
+				}
+
+				case 'jarvis/notifications/dismiss': {
+					const before = notifications.length;
+					notifications = msg.all
+						? []
+						: notifications.filter((n) => n.id !== String(msg.notification_id || ''));
+					ok(msg.id, { dismissed: before - notifications.length });
+					break;
+				}
+
+				case 'jarvis/conversation/search': {
+					const q = String(msg.query || '').toLowerCase();
+					const results = q
+						? conversationList()
+								.filter((row) => JSON.stringify(row).toLowerCase().includes(q))
+								.map((row) => ({
+									...row,
+									matches: [{ role: 'user', timestamp: Date.now() / 1000, excerpt: `…${q}…` }],
+									match_count: 1
+								}))
+						: [];
+					ok(msg.id, { query: msg.query || '', results });
 					break;
 				}
 

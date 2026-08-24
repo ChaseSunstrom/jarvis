@@ -8,6 +8,21 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Added
+- M17 (interactions): the things Jarvis says without being asked are now kept. A new
+  `notifications` integration records every proactive message — a finished job, a failed one,
+  the briefing — fires `jarvis_notification` as each is made, and lists them over websocket and
+  REST, so "what did you tell me earlier?" has an answer. The console draws them as **moments**
+  rather than toasts (a toast is gone in four seconds and these arrive when nobody is looking),
+  each with a WHY AM I SEEING THIS? that names the bus event that produced it; the phone gets
+  the same records on its own board. Conversations are searchable (`jarvis/conversation/search`
+  returns the line that matched, not just an id), a thread resumes with its earlier turns in
+  front of the model after a restart, and two clients on one thread see one transcript —
+  `testing/e2e/test_threads.py` and `test_continuity.py` prove both against a real server. The
+  briefing's schedule and sections are editable from the console without a restart. And a reply
+  that used remembered notes now carries which ones, rendered under it as WHY THIS ANSWER:
+  personalisation nobody can inspect is indistinguishable from a machine making things up.
+
+### Added
 - M15 (memory): Jarvis now learns facts in passing — after a turn that states one, a single
   bounded model call proposes durable facts, stored as `source: extracted` and linked to the
   turn, so they can be told apart from what you dictated and deleted on that basis. A word

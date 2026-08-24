@@ -781,6 +781,39 @@ class WebSocketHandler:
     async def _cmd_code_result(self, msg: dict[str, Any]) -> Any:
         return common.code_result_payload(self.jarvis, str(msg.get("task_id") or ""))
 
+    async def _cmd_briefing_get(self, msg: dict[str, Any]) -> Any:
+        return common.briefing_settings_payload(self.jarvis)
+
+    async def _cmd_briefing_set(self, msg: dict[str, Any]) -> Any:
+        changes = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return common.briefing_configure(self.jarvis, changes)
+
+    async def _cmd_notifications_list(self, msg: dict[str, Any]) -> Any:
+        return common.notifications_payload(
+            self.jarvis,
+            unread_only=bool(msg.get("unread")),
+            limit=int(msg.get("limit") or 100),
+        )
+
+    async def _cmd_notifications_read(self, msg: dict[str, Any]) -> Any:
+        return await common.async_notification_read(
+            self.jarvis,
+            entry_id=str(msg.get("notification_id") or ""),
+            everything=bool(msg.get("all")),
+        )
+
+    async def _cmd_notifications_dismiss(self, msg: dict[str, Any]) -> Any:
+        return await common.async_notification_dismiss(
+            self.jarvis,
+            entry_id=str(msg.get("notification_id") or ""),
+            everything=bool(msg.get("all")),
+        )
+
+    async def _cmd_conversation_search(self, msg: dict[str, Any]) -> Any:
+        return common.conversation_search_payload(
+            self.jarvis, str(msg.get("query") or ""), int(msg.get("limit") or 20)
+        )
+
     async def _cmd_notes_list(self, msg: dict[str, Any]) -> Any:
         return common.notes_list_payload(
             self.jarvis,
@@ -1271,6 +1304,12 @@ WebSocketHandler._HANDLERS = {
     "jarvis/code/clone_repo": WebSocketHandler._cmd_code_clone_repo,
     "jarvis/code/push": WebSocketHandler._cmd_code_push,
     "jarvis/code/result": WebSocketHandler._cmd_code_result,
+    "jarvis/briefing/get": WebSocketHandler._cmd_briefing_get,
+    "jarvis/briefing/set": WebSocketHandler._cmd_briefing_set,
+    "jarvis/notifications/list": WebSocketHandler._cmd_notifications_list,
+    "jarvis/notifications/read": WebSocketHandler._cmd_notifications_read,
+    "jarvis/notifications/dismiss": WebSocketHandler._cmd_notifications_dismiss,
+    "jarvis/conversation/search": WebSocketHandler._cmd_conversation_search,
     "jarvis/notes/list": WebSocketHandler._cmd_notes_list,
     "jarvis/notes/get": WebSocketHandler._cmd_notes_get,
     "jarvis/notes/create": WebSocketHandler._cmd_notes_create,

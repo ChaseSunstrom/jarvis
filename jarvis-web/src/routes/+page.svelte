@@ -18,6 +18,7 @@
 		withDelta,
 		withError,
 		withFinal,
+		withMemoryUsed,
 		withThinking,
 		withToolEnd,
 		withToolStart,
@@ -176,6 +177,9 @@
 					onResponse: (text) => {
 						if (text) response = text;
 						messages = withFinal(messages, text);
+					},
+					onMemoryUsed: (notes) => {
+						messages = withMemoryUsed(messages, notes);
 					},
 					onToolStart: (call) => {
 						messages = withToolStart(messages, call);

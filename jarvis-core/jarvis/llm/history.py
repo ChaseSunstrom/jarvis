@@ -82,6 +82,16 @@ def _clip(value: Any, limit: int = MAX_FIELD_CHARS) -> str:
     return text
 
 
+def _excerpt(text: str, needle: str, width: int = 160) -> str:
+    """The matched line, with enough either side to recognise it."""
+    where = text.lower().find(needle)
+    if where < 0:
+        return _clip(text, width)
+    start = max(0, where - width // 3)
+    piece = text[start : start + width].strip()
+    return ("…" if start else "") + piece + ("…" if start + width < len(text) else "")
+
+
 def _title_from(text: str) -> str:
     """A conversation's name, taken from the first thing that was said in it."""
     line = " ".join(str(text or "").split())
@@ -376,6 +386,48 @@ class ConversationArchive:
     def listing(self) -> list[dict[str, Any]]:
         """Every conversation as a summary row, most recent first."""
         return [c.summary() for c in self._sorted()]
+
+    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Conversations containing `query`, newest first, with the line that matched.
+
+        Plain substring matching over the archived turns, not an index. The
+        archive is bounded (`max_conversations` × `max_turns`) and lives in
+        memory already, so a search across all of it is a few milliseconds —
+        and an FTS index here would be a second store to keep in step with the
+        JSON file that is the actual record.
+
+        The MATCH is what makes this useful rather than a list of ids: a person
+        searching for "blue tin" wants to see the sentence, and the id it
+        belongs to is what they click.
+        """
+        needle = " ".join(str(query or "").split()).lower()
+        if not needle:
+            return []
+        out: list[dict[str, Any]] = []
+        for conversation in sorted(
+            self._conversations.values(), key=lambda c: c.last_active, reverse=True
+        ):
+            hits: list[dict[str, Any]] = []
+            for turn in conversation.turns:
+                if needle in turn.content.lower():
+                    hits.append(
+                        {
+                            "role": turn.role,
+                            "timestamp": turn.timestamp,
+                            "excerpt": _excerpt(turn.content, needle),
+                        }
+                    )
+                if len(hits) >= 3:
+                    break
+            if not hits:
+                continue
+            summary = conversation.summary()
+            summary["matches"] = hits
+            summary["match_count"] = len(hits)
+            out.append(summary)
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
 
     def messages(self, conversation_id: str, limit: int = 0) -> list[dict[str, str]]:
         """A reopened conversation as prompt messages, oldest last.

@@ -779,6 +779,9 @@ class PipelineRun:
         # the way there. See `_authoritative_answer`.
         reply = self._authoritative_answer(reply)
 
+        # Only when there is one: `data` carries what there is, and an empty
+        # trace on every turn is a key every client has to ignore.
+        trace = self._memory_trace()
         await self._emit(
             EVENT_INTENT_END,
             {
@@ -786,7 +789,7 @@ class PipelineRun:
                     "response": {
                         "speech": {"plain": {"speech": reply, "extra_data": None}},
                         "response_type": "action_done",
-                        "data": {},
+                        "data": {"memory_used": trace} if trace else {},
                     },
                     "conversation_id": self.conversation_id,
                 }
@@ -950,6 +953,27 @@ class PipelineRun:
             "Dropping %d characters of preamble from the spoken answer", len(preamble)
         )
         return answer
+
+    def _memory_trace(self) -> list[dict[str, str]]:
+        """The remembered notes this turn was actually given.
+
+        Sent with `intent-end` so a surface can answer "why did it say that?"
+        with the entries the model READ, rather than by asking the model — which
+        produces a plausible account of notes it may never have seen. Ids and
+        text together: the id is what the memory page links to, and the text is
+        the only part a person recognises.
+        """
+        agent = getattr(self.converse, "__self__", None)
+        result = getattr(agent, "last_result", None)
+        used = list(getattr(result, "memory_used", None) or [])
+        if not used or self.jarvis is None:
+            return []
+        store = self.jarvis.data.get("memory")
+        out: list[dict[str, str]] = []
+        for entry_id in used[:8]:
+            entry = store.get(entry_id) if store is not None else None
+            out.append({"id": entry_id, "text": getattr(entry, "text", "") or ""})
+        return out
 
     def _call_converse(self, text: str) -> Any:
         assert self.converse is not None

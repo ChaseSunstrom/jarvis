@@ -40,6 +40,15 @@ export interface ChatMessage {
 	/** True while this assistant message is still being streamed. */
 	pending: boolean;
 	error?: string | null;
+	/**
+	 * Which remembered notes went into this turn's prompt, as text.
+	 *
+	 * The answer to "why did it say that?" — and the only honest one. A model
+	 * asked to explain itself produces a plausible account of notes it may
+	 * never have read; these are the entries the server put in front of it
+	 * (`ConversationResult.memory_used`).
+	 */
+	memoryUsed?: string[];
 }
 
 /**
@@ -207,6 +216,22 @@ export function withToolEnd(messages: ChatMessage[], call: ToolCallEvent): ChatM
 export function withFinal(messages: ChatMessage[], text: string): ChatMessage[] {
 	if (!text) return messages;
 	return patchPending(messages, (m) => (m.content ? m : { ...m, content: text }));
+}
+
+/**
+ * Record which remembered notes the turn was given.
+ *
+ * On the message rather than on the page: two turns in a transcript used
+ * different notes, and a page-level "what memory was used" would be about
+ * whichever answered last.
+ */
+export function withMemoryUsed(
+	messages: ChatMessage[],
+	notes: { id: string; text: string }[]
+): ChatMessage[] {
+	const texts = notes.map((note) => note.text).filter(Boolean);
+	if (!texts.length) return messages;
+	return patchPending(messages, (m) => ({ ...m, memoryUsed: texts }));
 }
 
 /** Mark the streaming message done. Idempotent — `run-end` can arrive twice. */

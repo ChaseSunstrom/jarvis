@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.util.Log
 import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.companion.CompanionMessageHandler
+import ai.jarvis.app.tasks.MomentWatch
 import ai.jarvis.app.tasks.TaskBoard
 import ai.jarvis.app.tasks.TaskFrames
 import ai.jarvis.app.tasks.TaskWatch
@@ -610,6 +611,26 @@ class JarvisChannel(
                 TaskWatch.onListing(result.optJSONObject("result"))
             }
         }
+        watchMoments(current)
+    }
+
+    /**
+     * And the things Jarvis said while nobody was looking.
+     *
+     * Same shape as the tasks above and for the same reason: subscribe first so
+     * nothing that arrives during the listing is lost, then list, because the
+     * interesting case is a record made while the phone was in a pocket. An
+     * older jarvis-core answers `unknown_command` and fires nothing, which
+     * leaves the inbox empty — the behaviour before this existed.
+     */
+    private fun watchMoments(current: Session) {
+        current.send(TaskFrames.subscribe(nextRequestId.getAndIncrement(), MomentWatch.EVENT))
+        scope.launch {
+            val result = request(MomentWatch.TYPE_LIST, MomentWatch.listArgs())
+            if (result != null && ChannelFrames.isSuccess(result)) {
+                MomentWatch.onListing(result.optJSONObject("result"))
+            }
+        }
     }
 
     // --- outbound requests --------------------------------------------------
@@ -801,7 +822,10 @@ class JarvisChannel(
                 if (!current.authed || !current.registered) {
                     Log.w(TAG, "an event arrived before the handshake finished; ignoring")
                 } else {
-                    TaskWatch.onEvent(msg)
+                    // Two boards, one event branch: a task is work in
+                    // progress and a moment is a thing that already happened,
+                    // and neither should have to know about the other.
+                    if (!TaskWatch.onEvent(msg)) MomentWatch.onEvent(msg)
                 }
             }
 

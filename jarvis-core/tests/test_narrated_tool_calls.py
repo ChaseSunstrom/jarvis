@@ -428,3 +428,27 @@ def test_a_cue_three_paragraphs_away_is_not_a_narrated_call():
 def test_a_cue_beside_the_name_still_counts():
     assert narrated_tool_call("Now calling code_task with the repo name.", NAMES) == "code_task"
     assert narrated_tool_call("[Tool Call] -> `code_task`", NAMES) == "code_task"
+
+
+async def test_a_tool_this_turn_already_called_is_not_narrated(jarvis):
+    """Reporting is not pretending.
+
+    A model that calls `code_task` in round one and mentions it in round two is
+    telling the user what happened. Nudging it produced the argument you would
+    expect — "the call was in fact made on my last turn, so I shall not run it
+    again" — which is what the user got instead of their answer.
+    """
+    client = _Scripted(
+        _Stream("Right away, Sir.", call=ToolCall(name="code_task", arguments={"repo": "x"})),
+        # The answering round names the tool beside a cue and calls nothing:
+        # the exact shape the detector looks for.
+        _Stream("I have called code_task for you, Sir; it is under way."),
+    )
+    agent = _agent(jarvis, client)
+
+    said = await _say(agent)
+
+    assert "under way" in said
+    # Two rounds, not three: no nudge, and no corrective round.
+    assert agent.last_result.rounds == 2
+    assert [call["name"] for call in agent.last_result.tool_calls] == ["code_task"]

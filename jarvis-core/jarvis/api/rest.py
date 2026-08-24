@@ -676,6 +676,40 @@ async def code_result(request: Request, task_id: str) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- notifications ----------------------------------------------------------
+@api_router.get("/notifications")
+async def notifications_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.notifications_payload(
+            get_jarvis(request),
+            unread_only=str(request.query_params.get("unread") or "").lower()
+            in ("1", "true", "yes"),
+            limit=int(request.query_params.get("limit") or 100),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/notifications/{notification_id}/read")
+async def notification_read(request: Request, notification_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_notification_read(
+            get_jarvis(request), entry_id=notification_id
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/notifications/{notification_id}")
+async def notification_dismiss(request: Request, notification_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_notification_dismiss(
+            get_jarvis(request), entry_id=notification_id
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 # --- notes ------------------------------------------------------------------
 #
 # Ordinary CRUD, because a note is an ordinary document. The files on disk are

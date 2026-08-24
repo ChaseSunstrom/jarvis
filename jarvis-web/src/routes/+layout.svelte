@@ -14,6 +14,7 @@
 	import Approvals from '$lib/components/Approvals.svelte';
 	import ToolActivity from '$lib/components/ToolActivity.svelte';
 	import TaskDock from '$lib/components/TaskDock.svelte';
+	import Notifications from '$lib/components/Notifications.svelte';
 	import { ConsoleLink, statusLabel, type LinkSnapshot } from '$lib/consoleLink';
 	import { ChordTracker, isBareKey, isPaletteShortcut, isTypingTarget } from '$lib/shortcuts';
 	import { applyTextSize, readTextSize } from '$lib/textSize';
@@ -218,6 +219,11 @@
 			     HUD is still going three navigations later, and this is the only
 			     thing on any page that says so. -->
 			<TaskDock conn={approvalConn} />
+			<!-- And what Jarvis said while nobody was looking. Collapsed by
+			     default with an unread count: these arrive when you are not at
+			     the screen, which is exactly why a toast is the wrong shape for
+			     them. -->
+			<Notifications conn={approvalConn} />
 			{#key page.url.pathname}
 				<div class="jv-route" data-testid="route" data-route={page.url.pathname}>
 					{@render children()}

@@ -53,6 +53,7 @@ EXPECT_KEYS = {
     "task",              # {kind?, status?, title_contains?, steps_at_least?, within?}
     "no_task",           # no task was created by this turn
     "note",              # {title_contains?, body_contains?, citations_at_least?}
+    "notification",      # {title_contains?, kind?, source?, within?}
     "memory",            # {recalls?, forgotten?}
     "approval",          # {tool, decision: approve|deny}
     "ui",                # {testid, contains?, visible?} — asserted in the browser

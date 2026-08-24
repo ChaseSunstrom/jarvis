@@ -106,6 +106,12 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/code/clone_repo` | `forge`, `project` (`owner/name`), optional `name` and `environment`. Clones into the workspace. Refused unless that path is on the forge's allow-list — the console has no more reach here than the model, because the constraint is the operator's configuration rather than who is asking |
 | `jarvis/code/push` | `repo`, `branch`; pushes one `jarvis/…` branch to the forge it came from. Never `main`, never forced, and refused if `origin` was rewritten |
 | `jarvis/code/result` | `task_id`; the branch, the diff, the checks and the tool trail from one finished job |
+| `jarvis/briefing/get` | when the morning and evening briefings fire, which sections are in them, and which sections exist |
+| `jarvis/briefing/set` | any of `morning`, `evening` (`"07:00"`, or `"off"`), `include`, `importance`. Takes effect at the next tick of the schedule loop — no restart. **Not written back to `configuration.yaml`**: that file is the operator's, and a service that rewrote it would fight whoever edits it, so a restart returns to the configured values |
+| `jarvis/notifications/list` | optional `unread`, `limit`; every proactive message Jarvis has sent, newest first, with `unread`. Each carries the bus event that produced it (`source`) and where to go to see the thing itself (`link`) — "why am I seeing this" answered with a fact rather than a guess |
+| `jarvis/notifications/read` | `notification_id`, or `all: true` |
+| `jarvis/notifications/dismiss` | `notification_id`, or `all: true` |
+| `jarvis/conversation/search` | `query`; threads containing it, newest first, each with the lines that matched. Plain substring over the bounded archive rather than an index — the archive is already in memory, and a second store would be a second thing to keep in step |
 | `jarvis/notes/list` | optional `tag`, `query`, `limit`; every note, newest first — titles, tags, links and back-links, no bodies |
 | `jarvis/notes/get` | `note_id` (slug or title); one note with its `body`. **Not `id`** — every frame has one of those already, and it is the correlation number |
 | `jarvis/notes/create` | `title`, optional `body`, `tags`, `overwrite`. Writes `<config>/notes/<slug>.md`; the file IS the note |
