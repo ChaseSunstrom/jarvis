@@ -1946,22 +1946,55 @@ def register_builtin_tools(
         """
 
         async def run(_task_id: str) -> None:
-            agent = jarvis.data.get("llm_agent")
+            agent = jarvis.data.get("llm")
             registry_tasks = getattr(jarvis, "tasks", None)
             if agent is None:
                 raise RuntimeError("there is no conversation agent on this server")
+            # A request with more than one thing in it is planned, acted on
+            # step by step and verified — the steps land on the task, so
+            # somebody can see what Jarvis intends before it does it. A single
+            # action skips all of that: planning it costs a model call to be
+            # told what was already obvious.
+            from .plan import needs_a_plan
+
+            planned = needs_a_plan(description)
             if registry_tasks is not None:
+                # Only the unplanned path gets placeholders. A planned task's
+                # steps ARE the plan, and two invented ones in front of it
+                # would be a step list nobody chose — the console would show
+                # "work on it" as step 1 of a plan whose first step is
+                # something else entirely.
                 await registry_tasks.async_update(
-                    task_id, add_steps=["work on it", "write it up"], detail="working"
+                    task_id,
+                    add_steps=() if planned else ["work on it", "write it up"],
+                    detail="planning" if planned else "working",
                 )
                 registry_tasks.raise_if_cancelled(task_id)
-                await registry_tasks.async_update(task_id, step=0, step_status="running")
-            result = await agent.converse(
+                if not planned:
+                    await registry_tasks.async_update(task_id, step=0, step_status="running")
+
+            if planned:
+                answer = await agent.plan_and_run(description, task_id)
+                if registry_tasks is not None:
+                    registry_tasks.raise_if_cancelled(task_id)
+                    await registry_tasks.async_update(
+                        task_id, status="done", result=answer[:4000], detail="done"
+                    )
+                return
+
+            # `converse` is an async generator of text deltas — the streaming
+            # contract every other caller uses. Nobody is watching this one, so
+            # the deltas are collected and the answer is what they add up to.
+            chunks: list[str] = []
+            async for delta in agent.converse(
                 f"{description}\n\n(This is background work: nobody is waiting on this "
                 "reply. Do it, then summarise what you found in a few sentences.)",
                 conversation_id=f"background-{task_id}",
+            ):
+                chunks.append(str(delta))
+            answer = "".join(chunks).strip() or getattr(
+                getattr(agent, "last_result", None), "text", ""
             )
-            answer = getattr(result, "text", None) or str(result)
             if registry_tasks is not None:
                 registry_tasks.raise_if_cancelled(task_id)
                 await registry_tasks.async_update(

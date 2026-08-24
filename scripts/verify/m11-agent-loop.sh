@@ -12,16 +12,26 @@ require_file "$CORE/llm/plan.py"
 check "plan phase" grep -qE 'def (plan|_plan|make_plan)' "$CORE/llm/plan.py"
 check "verify phase" grep -qE 'def (verify|_verify)' "$CORE/llm/plan.py"
 check "re-plan on a failed verification, bounded" grep -qiE 'replan|max_replans|MAX_REPLANS' "$CORE/llm/plan.py"
-check "plans are registered as tasks (the UI shows the steps)" grep -qE 'TaskRegistry|async_add|tasks\.' "$CORE/llm/plan.py"
+# Asked of agent.py, not plan.py: plan.py is deliberately pure — it builds
+# prompts and parses answers and touches neither the registry nor the model —
+# so the wiring that puts a plan's steps on a task lives in `plan_and_run`.
+check "plans land on the task before they are acted on (the UI shows the steps)" \
+    grep -qE 'add_steps=made\.titles' "$CORE/llm/agent.py"
 check "the conversation agent uses the planner for multi-step requests" grep -q 'plan' "$CORE/llm/agent.py"
 check "rounds stay bounded" grep -q 'max_tool_rounds' "$CORE/llm/agent.py"
 require_file tests/contracts/tool_tiers.json
 check "jarvis-core reads the tier contract" grep -rlq tool_tiers.json jarvis-core/tests
 check "the web reads the tier contract" grep -rlq tool_tiers.json jarvis-web/src
 check "the Android mirror reads the tier contract" grep -rlq tool_tiers.json android-app/tools
-check_not "the MCP tier comment no longer contradicts the code" grep -n '2 = confirm' jarvis-core/config/configuration.yaml
+# Anchored to the legend line itself. Grepping the whole file for "confirm"
+# also matched the note explaining that the old wording was wrong, so the check
+# failed on its own fix.
+check "the MCP tier legend says what tier 2 does" \
+    grep -qE '^ *# *2 +run it, and say so' jarvis-core/config/configuration.yaml
+check_not "no legend line promises a confirmation tier 2 has never done" \
+    grep -nE '^ *# *2 +.*(confirm|ask first|approval)' jarvis-core/config/configuration.yaml
 require_file jarvis-core/tests/test_agent_loop.py
-for t in plan verify replan; do
+for t in plan verif replan; do
     check "test_agent_loop.py covers: $t" grep -qE "def test_[a-z_]*$t" jarvis-core/tests/test_agent_loop.py
 done
 check_sh "agent loop unit tests" \

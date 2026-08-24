@@ -317,6 +317,23 @@ they are the only places that particular bug can come back.
 | An InfluxDB the operator actually runs is reachable and queryable | **Scripted** | `python3 scripts/check-influx.py` — needs their database; nothing on a build machine can prove it |
 | The whole milestone | Automated | `bash scripts/verify/m05-dashboards.sh` · `bash scripts/verify/m06-influx.sh` |
 
+### Background work: one endpoint, a queue, and a plan
+
+| Claim | Level | Proof |
+|---|---|---|
+| Jarvis talks to exactly one model endpoint, OpenAI-compatible (`/v1/chat/completions`), and nothing bolts a provider prefix onto a model name | Automated | `cd jarvis-core && python3 -m pytest tests/test_openai_compat.py -q` · `python3 -m pytest jarvis-orchestrator/tests -q` · `bash scripts/verify/m09-llm.sh` |
+| "100 % local" is enforced, not promised: a public model-server URL is refused at startup | Automated | `cd jarvis-core && python3 -m pytest tests/test_llm_local_only.py -q` |
+| No more than `llm.max_concurrent` jobs run at once, however many are submitted | Automated | `cd jarvis-core && python3 -m pytest tests/test_taskengine.py -q` (`test_no_more_than_the_cap_run_at_once`) |
+| A failure is retried with jittered backoff and then reported; a cancellation is not a failure | Automated | the same |
+| Work that was waiting when the process died is still waiting after a restart | Automated | the same (`test_queued_work_is_still_queued_after_a_restart`) |
+| A background task the assistant accepts actually runs — against a real server, not a mock | Automated | `python3 -m pytest testing/e2e/test_agent_loop.py -q` |
+| A multi-step request becomes a plan whose steps are on the task *before* any of them is attempted | Automated | the same (`test_a_multi_step_request_is_planned_acted_on_and_verified`) |
+| Each step's outcome is judged by a call that can see the outcome but not the argument for it | Automated | `cd jarvis-core && python3 -m pytest tests/test_agent_loop.py -q` (`test_the_verifier_is_given_the_step_and_the_outcome_and_nothing_else`) |
+| A "not done" verdict re-plans what is left, and re-planning is bounded | Automated | the same (`test_replanning_is_bounded`) + the e2e replan test |
+| Tier meanings (1 direct · 2 background + notify · 3 approval) are one table, read by core, the console and the Android mirror | Automated | one contract, three suites: `tests/contracts/tool_tiers.json` |
+| A **real** model planning a **real** request | **Scripted** | `./scripts/e2e-smoke.sh` with a model server up; the offline suites script the model, on purpose — what they pin is which prompt gets which answer |
+| The whole milestones | Automated | `bash scripts/verify/m09-llm.sh` · `m10-task-engine.sh` · `m11-agent-loop.sh` |
+
 ### The design system
 
 | Claim | Level | Proof |

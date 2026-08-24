@@ -172,7 +172,7 @@ files both would touch, which the integrating session merges.
     queue, retry, backoff, restart, cancel.
   - Verify: `bash scripts/verify/m10-task-engine.sh`
 
-- [ ] **M11 — Agent loop: plan → act → verify** · size L · deps M09, M10
+- [x] **M11 — Agent loop: plan → act → verify** · size L · deps M09, M10
   - Scope: `jarvis-core/jarvis/llm/plan.py` — for multi-step requests the agent writes a plan
     whose steps are registered as a Task (so M04's UI shows them), acts step by step through
     tool calls, verifies each outcome (tool-based checks or a verification call), re-plans a

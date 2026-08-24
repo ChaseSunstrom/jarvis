@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..bus import Context
 from ..state import split_entity_id
+from . import plan as plan_module
 from .history import ConversationArchive
 from .memory import ConversationStore
 from .ollama import DEFAULT_MODEL, ChatResult, OllamaClient, OllamaError
@@ -661,6 +662,137 @@ class ConversationAgent:
             return ""
 
     # --- conversation -----------------------------------------------------
+
+    # --- plan → act → verify -------------------------------------------------
+
+    async def ask_once(self, prompt: str, *, system: str = "") -> str:
+        """One model call with no tools, no persona and no history.
+
+        The planner and the verifier both need this: a planner that can see the
+        conversation writes steps about the conversation, and a verifier that
+        can see the argument for an action agrees with it. So both get a fresh
+        context containing exactly what they are being asked.
+        """
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        chunks: list[str] = []
+        stream = self.client.chat(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            options=self.options or None,
+            think=False,
+        )
+        async for delta in stream:
+            text = getattr(delta, "content", None)
+            if text:
+                chunks.append(str(text))
+        answer = "".join(chunks)
+        result = getattr(stream, "result", None)
+        if not answer and result is not None:
+            answer = str(getattr(result, "content", "") or "")
+        return answer
+
+    async def make_plan(self, request: str) -> plan_module.Plan:
+        """One call: what are the steps? Never more than one."""
+        tools = list(self.tools.names()) if self.tools is not None else []
+        raw = await self.ask_once(plan_module.plan_prompt(request, tools))
+        made = plan_module.parse_plan(raw, request)
+        _LOGGER.debug("planned %d step(s) for %r", len(made.steps), request[:60])
+        return made
+
+    async def verify_step(self, step: "plan_module.PlanStep", outcome: str) -> "plan_module.Verdict":
+        """One call, given the step and what happened — nothing else."""
+        raw = await self.ask_once(plan_module.verify_prompt(step.title, outcome))
+        return plan_module.parse_verdict(raw)
+
+    async def replan(
+        self, made: "plan_module.Plan", failed: "plan_module.PlanStep"
+    ) -> list[str]:
+        remaining = [
+            step.title
+            for step in made.steps
+            if step.status == "queued" and step is not failed
+        ]
+        raw = await self.ask_once(plan_module.replan_prompt(made, failed, remaining))
+        return plan_module.parse_plan(raw, made.request).titles
+
+    async def plan_and_run(self, request: str, task_id: str = "") -> str:
+        """Plan → act → verify, reporting through a task.
+
+        The interactive loop stays what it is: somebody waiting for an answer
+        wants the answer, not a plan. This is the path for work nobody is
+        sitting in front of — background tasks, scheduled research — where the
+        steps are worth writing down before they are taken, and where a step
+        that quietly did not happen would otherwise be discovered by the user.
+
+        The plan becomes the TASK's steps, so `/tasks/<id>` shows what Jarvis
+        intends before it starts, and the current step is the one being acted
+        on. A plan nobody can see is indistinguishable from guessing.
+        """
+        registry = getattr(self.jarvis, "tasks", None) if self.jarvis is not None else None
+        made = await self.make_plan(request)
+        if registry is not None and task_id:
+            await registry.async_update(
+                task_id,
+                add_steps=made.titles,
+                detail=f"{len(made.steps)} step{'' if len(made.steps) == 1 else 's'}",
+                open_ended=False,
+            )
+
+        async def act(step: "plan_module.PlanStep") -> str:
+            if registry is not None and task_id:
+                registry.raise_if_cancelled(task_id)
+            chunks: list[str] = []
+            async for delta in self.converse(
+                step.title, conversation_id=f"plan-{task_id or id(made)}"
+            ):
+                chunks.append(str(delta))
+            outcome = "".join(chunks).strip()
+            if registry is not None and task_id and outcome:
+                registry.output(task_id, outcome[:2000], stream="note")
+            return outcome or "(the step produced no answer)"
+
+        async def verify(step: "plan_module.PlanStep", outcome: str) -> "plan_module.Verdict":
+            verdict = await self.verify_step(step, outcome)
+            if registry is not None and task_id and not verdict.done:
+                registry.output(task_id, f"not done: {verdict.reason}", stream="stderr")
+            return verdict
+
+        async def replan(
+            current: "plan_module.Plan", failed: "plan_module.PlanStep"
+        ) -> list[str]:
+            titles = await self.replan(current, failed)
+            if registry is not None and task_id and titles:
+                await registry.async_update(
+                    task_id, add_steps=titles, detail=f"replanned after: {failed.title}"
+                )
+            return titles
+
+        async def on_step(index: int, step: "plan_module.PlanStep") -> None:
+            if registry is None or not task_id:
+                return
+            await registry.async_update(
+                task_id,
+                step=index,
+                step_status="running" if step.status == "running" else step.status,
+                step_detail=(step.reason or step.outcome or "")[:200],
+            )
+
+        done = await plan_module.run_plan(
+            made, act=act, verify=verify, replan=replan, on_step=on_step
+        )
+        finished = [step for step in done.steps if step.status == "done"]
+        summary = "\n".join(
+            f"{step.title}: {step.outcome[:400]}" for step in finished
+        ) or "nothing was completed"
+        if done.replans:
+            summary += f"\n\n(replanned {done.replans} time"
+            summary += "s)" if done.replans != 1 else ")"
+        return summary
+
     async def converse(
         self,
         text: str,

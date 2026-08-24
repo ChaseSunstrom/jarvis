@@ -597,9 +597,21 @@ files:
 # an action.
 mcp:
   # The tier every server's tools register at unless it says otherwise.
-  # 1 = run it and answer, 2 = confirm first, 3 = never without a human yes.
+  #
+  #   1  run it and answer
+  #   2  run it, and say so — it takes time, costs something, or reaches
+  #      outside the house
+  #   3  never without a human yes, to that exact call
+  #
   # Two by default, and deliberately: an MCP tool is third-party code with side
-  # effects nothing in this process can see.
+  # effects nothing in this process can see, so it is announced rather than
+  # silent. Set 3 for a server whose tools should be held for approval.
+  #
+  # This comment used to say "2 = confirm first", which the code has never
+  # done: tier 2 runs. Somebody reading it and installing a server got tools
+  # that ran without asking, which is exactly the promise a security note must
+  # not make loosely. `tests/contracts/tool_tiers.json` is now the definition,
+  # and three suites read it.
   default_tier: 2
 
   # ##  READ THIS BEFORE SETTING IT TO TRUE  ##

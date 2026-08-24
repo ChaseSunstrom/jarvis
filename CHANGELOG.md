@@ -22,6 +22,23 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   OpenAI-compatible server serves it) instead of Ollama-only `/api/ps`.
 
 ### Added
+- M11 (plan → act → verify): background work with more than one thing in it is now planned
+  before it is done. The plan's steps land on the task, so the console shows what Jarvis
+  intends before it starts; each step is acted on as an ordinary tool-using turn; each outcome
+  is judged by a separate call that can see the outcome but not the argument for it; a "not
+  done" verdict re-plans what is left, twice at most. `tests/contracts/tool_tiers.json` makes
+  the tier meanings (1 direct · 2 background + notify · 3 approval) one table that core, the
+  console and the Android mirror all read, and the MCP config comment that promised a
+  confirmation tier 2 has never done is gone.
+
+### Fixed
+- M11: `run_background_task` looked the conversation agent up under a key nothing sets, so
+  every background task the assistant accepted failed with "there is no conversation agent on
+  this server" after two retries. Unit tests had mocked past it; the end-to-end test against a
+  real server is what found it. A planned task also no longer shows two invented steps
+  ("work on it", "write it up") in front of the plan it actually chose.
+
+### Added
 - M10 (task engine): `jarvis/taskengine.py` — a bounded queue with a concurrency cap
   (`llm.max_concurrent`, default 2, because every worker ends up talking to one model server),
   retries with jittered backoff, cooperative cancellation that is not a failure, and a queue

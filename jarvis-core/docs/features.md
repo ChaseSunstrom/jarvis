@@ -419,6 +419,61 @@ rather than merely left undocumented.
 
 ---
 
+## plan → act → verify
+
+Not an integration — the loop that runs work nobody is sitting in front of.
+`jarvis/llm/plan.py` and `Agent.plan_and_run`.
+
+An interactive turn stays what it always was: somebody waiting for an answer
+wants the answer, not a plan. But "look into X and tell me later" is different.
+Nobody sees it happen, so a step that quietly did not happen is discovered by
+the user, days later, as a thing Jarvis said it had done.
+
+So a background task with more than one thing in it runs as three separate
+model calls per step, each in its own context:
+
+| phase | what it sees | what it produces |
+|---|---|---|
+| **plan** | the request and the names of the available tools, nothing else | `{"steps": [...]}`, at most `MAX_STEPS` (8) |
+| **act** | one step title, as an ordinary tool-using turn | whatever the step produced |
+| **verify** | the step and its outcome — *not* the plan, not the argument for it | `{"done": true}` or `{"done": false, "reason": "..."}` |
+
+The contexts are separate on purpose. A planner that can see the conversation
+writes steps about the conversation; a verifier that can see the case for an
+action agrees with it. `Agent.ask_once` is the call with no persona, no history
+and no tools that both of them use.
+
+A `done: false` verdict re-plans the remaining steps — once, then again, and
+then it stops: `MAX_REPLANS` is 2, because a loop that re-plans until it
+succeeds is a loop that never reports failure.
+
+The plan becomes the **task's** steps before any of them is attempted
+(`add_steps`, `open_ended: false`), which is the visible half of all this: the
+console's task view shows what Jarvis intends, which step it is on, and — via
+`jarvis/tasks/log` — what each one actually produced. A plan nobody can see is
+indistinguishable from guessing.
+
+`needs_a_plan()` decides whether any of this happens, and is deliberately cheap
+and conservative: sequence words ("then", "after that", "finally"), work verbs
+in a long enough sentence, or two clauses joined by "and". Planning a request
+that did not need it costs one model call and shows a one-step plan; not
+planning one that did is the behaviour that was there before, which is the
+safer of the two failures.
+
+```bash
+cd jarvis-core && python3 -m pytest tests/test_agent_loop.py -q   # the pieces
+python3 -m pytest testing/e2e/test_agent_loop.py -q               # the whole loop
+```
+
+The end-to-end test is the one that matters, because the loop's correctness is
+*which prompt gets which answer* — it drives a real core with a scripted model
+that answers planning, acting and verifying differently, and asserts a failed
+verification changes what happens next. It is also what caught `plan_and_run`
+looking up the agent under a key nothing sets, which every unit test had
+mocked past.
+
+---
+
 ## Testing
 
 `tests/test_features.py` covers all four against the real `domains` service
