@@ -144,8 +144,16 @@ def text_colours() -> dict:
             "AssistOverlay no longer sets its own transcript colour, so it is "
             "drawing the palette's dimmest one over arbitrary content"
         )
-    value = re.search(rf"const val {token.group(1)} = 0x..([0-9A-Fa-f]{{6}})", ui)
-    if not value:
+    # JarvisUi's colours are aliases of the generated JarvisTokens (design/build.py),
+    # so the hex is read from the constant the alias points at.
+    alias = re.search(rf"const val {token.group(1)} = JarvisTokens\.Color\.([A-Z_0-9]+)", ui)
+    generated = source(KOTLIN / "ui/theme/JarvisTokens.kt")
+    value = None
+    if alias:
+        value = re.search(rf"const val {alias.group(1)} = 0x..([0-9A-Fa-f]{{6}})", generated)
+    if value is None:
+        value = re.search(rf"const val {token.group(1)} = 0x..([0-9A-Fa-f]{{6}})", ui)
+    if value is None:
         raise ValueError(f"JarvisUi has no colour {token.group(1)}")
     hexv = value.group(1)
     return {

@@ -238,6 +238,42 @@ shortened list.
 The chars-per-token divisor is an estimate, deliberately pessimistic for JSON. A
 real tokeniser will report more, not less.
 
+## 12. The design system is generated from one file, with three deliberate seams
+
+`design/tokens.json` is the only place a colour, size, font, radius, shadow or
+duration is typed; `design/build.py` generates the CSS, the TypeScript, the
+desktop palette, the Android `JarvisTokens.kt`, a Compose `JarvisTheme.kt` and
+the XML resources, and `scripts/verify/token_lint.py` refuses a hard-coded value
+in app code. Three places knowingly stop short of "generated":
+
+**The orb palette is drift-checked, not rewritten.** `SiriPalette.kt` and the
+palette comments in `Orb.svelte`'s shader are declared as `color.orb.*` in the
+JSON, and `build.py --check` fails if either differs — but neither file is
+generated. `android-app/tools/reactor_orb_test.py` (1,400 lines) already pins
+those two files to each other and to the shader's arithmetic; regenerating them
+would mean rewriting that spec for no gain in truth.
+
+**The phone keeps its own type and spacing scales.** `type.android` (sp) and
+`space.android` (dp) sit beside the console's rem scales in the same file.
+`tools/type_scale_test.py` pins the phone's numbers as "a rename, not a
+redesign" and the console's floor is 0.7 rem; one shared scale would move one
+surface or the other visibly, which is a decision for M03/M08, not a side
+effect of moving the source of truth.
+
+**Compose is enabled without a local compiler.** `JarvisTheme.kt` needs
+Compose, so `compose = true`, the Kotlin Compose plugin and the BOM are in the
+Gradle build — and this host has no JDK, so nothing here has compiled it. The
+configuration is the standard one for Kotlin 2.0.21 / AGP 8.7.3; the first
+`./gradlew assembleDebug` is milestone M08's job, and until then the theme file
+is claimed as "generated", not "compiles".
+
+**The lint ratchets rather than fails outright.** 340 legacy hard-coded values
+in 38 files are recorded in `design/token-lint.baseline.json`; a file may not
+exceed its count and a new file may have none. Failing the whole tree on day
+one would have made the milestone unmergeable until M03 and M08 finished; the
+ratchet keeps the rule enforceable now and makes "baseline empty" the
+finishing line those milestones check.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

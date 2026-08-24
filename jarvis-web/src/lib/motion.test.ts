@@ -8,6 +8,7 @@ import {
 	staggerStyle,
 	watchReducedMotion
 } from './motion';
+import { tokenMs } from './tokens';
 
 function host(matches: boolean, extra: Record<string, unknown> = {}) {
 	return {
@@ -47,7 +48,7 @@ describe('staggerDelay', () => {
 	});
 
 	it('mirrors the CSS duration tokens', () => {
-		expect(DURATION.base).toBe(180);
+		expect(DURATION.base).toBe(tokenMs('--jv-dur-base'));
 		expect(DURATION.fast).toBeLessThan(DURATION.base);
 		expect(DURATION.slow).toBeGreaterThan(DURATION.base);
 	});

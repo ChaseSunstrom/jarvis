@@ -8,6 +8,7 @@
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard } from '$lib/unsaved';
+	import { EmptyState } from '$lib/ui';
 	import {
 		applyStateChanged,
 		type CompanionDevice,
@@ -517,23 +518,21 @@
 			{/each}
 		</section>
 	{:else}
-		<div class="jv-empty" data-testid="empty">
-			<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>
-			{#if status === 'open'}
-				<p class="jv-empty-title">No entities matched</p>
-				<p class="jv-empty-body">
-					{filter
-						? `Nothing here is called “${filter}”. Clear the filter to see everything the backend exposes.`
-						: 'The backend reported no entities. Add an integration in jarvis-core and they will appear here live.'}
-				</p>
-			{:else}
-				<p class="jv-empty-title">No link to the backend</p>
-				<p class="jv-empty-body">
-					The websocket relay is {status}. Check that jarvis-core is reachable and that
-					JARVIS_URL / JARVIS_TOKEN are set where this server runs.
-				</p>
-			{/if}
-		</div>
+		{#if status === 'open'}
+			<EmptyState
+				testid="empty"
+				title="No entities matched"
+				body={filter
+					? `Nothing here is called “${filter}”. Clear the filter to see everything the backend exposes.`
+					: 'The backend reported no entities. Add an integration in jarvis-core and they will appear here live.'}
+			/>
+		{:else}
+			<EmptyState
+				testid="empty"
+				title="No link to the backend"
+				body={`The websocket relay is ${status}. Check that jarvis-core is reachable and that JARVIS_URL / JARVIS_TOKEN are set where this server runs.`}
+			/>
+		{/if}
 	{/each}
 {/if}
 

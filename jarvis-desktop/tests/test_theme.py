@@ -43,8 +43,8 @@ from jarvis_desktop import theme
 
 DESKTOP = Path(__file__).resolve().parents[1]
 REPO = DESKTOP.parent
-TOKENS = REPO / "jarvis-web/src/lib/tokens.ts"
-THEME = DESKTOP / "jarvis_desktop/theme.py"
+TOKENS = REPO / "design/tokens.json"
+THEME = DESKTOP / "jarvis_desktop/tokens.py"
 
 #: WCAG AA for body text. This chrome is small and monospace, so the large-text
 #: allowance (3:1) is not the one that applies.
@@ -72,16 +72,29 @@ TEXT_ON_GROUND = (
 
 
 def web_tokens() -> dict[str, str]:
-    """``'--jv-accent': '#3fd8ff'`` -> ``{'--jv-accent': '3fd8ff'}``. Hex only.
+    """``design/tokens.json`` colour leaves -> ``{'--jv-accent': '4fe3ff'}``. Hex only.
 
-    ``rgba(...)`` tokens are skipped rather than parsed: nothing here names one,
-    because Tk has no notion of a translucent widget background.
+    The JSON is the source of truth; ``tokens.ts`` and ``tokens.py`` are both
+    generated from it, so agreeing with the JSON is agreeing with the console.
+    ``rgba(...)`` tokens are skipped: Tk has no translucent widget background.
     """
-    text = TOKENS.read_text(encoding="utf-8")
-    return {
-        name: value.lstrip("#").lower()
-        for name, value in re.findall(r"'(--jv-[a-z-]+)':\s*'#([0-9A-Fa-f]{6})'", text)
-    }
+    import json
+
+    data = json.loads(TOKENS.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+
+    def walk(node: dict, path: list[str]) -> None:
+        if "$value" in node:
+            value = str(node["$value"])
+            if re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+                out["--jv-" + "-".join(path)] = value.lstrip("#").lower()
+            return
+        for key, child in node.items():
+            if not key.startswith("$") and isinstance(child, dict):
+                walk(child, path + [key])
+
+    walk(data["color"], [])
+    return out
 
 
 def theme_colours() -> dict[str, tuple[str, str]]:
@@ -137,12 +150,12 @@ def test_the_web_tokens_are_readable():
     tokens = web_tokens()
     assert TOKENS.is_file(), f"{TOKENS} is missing"
     assert len(tokens) >= 10
-    assert tokens["--jv-accent"] == "3fd8ff"
+    assert tokens["--jv-accent"] == "4fe3ff"
 
 
 def test_the_theme_declares_colours_at_all():
     colours = theme_colours()
-    assert len(colours) >= 10, "theme.py declares no colours, or not as NAME = \"#rrggbb\""
+    assert len(colours) >= 10, "tokens.py declares no colours, or not as NAME = \"#rrggbb\""
 
 
 def test_every_desktop_colour_names_a_token():

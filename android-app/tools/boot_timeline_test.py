@@ -1464,12 +1464,19 @@ def test_splash_screen_is_wired_with_no_white_flash():
     assert "windowSplashScreenAnimatedIcon" in themes
 
     colors = (ROOT / "app/src/main/res/values/colors.xml").read_text()
-    assert "<color name=\"jarvis_bg\">#FF04070C</color>" in colors, (
+    tokens_xml = (ROOT / "app/src/main/res/values/tokens.xml").read_text()
+    # colors.xml holds aliases only (design/build.py generates it); the hex lives
+    # in tokens.xml and must be the HUD ground from design/tokens.json.
+    assert "<color name=\"jarvis_bg\">@color/jv_bg</color>" in colors, (
+        "the splash background must alias the generated ground token"
+    )
+    ground = re.search(r"<color name=\"jv_bg\">#FF([0-9A-F]{6})</color>", tokens_xml)
+    assert ground, "tokens.xml has no jv_bg"
+    source = re.search(r'"bg":\s*\{[^}]*"\$value":\s*"#([0-9a-fA-F]{6})"',
+                       (ROOT.parent / "design/tokens.json").read_text())
+    assert source and ground.group(1).lower() == source.group(1).lower(), (
         "the splash background must be exactly the HUD ground"
     )
-
-
-def test_launcher_icon_has_all_three_layers():
     assert ADAPTIVE_ICON.is_file(), f"missing {ADAPTIVE_ICON}"
     icon = ADAPTIVE_ICON.read_text()
     assert "<background" in icon and "<foreground" in icon and "<monochrome" in icon

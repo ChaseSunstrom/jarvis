@@ -1,5 +1,14 @@
 import { defineConfig } from '@playwright/test';
 
+// The port is a knob because 8199 is also where a running install's HUD
+// listens (docker-compose.yml, host networking). On the box that runs Jarvis,
+// `reuseExistingServer: false` below would refuse to start — or, flipped on,
+// would silently test the live HUD instead of the mock-backed build. So a
+// verify run sets E2E_PORT to something free; the default stays 8199 so CI
+// and the README are unchanged. serve-e2e.mjs reads PORT, which is passed
+// through here.
+const port = process.env.E2E_PORT ?? '8199';
+
 export default defineConfig({
 	testDir: 'e2e',
 	// Every *.spec.ts in e2e/, not one named file. It WAS one named file, which
@@ -11,7 +20,7 @@ export default defineConfig({
 	workers: 1,
 	reporter: [['list']],
 	use: {
-		baseURL: 'http://127.0.0.1:8199',
+		baseURL: `http://127.0.0.1:${port}`,
 		browserName: 'chromium',
 		headless: true,
 		launchOptions: {
@@ -34,7 +43,8 @@ export default defineConfig({
 	},
 	webServer: {
 		command: 'node ../tests/web/serve-e2e.mjs',
-		url: 'http://127.0.0.1:8199/healthz',
+		url: `http://127.0.0.1:${port}/healthz`,
+		env: { PORT: port },
 		reuseExistingServer: false,
 		stdout: 'pipe',
 		stderr: 'pipe',

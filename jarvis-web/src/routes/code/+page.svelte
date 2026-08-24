@@ -41,6 +41,7 @@
 	import { staggerStyle } from '$lib/motion';
 	import { TASK_EVENTS, applyTaskEvent, mergeTaskList, type TaskRow } from '$lib/tasks';
 	import { toasts } from '$lib/toast';
+	import { EmptyState } from '$lib/ui';
 
 	let conn = $state<Connection | null>(null);
 	let status = $state('connecting');
@@ -304,16 +305,11 @@
 {#if loading}
 	<Skeleton rows={3} />
 {:else if !repos.length && !canCreate}
-	<div class="jv-empty" data-testid="code-empty">
-		<span class="jv-empty-mark" aria-hidden="true">[ ]</span>
-		<p class="jv-empty-title">No repositories</p>
-		<p class="jv-empty-body">
-			Jarvis works in repositories you name under <code>code:</code> in
-			<code>configuration.yaml</code>. To let it create its own, set
-			<code>code: workspace:</code> to a directory it may write in — then a NEW REPOSITORY
-			button appears here.
-		</p>
-	</div>
+	<EmptyState
+		testid="code-empty"
+		title="No repositories"
+		body="Jarvis works in repositories you name under `code:` in configuration.yaml. To let it create its own, set `code: workspace:` to a directory it may write in — then a NEW REPOSITORY button appears here."
+	/>
 {:else}
 	{#if canCreate}
 		<section class="panel" data-testid="code-repos">
@@ -570,10 +566,7 @@
 	</section>
 
 	{#if !mine.length}
-		<div class="jv-empty" data-testid="code-no-jobs">
-			<span class="jv-empty-mark" aria-hidden="true">[ ]</span>
-			<p class="jv-empty-title">No jobs yet</p>
-		</div>
+		<EmptyState testid="code-no-jobs" title="No jobs yet" />
 	{:else}
 		<h2>JOBS</h2>
 		<div class="stack jv-stagger" data-testid="code-jobs">

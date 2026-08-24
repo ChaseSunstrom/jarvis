@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 
+	import '$lib/styles/fonts.css';
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
 	import '$lib/styles/chrome.css';

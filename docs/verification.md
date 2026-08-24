@@ -300,6 +300,18 @@ they are the only places that particular bug can come back.
 | `./config` is writable by the uid the image runs as | Containerised | the job writes and removes a probe file from inside jarvis-core, as uid 10003, on the real bind mount |
 | `OLLAMA_URL` and `OLLAMA_MODEL` reach the agent rather than being decoration | Automated + Containerised | `test_packaging.py` reads the wiring; the job hands both a sentinel and requires the startup log to echo them back |
 
+### The design system
+
+| Claim | Level | Proof |
+|---|---|---|
+| One token source: `design/tokens.json` is the only file where a colour, size, font, radius, shadow or duration is typed; every surface's token file is generated from it | Automated | `python3 design/build.py --check` — seven generated files current (web CSS + TS, desktop `tokens.py`, Android `JarvisTokens.kt`, `JarvisTheme.kt`, `tokens.xml`, `colors.xml`) |
+| The orb palette on all three surfaces equals `color.orb.*` | Automated | the same command (drift check over `SiriPalette.kt` and `Orb.svelte`) + `python3 android-app/tools/reactor_orb_test.py` |
+| No new hard-coded colour/spacing/type/motion value in web, Android or desktop app code; legacy counts only fall | Automated | `python3 scripts/verify/token_lint.py` (ratchet: `design/token-lint.baseline.json`, 340 legacy hits in 38 files on 2026-08-24, 4 documented exceptions) |
+| Phone, desktop and console draw one palette, every text colour AA on its ground | Automated | `python3 android-app/tools/design_token_test.py` · `cd jarvis-desktop && python3 -m pytest tests/test_theme.py -q` · `cd jarvis-web && npx vitest run src/lib/tokens.test.ts` — all three read `design/tokens.json` |
+| `/styleguide` renders every token group and the four screen states, headless | Automated | `cd jarvis-web && E2E_PORT=8299 npx playwright test e2e/styleguide.spec.ts` (screenshot under `.verify/styleguide.png`) |
+| The Compose theme (`JarvisTheme.kt`) compiles | **Unproven** | generated and Compose is enabled in the Gradle build, but this host has no JDK; `./gradlew assembleDebug` is milestone M08's proof |
+| The whole design-system gate | Automated | `bash scripts/verify/m01-design-tokens.sh` — 46 checks, measured 2026-08-24 |
+
 ### jarvis-web (HUD + management console)
 
 | Capability | Level | Proof / command |
@@ -479,6 +491,20 @@ callbacks must span at least `HANDOFF_START_MS`, which a collapsed run (two
 callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
 **A test that cannot tell a slow machine from a slow app should not claim
 either.**
+
+## Known failures, as of 2026-08-24 (this host)
+
+Two jarvis-core tests fail on the machine that runs Jarvis, with no change to
+`jarvis-core/jarvis` or `jarvis-core/config` in the working tree:
+
+- `tests/test_code_sandbox.py::test_a_missing_docker_says_what_to_do_rather_than_raising` —
+  expects "docker is not installed"; here the fake binary fails with `[Errno 13] Permission
+  denied` instead of `ENOENT`, so the message names the wrong cause. Environment: the docker
+  socket is root-only for `jarvisdev` (see `docs/AUDIT.md` "Host"). Fix belongs to M19.
+- `tests/test_packaging.py::test_the_default_boots_into_an_empty_house_that_is_still_alive` —
+  asserts a fresh install invents no rooms; the tracked `jarvis-core/config/*.yaml` is this
+  house's configuration (areas, entities), so the "default" boot is not empty here. Either the
+  test boots from `config/examples/` or the house config moves out of the tree (M23 decides).
 
 ## Known failures, as of 2026-08-09
 

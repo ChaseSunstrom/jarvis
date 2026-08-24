@@ -13,6 +13,7 @@ import java.util.zip.ZipFile
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
 }
 
 /*
@@ -91,7 +92,10 @@ android {
         // UI is built programmatically (see ui/ and the ported activities).
         viewBinding = false
         dataBinding = false
-        compose = false
+        // On for the generated design-system theme (ui/theme/JarvisTheme.kt from
+        // design/tokens.json) and the Robolectric screenshot tests that use it;
+        // the screens themselves stay Views.
+        compose = true
         // BuildConfig.VERSION_NAME is used in the WebView user agent.
         buildConfig = true
     }
@@ -172,6 +176,13 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // The design-system theme (ui/theme/JarvisTheme.kt is generated from
+    // design/tokens.json). Screens are still Views; see libs.versions.toml.
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

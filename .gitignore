@@ -41,3 +41,7 @@ secrets.yaml
 *.db
 *.db-wal
 *.db-shm
+
+# scripts/verify/all.sh writes one log per milestone here. It is output, not
+# source, and a stale log next to a green table would be worse than no log.
+.verify/

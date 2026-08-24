@@ -41,6 +41,7 @@ from pathlib import Path
 ANDROID = Path(__file__).resolve().parents[1]
 KOTLIN = ANDROID / "app/src/main/kotlin/ai/jarvis/app"
 UI = KOTLIN / "ui/JarvisUi.kt"
+GENERATED = KOTLIN / "ui/theme/JarvisTokens.kt"
 
 
 def code(path: Path) -> str:
@@ -118,7 +119,7 @@ def test_the_scale_kept_the_sizes_that_were_already_there() -> None:
     deliberately — and the phone's steps are the console's, so it is a decision
     to take in both places at once. This check is what makes it deliberate.
     """
-    src = code(UI)
+    src = code(GENERATED)
     expected = {
         "LABEL": "11f",
         "HINT": "12f",
@@ -133,8 +134,8 @@ def test_the_scale_kept_the_sizes_that_were_already_there() -> None:
         assert match, f"the {name} step is gone"
         assert match.group(1) == value, (
             f"the {name} step moved from {value} to {match.group(1)}. That is a "
-            "visual change to every screen at once, and the console's scale is "
-            "the other half of it — change both, or neither."
+            "visual change to every screen at once; change it in design/tokens.json "
+            "(type.android) and here together, or neither."
         )
 
 

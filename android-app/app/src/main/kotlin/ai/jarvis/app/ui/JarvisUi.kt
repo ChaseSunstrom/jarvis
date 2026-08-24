@@ -17,6 +17,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * Shared look-and-feel for every Jarvis surface: deep navy ground, arc-reactor
@@ -27,9 +28,9 @@ import android.widget.TextView
  */
 object JarvisUi {
 
-    // Every one of these is a `--jv-*` token from
-    // `jarvis-web/src/lib/tokens.ts`, and `design_token_test.py` checks them
-    // against it.
+    // Every one of these is a `--jv-*` token from `design/tokens.json`, reached
+    // through the generated `JarvisTokens`; `design_token_test.py` checks the
+    // aliases against the source.
     //
     // They were a second palette that happened to look similar: three of the
     // eight matched a web token and five were near misses nobody could see
@@ -42,7 +43,7 @@ object JarvisUi {
     // One of the five was not merely different. FAINT was #5A7A86, which is
     // 4.38:1 on this ground — under WCAG AA — and it is the colour every hint
     // on every screen is drawn in. `--jv-text-faint` is 9.01:1.
-    const val ACCENT = 0xFF3FD8FF.toInt() // --jv-accent
+    const val ACCENT = JarvisTokens.Color.ACCENT // --jv-accent
     /**
      * Body text. `--jv-text`.
      *
@@ -51,14 +52,14 @@ object JarvisUi {
      * only if the scrim behind it is nearly opaque, which is the dark slab this
      * surface has already had removed twice. A brighter line needs less ground.
      */
-    const val TEXT = 0xFFD7EDF5.toInt()
+    const val TEXT = JarvisTokens.Color.TEXT // --jv-text
     /** `--jv-text-dim`, at the 80% alpha the phone has always drawn it with. */
-    const val DIM = 0xCC9FC0CC.toInt()
-    const val BG = 0xFF04070C.toInt() // --jv-bg
-    const val SURFACE = 0xFF06121A.toInt() // --jv-panel-solid
-    const val FAINT = 0xFF8FB3C0.toInt() // --jv-text-faint
-    const val APPROVE = 0xFF6FF2C0.toInt() // --jv-ok
-    const val DENY = 0xFFFF6B5C.toInt() // --jv-danger
+    const val DIM = JarvisTokens.Color.TEXT_DIM_80 // --jv-text-dim
+    const val BG = JarvisTokens.Color.BG // --jv-bg
+    const val SURFACE = JarvisTokens.Color.PANEL_SOLID // --jv-panel-solid
+    const val FAINT = JarvisTokens.Color.TEXT_FAINT // --jv-text-faint
+    const val APPROVE = JarvisTokens.Color.OK // --jv-ok
+    const val DENY = JarvisTokens.Color.DANGER // --jv-danger
 
     /**
      * Wants attention, but nothing is broken.
@@ -67,7 +68,7 @@ object JarvisUi {
      * not failed. Matches `--jv-warn` in the console, which marks the same idea
      * there — held, not wrong.
      */
-    const val GOLD = 0xFFFFB347.toInt()
+    const val GOLD = JarvisTokens.Color.WARN // --jv-warn
 
     /**
      * The type scale.
@@ -87,25 +88,25 @@ object JarvisUi {
      */
     object Type {
         /** All-caps section labels and chrome captions. */
-        const val LABEL = 11f
+        const val LABEL = JarvisTokens.Type.LABEL
 
         /** Explanatory body copy, ghost buttons, status lines. */
-        const val HINT = 12f
+        const val HINT = JarvisTokens.Type.HINT
 
         /** Verbatim machine text, checklist glyphs. */
-        const val MONO = 13f
+        const val MONO = JarvisTokens.Type.MONO
 
         /** Ordinary interface text: switch rows, checklist titles, pills. */
-        const val BODY = 14f
+        const val BODY = JarvisTokens.Type.BODY
 
         /** Text the user typed or is about to, plus consent buttons. */
-        const val FIELD = 15f
+        const val FIELD = JarvisTokens.Type.FIELD
 
         /** What Jarvis said. The largest thing on a conversation surface. */
-        const val RESPONSE = 20f
+        const val RESPONSE = JarvisTokens.Type.RESPONSE
 
         /** The JARVIS wordmark and screen titles. */
-        const val TITLE = 22f
+        const val TITLE = JarvisTokens.Type.TITLE
     }
 
     /**
@@ -119,28 +120,28 @@ object JarvisUi {
      */
     object Space {
         /** A hairline stroke. */
-        const val HAIRLINE = 1
+        const val HAIRLINE = JarvisTokens.Space.HAIRLINE
 
         /** Between a line of text and its own line spacing. */
-        const val TIGHT = 4
+        const val TIGHT = JarvisTokens.Space.TIGHT
 
         /** Between a label and the thing it labels. */
-        const val SNUG = 6
+        const val SNUG = JarvisTokens.Space.SNUG
 
         /** Inside a row: a glyph and its text. */
-        const val ROW = 10
+        const val ROW = JarvisTokens.Space.ROW
 
         /** Between two controls. */
-        const val GAP = 12
+        const val GAP = JarvisTokens.Space.GAP
 
         /** Between one section and the next. */
-        const val SECTION = 16
+        const val SECTION = JarvisTokens.Space.SECTION
 
         /** A screen's own margin. */
-        const val SCREEN = 20
+        const val SCREEN = JarvisTokens.Space.SCREEN
 
         /** A screen's margin where the content is a single centred column. */
-        const val WIDE = 24
+        const val WIDE = JarvisTokens.Space.WIDE
     }
 
     fun dp(context: Context, v: Int): Int =

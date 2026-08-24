@@ -7,6 +7,7 @@
 	import McpServers from '$lib/components/McpServers.svelte';
 	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import { EmptyState } from '$lib/ui';
 	import {
 		friendlyName,
 		type EntityRegistryEntry,
@@ -621,15 +622,13 @@
 				</div>
 			{/if}
 		{:else}
-			<div class="jv-empty" data-testid="empty">
-				<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>
-				<p class="jv-empty-title">{status === 'open' ? 'No tools matched' : 'No link to the backend'}</p>
-				<p class="jv-empty-body">
-					{status === 'open'
-						? 'Nothing in the catalogue matches that filter.'
-						: `The websocket relay is ${status}.`}
-				</p>
-			</div>
+			<EmptyState
+				testid="empty"
+				title={status === 'open' ? 'No tools matched' : 'No link to the backend'}
+				body={status === 'open'
+					? 'Nothing in the catalogue matches that filter.'
+					: `The websocket relay is ${status}.`}
+			/>
 		{/each}
 	{/if}
 </section>

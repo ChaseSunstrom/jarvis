@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Instrument · Dashboard</title>
+<style>
+@font-face{font-family:"Barlow Condensed";font-weight:500;src:url(fonts/barlow-condensed-500.woff2) format("woff2")}
+@font-face{font-family:"Barlow Condensed";font-weight:600;src:url(fonts/barlow-condensed-600.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:500;src:url(fonts/jetbrains-mono-500.woff2) format("woff2")}
+:root{
+  --bg:#04070c; --surface:#070c13; --panel:#0a1219; --inset:#03060a;
+  --line:#17323e; --line-soft:#0f2029; --line-hair:#0b1820;
+  --text:#cfe6ee; --text-bright:#eaf7fb; --dim:#7fa3b0; --faint:#4a6570;
+  --accent:#3fd8ff; --accent-ink:#04121a; --accent-wash:rgba(63,216,255,.10);
+  --amber:#f2b84b; --danger:#ff6b5c; --ok:#7fd6a8;
+  --font-display:"Barlow Condensed",sans-serif; --font-mono:"JetBrains Mono",monospace;
+  --fs-2xs:10px; --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-lg:18px; --fs-xl:26px; --fs-display:40px;
+  --track:.10em; --track-wide:.22em; --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px;
+  --r:2px; --dur:160ms; --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.5 var(--font-mono)}
+body{overflow:hidden}
+.app{display:grid;grid-template-rows:40px 40px 1fr;height:100vh}
+.bar{display:grid;grid-template-columns:200px 1fr auto;align-items:center;border-bottom:1px solid var(--line-soft);padding:0 var(--s4);background:var(--surface)}
+.brand{font:600 var(--fs-lg)/1 var(--font-display);letter-spacing:var(--track-wide);color:var(--text-bright)}
+.brand small{color:var(--faint);font-size:var(--fs-2xs);letter-spacing:var(--track);margin-left:var(--s2);font-family:var(--font-mono);font-weight:400}
+nav{display:flex;gap:var(--s5);font:500 var(--fs-sm)/1 var(--font-display);letter-spacing:var(--track-wide);color:var(--dim);text-transform:uppercase}
+nav a{color:inherit;text-decoration:none;padding:var(--s3) 0;border-bottom:1px solid transparent}
+nav a.on{color:var(--text-bright);border-bottom-color:var(--accent)}
+.status{display:flex;gap:var(--s4);font-size:var(--fs-2xs);letter-spacing:var(--track);color:var(--dim);text-transform:uppercase}
+.status i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:6px;vertical-align:middle}
+.status i.live{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.tools{display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);border-bottom:1px solid var(--line-hair);background:var(--surface);font-size:var(--fs-xs)}
+.tools h1{font:500 var(--fs-sm)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--text-bright);margin-right:var(--s4)}
+.chip{font:500 var(--fs-2xs)/1 var(--font-display);letter-spacing:var(--track);text-transform:uppercase;padding:6px 10px;border:1px solid var(--line-hair);color:var(--faint);border-radius:var(--r)}
+.chip.on{border-color:var(--accent);color:var(--accent)}
+.tools .sp{flex:1}
+.btn{font:500 var(--fs-2xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;padding:7px 12px;border:1px solid var(--line);color:var(--dim);background:transparent;border-radius:var(--r)}
+.btn.primary{border-color:var(--accent);color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:1fr;gap:1px;background:var(--line-hair);min-height:0}
+.w{background:var(--surface);position:relative;padding:var(--s3) var(--s4);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.w.c2{grid-column:span 2}.w.c3{grid-column:span 3}.w.r2{grid-row:span 2}
+.w h3{font:500 var(--fs-2xs)/1 var(--font-display);letter-spacing:var(--track-wide);text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between}
+.w h3 .src{color:var(--faint);letter-spacing:var(--track)}
+.w h3 .src.inf::before{content:"◆ ";color:var(--amber)}
+.w h3 .src.int::before{content:"● ";color:var(--faint)}
+.w .big{font:600 var(--fs-display)/1 var(--font-display);color:var(--text-bright);margin-top:var(--s2);font-variant-numeric:tabular-nums}
+.w .big small{font-size:var(--fs-sm);color:var(--faint);letter-spacing:var(--track);margin-left:var(--s1);font-family:var(--font-mono);font-weight:400}
+.w .big.live{color:var(--accent)}
+.w .sub{font-size:var(--fs-xs);color:var(--faint);margin-top:2px}
+.w svg{flex:1;width:100%;min-height:0;margin-top:var(--s2)}
+.w .handle{position:absolute;right:4px;bottom:4px;width:8px;height:8px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);opacity:.8}
+.w.focus::before,.w.focus::after{content:"";position:absolute;width:10px;height:10px;border-color:var(--accent);border-style:solid;pointer-events:none}
+.w.focus::before{top:6px;left:6px;border-width:1px 0 0 1px}.w.focus::after{bottom:6px;right:6px;border-width:0 1px 1px 0}
+table{width:100%;border-collapse:collapse;font-size:var(--fs-xs);margin-top:var(--s2)}
+td{padding:4px 0;border-bottom:1px solid var(--line-hair);color:var(--dim)}
+td.n{text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums}
+td svg{width:70px;height:14px;vertical-align:middle;margin:0}
+.bars{display:flex;align-items:flex-end;gap:3px;flex:1;margin-top:var(--s2)}
+.bars i{flex:1;background:var(--line);min-height:2px}.bars i.hi{background:var(--dim)}.bars i.now{background:var(--accent)}
+.axis{display:flex;justify-content:space-between;font-size:var(--fs-2xs);color:var(--faint);margin-top:var(--s1);letter-spacing:var(--track)}
+.list{font-size:var(--fs-xs);margin-top:var(--s2)}
+.list div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line-hair);color:var(--dim)}
+.list b{font-weight:400;color:var(--text)}.list .ok{color:var(--ok)}.list .bad{color:var(--danger)}
+.gauge{display:grid;grid-template-columns:auto 1fr;gap:var(--s3);align-items:center;flex:1;min-height:0}
+.gauge svg{width:84px;height:84px;margin:0;flex:none}
+</style></head>
+<body><div class="app">
+  <header class="bar">
+    <div class="brand">JARVIS<small>v0.1 · LOCAL</small></div>
+    <nav><a href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a href="#">Tasks</a><a class="on" href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+    <div class="status"><span><i class="live"></i>link</span><span><i class="live"></i>influx · homelab</span><span><i></i>refresh 10 s</span></div>
+  </header>
+  <div class="tools">
+    <h1>Homelab</h1>
+    <span class="chip">Overview</span><span class="chip on">Homelab</span><span class="chip">Voice</span><span class="chip">+ new</span>
+    <span class="sp"></span>
+    <span class="chip">1h</span><span class="chip on">6h</span><span class="chip">24h</span><span class="chip">7d</span>
+    <button class="btn">Edit layout</button><button class="btn primary">+ Widget</button>
+  </div>
+  <main class="grid">
+    <section class="w c2 focus"><h3>Tokens / s · llama-swap <span class="src int">internal</span></h3><div class="big live">31.4<small>tok/s</small></div><div class="sub">qwen3-8b · q4_k_m · 8k ctx · first token 640 ms</div><svg data-spark="18 22 24 21 27 29 33 31 30 34 36 33 31 29 32 35 31 31" data-live="1" viewBox="0 0 300 70" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="w"><h3>GPU temp <span class="src inf">influx</span></h3><div class="big">61<small>°C</small></div><div class="sub">rtx 3090 · fan 41 %</div><svg data-spark="58 59 61 63 62 60 59 61 64 66 63 61" viewBox="0 0 140 60" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="w"><h3>VRAM <span class="src inf">influx</span></h3><div class="big">14.2<small>/ 24 GB</small></div><div class="sub">2 models resident</div><div class="bars" style="flex:0 0 6px;margin-top:var(--s3)"><i class="hi" style="flex:59"></i><i style="flex:41"></i></div><div class="axis"><span>qwen3-8b 5.1</span><span>coder-7b 4.7</span><span>kv 4.4</span></div><i class="handle"></i></section>
+    <section class="w c2"><h3>STT latency · whisper base.en <span class="src int">internal</span></h3><div class="big">412<small>ms p50</small></div><div class="sub">p95 780 ms · 46 runs · cpu 4×</div><div class="bars" data-bars="380 410 395 640 420 780 402 398 455 412 430 470 410 388 402 415 620 405 399 412 411 430 450 412"></div><div class="axis"><span>−6h</span><span>−4h</span><span>−2h</span><span>now</span></div><i class="handle"></i></section>
+    <section class="w"><h3>Disk free <span class="src int">internal</span></h3><div class="big">42<small>GB</small></div><div class="sub">of 79 · recorder 1.9 GB · models 3.2 GB</div><div class="gauge"><svg viewBox="0 0 120 120" data-arc="53"></svg><div class="list"><div><span>/</span><b>53 %</b></div><div><span>wyoming</span><b>202 MB</b></div><div><span>.storage</span><b>14 MB</b></div></div></div><i class="handle"></i></section>
+
+    <section class="w c2"><h3>Room temperatures <span class="src int">internal</span></h3><table><tr><td>office</td><td><svg data-spark="21.9 21.8 21.6 21.5 21.4 21.4 21.4 21.4" viewBox="0 0 70 14" preserveAspectRatio="none"></svg></td><td class="n">21.4 °C</td></tr><tr><td>kitchen</td><td><svg data-spark="19.2 19.6 20.1 20.8 21.2 21.0 20.7 20.5" viewBox="0 0 70 14" preserveAspectRatio="none"></svg></td><td class="n">20.5 °C</td></tr><tr><td>bedroom</td><td><svg data-spark="18.4 18.3 18.2 18.2 18.1 18.1 18.0 18.0" viewBox="0 0 70 14" preserveAspectRatio="none"></svg></td><td class="n">18.0 °C</td></tr><tr><td>rack</td><td><svg data-spark="27 28 29 31 33 32 31 31" viewBox="0 0 70 14" preserveAspectRatio="none"></svg></td><td class="n">31.0 °C</td></tr></table><i class="handle"></i></section>
+    <section class="w"><h3>Load · 1 / 5 / 15 <span class="src int">internal</span></h3><div class="big">1.84</div><div class="sub">1.62 · 1.40 · 4 cores</div><svg data-spark="0.9 1.1 1.4 2.3 2.8 2.1 1.7 1.6 1.9 2.2 1.8 1.84" viewBox="0 0 140 60" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="w c2"><h3>Power · rack <span class="src inf">influx</span></h3><div class="big">186<small>W</small></div><div class="sub">today 3.9 kWh · €1.12</div><svg data-area="150 160 172 210 240 230 198 184 178 186 190 186" viewBox="0 0 140 60" preserveAspectRatio="none"></svg><i class="handle"></i></section>
+    <section class="w c2"><h3>Tasks / day <span class="src int">internal</span></h3><div class="big">9</div><div class="sub">7 done · 1 error · 1 running · median 48 s</div><div class="bars" data-bars="6 4 8 11 7 9 9" data-now="1"></div><div class="axis"><span>mon</span><span>tue</span><span>wed</span><span>thu</span><span>fri</span><span>sat</span><span>today</span></div><i class="handle"></i></section>
+
+    <section class="w c2"><h3>Calls by tool · 24h <span class="src int">internal</span></h3><div class="list"><div><span>light.turn_on</span><b>41</b></div><div><span>climate.get_state</span><b>27</b></div><div><span>web_search</span><b>12</b></div><div><span>schedule.add</span><b>6</b></div><div><span>code.run_check</span><b>5</b></div><div><span>control_device</span><b>3</b></div></div><i class="handle"></i></section>
+    <section class="w"><h3>Containers <span class="src int">internal</span></h3><div class="list"><div><span>jarvis-core</span><b class="ok">up 6d</b></div><div><span>jarvis-web</span><b class="ok">up 6d</b></div><div><span>whisper</span><b class="ok">up 6d</b></div><div><span>piper</span><b class="ok">up 6d</b></div><div><span>orchestrator</span><b class="ok">up 2d</b></div><div><span>sandbox</span><b class="ok">no net</b></div></div><i class="handle"></i></section>
+    <section class="w"><h3>Wake word <span class="src int">internal</span></h3><div class="big">3<small>today</small></div><div class="sub">hey_jarvis · 0 false · score 0.91</div><div class="bars" data-bars="1 0 2 1 0 3 3" data-now="1"></div><div class="axis"><span>mon</span><span>today</span></div><i class="handle"></i></section>
+  </main>
+</div>
+<script>
+(function(){
+  const N='http://www.w3.org/2000/svg';
+  function pts(data,w,h,pad){const mn=Math.min(...data),mx=Math.max(...data),sp=(mx-mn)||1;return data.map((v,i)=>[pad+i*(w-2*pad)/(data.length-1),h-pad-((v-mn)/sp)*(h-2*pad)]);}
+  document.querySelectorAll('svg[data-spark]').forEach(s=>{const d=s.dataset.spark.split(' ').map(Number);const [w,h]=s.getAttribute('viewBox').split(' ').slice(2).map(Number);const p=pts(d,w,h,2);const live=s.dataset.live;const pl=document.createElementNS(N,'polyline');pl.setAttribute('points',p.map(x=>x.join(',')).join(' '));pl.setAttribute('fill','none');pl.setAttribute('stroke',live?'#3fd8ff':'#7fa3b0');pl.setAttribute('stroke-width','1.2');pl.setAttribute('vector-effect','non-scaling-stroke');s.appendChild(pl);const last=p[p.length-1];if(h>30){const g=document.createElementNS(N,'line');g.setAttribute('x1',0);g.setAttribute('x2',w);g.setAttribute('y1',last[1]);g.setAttribute('y2',last[1]);g.setAttribute('stroke',live?'#3fd8ff':'#17323e');g.setAttribute('stroke-dasharray','2 3');g.setAttribute('vector-effect','non-scaling-stroke');g.setAttribute('opacity','.6');s.appendChild(g);}const c=document.createElementNS(N,'line');c.setAttribute('x1',last[0]);c.setAttribute('x2',last[0]);c.setAttribute('y1',last[1]-4);c.setAttribute('y2',last[1]+4);c.setAttribute('stroke',live?'#3fd8ff':'#cfe6ee');c.setAttribute('stroke-width','2');c.setAttribute('vector-effect','non-scaling-stroke');s.appendChild(c);});
+  document.querySelectorAll('svg[data-area]').forEach(s=>{const d=s.dataset.area.split(' ').map(Number);const [w,h]=s.getAttribute('viewBox').split(' ').slice(2).map(Number);const p=pts(d,w,h,2);const path=document.createElementNS(N,'path');path.setAttribute('d','M'+p.map(x=>x.join(' ')).join(' L ')+` L ${w-2} ${h} L 2 ${h} Z`);path.setAttribute('fill','#0f2029');s.appendChild(path);const pl=document.createElementNS(N,'polyline');pl.setAttribute('points',p.map(x=>x.join(',')).join(' '));pl.setAttribute('fill','none');pl.setAttribute('stroke','#7fa3b0');pl.setAttribute('stroke-width','1.2');pl.setAttribute('vector-effect','non-scaling-stroke');s.appendChild(pl);});
+  document.querySelectorAll('.bars[data-bars]').forEach(b=>{const d=b.dataset.bars.split(' ').map(Number);const mx=Math.max(...d);d.forEach((v,i)=>{const e=document.createElement('i');e.style.height=Math.max(2,Math.round(v/mx*100))+'%';if(v>=mx*.8)e.className='hi';if(b.dataset.now&&i===d.length-1)e.className='now';b.appendChild(e);});});
+  document.querySelectorAll('svg[data-arc]').forEach(s=>{const pct=+s.dataset.arc;const r=50,c=2*Math.PI*r;const mk=(st,da,sw)=>{const e=document.createElementNS(N,'circle');e.setAttribute('cx',60);e.setAttribute('cy',60);e.setAttribute('r',r);e.setAttribute('fill','none');e.setAttribute('stroke',st);e.setAttribute('stroke-width',sw);e.setAttribute('transform','rotate(-90 60 60)');if(da)e.setAttribute('stroke-dasharray',da);return e;};s.appendChild(mk('#0f2029','',6));s.appendChild(mk('#7fa3b0',`${c*pct/100} ${c}`,6));const t=document.createElementNS(N,'text');t.setAttribute('x',60);t.setAttribute('y',66);t.setAttribute('text-anchor','middle');t.setAttribute('fill','#eaf7fb');t.setAttribute('font-family','Barlow Condensed');t.setAttribute('font-size','22');t.setAttribute('font-weight','600');t.textContent=pct+'%';s.appendChild(t);});
+})();
+</script>
+</body></html>

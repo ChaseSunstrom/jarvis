@@ -7,6 +7,7 @@
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
+	import { EmptyState } from '$lib/ui';
 	import {
 		applyStateChanged,
 		friendlyName,
@@ -494,20 +495,21 @@
 				</div>
 			{/if}
 		{:else}
-			<div class="jv-empty" data-testid="empty">
-				<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>
-				{#if status === 'open'}
-					<p class="jv-empty-title">No automations</p>
-					<p class="jv-empty-body">
-						{filter
-							? `Nothing matches “${filter}”.`
-							: 'This backend has no automations configured. Add one in jarvis-core and it will appear here, with its last trigger time.'}
-					</p>
-				{:else}
-					<p class="jv-empty-title">No link to the backend</p>
-					<p class="jv-empty-body">The websocket relay is {status}.</p>
-				{/if}
-			</div>
+			{#if status === 'open'}
+				<EmptyState
+					testid="empty"
+					title="No automations"
+					body={filter
+						? `Nothing matches “${filter}”.`
+						: 'This backend has no automations configured. Add one in jarvis-core and it will appear here, with its last trigger time.'}
+				/>
+			{:else}
+				<EmptyState
+					testid="empty"
+					title="No link to the backend"
+					body={`The websocket relay is ${status}.`}
+				/>
+			{/if}
 		{/each}
 	{/if}
 </section>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JARVIS · Ledger · Chat</title>
+<style>
+@font-face{font-family:"IBM Plex Sans";font-weight:300;src:url(fonts/plex-sans-300.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:400;src:url(fonts/plex-sans-400.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:500;src:url(fonts/plex-sans-500.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;src:url(fonts/plex-mono-400.woff2) format("woff2")}
+:root{
+  /* ── direction B · LEDGER · tokens (inlined) ──────────────────────── */
+  --bg:#0a0c0f; --surface:#0d1013; --raised:#111519;
+  --line:#1f262c; --line-soft:#161b20; --line-hair:#121619;
+  --text:#d9dde2; --text-bright:#f2f4f6; --dim:#8a939c; --faint:#565e66;
+  --accent:#33c6e8; --accent-wash:rgba(51,198,232,.08);
+  --ok:#8fd3b1; --warn:#d9a441; --danger:#e06a5c;
+  --font-sans:"IBM Plex Sans",sans-serif; --font-mono:"IBM Plex Mono",monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:14px; --fs-lg:16px; --fs-xl:22px; --fs-2xl:32px; --fs-display:44px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:0; --dur:200ms; --dur-slow:900ms; --ease:cubic-bezier(.3,.6,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:400 var(--fs-md)/1.55 var(--font-sans);-webkit-font-smoothing:antialiased}
+body{overflow:hidden}
+.app{display:grid;grid-template-rows:auto auto 1fr auto;height:100vh;padding:0 var(--s7)}
+.mast{display:grid;grid-template-columns:1fr auto 1fr;align-items:baseline;padding:var(--s4) 0 var(--s3);border-bottom:1px solid var(--line);font-size:var(--fs-xs);color:var(--dim)}
+.mast .brand{font-weight:500;letter-spacing:.22em;color:var(--text-bright);font-size:var(--fs-sm)}
+.mast .date{text-align:center;font-family:var(--font-mono)}
+.mast .st{text-align:right}
+.mast .st i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin:0 6px 1px 0}
+nav{display:flex;gap:var(--s5);padding:var(--s3) 0;border-bottom:1px solid var(--line-hair);font-size:var(--fs-sm);color:var(--dim)}
+nav a{color:inherit;text-decoration:none;padding-bottom:2px;border-bottom:1px solid transparent}
+nav a.on{color:var(--text-bright);border-bottom-color:var(--accent)}
+.page{display:grid;grid-template-columns:200px minmax(0,680px) 1fr;column-gap:var(--s6);min-height:0;padding-top:var(--s5)}
+.margin{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);border-right:1px solid var(--line-hair);padding-right:var(--s4)}
+.label{font-size:var(--fs-2xs);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);font-family:var(--font-sans);font-weight:500;margin-bottom:var(--s2)}
+/* conversation */
+.conv{display:flex;flex-direction:column;justify-content:flex-end;gap:var(--s5);min-height:0}
+.turn{display:grid;grid-template-columns:1fr;position:relative}
+.turn .t{position:absolute;left:calc(-200px - var(--s6));width:200px;font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);padding-right:var(--s4);text-align:right;top:.35em}
+.turn.you p{color:var(--dim);font-weight:300;font-size:var(--fs-lg)}
+.turn.jarvis p{color:var(--text-bright);font-size:var(--fs-lg);font-weight:400;max-width:60ch}
+.turn.jarvis.live p::after{content:"";display:inline-block;width:2px;height:1em;background:var(--accent);margin-left:2px;vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{to{opacity:0}}
+.calls{margin-top:var(--s2);border-left:1px solid var(--line-soft);padding-left:var(--s3);font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);line-height:1.8}
+.calls b{font-weight:400;color:var(--dim)}
+.calls .ok{color:var(--ok)}
+/* side ledger */
+.side{border-left:1px solid var(--line-hair);padding-left:var(--s6);font-size:var(--fs-xs);color:var(--dim);display:flex;flex-direction:column;gap:var(--s6)}
+.side table{border-collapse:collapse;width:100%}
+.side td{padding:5px 0;border-bottom:1px solid var(--line-hair);vertical-align:baseline}
+.side td.n{text-align:right;font-family:var(--font-mono);color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.side td.n.live{color:var(--accent)}
+.side .fig{font:300 var(--fs-2xl)/1 var(--font-sans);color:var(--text-bright);margin-bottom:var(--s1)}
+.side .fig small{font-size:var(--fs-xs);color:var(--faint);margin-left:var(--s1)}
+/* input */
+.input{display:grid;grid-template-columns:200px minmax(0,680px) 1fr;column-gap:var(--s6);align-items:center;padding:var(--s4) 0 var(--s5);border-top:1px solid var(--line)}
+.input .orb{justify-self:end;width:40px;height:40px;border-radius:50%;border:1px solid var(--line);position:relative;margin-right:var(--s4)}
+.input .orb::after{content:"";position:absolute;inset:14px;border-radius:50%;background:var(--accent);animation:breathe 3.6s var(--ease) infinite}
+@keyframes breathe{0%,100%{transform:scale(.8);opacity:.7}50%{transform:scale(1);opacity:1}}
+.input .field{border-bottom:1px solid var(--line);padding:var(--s2) 0;font-size:var(--fs-lg);color:var(--faint);font-weight:300}
+.input .field span{color:var(--text-bright);font-weight:400}
+.input .hint{font-family:var(--font-mono);font-size:var(--fs-2xs);color:var(--faint);padding-left:var(--s6)}
+.input kbd{font:inherit;color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head>
+<body><div class="app">
+  <header class="mast">
+    <span class="brand">JARVIS</span>
+    <span class="date">Sunday 24 August · 02:41</span>
+    <span class="st"><i></i>link steady · qwen3-8b via llama-swap · whisper base.en · piper alan</span>
+  </header>
+  <nav><a class="on" href="#">Voice</a><a href="#">Devices</a><a href="#">Areas</a><a href="#">Automations</a><a href="#">Tools</a><a href="#">Tasks</a><a href="#">Dashboards</a><a href="#">Code</a><a href="#">Settings</a></nav>
+
+  <main class="page">
+    <aside class="margin">
+      <div class="label">Session 0413</div>
+      <div>kitchen · hands-free</div>
+      <div>started 02:38</div>
+      <div style="margin-top:var(--s5)" class="label">Earlier</div>
+      <div>01:12 lights, hall</div>
+      <div>00:40 weather, tomorrow</div>
+      <div>23:55 timer 9 min</div>
+    </aside>
+
+    <section class="conv">
+      <div class="turn you"><span class="t">02:38:12</span><p>What's the temperature in the office?</p></div>
+      <div class="turn jarvis"><span class="t">02:38:13</span><p>21.4 °C, holding. The radiator has been off since one.</p>
+        <div class="calls"><b>climate.get_state</b> sensor.office_temperature <span class="ok">ok</span> 6 ms</div></div>
+
+      <div class="turn you"><span class="t">02:40:02</span><p>Turn the kitchen lamp to forty percent and remind me at six to take the bread out.</p></div>
+      <div class="turn jarvis"><span class="t">02:40:03</span><p>Kitchen lamp at 40 %. I'll remind you at 18:00 — the bread.</p>
+        <div class="calls"><b>light.turn_on</b> light.kitchen_lamp · brightness_pct 40 <span class="ok">ok</span> 84 ms<br><b>schedule.add</b> 18:00 · notify · “take the bread out” <span class="ok">ok</span> 12 ms</div></div>
+
+      <div class="turn you"><span class="t">02:41:40</span><p>And how long has the coding job been running?</p></div>
+      <div class="turn jarvis live"><span class="t">02:41:41</span><p>Two minutes fourteen. It's on step three of five — wiring the socket status into the offline state — and it will ask you before it pushes</p>
+        <div class="calls"><b>tasks.get</b> task_8f3a <span class="ok">ok</span> 2 ms</div></div>
+    </section>
+
+    <aside class="side">
+      <div><div class="label">Last turn</div><div class="fig">1.27<small>s</small></div>
+        <table><tr><td>wake</td><td class="n">0 ms</td></tr><tr><td>transcription</td><td class="n">412 ms</td></tr><tr><td>first token</td><td class="n live">640 ms</td></tr><tr><td>speech</td><td class="n">210 ms</td></tr><tr><td>throughput</td><td class="n">31 tok/s</td></tr></table></div>
+      <div><div class="label">Touched</div>
+        <table><tr><td>light.kitchen_lamp</td><td class="n">40 %</td></tr><tr><td>sensor.office_temperature</td><td class="n">21.4 °C</td></tr><tr><td>schedule · bread</td><td class="n">18:00</td></tr></table></div>
+      <div><div class="label">Running</div>
+        <table><tr><td>Add an OFFLINE state to the settings screen</td><td class="n live">3 / 5</td></tr><tr><td>Research: whisper-large-v3-turbo on CPU</td><td class="n">1 / 6</td></tr></table></div>
+    </aside>
+  </main>
+
+  <footer class="input">
+    <div class="orb" aria-hidden="true"></div>
+    <div class="field"><span>Say or type</span> — hold space to talk, release to send</div>
+    <div class="hint"><kbd>⌘K</kbd> palette · <kbd>g t</kbd> tasks · <kbd>m</kbd> mute</div>
+  </footer>
+</div></body></html>

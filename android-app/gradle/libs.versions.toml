@@ -20,6 +20,12 @@ onnxruntime = "1.19.2"
 # binding for a phone projecting onto a head unit (as opposed to
 # `app-automotive`, which is for cars running Android Automotive OS itself).
 carApp = "1.4.0"
+# Jetpack Compose, for the generated design-system theme (ui/theme/JarvisTheme.kt,
+# from design/tokens.json). The screens stay View-based; the theme exists so a
+# Composable — the first ones land with the Robolectric screenshot tests — draws
+# from the same tokens as the console and the desktop. The BOM pins every
+# androidx.compose artifact to one release; the compiler ships with Kotlin 2.x.
+composeBom = "2024.12.01"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -38,7 +44,13 @@ onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android"
 androidx-car-app = { module = "androidx.car.app:app", version.ref = "carApp" }
 androidx-car-app-projected = { module = "androidx.car.app:app-projected", version.ref = "carApp" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui" }
+androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

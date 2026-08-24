@@ -1,0 +1,44 @@
+# Changelog
+
+Every milestone in `MILESTONES.md` adds an entry here when it is ticked, in the
+same commit. Format: one heading per release (or `Unreleased`), one line per
+change, newest first, each line naming the milestone it belongs to. Behaviour,
+not diff: what a user or operator can now do, or can no longer be bitten by.
+
+## Unreleased
+
+### Changed
+- The console's palette, type and motion move to Reactor II's values (accent #4fe3ff, Barlow /
+  Space Grotesk / JetBrains Mono, 160/260 ms); Compose is enabled in the Android build for the
+  generated theme (uncompiled here — M08). Jarvis Code, Android and desktop parity tests now read
+  `design/tokens.json` instead of `tokens.ts`.
+
+### Added
+- M02 (component library): `$lib/ui` — 18 token-only components (Button, IconButton, Input,
+  Select, Toggle, Field, Panel, Row, Pill, Toolbar, Tabs, Dialog, SkeletonRows, EmptyState,
+  ErrorState, OfflineState, `ScreenState`, and the `Reactor` instrument), each with a
+  `@component` doc block, a README section, an SSR test and a live demo on `/styleguide`;
+  the eight hand-copied empty states across the console are now one component.
+- M01 (design system): `design/tokens.json` is the single source of truth (Reactor II);
+  `python3 design/build.py` generates `tokens.css`/`tokens.ts` (web), `tokens.py` (desktop),
+  `JarvisTokens.kt` + a Compose `JarvisTheme.kt` + `tokens.xml`/`colors.xml` (Android), with
+  `--check` for drift; `scripts/verify/token_lint.py` (ratchet baseline) fails
+  `make verify-all` on any new hard-coded colour/spacing/type/motion value; `/styleguide`
+  renders every token and the four screen states; Barlow, Space Grotesk and JetBrains Mono
+  are self-hosted; `.claude/skills/jarvis-design-system` + `.claude/rules/design-system.md`
+  bind future sessions. `make tokens`, `make tokens-check`, `make token-lint`.
+- Design: three divergent visual directions for the redesign (Instrument, Ledger, Reactor),
+  each mocked on the chat/voice, live-task and dashboard screens as static HTML with inlined
+  tokens under `docs/design/`, rendered headlessly to `docs/design/shots/` by
+  `docs/design/screenshot.mjs`. Direction C chosen and revised as Reactor II
+  (`docs/design/c2-reactor.html`: the reactor as an instrument, flat panels, sliding-underline
+  tabs, real motion; stills + WebM clips via `screenshot-c2.mjs`). M01/M02 build from it.
+- M00: `make verify-all` and `scripts/verify/` — one check script per milestone; a
+  failing check is the definition of unfinished work. Playwright's port is now
+  `E2E_PORT` so the suite runs beside a live install.
+- Agent-intelligence targets folded in: `docs/AUDIT.md` §10–15 (research engine, coding
+  agent, subagents, memory, notes, user interactions) and milestones M15–M20 with verify
+  scripts `m15-memory.sh` … `m20-subagents.sh`; desktop automation, the phone flag and final
+  integration renumbered M21–M23 (`m21-…`, `m22-…`, `m23-…`).
+- Planning artefacts for the milestone run: `docs/AUDIT.md`, `MILESTONES.md`,
+  `PROCESS.md`, `BLOCKERS.md`, this file.

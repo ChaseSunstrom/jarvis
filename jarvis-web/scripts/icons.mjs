@@ -21,6 +21,7 @@
  * committed files without writing.
  */
 
+import { readFileSync } from 'node:fs';
 import { deflateSync, inflateSync } from 'node:zlib';
 
 /** The art is authored in a 64x64 box; every radius below is in those units. */
@@ -30,16 +31,25 @@ const C = CANVAS / 2;
 /** Corner radius of the backing plate, in canvas units. */
 export const PLATE_RADIUS = 13;
 
+// The two colours the icon needs, read from the generated tokens rather than
+// typed here: design/tokens.json is the only place a colour is typed, and the
+// favicon drifting from the accent is exactly the kind of near-miss nobody sees.
+const _tokensCss = readFileSync(new URL('../src/lib/styles/tokens.css', import.meta.url), 'utf8');
+const _token = (name) => {
+	const found = _tokensCss.match(new RegExp(`^\\t--${name}: (.+);$`, 'm'));
+	if (!found) throw new Error(`--${name} is not in tokens.css`);
+	return found[1].trim().toLowerCase();
+};
 export const PALETTE = {
 	/** --jv-bg: the plate, so the reactor reads on a light tab strip too. */
-	bg: '#04070c',
+	bg: _token('jv-bg'),
 	/** --jv-accent: rings, ticks, arcs, glow. */
-	accent: '#3fd8ff',
-	/** The inner rim, one step brighter than the accent. */
-	rim: '#7fe9ff',
-	/** The core. */
+	accent: _token('jv-accent'),
+	/** --jv-accent-lift: the inner rim, the lit edge one step brighter than the accent. */
+	rim: _token('jv-accent-lift'),
+	/** The core and the hot centre: the icon's own two highlights, brighter than
+	 * any text token because they are light, not text. Icon-only by design. */
 	core: '#aef2ff',
-	/** The hot centre. */
 	hot: '#ffffff'
 };
 

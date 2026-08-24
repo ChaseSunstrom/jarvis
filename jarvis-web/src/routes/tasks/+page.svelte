@@ -19,6 +19,7 @@
 	import { isUnsupported, type Subscription } from '$lib/jarvisClient';
 	import { staggerStyle } from '$lib/motion';
 	import { toasts } from '$lib/toast';
+	import { EmptyState } from '$lib/ui';
 	import {
 		TASK_EVENTS,
 		activeTasks,
@@ -246,20 +247,13 @@
 {#if loading}
 	<Skeleton rows={3} />
 {:else if !tasks.length}
-	<div class="jv-empty" data-testid="tasks-empty">
-		<span class="jv-empty-mark" aria-hidden="true">[ ]</span>
-		<p class="jv-empty-title">Nothing running</p>
-		<p class="jv-empty-body">
-			Research runs, scheduled jobs and anything else slow enough to ask about will appear here,
-			with where it has got to. Jarvis puts them on this list himself — there is nothing to start
-			from the console.
-		</p>
-	</div>
+	<EmptyState
+		testid="tasks-empty"
+		title="Nothing running"
+		body="Research runs, scheduled jobs and anything else slow enough to ask about will appear here, with where it has got to. Jarvis puts them on this list himself — there is nothing to start from the console."
+	/>
 {:else if !matching.length}
-	<div class="jv-empty" data-testid="tasks-none-matching">
-		<span class="jv-empty-mark" aria-hidden="true">[ ]</span>
-		<p class="jv-empty-title">No task matches “{filter}”</p>
-	</div>
+	<EmptyState testid="tasks-none-matching" title={`No task matches “${filter}”`} />
 {:else}
 	{#if live.length}
 		<section aria-labelledby="tasks-live">

@@ -5,6 +5,7 @@
 	import { staggerStyle } from '$lib/motion';
 	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import { EmptyState } from '$lib/ui';
 	import {
 		areaForEntity,
 		areaKey,
@@ -253,15 +254,13 @@
 	</section>
 {:else}
 	{#if !loading}
-		<div class="jv-empty" data-testid="empty">
-			<span class="jv-empty-mark" aria-hidden="true">[ ∅ ]</span>
-			<p class="jv-empty-title">{status === 'open' ? 'No areas yet' : 'No link to the backend'}</p>
-			<p class="jv-empty-body">
-				{status === 'open'
-					? 'Areas are how voice commands like “turn off the kitchen” resolve. Create one above, then assign entities to it.'
-					: `The websocket relay is ${status}.`}
-			</p>
-		</div>
+		<EmptyState
+			testid="empty"
+			title={status === 'open' ? 'No areas yet' : 'No link to the backend'}
+			body={status === 'open'
+				? 'Areas are how voice commands like “turn off the kitchen” resolve. Create one above, then assign entities to it.'
+				: `The websocket relay is ${status}.`}
+		/>
 	{/if}
 {/each}
 

@@ -10,19 +10,21 @@
 //     second cascade; capping the delay means the effect reads as one wave and
 //     the last row is never left waiting.
 
-/** Milliseconds between one staggered row starting and the next. */
-export const STAGGER_STEP_MS = 26;
+import { tokenMs } from './tokens';
 
-/** The most any row will wait, however far down the list it is. */
-export const STAGGER_CAP_MS = 320;
+/** Milliseconds between one staggered row starting and the next (`--jv-stagger-step`). */
+export const STAGGER_STEP_MS = tokenMs('--jv-stagger-step');
 
-/** Durations, mirroring `--jv-dur-*`. */
+/** The most any row will wait, however far down the list it is (`--jv-stagger-cap`). */
+export const STAGGER_CAP_MS = tokenMs('--jv-stagger-cap');
+
+/** Durations, read from `--jv-dur-*` so a token change is the only change. */
 export const DURATION = {
-	instant: 90,
-	fast: 120,
-	base: 180,
-	slow: 320,
-	pulse: 620
+	instant: tokenMs('--jv-dur-instant'),
+	fast: tokenMs('--jv-dur-fast'),
+	base: tokenMs('--jv-dur-base'),
+	slow: tokenMs('--jv-dur-slow'),
+	pulse: tokenMs('--jv-dur-pulse')
 } as const;
 
 /**

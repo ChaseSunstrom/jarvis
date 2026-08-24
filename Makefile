@@ -58,6 +58,19 @@ test-android: ## the Kotlin logic mirrors (pure python, no SDK)
 test: lint test-python ## everything runnable without hardware or models
 	@echo "OFFLINE TEST SUITE PASSED"
 
+# --- design system ------------------------------------------------------------
+.PHONY: tokens
+tokens: ## regenerate every surface's tokens from design/tokens.json
+	python3 design/build.py
+
+.PHONY: tokens-check
+tokens-check: ## fail if a generated token file is stale or the orb palette drifted
+	python3 design/build.py --check
+
+.PHONY: token-lint
+token-lint: ## fail on a hard-coded colour/spacing/type/motion value in app code (ratchet: design/token-lint.baseline.json)
+	python3 scripts/verify/token_lint.py
+
 # --- evals ------------------------------------------------------------------
 .PHONY: eval-routing
 eval-routing: ## routing table + its two mirrors (offline)
@@ -113,3 +126,7 @@ verify: ## the full gate: offline suite, then the hardware-backed checks
 	-$(MAKE) egress-audit
 	-$(MAKE) eval-persona
 	@echo "See docs/verification.md for the on-device (Pixel, head unit) gates."
+
+.PHONY: verify-all
+verify-all: ## the whole target state, one script per milestone (scripts/verify/); fails on any error
+	bash scripts/verify/all.sh

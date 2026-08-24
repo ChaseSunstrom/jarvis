@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# M15 — memory: the existing store gains automatic extraction, export, wipe, a
+# "why" trace and a console UI; a scripted eval proves store → restart →
+# retrieve → forget → export → wipe end to end.
+source "$(dirname "$0")/lib.sh"
+verify_begin "M15" "memory: durable, transparent, user-owned"
+use_venv
+M=jarvis-core/jarvis/integrations/memory/__init__.py
+
+require_file "$M"
+check "automatic extraction of durable facts after a turn" grep -qiE 'def .*extract' "$M"
+check "extracted entries are marked as such" grep -q '"extracted"' "$M"
+check "export: everything in one file" grep -qE 'def .*export' "$M"
+check "wipe: everything, including the vector sidecar" grep -qE 'def .*wipe' "$M"
+check "REST: /api/memory/export" grep -q '/api/memory/export' jarvis-core/jarvis/api/rest.py
+check "WS: jarvis/memory/list" grep -q '"jarvis/memory/list"' jarvis-core/jarvis/api/websocket.py
+check "the turn records which memory entries it used (memory_used)" grep -q 'memory_used' jarvis-core/jarvis/llm/agent.py
+check_not "research no longer writes reports into memory (notes own that)" grep -n '_remember' jarvis-core/jarvis/integrations/research/__init__.py
+require_file jarvis-web/src/routes/memory/+page.svelte
+check "console memory route can export and wipe" grep -qE 'export' jarvis-web/src/routes/memory/+page.svelte
+check "mock backend serves jarvis/memory/*" grep -q 'jarvis/memory/' tests/web/mock-ha.mjs
+require_file jarvis-core/tests/test_memory.py
+check_sh "memory unit tests" 'cd jarvis-core && python3 -m pytest tests/test_memory.py tests/test_memory_vectors.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+require_file evals/memory_eval.py
+check_sh "scripted eval: store → restart → retrieve → forget → export → wipe (exit code)" \
+    'timeout 900 python3 evals/memory_eval.py --out .verify/memory 2>&1 | tail -6'
+require_file jarvis-web/e2e/memory.spec.ts
+ensure_web_deps
+ensure_web_build
+run_playwright "memory UI e2e" e2e/memory.spec.ts
+verify_end
