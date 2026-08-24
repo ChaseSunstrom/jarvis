@@ -63,6 +63,18 @@ export function isChartType(value: unknown): value is ChartType {
 export const AGGREGATES = ['last', 'mean', 'min', 'max', 'sum', 'count'] as const;
 export type Aggregate = (typeof AGGREGATES)[number];
 
+/**
+ * Sources the console knows how to talk about in the picker.
+ *
+ * The list is not a gate — a backend may serve any source name and the picker
+ * shows whatever it is told — it is what to SAY about the two that ship, so an
+ * unconfigured InfluxDB reads as "not set up yet" rather than as broken.
+ */
+export const SOURCE_NOTES: Record<string, string> = {
+	internal: 'Jarvis itself: entity history, this host, and the assistant’s own work.',
+	influx: 'An InfluxDB you already run. Configure it under metrics: sources: influx.'
+};
+
 /** The windows the range switch offers. */
 export const RANGES = ['1h', '6h', '24h', '7d'] as const;
 export type Range = (typeof RANGES)[number];

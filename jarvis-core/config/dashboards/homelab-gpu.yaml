@@ -1,0 +1,74 @@
+# The worked example for an InfluxDB you already run.
+#
+# Homelabs measure things — a GPU's temperature, the rack's power draw, a NAS's
+# disk — and those numbers are usually already in an InfluxDB. This is what
+# graphing them beside Jarvis's own looks like.
+#
+# It will draw "cannot reach it" on every widget until `metrics: sources:
+# influx:` is configured (see docs/metrics.md), which is the honest thing for it
+# to do: an empty chart with no explanation reads as zero.
+#
+# The series keys are `measurement.field`, which is what your database calls
+# them. Change them to match yours — `python3 scripts/check-influx.py` lists
+# what is in the bucket.
+id: homelab-gpu
+title: Homelab · GPU and power
+range: 24h
+widgets:
+  - id: gpu-temp
+    title: GPU temperature
+    type: line
+    source: influx
+    series: [gpu.temp]
+    aggregate: mean
+    x: 0
+    y: 0
+    w: 6
+    h: 3
+
+  - id: gpu-power
+    title: GPU power
+    type: area
+    source: influx
+    series: [gpu.power_draw]
+    aggregate: mean
+    x: 6
+    y: 0
+    w: 6
+    h: 3
+
+  - id: rack-power
+    title: Rack draw
+    type: stat
+    source: influx
+    series: [ups.watts]
+    aggregate: last
+    x: 0
+    y: 3
+    w: 3
+    h: 2
+
+  - id: gpu-memory
+    title: VRAM used
+    type: gauge
+    source: influx
+    series: [gpu.memory_percent]
+    aggregate: last
+    x: 3
+    y: 3
+    w: 3
+    h: 2
+
+  # Jarvis's own throughput beside the hardware running it: the two questions
+  # are asked together ("is it slow, and is the box hot?") and answering them on
+  # two screens is how nobody answers them at all.
+  - id: throughput
+    title: Model first token
+    type: line
+    source: internal
+    series: [jarvis.first_token_ms]
+    aggregate: mean
+    x: 6
+    y: 3
+    w: 6
+    h: 2

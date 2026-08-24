@@ -708,6 +708,16 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	/** What can be graphed, as `jarvis/metrics/sources` describes it. */
 	const metricSources = [
 		{
+			// A source that is DOWN, on purpose: a dashboard with six widgets and
+			// one dead source should draw five graphs and one honest "cannot reach
+			// it", and that path has to be exercised somewhere.
+			name: 'influx',
+			description: 'InfluxDB at http://127.0.0.1:8086',
+			healthy: false,
+			detail: 'nothing answered at http://127.0.0.1:8086. Check INFLUX_URL.',
+			series: []
+		},
+		{
 			name: 'internal',
 			description: 'Jarvis itself: entity history, this host, and the assistant’s own work.',
 			healthy: true,

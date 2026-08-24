@@ -14,6 +14,11 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   `design/tokens.json` instead of `tokens.ts`.
 
 ### Added
+- M06 (InfluxDB): `metrics/sources/influx.py` reads an InfluxDB the operator already runs —
+  it works out from `/health` and `/ping` whether it is 1.x (InfluxQL) or 2.x/3.x (Flux),
+  asks the server for the schema, keeps the token in a header, and never writes. Proven
+  offline against a fake of each generation; `scripts/check-influx.py` is the live check.
+  A `homelab-gpu` example dashboard ships.
 - M05 (dashboards): `jarvis/metrics/` defines one shape for anything graphable and ships the
   `internal` source — the recorder's entity history, this host's load/memory/disk, and counters
   for turns, tool calls and task outcomes; `integrations/dashboards/` stores layouts per token

@@ -300,6 +300,23 @@ they are the only places that particular bug can come back.
 | `./config` is writable by the uid the image runs as | Containerised | the job writes and removes a probe file from inside jarvis-core, as uid 10003, on the real bind mount |
 | `OLLAMA_URL` and `OLLAMA_MODEL` reach the agent rather than being decoration | Automated + Containerised | `test_packaging.py` reads the wiring; the job hands both a sentinel and requires the startup log to echo them back |
 
+### Dashboards and metrics
+
+| Claim | Level | Proof |
+|---|---|---|
+| A data source never invents a point: a window with nothing recorded is a gap, not a zero | Automated | `cd jarvis-core && python3 -m pytest tests/test_metrics.py -q` · the console's half: `cd jarvis-web && npx vitest run src/lib/dashboards` |
+| A query is downsampled to the step it was asked for, and says which aggregate it used | Automated | the same |
+| The internal source graphs entity history, this host, and Jarvis's own counters | Automated | `tests/test_metrics.py` |
+| A dashboard belongs to the token that saved it; one token can neither read nor overwrite another's | Automated | `cd jarvis-core && python3 -m pytest tests/test_dashboards.py -q` |
+| A layout survives a restart | Automated | the same (`test_a_layout_survives_a_restart`) |
+| The layout the console writes is the layout the server accepts | Automated | one contract, both suites: `tests/contracts/dashboard_layout.json` |
+| Widgets can be added, resized, moved, swapped and removed — and it sticks | Automated | `cd jarvis-web && E2E_PORT=8299 npx playwright test e2e/dashboards.spec.ts` |
+| Six chart types draw, and a gap breaks the line | Automated | the same spec |
+| The InfluxDB adapter speaks 1.x InfluxQL and 2.x Flux, and works out which it is talking to | Automated *against a fake of each generation* | `cd jarvis-core && python3 -m pytest tests/test_metrics_influx.py -q` |
+| The token never appears in a URL | Automated | the same (`test_the_token_never_appears_in_a_url`) |
+| An InfluxDB the operator actually runs is reachable and queryable | **Scripted** | `python3 scripts/check-influx.py` — needs their database; nothing on a build machine can prove it |
+| The whole milestone | Automated | `bash scripts/verify/m05-dashboards.sh` · `bash scripts/verify/m06-influx.sh` |
+
 ### The design system
 
 | Claim | Level | Proof |

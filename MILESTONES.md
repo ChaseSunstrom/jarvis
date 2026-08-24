@@ -103,7 +103,7 @@ files both would touch, which the integrating session merges.
     mock; `e2e/dashboards.spec.ts`; `tests/test_dashboards.py`, `tests/test_metrics.py`.
   - Verify: `bash scripts/verify/m05-dashboards.sh`
 
-- [ ] **M06 — InfluxDB data-source adapter** · size M · deps M05
+- [x] **M06 — InfluxDB data-source adapter** · size M · deps M05
   - Scope: `metrics/sources/influx.py` detecting 1.x vs 2.x from `/health` / `/ping`, InfluxQL
     via `/query` and Flux via `/api/v2/query`, token in the `Authorization` header, series
     listing (measurements / fields / tags), range + step → query; `metrics.sources` config;

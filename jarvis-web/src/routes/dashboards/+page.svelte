@@ -15,7 +15,14 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { openConnection, type Connection, type ConnectionStatus } from '$lib/connection';
 	import type { MetricSource } from '$lib/jarvisClient';
-	import { CHART_TYPES, CHART_TYPE_NAMES, RANGES, type ChartType, type Range } from '$lib/dashboards/chartTypes';
+	import {
+		CHART_TYPES,
+		CHART_TYPE_NAMES,
+		RANGES,
+		SOURCE_NOTES,
+		type ChartType,
+		type Range
+	} from '$lib/dashboards/chartTypes';
 	import {
 		COLUMNS,
 		addWidget,
@@ -240,7 +247,12 @@
 								}))}
 							/>
 						</Field>
-						<Field label="Source">
+						<Field
+							label="Source"
+							hint={SOURCE_NOTES[newSource] ??
+								sources.find((one) => one.name === newSource)?.description ??
+								''}
+						>
 							<Select
 								bind:value={newSource}
 								testid="new-source"
