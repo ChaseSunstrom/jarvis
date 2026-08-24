@@ -730,13 +730,17 @@ def test_the_shipped_model_sensor_keeps_its_path_when_the_url_is_overridden(monk
     """The regression itself, asserted against the file that shipped it."""
     from jarvis import config as config_module
 
-    monkeypatch.setenv("OLLAMA_URL", "http://192.168.1.174:9000/v1")
+    # `LLM_URL` is the name the shipped config reads now; the failure it
+    # guards against is the same one — a base URL set by an operator, with the
+    # sensor's path lost, so the poll hit the bare base and 404'd every thirty
+    # seconds.
+    monkeypatch.setenv("LLM_URL", "http://192.168.1.174:9000")
     config_dir = Path(__file__).resolve().parents[1] / "config"
     loaded = config_module.load_yaml(config_dir / "configuration.yaml", config_dir, {})
     resources = [entry["resource"] for entry in loaded["rest"] if "resource" in entry]
-    assert "http://192.168.1.174:9000/v1/api/ps" in resources, resources
+    assert "http://192.168.1.174:9000/v1/models" in resources, resources
     # The bare base is exactly what it used to poll, and what returned the 404.
-    assert "http://192.168.1.174:9000/v1" not in resources
+    assert "http://192.168.1.174:9000" not in resources
 
 
 # A REACHABLE server answering the wrong thing is the same kind of news as an

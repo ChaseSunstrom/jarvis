@@ -109,8 +109,12 @@ services:
       # Set `backend: openai` in the `llm:` block of configuration.yaml as
       # well; the url alone only switches wires when it ends in `/v1`. See
       # docs/openai-compat.md.
-      - OLLAMA_URL=${LLM_URL:-${OLLAMA_URL:-http://127.0.0.1:11434}}
-      - OLLAMA_MODEL=${LLM_MODEL:-${OLLAMA_MODEL:-qwen3:8b}}
+      # `configuration.yaml` reads these two. Compatibility with an install
+      # that only ever set OLLAMA_URL/OLLAMA_MODEL lives in the defaults here,
+      # rather than in a second pair of variables inside the container that
+      # nothing would read.
+      - LLM_URL=${LLM_URL:-${OLLAMA_URL:-http://127.0.0.1:11434}}
+      - LLM_MODEL=${LLM_MODEL:-${OLLAMA_MODEL:-qwen3:8b}}
       # The proxy's key, if it has one. Ignored on the Ollama wire, so it is
       # safe to leave set.
       - LLM_API_KEY=${LLM_API_KEY:-}

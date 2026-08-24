@@ -60,9 +60,17 @@ def safe_repo_dir(workspace: Path, repo: str) -> Path:
 
 
 def build_command(model: str, instruction: str) -> list[str]:
+    """The coding agent's command line.
+
+    The model name is passed through as the server calls it. It used to be
+    prefixed `ollama/`, which is a provider name — on a house running llama-swap
+    or vLLM behind an OpenAI-compatible URL that prefix names a provider that is
+    not there, and opencode fails to resolve a model that exists. The provider
+    belongs in opencode's own config, next to the base URL.
+    """
     return [
         "opencode", "run",
-        "--model", f"ollama/{model}",
+        "--model", model,
         instruction,
     ]
 

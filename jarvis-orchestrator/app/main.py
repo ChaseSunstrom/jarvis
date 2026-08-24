@@ -23,7 +23,20 @@ from .fanout import fan_out
 from .opencode import CodeJobRunner
 from .sandbox_queue import SandboxQueue
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+# The OpenAI-compatible model endpoint — llama-swap, llama.cpp's server, vLLM,
+# LM Studio, LiteLLM. The same URL jarvis-core uses, because two components
+# talking two dialects to one server is how a house ends up with a working
+# assistant and a delegate tool that answers 404. OLLAMA_URL is still read as a
+# fallback for an install that has not been repointed yet, with /v1 appended.
+def _model_base_url() -> str:
+    explicit = os.environ.get("LLM_URL", "").rstrip("/")
+    if explicit:
+        return explicit
+    legacy = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+    return legacy if legacy.endswith("/v1") else f"{legacy}/v1"
+
+
+LLM_URL = _model_base_url()
 PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "qwen3:8b")
 CODER_MODEL = os.environ.get("CODER_MODEL", "qwen2.5-coder:7b")
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
@@ -79,7 +92,7 @@ class DelegateBody(BaseModel):
 
 @app.post("/delegate", dependencies=[Depends(require_token)])
 async def delegate(body: DelegateBody):
-    return await fan_out(body.tasks, OLLAMA_URL, PLANNER_MODEL)
+    return await fan_out(body.tasks, LLM_URL, PLANNER_MODEL)
 
 
 # ------------------------------------------------------------ code tasks

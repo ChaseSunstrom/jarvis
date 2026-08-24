@@ -151,11 +151,11 @@ llm:
   # or another box on the LAN works, and OLLAMA_URL in .env is how you say so.
   # This was hardcoded to loopback, so setting that variable did nothing at all
   # and the log cheerfully reported url=http://127.0.0.1:11434 either way.
-  url: !env_var OLLAMA_URL http://127.0.0.1:11434
+  url: !env_var LLM_URL http://127.0.0.1:11434
   # The chat model. PLANNER_MODEL/CODER_MODEL in .env are the orchestrator's,
   # not this one — setting those and expecting the conversation to change is an
   # easy and unrewarding mistake to make.
-  model: !env_var OLLAMA_MODEL qwen3:8b
+  model: !env_var LLM_MODEL qwen3:8b
   persona_file: prompts/jarvis.txt
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.
@@ -385,22 +385,23 @@ template:
 # REST — any HTTP API as entities.
 # ---------------------------------------------------------------------------
 # One request per block feeds every entity in it. This example watches the
-# local Ollama so you can see at a glance whether the model is warm, which is
-# the difference between a 300 ms reply and a 6 s one.
+# model server so you can see at a glance whether it is answering at all.
 rest:
-  # Same OLLAMA_URL as the `llm:` block above — these two pointing at
-  # different places is how you get an assistant that talks to a model while
-  # reporting it offline.
-  - resource: !env_var OLLAMA_URL http://127.0.0.1:11434/api/ps
+  # Same LLM_URL as the `llm:` block above — these two pointing at different
+  # places is how you get an assistant that talks to a model while reporting it
+  # offline. `/v1/models` is the one endpoint every OpenAI-compatible server
+  # serves (llama-swap, llama.cpp, vLLM, LM Studio, LiteLLM) and Ollama serves
+  # it too, so this readout does not assume which one you run.
+  - resource: !env_url LLM_URL http://127.0.0.1:11434 /v1/models
     scan_interval: 30
     method: GET
     sensor:
-      - name: Ollama Loaded Model
+      - name: Model Server Models
         value_template: >-
-          {{ (value_json.models | first).name if value_json.models else 'idle' }}
-        json_attributes: [models]
+          {{ (value_json.data | map(attribute='id') | first) if value_json.data else 'none' }}
+        json_attributes: [data]
     binary_sensor:
-      - name: Ollama Up
+      - name: Model Server Up
         value_template: "{{ value_json is defined and value_json is not none }}"
         device_class: connectivity
 

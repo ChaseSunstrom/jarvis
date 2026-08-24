@@ -22,8 +22,37 @@ check "check-model-server.py recognises llama-swap" grep -qi 'llama-swap' script
 check "e2e-smoke probes /v1/models, not /api/tags" grep -q '/v1/models' scripts/e2e-smoke.sh
 check_not "e2e-smoke no longer assumes Ollama" grep -n '/api/tags' scripts/e2e-smoke.sh
 check "orchestrator fan-out uses /v1/chat/completions" grep -q '/v1/chat/completions' jarvis-orchestrator/app/fanout.py
-check_not "orchestrator no longer calls Ollama-native /api/chat" grep -rn '/api/chat' jarvis-orchestrator/app
-check_not "orchestrator no longer hardcodes the ollama/ model prefix" grep -rn 'ollama/' jarvis-orchestrator/app
+# Code, not prose: the modules explain what they used to do, and a check that
+# cannot tell a comment from a call would forbid the explanation.
+check_sh_not "orchestrator no longer calls Ollama-native /api/chat" \
+    'python3 - <<'"'"'PY'"'"'
+import ast, pathlib, sys
+hits = []
+for path in pathlib.Path("jarvis-orchestrator/app").rglob("*.py"):
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "/api/chat" in node.value and node.col_offset >= 0:
+                # A docstring is a statement of its own; a URL is not.
+                hits.append(f"{path}:{node.lineno}")
+        if isinstance(node, ast.JoinedStr):
+            text = "".join(v.value for v in node.values if isinstance(v, ast.Constant))
+            if "/api/chat" in text:
+                hits.append(f"{path}:{node.lineno}")
+docstrings = set()
+for path in pathlib.Path("jarvis-orchestrator/app").rglob("*.py"):
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            doc = ast.get_docstring(node, clean=False)
+            if doc and "/api/chat" in doc:
+                docstrings.add(f"{path}:{node.body[0].lineno}")
+real = [h for h in hits if h not in docstrings]
+print("\n".join(real))
+sys.exit(0 if real else 1)
+PY'
+check_sh_not "orchestrator no longer hardcodes the ollama/ model prefix" \
+    'grep -rn "\"ollama/\|f\"ollama/\|'"'"'ollama/" jarvis-orchestrator/app'
 check_sh "llm client + tool-call tests" \
     'cd jarvis-core && python3 -m pytest tests/test_openai_compat.py tests/test_tool_call_recovery.py tests/test_narrated_tool_calls.py tests/test_llm.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
 check_sh "local-only guard tests" 'cd jarvis-core && python3 -m pytest tests/test_llm_local_only.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'

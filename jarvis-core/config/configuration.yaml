@@ -157,14 +157,34 @@ voice:
 # LLM — the local model that runs the conversation.
 # ---------------------------------------------------------------------------
 llm:
-  # Ollama usually runs on the host, but it does not have to — an LXC container
-  # or another box on the LAN works, and OLLAMA_URL in .env is how you say so.
-  url: !env_var OLLAMA_URL http://127.0.0.1:11434
-  # The chat model. PLANNER_MODEL/CODER_MODEL in .env are the orchestrator's,
-  # not this one — setting those and expecting the conversation to change is an
-  # easy and unrewarding mistake to make. The console offers whatever Ollama
-  # reports it has as a dropdown.
-  model: !env_var OLLAMA_MODEL qwen3:8b
+  # Where the model is. `LLM_URL` in .env is the one to set: a base URL ending
+  # in /v1 for anything OpenAI-compatible — llama-swap, llama.cpp's server,
+  # vLLM, LM Studio, LiteLLM — or an Ollama base URL for Ollama's own wire.
+  #
+  # The model server does not have to be on this box: an LXC container or
+  # another machine on the LAN is fine, and this is how you say so. It DOES
+  # have to be yours; see `local_only:` below.
+  #
+  # `OLLAMA_URL` is still read when `LLM_URL` is unset, so an install that
+  # never heard of this key keeps working.
+  url: !env_var LLM_URL http://127.0.0.1:11434
+  # The chat model, named as YOUR server names it. With llama-swap that is the
+  # id in its config; with Ollama it is the tag. PLANNER_MODEL/CODER_MODEL in
+  # .env are the orchestrator's, not this one — setting those and expecting the
+  # conversation to change is an easy and unrewarding mistake to make.
+  model: !env_var LLM_MODEL qwen3:8b
+
+  # Refuse a model server that is not yours.
+  #
+  # Nothing in the code stops `url:` pointing at a cloud endpoint, and "100%
+  # local" is the promise this project is built on — so this checks it rather
+  # than trusting it. On, the URL must resolve to a loopback, private (RFC
+  # 1918), link-local or CGNAT/Tailscale address; anything public is refused at
+  # startup with the address it resolved to.
+  #
+  # Turn it off only if you deliberately run a model through a public relay you
+  # own, and know that is what you are doing.
+  local_only: true
 
   # Which wire to speak. Left unset it is inferred from the url, so an install
   # that never heard of this setting keeps the behaviour it had.
@@ -901,32 +921,31 @@ mqtt:
 # will actually ask — "is the model loaded, and is this box healthy?" That is
 # the whole test for what belongs in a default configuration.
 rest:
-  # Same OLLAMA_URL as the `llm:` block above — these two pointing at
+  # Same model server as the `llm:` block above — these two pointing at
   # different places is how you get an assistant that talks to a model while
   # reporting it offline.
   #
-  # `!env_url`, not `!env_var`: OLLAMA_URL is a BASE url (the `llm:` block
-  # requires that), and `/api/ps` has to be appended to it. Written with
+  # `!env_url`, not `!env_var`: LLM_URL is a BASE url (the `llm:` block
+  # requires that), and the path has to be appended to it. Written with
   # `!env_var` the path survived only in the default, so anyone who actually
-  # set the variable polled the base and got a 404 every thirty seconds —
-  # `GET http://host:9000/v1` against an OpenAI-compatible server, with a
-  # twenty-frame traceback each time.
+  # set the variable polled the base and got a 404 every thirty seconds.
   #
-  # THIS SENSOR IS OLLAMA-ONLY. `/api/ps` ("which model is resident") has no
-  # OpenAI equivalent — `/v1/models` lists what a server *offers*, not what it
-  # has loaded. On LiteLLM, vLLM, llama-swap or llama.cpp, delete this block or
-  # point it at something your router actually serves; the assistant does not
-  # use it, it is a dashboard readout.
-  - resource: !env_url OLLAMA_URL http://127.0.0.1:11434 /api/ps
+  # `/v1/models` is the one endpoint every OpenAI-compatible server serves —
+  # llama-swap, llama.cpp, vLLM, LM Studio, LiteLLM and Ollama alike. It lists
+  # what the server OFFERS rather than what is resident: "which model is
+  # loaded" has no OpenAI equivalent, and a readout that says what you can ask
+  # for is the honest version of the question. The assistant does not use this;
+  # it is a dashboard readout.
+  - resource: !env_url LLM_URL http://127.0.0.1:11434 /v1/models
     scan_interval: 30
     method: GET
     sensor:
-      - name: Ollama Loaded Model
+      - name: Model Server Models
         value_template: >-
-          {{ (value_json.models | first).name if value_json.models else 'idle' }}
-        json_attributes: [models]
+          {{ (value_json.data | map(attribute='id') | first) if value_json.data else 'none' }}
+        json_attributes: [data]
     binary_sensor:
-      - name: Ollama Up
+      - name: Model Server Up
         value_template: "{{ value_json is defined and value_json is not none }}"
         device_class: connectivity
 

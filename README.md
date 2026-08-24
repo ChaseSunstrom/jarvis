@@ -155,6 +155,22 @@ for anything dangerous:
 
 The full model is [`docs/security.md`](docs/security.md).
 
+## The model server
+
+Jarvis talks to one OpenAI-compatible endpoint, set with `LLM_URL`. This house
+runs **llama-swap**: one `/v1` in front of llama.cpp that swaps the loaded model
+per request, so the conversation, the planner and the coder can be three
+different models without three servers. Anything else that serves `/v1` works
+the same way — llama.cpp's own server, vLLM, LM Studio, LiteLLM — and Ollama's
+native wire is still spoken when `LLM_URL` is an Ollama base URL.
+
+It has to be a machine you own: `llm: local_only:` resolves the URL at startup
+and refuses a public address, because "100 % local" is the whole point.
+
+```bash
+python3 scripts/check-model-server.py http://127.0.0.1:8080/v1
+```
+
 ## Honest limits
 
 - **The head unit belongs to Google.** A third-party app cannot be the voice

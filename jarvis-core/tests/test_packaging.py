@@ -491,8 +491,8 @@ async def test_the_default_boots_into_an_empty_house_that_is_still_alive(
 
         # Present, because they need nothing but the software itself.
         for entity_id in (
-            "sensor.ollama_loaded_model",
-            "binary_sensor.ollama_up",
+            "sensor.model_server_models",
+            "binary_sensor.model_server_up",
             "sensor.disk_free",
             "sensor.load_average",
             "sensor.jarvis_uptime",
@@ -623,7 +623,7 @@ async def test_unreachable_services_degrade_instead_of_failing(example_copy: Pat
     jarvis = await _boot(example_copy)
     try:
         # The REST block points at Ollama, which is not running here.
-        assert jarvis.states.get("sensor.ollama_loaded_model").state == "unavailable"
+        assert jarvis.states.get("sensor.model_server_models").state == "unavailable"
         # ...and the rest of the house is unaffected.
         assert jarvis.states.get("light.kitchen_lights").state == "on"
     finally:

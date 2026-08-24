@@ -50,8 +50,12 @@ before calling :func:`async_setup`.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 import time
+from urllib.parse import urlparse
+
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -304,11 +308,77 @@ def _build_model_client(
 build_model_client = _build_model_client
 
 
+
+# ---------------------------------------------------------------------------
+# "100% local", checked rather than trusted
+# ---------------------------------------------------------------------------
+
+#: Networks a model server may live on: this machine, the LAN, a link-local
+#: address, or the CGNAT range Tailscale and similar overlays use. Everything
+#: else is somebody else's computer.
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def is_local_url(url: str) -> tuple[bool, str]:
+    """Does this URL point at a machine the operator plausibly owns?
+
+    Returns `(ok, why not)`. A name that does not resolve is NOT treated as a
+    failure: a compose service that has not started yet is the ordinary case on
+    a first boot, and refusing to start because DNS was not ready would be a
+    worse bug than the one this prevents.
+    """
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError as err:
+        return False, f"{url!r} is not a URL: {err}"
+    if not host:
+        return False, f"{url!r} names no host"
+    if host in ("localhost", "host.docker.internal") or host.endswith(".local"):
+        return True, ""
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except (socket.gaierror, UnicodeError):
+        # Unresolvable today, and possibly a container that is still starting.
+        return True, ""
+    for address in addresses:
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:  # pragma: no cover
+            continue
+        if not any(parsed in network for network in _PRIVATE_NETWORKS):
+            return False, (
+                f"{host} resolves to {address}, which is a public address. "
+                "Jarvis runs its model locally by design; point `llm: url:` at a "
+                "server you run, or set `llm: local_only: false` if you really "
+                "mean to send every conversation off this network."
+            )
+    return True, ""
+
+
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     options = _as_dict(config)
 
     url = str(options.get("url") or options.get("host") or DEFAULT_URL)
     model = str(options.get("model") or DEFAULT_MODEL)
+
+    # The promise the whole project rests on, checked rather than trusted.
+    # Nothing else in the code stops `url:` naming a cloud endpoint, and a
+    # promise nothing verifies is a hope.
+    if options.get("local_only", True):
+        local, why = is_local_url(url)
+        if not local:
+            _LOGGER.error("llm: refusing to use a non-local model server. %s", why)
+            return False
     timeout = float(options.get("timeout") or DEFAULT_TIMEOUT)
     max_tool_rounds = int(options.get("max_tool_rounds") or DEFAULT_MAX_TOOL_ROUNDS)
     approval_ttl = float(options.get("approval_ttl") or DEFAULT_APPROVAL_TTL)

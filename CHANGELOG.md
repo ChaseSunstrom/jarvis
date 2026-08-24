@@ -13,7 +13,17 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   generated theme (uncompiled here — M08). Jarvis Code, Android and desktop parity tests now read
   `design/tokens.json` instead of `tokens.ts`.
 
+### Changed
+- M09 (one model endpoint): `LLM_URL`/`LLM_MODEL` are the first-class settings everywhere —
+  `configuration.yaml`, `.env.example`, compose, the smoke script and the worked example —
+  with `OLLAMA_*` kept as a fallback. The orchestrator's fan-out speaks
+  `/v1/chat/completions` instead of Ollama's `/api/chat`, and no longer bolts an `ollama/`
+  provider prefix onto a model name. The dashboard readout polls `/v1/models` (every
+  OpenAI-compatible server serves it) instead of Ollama-only `/api/ps`.
+
 ### Added
+- M09: `llm: local_only:` (default on) resolves the model server's URL at startup and refuses
+  a public address — "100 % local" was a promise nothing verified.
 - M06 (InfluxDB): `metrics/sources/influx.py` reads an InfluxDB the operator already runs —
   it works out from `/health` and `/ping` whether it is 1.x (InfluxQL) or 2.x/3.x (Flux),
   asks the server for the schema, keeps the token in a header, and never writes. Proven

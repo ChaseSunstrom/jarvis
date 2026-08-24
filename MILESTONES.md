@@ -149,7 +149,7 @@ files both would touch, which the integrating session merges.
 
 ## Platform capabilities
 
-- [ ] **M09 — LLM through the llama-swap OpenAI-compatible endpoint, everywhere** · size M · deps M00 · parallel-ok M01–M08
+- [x] **M09 — LLM through the llama-swap OpenAI-compatible endpoint, everywhere** · size M · deps M00 · parallel-ok M01–M08
   - Scope: `LLM_URL`/`LLM_MODEL` first-class (`!env_var LLM_URL` in `configuration.yaml`,
     `.env.example` leads with them; `OLLAMA_*` stay as aliases); `llm.local_only: true` default
     refusing model hosts that resolve to public addresses (loopback, RFC 1918, CGNAT/Tailscale
