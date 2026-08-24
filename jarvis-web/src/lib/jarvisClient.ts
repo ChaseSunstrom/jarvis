@@ -12,6 +12,7 @@
 
 import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
+import { type LogEntry, toLog } from './taskEvents';
 import type { McpServer } from './mcpDraft';
 import type { ScheduledJob } from './schedule';
 import type { CodeListing, CodeResult } from './code';
@@ -859,6 +860,16 @@ export class JarvisClient {
 		if (opts.kind) payload.kind = opts.kind;
 		if (opts.active) payload.active = true;
 		return toTaskList(await this.command(payload));
+	}
+
+	/**
+	 * One task's replayable history.
+	 *
+	 * The activity events are fire-and-forget, so a page opened two minutes into
+	 * a job has missed every one of them. This is how it catches up.
+	 */
+	async taskLog(taskId: string, limit = 200): Promise<LogEntry[]> {
+		return toLog(await this.command({ type: 'jarvis/tasks/log', task_id: taskId, limit }));
 	}
 
 	/** One task in full, or null if it has been forgotten. */

@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -373,7 +374,22 @@ async def _run(
         _check(jarvis, task_id)
         index = 1 + offset
         await registry.async_update(task_id, step=index, step_status=STATUS_RUNNING)
+        # The same tool events a chat turn fires, so a research run reads as
+        # work happening rather than as a bar that moves every thirty seconds.
+        started = time.monotonic()
+        call_id = registry.tool_started(
+            task_id, name="web_search", arguments={"query": query}, index=offset + 1,
+            total=len(queries),
+        )
         result = await _call(jarvis, "web", "search", {"query": query, "limit": cfg.search_limit})
+        registry.tool_finished(
+            task_id,
+            name="web_search",
+            call_id=call_id,
+            ok=result.get("status") == "ok",
+            error=str(result.get("error") or "")[:200],
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
         if result.get("status") != "ok":
             reason = str(result.get("error") or result.get("message") or "search failed")
             search_failures.append(reason)
@@ -383,6 +399,12 @@ async def _run(
             continue
         results = [r for r in result.get("results") or [] if isinstance(r, dict)]
         per_query.append((query, results))
+        registry.output(
+            task_id,
+            f"{query} — {len(results)} result{'' if len(results) == 1 else 's'}\n"
+            + "\n".join(f"  {r.get('url', '')}" for r in results[:5]),
+            stream="note",
+        )
         await registry.async_update(
             task_id,
             step=index,
@@ -427,8 +449,25 @@ async def _run(
         _check(jarvis, task_id)
         index = read_from + offset
         await registry.async_update(task_id, step=index, step_status=STATUS_RUNNING)
+        started = time.monotonic()
+        call_id = registry.tool_started(
+            task_id, name="web_fetch", arguments={"url": source.url},
+            index=offset + 1, total=len(chosen),
+        )
         note = await _read_one(jarvis, cfg, question, source)
+        registry.tool_finished(
+            task_id,
+            name="web_fetch",
+            call_id=call_id,
+            ok=note.ok,
+            error=(note.error or "")[:200],
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
         notes.append(note)
+        if note.text:
+            # Findings accumulate on screen instead of appearing all at once in
+            # the report: this is the sentence the page contributed.
+            registry.output(task_id, f"{source.url}\n  {note.text[:400]}", stream="note")
         await registry.async_update(
             task_id,
             step=index,

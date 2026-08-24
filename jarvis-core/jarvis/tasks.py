@@ -59,6 +59,10 @@ __all__ = [
     "EVENT_TASK_ADDED",
     "EVENT_TASK_UPDATED",
     "EVENT_TASK_REMOVED",
+    "EVENT_TASK_OUTPUT",
+    "EVENT_TASK_TOOL_FINISHED",
+    "EVENT_TASK_TOOL_STARTED",
+    "MAX_LOG_ENTRIES",
     "MAX_TASKS",
     "STATUS_BLOCKED",
     "STATUS_CANCELLED",
@@ -67,6 +71,8 @@ __all__ = [
     "STATUS_QUEUED",
     "STATUS_RUNNING",
     "Task",
+    "TaskCancelled",
+    "TaskLogEntry",
     "TaskRegistry",
     "TaskStep",
 ]
@@ -76,6 +82,14 @@ STORE_KEY = "tasks"
 EVENT_TASK_ADDED = "jarvis_task_added"
 EVENT_TASK_UPDATED = "jarvis_task_updated"
 EVENT_TASK_REMOVED = "jarvis_task_removed"
+#: A worker called a tool, and that call returned. Any worker — not only a chat
+#: turn, which is where tool events used to begin and end: a coding job called
+#: nine tools and the console learned about them when the job was over.
+EVENT_TASK_TOOL_STARTED = "jarvis_task_tool_started"
+EVENT_TASK_TOOL_FINISHED = "jarvis_task_tool_finished"
+#: Output worth watching while it happens: a check's stdout, a command's log.
+#: The contract in `tests/contracts/task_events.json` is what both sides read.
+EVENT_TASK_OUTPUT = "jarvis_task_output"
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -107,12 +121,62 @@ MAX_STEPS = 100
 #: A result is a summary for a person, not a payload. Anything large belongs
 #: behind a URL or in the store the task wrote to.
 MAX_RESULT_CHARS = 8000
+#: One task's replayable history. Bounded because a job that ran forty rounds
+#: would otherwise carry forty rounds of text in the file every task is saved
+#: to. Old entries fall off the front: the tail is what somebody arriving late
+#: wants to see.
+MAX_LOG_ENTRIES = 200
+#: One slice of streamed output. A worker sends what it has; this is the cap on
+#: what any single frame may carry.
+MAX_CHUNK_CHARS = 4000
 
 
 def _clip(value: Any, limit: int) -> str:
     text = "" if value is None else str(value)
     text = " ".join(text.split()) if "\n" not in text else text
     return text[:limit]
+
+
+class TaskCancelled(Exception):
+    """Raised inside a worker when its task was cancelled or forgotten.
+
+    Cancelling a task marks the record; it cannot reach into a coroutine and
+    stop it. A worker calls :meth:`TaskRegistry.raise_if_cancelled` at the
+    points where stopping is safe, and this is what it gets. Not an error: the
+    worker unwinds, tidies up, and the task stays `cancelled` rather than
+    becoming `error`.
+    """
+
+
+@dataclass
+class TaskLogEntry:
+    """One line of a task's replayable history.
+
+    The events below are fire-and-forget: a client watching from the start sees
+    every tool call and every line of output, and a client that opens the task
+    detail page two minutes in sees nothing at all. So every event is also
+    appended here, and `jarvis/tasks/log` replays it.
+    """
+
+    at: float
+    #: "status" | "step" | "tool" | "output" | "note"
+    kind: str
+    text: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"at": self.at, "kind": self.kind, "text": self.text}
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> "TaskLogEntry | None":
+        if not isinstance(raw, dict):
+            return None
+        kind = _clip(raw.get("kind"), 16) or "note"
+        text = _clip(raw.get("text"), MAX_CHUNK_CHARS)
+        try:
+            at = float(raw.get("at") or 0.0)
+        except (TypeError, ValueError):
+            at = 0.0
+        return cls(at=at, kind=kind, text=text)
 
 
 @dataclass
@@ -163,6 +227,11 @@ class Task:
     #: True while more steps may still be appended, so a bar can say
     #: "indeterminate" instead of inventing a denominator.
     open_ended: bool = False
+    #: Everything that happened, oldest first, capped at [MAX_LOG_ENTRIES].
+    log: list[TaskLogEntry] = field(default_factory=list)
+    #: Monotonic per task, so a client can tell a dropped frame from a
+    #: reordered one. Not persisted: a restart ends the run anyway.
+    seq: int = 0
 
     # --- derived ----------------------------------------------------------
     @property
@@ -200,6 +269,10 @@ class Task:
             "updated": self.updated,
             "source": self.source,
             "open_ended": self.open_ended,
+            # The log is deliberately NOT here: the lifecycle events carry the
+            # whole task on every update, and a 200-entry log on every frame is
+            # a websocket carrying the same kilobytes forty times a minute.
+            # `jarvis/tasks/log` fetches it once.
             # Derived, and sent rather than recomputed on four clients that
             # would each get the open-ended case subtly different.
             "fraction": self.fraction,
@@ -233,6 +306,11 @@ class Task:
             error=_clip(raw.get("error"), MAX_DETAIL_CHARS),
             source=_clip(raw.get("source"), 80),
             open_ended=bool(raw.get("open_ended")),
+            log=[
+                entry
+                for entry in (TaskLogEntry.from_dict(e) for e in raw.get("log") or [])
+                if entry is not None
+            ][-MAX_LOG_ENTRIES:],
         )
         for key in ("created", "updated"):
             try:
@@ -287,7 +365,9 @@ class TaskRegistry:
         if self.store is None:
             return
         try:
-            await self.store.save({"tasks": [t.as_dict() for t in self.tasks]})
+            await self.store.save(
+                {"tasks": [{**t.as_dict(), "log": [e.as_dict() for e in t.log]} for t in self.tasks]}
+            )
         except Exception:  # pragma: no cover - a full disk is not a task failure
             _LOGGER.exception("Could not save the task list")
 
@@ -394,6 +474,11 @@ class TaskRegistry:
                 if pending.status not in TERMINAL:
                     pending.status = STATUS_DONE
 
+        if status is not None and status in STATUSES:
+            self._log(task, "status", status)
+        if step is not None and 0 <= step < len(task.steps) and step_status is not None:
+            self._log(task, "step", f"{task.steps[step].title}: {step_status}")
+
         task.updated = time.time()
         await self.async_save()
         self._fire(EVENT_TASK_UPDATED, task)
@@ -417,6 +502,126 @@ class TaskRegistry:
             for task in finished:
                 self._fire(EVENT_TASK_REMOVED, task)
         return len(finished)
+
+    # --- watching one run ---------------------------------------------------
+    #
+    # Everything below is what a worker calls while it works, and what the task
+    # detail page renders. Each fires an event AND appends to the task's own log,
+    # because a client that opens the page two minutes in has missed every event
+    # and must still be able to see what happened.
+
+    def _log(self, task: Task, kind: str, text: str) -> None:
+        task.log.append(TaskLogEntry(at=time.time(), kind=kind, text=_clip(text, MAX_CHUNK_CHARS)))
+        if len(task.log) > MAX_LOG_ENTRIES:
+            del task.log[: len(task.log) - MAX_LOG_ENTRIES]
+
+    def raise_if_cancelled(self, task_id: str) -> None:
+        """Stop, if somebody has cancelled this task or forgotten it.
+
+        Cancelling marks the record — `api/common.py` says so plainly, and adds
+        that "a worker that does not check may still be running". This is the
+        check. Call it wherever unwinding is safe: between rounds, before a
+        tool call, between pages. A task that has been removed outright counts
+        as cancelled, because there is nothing left to report to.
+        """
+        task = self.get(task_id)
+        if task is None:
+            raise TaskCancelled(f"task {task_id} was forgotten")
+        if task.status == STATUS_CANCELLED:
+            raise TaskCancelled(f"task {task_id} was cancelled")
+
+    def cancelled(self, task_id: str) -> bool:
+        """The same question, without the exception, for a polling loop."""
+        task = self.get(task_id)
+        return task is None or task.status == STATUS_CANCELLED
+
+    def tool_started(
+        self,
+        task_id: str,
+        *,
+        name: str,
+        arguments: Any = None,
+        call_id: str = "",
+        index: int = 0,
+        total: int = 0,
+    ) -> str:
+        """A worker is calling a tool. Returns the call id to finish it with."""
+        task = self.get(task_id)
+        if task is None:
+            return ""
+        task.seq += 1
+        call = call_id or f"{task_id}-{task.seq}"
+        self._log(task, "tool", f"{name} {_clip(arguments, 200)}".strip())
+        self._fire_raw(
+            EVENT_TASK_TOOL_STARTED,
+            {
+                "task_id": task_id,
+                "call_id": call,
+                "name": _clip(name, 80),
+                "arguments": arguments if isinstance(arguments, (dict, list, str)) else {},
+                "index": int(index),
+                "total": int(total),
+            },
+        )
+        return call
+
+    def tool_finished(
+        self,
+        task_id: str,
+        *,
+        name: str,
+        call_id: str = "",
+        ok: bool = True,
+        status: str = "",
+        error: str = "",
+        duration_ms: int = 0,
+    ) -> None:
+        task = self.get(task_id)
+        if task is None:
+            return
+        self._log(task, "tool", f"{name} {'ok' if ok else 'failed'} {duration_ms} ms {error}".strip())
+        self._fire_raw(
+            EVENT_TASK_TOOL_FINISHED,
+            {
+                "task_id": task_id,
+                "call_id": call_id,
+                "name": _clip(name, 80),
+                "ok": bool(ok),
+                "status": _clip(status, 40) or ("ok" if ok else "error"),
+                "error": _clip(error, MAX_DETAIL_CHARS),
+                "duration_ms": int(duration_ms),
+            },
+        )
+
+    def output(self, task_id: str, chunk: str, *, stream: str = "stdout") -> None:
+        """A line (or several) of output, while it happens.
+
+        This is the channel a check's stdout goes down. It is deliberately not
+        the task's `detail`: detail is one line saying where the work has got
+        to, and using it as a log made the last line the only line anybody saw.
+        """
+        task = self.get(task_id)
+        if task is None or not chunk:
+            return
+        task.seq += 1
+        text = _clip(chunk, MAX_CHUNK_CHARS)
+        self._log(task, "output", text)
+        self._fire_raw(
+            EVENT_TASK_OUTPUT,
+            {
+                "task_id": task_id,
+                "stream": stream if stream in ("stdout", "stderr", "note") else "stdout",
+                "chunk": text,
+                "seq": task.seq,
+            },
+        )
+
+    def log_entries(self, task_id: str, *, limit: int = MAX_LOG_ENTRIES) -> list[dict[str, Any]]:
+        """The task's replayable history, oldest first."""
+        task = self.get(task_id)
+        if task is None:
+            return []
+        return [entry.as_dict() for entry in task.log[-max(1, limit) :]]
 
     # --- internals --------------------------------------------------------
     def _trim(self) -> None:
@@ -446,5 +651,20 @@ class TaskRegistry:
             # this guard is for the bus being absent or wedged, not for the
             # listeners, which it protects on its own.
             bus.fire(event, {"task": task.as_dict()})
+        except Exception:  # pragma: no cover - a listener must not break work
+            _LOGGER.exception("Could not fire %s", event)
+
+    def _fire_raw(self, event: str, data: dict[str, Any]) -> None:
+        """Fire an event whose payload is not the whole task.
+
+        The lifecycle events carry `{"task": ...}` so a client can recover from
+        any single frame. The watching events carry only what changed, because
+        they arrive many times a second and the task is already on screen.
+        """
+        bus = getattr(self.jarvis, "bus", None)
+        if bus is None:
+            return
+        try:
+            bus.fire(event, data)
         except Exception:  # pragma: no cover - a listener must not break work
             _LOGGER.exception("Could not fire %s", event)

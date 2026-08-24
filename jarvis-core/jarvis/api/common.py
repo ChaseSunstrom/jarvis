@@ -1334,6 +1334,20 @@ async def async_cancel_task(jarvis: "Jarvis", task_id: str) -> dict[str, Any]:
 # request — from a browser, a phone, a model or a forged one — can cross it.
 
 
+
+def task_log_payload(jarvis: Any, task_id: str, limit: int = 200) -> dict[str, Any]:
+    """One task's replayable history.
+
+    The watching events (tool calls, output) are fire-and-forget: a client that
+    opens a task's page two minutes into a job has missed every one of them.
+    This is how it catches up, and it is a separate command rather than part of
+    the task payload because the task payload is sent on every single update.
+    """
+    registry = getattr(jarvis, "tasks", None)
+    if registry is None:
+        return {"task_id": task_id, "log": []}
+    return {"task_id": task_id, "log": registry.log_entries(task_id, limit=limit)}
+
 def _mcp(jarvis: "Jarvis") -> Any:
     from ..integrations.mcp import get_manager
 

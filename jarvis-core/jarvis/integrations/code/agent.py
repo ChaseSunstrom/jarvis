@@ -192,6 +192,20 @@ class Stopped(Exception):
     """The job was cancelled from a client. Not an error."""
 
 
+def _summarise_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Arguments small enough to put on a wire, with file contents left out.
+
+    A `write_file` call carries the whole file; a status line wants the path.
+    """
+    out: dict[str, Any] = {}
+    for key, value in list(args.items())[:6]:
+        if key in ("content", "text", "body", "replacement"):
+            out[key] = f"<{len(str(value))} chars>"
+        else:
+            out[key] = str(value)[:120]
+    return out
+
+
 class CodeAgent:
     """One job, from instruction to branch."""
 
@@ -359,7 +373,53 @@ class CodeAgent:
             "the branch"
         )
 
+    def _registry(self) -> Any:
+        """The task registry, when this job is attached to a task."""
+        registry = getattr(self.jarvis, "tasks", None)
+        return registry if registry is not None and self._task_id else None
+
     async def _dispatch(self, name: str, args: dict[str, Any]) -> str:
+        """Run one tool call, and say so while it is running.
+
+        The trail used to be appended to `run.trail` and surfaced when the whole
+        job finished — so a job that called nine tools over four minutes showed
+        a spinner for four minutes and nine lines at the end. These are the same
+        events a chat turn fires, on the task, so the console can watch a coding
+        job the way it watches a turn.
+        """
+        registry = self._registry()
+        started = time.monotonic()
+        call_id = ""
+        if registry is not None:
+            call_id = registry.tool_started(
+                self._task_id, name=name, arguments=_summarise_args(args)
+            )
+        ok, failure = True, ""
+        try:
+            result = await self._dispatch_one(name, args)
+            # The tools report refusals as values rather than exceptions, which
+            # is right for the model and wrong for a status line: "refused: …"
+            # is not a call that worked.
+            lowered = result[:60].lower()
+            ok = not lowered.startswith(("refused:", "no:", "not found:", "there is no tool"))
+            if not ok:
+                failure = result[:200]
+            return result
+        except Exception as err:
+            ok, failure = False, f"{type(err).__name__}: {err}"[:200]
+            raise
+        finally:
+            if registry is not None:
+                registry.tool_finished(
+                    self._task_id,
+                    name=name,
+                    call_id=call_id,
+                    ok=ok,
+                    error=failure,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+
+    async def _dispatch_one(self, name: str, args: dict[str, Any]) -> str:
         try:
             if name == "list_files":
                 return self._do_list(args)
@@ -622,6 +682,13 @@ class CodeAgent:
             code, out = await self._spawn(
                 self.ws.sandbox_argv(check_argv(allowed[wanted]))
             )
+        registry = self._registry()
+        if registry is not None and out:
+            # The output of a check is the thing somebody actually watches, and
+            # it used to arrive only in the finished job's record.
+            registry.output(
+                self._task_id, out[-4000:], stream="stdout" if code == 0 else "stderr"
+            )
         record = {"command": wanted, "ok": code == 0, "output": out[-4000:]}
         self.run.checks.append(record)
         head = "passed" if code == 0 else f"failed (exit {code})"
@@ -671,6 +738,11 @@ class CodeAgent:
         except SandboxError as err:
             return f"no: {err}"
         record = {"command": command, "ok": code == 0, "output": out[-4000:]}
+        registry = self._registry()
+        if registry is not None and out:
+            registry.output(
+                self._task_id, out[-4000:], stream="stdout" if code == 0 else "stderr"
+            )
         self.run.commands.append(record)
         head = "ok" if code == 0 else f"exit {code}"
         body = out[-MAX_RESULT_CHARS:] or "(no output)"
@@ -774,6 +846,7 @@ class CodeAgent:
 
     # --- the task -----------------------------------------------------------
     def _check_stopped(self) -> None:
+        """Stop if this job was cancelled. The registry owns the question."""
         if not self._task_id:
             return
         registry = getattr(self.jarvis, "tasks", None)

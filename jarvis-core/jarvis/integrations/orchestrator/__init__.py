@@ -88,6 +88,7 @@ before calling :func:`async_setup`. Nothing here needs the container.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -96,6 +97,7 @@ import httpx
 
 from ...api.devices import mark_untrusted_result
 from ...services import ServiceCall
+from ...tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
 from ..web.fence import fence
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -116,6 +118,12 @@ DEFAULT_TIMEOUT = 120.0
 DEFAULT_CONNECT_TIMEOUT = 3.0
 #: The service's own pydantic bound. Mirrored so a too-long list is refused
 #: here with a sentence the model can act on, rather than a 422 from FastAPI.
+#: How a remote coding job is watched: every few seconds, for up to an hour.
+#: Polling rather than a webhook because the orchestrator's completion hook is
+#: best-effort and points at a URL this house does not have to expose.
+POLL_SECONDS = 5.0
+POLL_ATTEMPTS = 720
+
 MAX_TASKS = 8
 #: The service's ``ExecRequestBody.command`` bound. A command longer than this
 #: is REFUSED, never shortened: the human approved the whole string, and a
@@ -769,12 +777,112 @@ def _register_tools(jarvis: "Jarvis", client: OrchestratorClient) -> None:
         return mark_untrusted_result(jarvis, context, result)
 
     async def tool_delegate(args: dict[str, Any], context: Any = None) -> Any:
-        return _fenced(context, await async_delegate(client, args.get("tasks")))
+        """Fan out, and put the fan-out on the task list while it runs.
+
+        Delegation used to be invisible: the model waited, the console showed
+        nothing, and the only sign anything was happening was a turn that took
+        two minutes. It is work slow enough to ask about, which is the whole
+        definition of a task.
+        """
+        tasks = [str(t) for t in (args.get("tasks") or []) if str(t).strip()]
+        registry = getattr(jarvis, "tasks", None)
+        record = None
+        if registry is not None and tasks:
+            record = await registry.async_add(
+                f"Delegate {len(tasks)} task{'' if len(tasks) == 1 else 's'}",
+                kind="delegate",
+                steps=[t[:120] for t in tasks],
+                source="conversation",
+                detail="specialists working in parallel",
+            )
+            await registry.async_update(record.id, status=STATUS_RUNNING)
+            for index in range(len(tasks)):
+                await registry.async_update(record.id, step=index, step_status=STATUS_RUNNING)
+        result = await async_delegate(client, args.get("tasks"))
+        if registry is not None and record is not None:
+            agents = result.get("agents") if isinstance(result, dict) else None
+            for index, agent in enumerate(agents or []):
+                ok = isinstance(agent, dict) and agent.get("status") == "done"
+                await registry.async_update(
+                    record.id,
+                    step=index,
+                    step_status=STATUS_DONE if ok else STATUS_ERROR,
+                    step_detail=str((agent or {}).get("result") or "")[:200],
+                )
+            failed = isinstance(result, dict) and result.get("status") != "ok"
+            await registry.async_update(
+                record.id,
+                status=STATUS_ERROR if failed else STATUS_DONE,
+                error=str(result.get("detail") or "")[:400] if failed else "",
+                result=str((result or {}).get("synthesis") or "")[:4000],
+            )
+        return _fenced(context, result)
 
     async def tool_code_task(args: dict[str, Any], context: Any = None) -> Any:
-        return _fenced(
-            context,
-            await async_code_task(client, args.get("repo"), args.get("instruction")),
+        """Start a remote coding job, and watch it from here.
+
+        The orchestrator hands back a job id and expects to be polled. Nothing
+        polled it: the job only appeared when the model happened to ask for its
+        status, so a job that failed at minute two was reported at minute nine.
+        This registers it as a task and polls it in the background, which is
+        what puts it on the same list as everything else Jarvis is doing.
+        """
+        result = await async_code_task(client, args.get("repo"), args.get("instruction"))
+        registry = getattr(jarvis, "tasks", None)
+        job_id = str((result or {}).get("job_id") or "") if isinstance(result, dict) else ""
+        if registry is not None and job_id:
+            record = await registry.async_add(
+                str(args.get("instruction") or "coding job")[:120],
+                kind="code_task",
+                steps=["queued", "running", "report"],
+                source="conversation",
+                detail=f"{args.get('repo')} · job {job_id}",
+            )
+            await registry.async_update(record.id, status=STATUS_RUNNING)
+            jarvis.async_create_task(_watch_code_task(record.id, job_id))
+        return _fenced(context, result)
+
+    async def _watch_code_task(task_id: str, job_id: str) -> None:
+        """Poll one remote job until it settles, reporting through the task."""
+        registry = getattr(jarvis, "tasks", None)
+        if registry is None:
+            return
+        seen = ""
+        for _ in range(POLL_ATTEMPTS):
+            if registry.cancelled(task_id):
+                return
+            await asyncio.sleep(POLL_SECONDS)
+            status = await async_code_status(client, job_id)
+            if not isinstance(status, dict):
+                continue
+            state = str(status.get("status") or "")
+            if state and state != seen:
+                seen = state
+                registry.output(task_id, f"job {job_id}: {state}", stream="note")
+                await registry.async_update(
+                    task_id,
+                    step=1 if state == "running" else 0,
+                    step_status=STATUS_RUNNING,
+                    detail=state,
+                )
+            if state in ("done", "applied"):
+                await registry.async_update(
+                    task_id,
+                    step=2,
+                    step_status=STATUS_DONE,
+                    status=STATUS_DONE,
+                    result=str(status.get("summary") or status.get("diff_stat") or "")[:4000],
+                )
+                return
+            if state == "error":
+                await registry.async_update(
+                    task_id, status=STATUS_ERROR, error=str(status.get("error") or "")[:400]
+                )
+                return
+        await registry.async_update(
+            task_id,
+            status=STATUS_ERROR,
+            error=f"job {job_id} did not finish within {POLL_ATTEMPTS * POLL_SECONDS:.0f}s",
         )
 
     async def tool_code_status(args: dict[str, Any], context: Any = None) -> Any:

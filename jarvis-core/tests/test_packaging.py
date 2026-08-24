@@ -182,7 +182,16 @@ def config_copy(tmp_path: Path) -> Path:
     would leave those behind for the next developer to wonder about.
     """
     target = tmp_path / "config"
-    shutil.copytree(CONFIG, target)
+    # `.storage/` and the recorder database are RUNTIME state, gitignored and
+    # not shipped: on a developer's machine they hold that person's own rooms,
+    # entities and tokens. Copying them made "what does a fresh install look
+    # like" mean "what does this machine look like", and the test failed on the
+    # box that actually runs Jarvis while passing everywhere else.
+    shutil.copytree(
+        CONFIG,
+        target,
+        ignore=shutil.ignore_patterns(".storage", "*.db", "*.db-wal", "*.db-shm"),
+    )
     return target
 
 

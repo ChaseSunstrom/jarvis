@@ -77,7 +77,7 @@ files both would touch, which the integrating session merges.
     The whole Playwright suite (112 + new) green headless on this host.
   - Verify: `bash scripts/verify/m03-web.sh`
 
-- [ ] **M04 — Task-execution UI** · size L · deps M03 · parallel-ok M05 (shared: `api/websocket.py`, `tests/web/mock-ha.mjs`, `+layout.svelte`)
+- [x] **M04 — Task-execution UI** · size L · deps M03 · parallel-ok M05 (shared: `api/websocket.py`, `tests/web/mock-ha.mjs`, `+layout.svelte`)
   - Scope: `tests/contracts/task_events.json` (event names + payload schemas) read by
     `jarvis-core/tests/test_task_events_contract.py` and `jarvis-web/src/lib/taskEvents.test.ts`;
     `jarvis-core/jarvis/tasks.py` gains `tool_started/finished`, `output()` (→

@@ -83,6 +83,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/conversation/rename` | `conversation_id`, `title`; a name of your own instead of the first sentence |
 | `jarvis/tasks/list` | every tracked job, newest first: `{tasks: [...]}`. `kind` filters, `active: true` hides finished ones. Each row carries its own steps and a derived `fraction`, so a list of progress bars is one request rather than one per bar |
 | `jarvis/tasks/get` | `task_id`; one task in full |
+| `jarvis/tasks/log` | `task_id`, `limit`; the task's replayable history — every tool call, every line of output, oldest first. The activity events are fire-and-forget, so a client that opens a task's page two minutes in has missed them; this is how it catches up. See `tests/contracts/task_events.json`. |
 | `jarvis/tasks/cancel` | `task_id`; **asks** the worker to stop. The registry is a record, not a scheduler — it cannot reach into the coroutine — so the reply carries `cancelled` and a `note` saying a worker that does not check may still be running |
 | `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
 | `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |

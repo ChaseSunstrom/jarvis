@@ -52,7 +52,9 @@
 <article class="task" data-testid="task-card-{task.id}" data-status={task.status} data-kind={task.kind}>
 	<header>
 		<span class="badge" data-testid="task-status-{task.id}">{statusLabel(task)}</span>
-		<h3 title={task.title}>{task.title}</h3>
+		<h3 title={task.title}>
+			<a class="open" href="/tasks/{task.id}" data-testid="task-open-{task.id}">{task.title}</a>
+		</h3>
 		<span class="meta">
 			<span class="kind">{task.kind}</span>
 			{#if counts}<span data-testid="task-steps-{task.id}">{counts}</span>{/if}
@@ -118,6 +120,20 @@
 </article>
 
 <style>
+	.open {
+		color: inherit;
+		text-decoration: none;
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.open:hover {
+		color: var(--jv-text-bright);
+		border-bottom-color: var(--jv-accent);
+	}
+	.open:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: var(--jv-focus-offset);
+	}
+
 	.task {
 		border: 1px solid var(--jv-line-soft);
 		border-radius: var(--jv-radius-sm);

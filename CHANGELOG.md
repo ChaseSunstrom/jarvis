@@ -14,6 +14,11 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   `design/tokens.json` instead of `tokens.ts`.
 
 ### Added
+- M04 (task-execution UI): `tests/contracts/task_events.json` binds server and console;
+  `TaskRegistry` gains `tool_started`/`tool_finished`, `output()`, `raise_if_cancelled()` and a
+  persisted per-task log replayed by `jarvis/tasks/log`; the coding agent and research emit tool
+  calls and stream their output live; orchestrator delegate and code jobs are registered as tasks
+  and polled; `/tasks/[id]` shows the plan, live calls, streaming output, a timeline and cancel.
 - M03 (web console on the system): every screen declares its status through `ScreenState`
   (loading · empty · error · offline), `src/lib/screens.ts` is the manifest three things read,
   `+error.svelte` catches a thrown route, and `src/lib/online.ts` tells a dead relay from a dead

@@ -662,6 +662,31 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	const taskStore = new Map();
 	let taskSeq = 0;
 
+	/**
+	 * One task's replayable history, keyed by task id.
+	 *
+	 * The activity events below are fire-and-forget: a page opened two minutes
+	 * into a job has missed every one of them, so the server also keeps a log and
+	 * the page fetches it once (`jarvis/tasks/log`). The mock keeps the same
+	 * promise, or the console's catch-up path would be untested.
+	 * @type {Map<string, any[]>}
+	 */
+	const taskLogs = new Map();
+
+	/**
+	 * Fire one activity event, and log it. The payload shape is
+	 * `tests/contracts/task_events.json`, which both suites read.
+	 */
+	const fireTaskEvent = (taskId, type, data) => {
+		const entry = { at: Date.now() / 1000, kind: type.includes('output') ? 'output' : 'tool', text: '' };
+		if (type === 'jarvis_task_output') entry.text = String(data.chunk || '');
+		else entry.text = `${data.name}${data.ok === undefined ? '' : data.ok ? ' ok' : ' failed'}`;
+		const log = taskLogs.get(taskId) || [];
+		log.push(entry);
+		taskLogs.set(taskId, log.slice(-200));
+		broadcast(type, { task_id: taskId, ...data });
+	};
+
 	const TASK_TERMINAL = ['done', 'error', 'cancelled'];
 
 	const taskDict = (task) => {
@@ -2110,6 +2135,13 @@ index 1234567..89abcde 100644
 					break;
 				}
 
+				case 'jarvis/tasks/log': {
+					// The console fetches this once when a task's page opens, to show
+					// what happened before it was looking.
+					ok(msg.id, { task_id: msg.task_id, log: taskLogs.get(msg.task_id) || [] });
+					break;
+				}
+
 				case 'jarvis/test/task_run': {
 					const task = addTask({
 						kind: msg.kind || 'research',
@@ -2152,6 +2184,35 @@ index 1234567..89abcde 100644
 						}
 						live.steps[at].status = 'running';
 						updateTask(task.id, {});
+
+						// A step is not only a bar moving: it calls tools and prints
+						// things, and the detail page watches both. The real workers
+						// fire exactly these (tests/contracts/task_events.json).
+						const step = live.steps[at];
+						const callId = `${task.id}-call-${at}`;
+						fireTaskEvent(task.id, 'jarvis_task_tool_started', {
+							call_id: callId,
+							name: at === 0 ? 'web_search' : 'web_fetch',
+							arguments: { query: step.title },
+							index: at + 1,
+							total: live.steps.length
+						});
+						fireTaskEvent(task.id, 'jarvis_task_output', {
+							stream: 'stdout',
+							chunk: `${step.title}: working`,
+							seq: at + 1
+						});
+						setTimeout(() => {
+							fireTaskEvent(task.id, 'jarvis_task_tool_finished', {
+								call_id: callId,
+								name: at === 0 ? 'web_search' : 'web_fetch',
+								ok: true,
+								status: 'ok',
+								error: '',
+								duration_ms: 12 + at
+							});
+						}, Math.max(10, tick / 3));
+
 						at += 1;
 						setTimeout(advance, tick);
 					};

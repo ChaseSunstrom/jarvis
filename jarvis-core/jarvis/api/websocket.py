@@ -686,6 +686,11 @@ class WebSocketHandler:
     async def _cmd_task_get(self, msg: dict[str, Any]) -> Any:
         return common.task_get_payload(self.jarvis, str(msg.get("task_id") or ""))
 
+    async def _cmd_task_log(self, msg: dict[str, Any]) -> Any:
+        return common.task_log_payload(
+            self.jarvis, str(msg.get("task_id") or ""), int(msg.get("limit") or 200)
+        )
+
     async def _cmd_task_cancel(self, msg: dict[str, Any]) -> Any:
         return await common.async_cancel_task(self.jarvis, str(msg.get("task_id") or ""))
 
@@ -1115,6 +1120,7 @@ WebSocketHandler._HANDLERS = {
     # put that hole back one level out.
     "jarvis/tasks/list": WebSocketHandler._cmd_task_list,
     "jarvis/tasks/get": WebSocketHandler._cmd_task_get,
+    "jarvis/tasks/log": WebSocketHandler._cmd_task_log,
     "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
     "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,
     "jarvis/tasks/clear_finished": WebSocketHandler._cmd_task_clear_finished,

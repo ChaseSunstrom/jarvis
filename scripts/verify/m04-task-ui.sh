@@ -21,7 +21,8 @@ check "tasks.py: cooperative cancel every worker can honour" grep -q 'def raise_
 check "code jobs report tool calls live" grep -qE 'tool_started\(' "$CORE/integrations/code/agent.py"
 check "code jobs stream check/command output" grep -qE '\.output\(' "$CORE/integrations/code/agent.py"
 check "research tasks report tool calls live" grep -qE 'tool_started\(' "$CORE/integrations/research/__init__.py"
-check "orchestrator jobs appear in the task registry" grep -qE 'TaskRegistry|tasks\.(async_add|add|create)' "$CORE/integrations/orchestrator/__init__.py"
+check "orchestrator jobs appear in the task registry" \
+    grep -qE 'async_add\(' "$CORE/integrations/orchestrator/__init__.py"
 check "per-task event log is persisted" grep -rqE 'task_events|events\.jsonl' "$CORE/tasks.py" "$CORE/integrations/recorder/__init__.py"
 
 require_file "jarvis-web/src/routes/tasks/[id]/+page.svelte"
