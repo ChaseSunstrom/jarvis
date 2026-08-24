@@ -676,11 +676,48 @@ async def code_result(request: Request, task_id: str) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+# --- skills -----------------------------------------------------------------
+#
+# Read-only over HTTP, deliberately: a skill is created by putting a folder on
+# disk, which is the operator's own filesystem and not an API surface. `reload`
+# is the one write, and it only re-reads what is already there.
+@api_router.get("/skills")
+async def skills_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.skills_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/skills/{name}")
+async def skill_get(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return common.skill_payload(get_jarvis(request), name)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/skills/reload")
+async def skills_reload(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_reload_skills(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 # --- MCP servers ------------------------------------------------------------
 @api_router.get("/mcp/servers")
 async def mcp_servers(request: Request) -> dict[str, Any]:
     try:
         return common.mcp_list_payload(get_jarvis(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/mcp/servers/{name}/inspect")
+async def mcp_server_inspect(request: Request, name: str) -> dict[str, Any]:
+    try:
+        return common.mcp_inspect_payload(get_jarvis(request), name)
     except ApiError as err:
         raise _api_error(err) from err
 

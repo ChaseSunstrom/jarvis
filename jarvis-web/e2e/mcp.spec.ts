@@ -143,3 +143,40 @@ test('a url that is not one is caught before it is sent', async ({ page }) => {
 	await expect(page.getByTestId('mcp-error')).toContainText('http');
 	await expect(page.getByTestId('mcp-row-typo')).toHaveCount(0);
 });
+
+test('inspect shows the schemas and, when it is down, why', async ({ page }) => {
+	// The failure this covers: a server that is simply missing from the tool
+	// list tells nobody why. `last_error` is what the view exists for, and the
+	// schema below it is the answer to nine failing tool calls in ten.
+	//
+	// It knocks the server over itself rather than relying on the state an
+	// earlier test left: the tests in this file share one mock, and this one
+	// asserted on a tool list a previous test had emptied — which is a test
+	// depending on its neighbours, not a defect in the panel.
+	await openTools(page);
+	await tell(page, { type: 'jarvis/test/mcp_break', name: 'house', error: 'no route to host' });
+	await page.reload();
+
+	await page.getByTestId('mcp-tools-house').click();
+	const detail = page.getByTestId('mcp-inspect-house');
+	await expect(detail).toBeVisible();
+	await expect(page.getByTestId('mcp-protocol-house')).toContainText('2025-06-18');
+	await expect(page.getByTestId('mcp-last-error-house')).toContainText('connection refused');
+
+	// Back up, and now the tools — with their arguments in full.
+	await page.getByTestId('mcp-reconnect-house').click();
+	await expect(page.getByTestId('mcp-row-house')).toHaveAttribute('data-connected', 'true', {
+		timeout: 10_000
+	});
+	const schema = page.getByTestId('mcp-schema-mcp_house_read_note');
+	await expect(schema).toContainText('"id"');
+	await expect(schema).toContainText('required');
+
+	// And a test call, which goes through the SAME gate the model does — a
+	// console-only execution path would be a way around the approval gate, and
+	// the whole argument for the gate is that there is only one.
+	await page.getByTestId('mcp-try-mcp_house_read_note').click();
+	await expect(page.getByTestId('mcp-result-mcp_house_read_note')).toBeVisible({
+		timeout: 10_000
+	});
+});

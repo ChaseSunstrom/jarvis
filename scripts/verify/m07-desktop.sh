@@ -30,4 +30,9 @@ check_sh "unpacked distribution builds (npm run dist:dir)" \
     'cd jarvis-desktop-app && npm run dist:dir 2>&1 | tail -3 && ls -d dist/*unpacked* >/dev/null'
 require_file "$APP/README.md"
 check "verification claim" grep -qi jarvis-desktop-app docs/verification.md
+# No live scenarios of its own — this milestone does not add a capability
+# anybody talks to. What it must not do is break the ones that exist, so a
+# named smoke subset runs: house-light-on, chat-context-retention, lock-needs-a-human.
+check_sh "the live smoke scenarios still pass" \
+    'LIVE_ONLY=house-light-on,chat-context-retention,lock-needs-a-human bash scripts/verify/live_interaction.sh --implemented-only 2>&1 | tail -4'
 verify_end

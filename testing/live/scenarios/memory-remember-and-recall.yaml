@@ -1,0 +1,20 @@
+name: memory-remember-and-recall
+capability: memory
+gated-on: M15
+intent: >
+  A memory that lives in a process is not a memory. The service is killed
+  between the two turns, which is the only honest way to test the claim, and
+  the recall has to come back through the same conversation surface a person
+  would use.
+variants: [voice, text]
+turns:
+  - say: "Remember that the spare key is in the blue tin on the shelf."
+    expect:
+      reply_means: "confirms it has remembered that"
+      capability: memory
+  - say: "Where did I say the spare key was?"
+    restart: true
+    expect:
+      reply_contains: ["blue tin"]
+      reply_means: "says the spare key is in the blue tin on the shelf"
+      capability: memory

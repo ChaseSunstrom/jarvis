@@ -21,4 +21,9 @@ check "the e2e watches the task events the UI shows" grep -qE 'jarvis_task_updat
 check_sh "desktop agentic-automation e2e (harness + scripted model + real agent)" \
     'cd jarvis-desktop && timeout 900 python3 -m pytest tests_e2e/test_agentic_automation.py -q --timeout=600 --timeout-method=signal 2>&1 | tail -3'
 check "verification claim" grep -qi 'agentic automation' docs/verification.md
+# No live scenarios of its own — this milestone does not add a capability
+# anybody talks to. What it must not do is break the ones that exist, so a
+# named smoke subset runs: house-light-on, chat-context-retention, lock-needs-a-human.
+check_sh "the live smoke scenarios still pass" \
+    'LIVE_ONLY=house-light-on,chat-context-retention,lock-needs-a-human bash scripts/verify/live_interaction.sh --implemented-only 2>&1 | tail -4'
 verify_end

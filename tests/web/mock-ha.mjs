@@ -1083,6 +1083,45 @@ index 1234567..89abcde 100644
 	/** Read only from the mock's own "config"; no frame may set it. */
 	let mcpAllowStdio = false;
 
+	// Skills: folders of instructions the operator wrote. The console lists
+	// them beside the tools, because "a thing the assistant knows how to do" is
+	// one idea whether it arrives as a tool or as a document.
+	const skills = [
+		{
+			name: "house-style",
+			description:
+				"How Jarvis should answer in this house — length, address, and when to say nothing.",
+			allowed_tools: ["get_state", "list_entities"],
+			metadata: { owner: "the household" },
+			version: "1",
+			resources: [],
+			path: "/config/skills/house-style/SKILL.md",
+			body_chars: 1120,
+		},
+		{
+			name: "roasting",
+			description: "How this house roasts coffee — times, temperatures, the log.",
+			allowed_tools: [],
+			metadata: {},
+			version: "",
+			resources: ["references", "scripts"],
+			path: "/config/skills/roasting/SKILL.md",
+			body_chars: 2480,
+		},
+	];
+	// A skill that could not be read is listed too, with the reason: a mistyped
+	// frontmatter is otherwise simply absent, which is the least diagnosable
+	// failure a folder-based feature can have.
+	const skillErrors = [
+		{ path: "/config/skills/broken/SKILL.md", error: "the frontmatter has no `description`" },
+	];
+	const skillsListing = () => ({
+		skills: skills.map((s) => ({ ...s })),
+		errors: skillErrors.map((e) => ({ ...e })),
+		enabled: true,
+		path: "/config/skills",
+	});
+
 	const mcpListing = () => ({
 		servers: [...mcpServers.values()].map((s) => ({ ...s, tool_count: s.tools.length })),
 		allow_stdio: mcpAllowStdio,
@@ -1781,7 +1820,58 @@ index 1234567..89abcde 100644
 					break;
 				}
 
+				// --- skills --------------------------------------------------
+				case 'jarvis/skills/list':
+					ok(msg.id, skillsListing());
+					break;
+
+				case 'jarvis/skills/get': {
+					const skill = skills.find((s) => s.name === String(msg.name || ''));
+					if (!skill) {
+						fail(msg.id, 'not_found', `no skill named '${msg.name}'`);
+						break;
+					}
+					ok(msg.id, {
+						skill: { ...skill, body: `# ${skill.name}\n\nThe body of ${skill.name}.` }
+					});
+					break;
+				}
+
+				case 'jarvis/skills/reload':
+					ok(msg.id, { loaded: skills.length, errors: skillErrors });
+					break;
+
 				// --- MCP -----------------------------------------------------
+				case 'jarvis/mcp/inspect': {
+					const server = mcpServers.get(String(msg.name || ''));
+					if (!server) {
+						fail(msg.id, 'not_found', `no MCP server named '${msg.name}'`);
+						break;
+					}
+					ok(msg.id, {
+						server: {
+							...server,
+							protocol_version: '2025-06-18',
+							server_info: { name: 'house-notes', version: '0.4.1' },
+							last_error: server.connected ? '' : 'connect: connection refused',
+							attempts: server.connected ? 0 : 3,
+							next_attempt_in: server.connected ? 0 : 120,
+							tools: server.tools.map((t) => ({
+								...t,
+								// The schema is what somebody opens this view for: nine
+								// failing tool calls in ten are about arguments.
+								parameters: t.parameters ?? {
+									type: 'object',
+									properties: { id: { type: 'string', description: 'Which note.' } },
+									required: ['id']
+								},
+								tier: server.tier
+							}))
+						}
+					});
+					break;
+				}
+
 				case 'jarvis/mcp/list':
 					ok(msg.id, mcpListing());
 					break;
@@ -1873,6 +1963,10 @@ index 1234567..89abcde 100644
 					for (const s of one ? [one] : mcpServers.values()) {
 						s.connected = true;
 						s.error = '';
+						if (s.offline_tools) {
+							s.tools = s.offline_tools;
+							delete s.offline_tools;
+						}
 					}
 					ok(msg.id, { reconnected: msg.name || 'all', ...mcpListing() });
 					break;
@@ -1890,6 +1984,11 @@ index 1234567..89abcde 100644
 					if (target) {
 						target.connected = false;
 						target.error = String(msg.error || 'no route to host');
+						// Kept, so reconnecting can bring them back. jarvis-core
+						// re-lists a server's tools when it comes up, and a mock
+						// where they never returned made a reconnect look like a
+						// server that had lost everything it could do.
+						target.offline_tools = target.tools;
 						target.tools = [];
 					}
 					ok(msg.id, mcpListing());

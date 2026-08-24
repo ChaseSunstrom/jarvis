@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jarvis.api.devices import result_is_untrusted  # noqa: E402
 from jarvis.core import Jarvis  # noqa: E402
+from jarvis.integrations import mcp as mcp_integration  # noqa: E402
 from jarvis.integrations.mcp import (  # noqa: E402
     MCPManager,
     async_add_server,
@@ -666,3 +667,117 @@ def test_a_tool_row_carries_both_names():
     )
     assert tool.remote_name == "search"
     assert tool.name == "mcp_notes_search"
+
+
+# --- inspect, and staying connected ------------------------------------------
+
+
+def test_the_tier_contract_is_the_one_three_suites_read():
+    """`tests/contracts/tool_tiers.json` is the definition of what a tier
+    means. MCP's default is 2, and the contract is what says what 2 does —
+    the config comment used to say "confirm first", which tier 2 has never
+    done. One table, three readers: this one, the console's vitest suite and
+    the Android mirror."""
+    import json
+    from pathlib import Path
+
+    contract = json.loads(
+        (Path(__file__).resolve().parents[2] / "tests/contracts/tool_tiers.json").read_text()
+    )
+    tiers = {int(key): value for key, value in contract["tiers"].items()}
+    assert set(tiers) == {1, 2, 3}
+    assert mcp_integration.DEFAULT_TIER == int(contract["default_for_mcp"]["value"]) == 2
+    assert tiers[2]["asks_first"] is False, (
+        "tier 2 announces, it does not ask — if that ever changes, the MCP "
+        "default has to be revisited, and so does the config comment that used "
+        "to promise a confirmation this tier has never performed"
+    )
+    assert tiers[3]["asks_first"] is True
+
+
+def test_backoff_grows_and_is_capped(jarvis):
+    """A server that is gone must not be dialled every ten seconds for a week;
+    one that is merely slow to start must be picked up in under a minute."""
+    manager = manager_for(jarvis)
+    assert manager.backoff(1) == mcp_integration.RECONNECT_BASE
+    assert manager.backoff(2) == mcp_integration.RECONNECT_BASE * 2
+    assert manager.backoff(50) == mcp_integration.RECONNECT_CEILING
+    assert manager.backoff(1) < 60, "a slow starter waits under a minute"
+
+
+async def test_a_server_that_was_down_is_retried_and_comes_back(jarvis, monkeypatch):
+    manager = manager_for(jarvis)
+    spec = server_from_dict({"name": "house", "url": "http://mcp.test/mcp"}, editable=False)
+    manager.servers["house"] = spec
+
+    attempts = []
+
+    async def flaky(target):
+        attempts.append(target.name)
+        if len(attempts) < 3:
+            manager.errors[target.name] = "connection refused"
+            return False
+        manager.clients[target.name] = object()
+        manager.errors.pop(target.name, None)
+        return True
+
+    monkeypatch.setattr(manager, "async_connect", flaky)
+    monkeypatch.setattr(manager, "backoff", lambda attempt: 0.0)
+
+    for _ in range(3):
+        await manager._retry_the_dead()
+
+    assert attempts == ["house", "house", "house"]
+    assert "house" in manager.clients
+    assert manager.attempts == {}, "the counter resets once it is back"
+
+
+async def test_a_connected_server_is_not_dialled_again(jarvis, monkeypatch):
+    manager = manager_for(jarvis)
+    spec = server_from_dict({"name": "house", "url": "http://mcp.test/mcp"}, editable=False)
+    manager.servers["house"] = spec
+    manager.clients["house"] = object()
+    called = []
+    monkeypatch.setattr(manager, "async_connect", lambda s: called.append(s.name))
+
+    await manager._retry_the_dead()
+    assert called == []
+def test_inspect_says_why_a_server_is_not_working(jarvis):
+    """A server that is simply absent from the tool list tells nobody why."""
+    manager = manager_for(jarvis)
+    manager.servers["house"] = server_from_dict(
+        {"name": "house", "url": "http://mcp.test/mcp"}, editable=False
+    )
+    manager.errors["house"] = "connect: connection refused"
+    manager.attempts["house"] = 2
+
+    detail = manager.inspect("house")
+    assert detail["connected"] is False
+    assert detail["last_error"] == "connect: connection refused"
+    assert detail["attempts"] == 2
+    assert detail["tools"] == []
+
+    with pytest.raises(KeyError):
+        manager.inspect("nobody")
+
+
+def test_inspect_carries_every_tool_schema(jarvis):
+    """The page somebody reads when a tool call keeps failing. Nine times in
+    ten the answer is in the arguments."""
+    manager = manager_for(jarvis)
+    manager.servers["house"] = server_from_dict(
+        {"name": "house", "url": "http://mcp.test/mcp"}, editable=False
+    )
+    manager.tools["house"] = [
+        MCPTool(
+            server="house",
+            remote_name="read_note",
+            name="mcp_house_read_note",
+            description="Read a note.",
+            parameters={"type": "object", "properties": {"id": {"type": "string"}}},
+            tier=2,
+        )
+    ]
+    detail = manager.inspect("house")
+    assert detail["tools"][0]["parameters"]["properties"]["id"]["type"] == "string"
+    assert detail["tools"][0]["tier"] == 2

@@ -584,6 +584,32 @@ files:
   #   writable: false
 
 # ---------------------------------------------------------------------------
+# Skills — things this house has written down, in a folder.
+# ---------------------------------------------------------------------------
+# A skill is a directory under `skills/` with a `SKILL.md` in it: YAML
+# frontmatter (`name`, `description`, optional `allowed-tools` and `metadata`)
+# and a markdown body, in the open Agent Skills format. Drop one in and Jarvis
+# knows it; no code, no restart beyond `skills.reload`.
+#
+# Only the NAME and DESCRIPTION reach the system prompt — one line each. The
+# body arrives when the model calls `use_skill`, and not before: twelve skills
+# of two thousand words each would be twenty-four thousand words in front of
+# every "turn the lights off".
+#
+# `scripts/` beside a SKILL.md is material, not a program: this integration
+# reads files and never executes one. A skill cannot grant itself a tool
+# either — `allowed-tools` narrows, never widens, and a Tier-3 action still
+# needs a human whatever a document says.
+#
+# There is an example in `config/examples/skills/house-style/`.
+skills:
+  # Where to look, relative to this directory.
+  path: skills
+  # A body longer than this is truncated when it is handed to the model.
+  max_body_chars: 8000
+  # enabled: [house-style]   # load only these; omit for all of them
+
+# ---------------------------------------------------------------------------
 # MCP — anybody else's tools, inside Jarvis.
 # ---------------------------------------------------------------------------
 # Model Context Protocol servers. Each one Jarvis can reach lends it their

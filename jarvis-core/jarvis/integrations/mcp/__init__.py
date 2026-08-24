@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -95,6 +96,11 @@ DATA_MANAGER = "manager"
 
 DEFAULT_TIER = 2
 CONNECT_TIMEOUT = 20.0
+#: The reconnect watcher. `TICK` is how often it looks; `BASE` and `CEILING`
+#: bound the per-server backoff (30 s doubling to 30 minutes).
+RECONNECT_TICK = 10.0
+RECONNECT_BASE = 30.0
+RECONNECT_CEILING = 1800.0
 
 
 class MCPManager:
@@ -120,6 +126,10 @@ class MCPManager:
         self.tools: dict[str, list[MCPTool]] = {}
         #: name -> why it is not working, for the console to show.
         self.errors: dict[str, str] = {}
+        #: How many times in a row a server has failed to connect, and when it
+        #: may be tried again. Both keyed by name; both cleared on success.
+        self.attempts: dict[str, int] = {}
+        self.next_attempt: dict[str, float] = {}
 
     # --- configuration ----------------------------------------------------
     def add_from_config(self, raw: Any) -> None:
@@ -320,7 +330,100 @@ class MCPManager:
 
         return call
 
+    # --- staying connected ------------------------------------------------
+    #
+    # A server that was down when Jarvis booted stayed down until somebody
+    # pressed reconnect. That is the wrong default for a thing whose whole job
+    # is to be reachable: an MCP server in the same compose file starts a few
+    # seconds later than jarvis-core roughly every time, and the result was a
+    # house whose extra tools existed only after a human noticed.
+    #
+    # Backoff, not a retry loop: a server that is *gone* must not be dialled
+    # every ten seconds for a week. Doubling from 30 s to a 30-minute ceiling
+    # means a slow starter is picked up in under a minute and a decommissioned
+    # one costs two requests an hour.
+    def backoff(self, attempts: int) -> float:
+        """Seconds before the next attempt at a server that is not answering."""
+        delay = RECONNECT_BASE * (2 ** max(0, attempts - 1))
+        return float(min(delay, RECONNECT_CEILING))
+
+    async def async_watch(self) -> None:
+        """Reconnect anything that is down, for as long as the server runs."""
+        while True:
+            try:
+                await asyncio.sleep(RECONNECT_TICK)
+                await self._retry_the_dead()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pragma: no cover - the watcher must not die
+                _LOGGER.exception("mcp: the reconnect watcher raised")
+
+    async def _retry_the_dead(self) -> None:
+        now = time.monotonic()
+        for spec in list(self.servers.values()):
+            if not spec.enabled or spec.name in self.clients:
+                self.attempts.pop(spec.name, None)
+                continue
+            attempts = self.attempts.get(spec.name, 0)
+            due = self.next_attempt.get(spec.name, 0.0)
+            if now < due:
+                continue
+            self.attempts[spec.name] = attempts + 1
+            ok = await self.async_connect(spec)
+            if ok:
+                self.attempts.pop(spec.name, None)
+                self.next_attempt.pop(spec.name, None)
+                _LOGGER.info("mcp: %s came back after %d attempt(s)", spec.name, attempts + 1)
+            else:
+                wait = self.backoff(attempts + 1)
+                self.next_attempt[spec.name] = now + wait
+                _LOGGER.debug("mcp: %s still down; next attempt in %.0fs", spec.name, wait)
+
     # --- what the console sees --------------------------------------------
+    def inspect(self, name: str) -> dict[str, Any]:
+        """Everything knowable about one server, including why it is not up.
+
+        The listing is deliberately thin — it is drawn for every server on one
+        page — so the schemas, the protocol version and the last error live
+        here, behind a click. `last_error` is the field that matters: a server
+        that is simply absent from the tool list tells nobody why.
+        """
+        spec = self.servers.get(str(name or ""))
+        if spec is None:
+            raise KeyError(name)
+        client = self.clients.get(spec.name)
+        tools = self.tools.get(spec.name, [])
+        return {
+            "name": spec.name,
+            "transport": "stdio" if spec.is_stdio else "http",
+            "url": spec.url,
+            "command": spec.command,
+            "enabled": spec.enabled,
+            "editable": spec.editable,
+            "tier": spec.tier,
+            "connected": client is not None,
+            "server_info": client.server_info if client else {},
+            "protocol_version": getattr(client, "protocol_version", "") if client else "",
+            "last_error": self.errors.get(spec.name, ""),
+            "attempts": self.attempts.get(spec.name, 0),
+            "next_attempt_in": max(
+                0.0, round(self.next_attempt.get(spec.name, 0.0) - time.monotonic(), 1)
+            ),
+            "tools": [
+                {
+                    "name": tool.name,
+                    "remote_name": tool.remote_name,
+                    "description": tool.description,
+                    # The whole schema: this is the page somebody reads when a
+                    # tool call keeps failing, and "arguments" is the answer
+                    # about nine times in ten.
+                    "parameters": tool.parameters,
+                    "tier": tool.tier,
+                }
+                for tool in tools
+            ],
+        }
+
     def listing(self) -> list[dict[str, Any]]:
         out = []
         for spec in self.servers.values():
@@ -367,6 +470,9 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # Not awaited: a server that is down should not hold up a boot, and every
     # tool it would have registered simply is not there until it answers.
     jarvis.async_create_task(manager.async_connect_all())
+    # …and keeps trying, with backoff. Without this, a server that lost its
+    # network for a minute was gone until somebody pressed a button.
+    jarvis.async_create_task(manager.async_watch())
 
     _register_services(jarvis, manager)
     jarvis.register_shutdown(manager.async_shutdown)

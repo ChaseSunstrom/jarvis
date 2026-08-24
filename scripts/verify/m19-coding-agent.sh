@@ -23,4 +23,10 @@ check_sh "docker is reachable for the sandbox (prerequisite on this host: docker
 check_sh "scripted eval: the agent makes the fixture's tests pass inside the sandbox; nothing written outside it" \
     'timeout 1800 python3 evals/coding_eval.py --out .verify/coding 2>&1 | tail -8'
 check "task detail shows commits and diffs" grep -rqiE 'commit' jarvis-web/src/routes/tasks
+# This milestone's own live scenarios. A capability is not done until it works
+# when a person talks to it — which is a different claim from "its unit tests
+# pass", and the only one an operator can feel. Its scenarios are gated on this
+# milestone, so they run here for the first time.
+check_sh "the live scenarios for coding" \
+    'LIVE_CAPABILITY=coding bash scripts/verify/live_interaction.sh --full 2>&1 | tail -6'
 verify_end

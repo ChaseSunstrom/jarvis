@@ -1,0 +1,19 @@
+name: task-scheduled
+capability: task
+gated-on: M17
+intent: >
+  "Remind me in a minute" is the smallest proactive thing an assistant does,
+  and the one people notice missing. It must fire on time, once, and arrive as
+  a UI moment rather than a line in a log.
+variants: [voice, text]
+turns:
+  - say: "Remind me in one minute to check the oven."
+    expect:
+      task: {kind: notify, within: 30}
+      reply_means: "confirms the reminder is set for one minute from now"
+  - say: ""
+    sound: silence
+    wait: 65
+    audio: {seconds: 1}
+    expect:
+      reply_contains: "oven"

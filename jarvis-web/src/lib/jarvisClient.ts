@@ -262,6 +262,59 @@ export interface DeviceRegistryEntry {
 	disabled?: boolean;
 }
 
+/** One skill: a folder of instructions the operator wrote. */
+export interface Skill {
+	name: string;
+	description: string;
+	allowed_tools: string[];
+	metadata: Record<string, unknown>;
+	version: string;
+	resources: string[];
+	path: string;
+	body_chars: number;
+	/** Only `jarvis/skills/get` fills this in — the list is names and summaries. */
+	body?: string;
+}
+
+/** What `jarvis/skills/list` answers with. */
+export interface SkillListing {
+	skills: Skill[];
+	/**
+	 * Skills that could not be read, with the reason. Shown rather than
+	 * swallowed: a mistyped frontmatter is otherwise simply absent, and
+	 * "it does not appear" is the least diagnosable failure a folder-based
+	 * feature can have.
+	 */
+	errors: { path: string; error: string }[];
+	enabled: boolean;
+	path?: string;
+}
+
+/** What `jarvis/mcp/inspect` answers with: one server, in full. */
+export interface McpServerDetail {
+	name: string;
+	transport: string;
+	url: string;
+	command: string;
+	enabled: boolean;
+	editable: boolean;
+	tier: number;
+	connected: boolean;
+	server_info: Record<string, unknown>;
+	protocol_version: string;
+	/** Why it is not up. Empty when it is. */
+	last_error: string;
+	attempts: number;
+	next_attempt_in: number;
+	tools: {
+		name: string;
+		remote_name: string;
+		description: string;
+		parameters: Record<string, unknown>;
+		tier: number;
+	}[];
+}
+
 /** What `jarvis/mcp/list` and the three write commands all answer with. */
 export interface McpListing {
 	servers: McpServer[];
@@ -780,6 +833,30 @@ export class JarvisClient {
 	// configuration.yaml so that no request can cross it. `listMcpServers`
 	// reports the flag so this console can explain the closed fields rather
 	// than submitting a form the server will refuse.
+
+	/** Every loaded skill — names and descriptions, not bodies. */
+	listSkills(): Promise<SkillListing> {
+		return this.command<SkillListing>({ type: 'jarvis/skills/list' });
+	}
+
+	/** One skill, body included. */
+	getSkill(name: string): Promise<{ skill: Skill }> {
+		return this.command<{ skill: Skill }>({ type: 'jarvis/skills/get', name });
+	}
+
+	/** Re-read the folder. The only write: a skill is created on disk. */
+	reloadSkills(): Promise<{ loaded: number; errors: { path: string; error: string }[] }> {
+		return this.command({ type: 'jarvis/skills/reload' });
+	}
+
+	/**
+	 * One server in full: schemas, protocol version, and — the field that
+	 * matters — `last_error`. A server that is simply missing from the tool
+	 * list tells nobody why.
+	 */
+	inspectMcpServer(name: string): Promise<{ server: McpServerDetail }> {
+		return this.command<{ server: McpServerDetail }>({ type: 'jarvis/mcp/inspect', name });
+	}
 
 	listMcpServers(): Promise<McpListing> {
 		return this.command<McpListing>({ type: 'jarvis/mcp/list' });

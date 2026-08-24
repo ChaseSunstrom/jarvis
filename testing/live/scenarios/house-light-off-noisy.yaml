@@ -1,0 +1,19 @@
+name: house-light-off-noisy
+capability: house
+intent: >
+  The same request in a room with something running in it. A rig that only ever
+  feeds clean studio audio proves the recogniser works on studio audio; the
+  failures people actually hit are a fan, a fridge and a television.
+variants: [voice]
+tags: [noise]
+setup:
+  states:
+    light.ceiling_lights: "on"
+turns:
+  - say: "Turn off the ceiling lights."
+    audio: {snr_db: 10, noise: fan}
+    expect:
+      transcript_wer: 0.25
+      service: {domain: light, service: turn_off, entity_id: light.ceiling_lights}
+      state: {light.ceiling_lights: "off"}
+      reply_means: "confirms the ceiling lights are now off"

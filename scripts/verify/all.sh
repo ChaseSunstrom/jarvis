@@ -7,7 +7,8 @@
 # the pass/fail counts and the names of the failed checks.
 #
 #   make verify-all                 everything
-#   make verify-all ONLY=m03        one milestone (or ONLY="m03 m05")
+#   make verify-all ONLY=m03        one milestone (or ONLY="m03 m05", or
+#                                   ONLY=live for the interaction suite alone)
 #   make verify-all FAIL_FAST=1     stop at the first failing milestone
 #   VERIFY_TIMEOUT=2400             per-script timeout, seconds (default 40 min)
 #
@@ -24,6 +25,11 @@ mkdir -p "$LOGDIR"
 TIMEOUT="${VERIFY_TIMEOUT:-2400}"
 
 mapfile -t scripts < <(ls scripts/verify/m[0-9][0-9]-*.sh 2>/dev/null | sort)
+# The live interaction suite runs once, at the end, over every scenario that is
+# not gated on an unfinished milestone. The milestone scripts each run their own
+# slice of it; this is the whole-system pass, and it is what `make verify-all`
+# means by "somebody can talk to it".
+scripts+=("scripts/verify/live_interaction.sh")
 if [ "${#scripts[@]}" -eq 0 ]; then
     echo "no milestone scripts found under scripts/verify/ (expected mNN-*.sh)" >&2
     exit 1

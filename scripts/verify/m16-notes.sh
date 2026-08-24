@@ -36,4 +36,10 @@ require_file jarvis-web/e2e/notes.spec.ts
 ensure_web_deps
 ensure_web_build
 run_playwright "notes UI e2e" e2e/notes.spec.ts
+# This milestone's own live scenarios. A capability is not done until it works
+# when a person talks to it — which is a different claim from "its unit tests
+# pass", and the only one an operator can feel. Its scenarios are gated on this
+# milestone, so they run here for the first time.
+check_sh "the live scenarios for notes" \
+    'LIVE_CAPABILITY=notes bash scripts/verify/live_interaction.sh --full 2>&1 | tail -6'
 verify_end

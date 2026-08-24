@@ -25,7 +25,7 @@
 	 */
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
-	import { isUnsupported, type McpListing } from '$lib/jarvisClient';
+	import { isUnsupported, type McpListing, type McpServerDetail } from '$lib/jarvisClient';
 	import { toasts } from '$lib/toast';
 	import {
 		blankMcpForm,
@@ -50,6 +50,10 @@
 	let adding = $state(false);
 	let form = $state<McpForm>(blankMcpForm());
 	let expanded = $state('');
+	/** name -> the inspect payload, once it has been asked for. */
+	let detail = $state<Record<string, McpServerDetail>>({});
+	/** tool name -> what a test call returned, so the answer sits under it. */
+	let tried = $state<Record<string, string>>({});
 
 	const preview = $derived(toolNamePreview(form.name));
 	const normalised = $derived(safeName(form.name));
@@ -78,6 +82,51 @@
 		if (!connection) return;
 		void refresh(connection);
 	});
+
+	async function inspect(name: string, force = false): Promise<void> {
+		if (!force && expanded === name) {
+			expanded = '';
+			return;
+		}
+		expanded = name;
+		if (!conn) return;
+		// Always re-read, keeping whatever is on screen until the answer
+		// arrives. Cached-forever was wrong in the one case the view is for:
+		// press RECONNECT after fixing a server and the panel went on showing
+		// the error it had failed with, and no tools.
+		try {
+			const answer = await conn.client.inspectMcpServer(name);
+			detail = { ...detail, [name]: answer.server };
+		} catch (e) {
+			err = describeError(e);
+		}
+	}
+
+	/**
+	 * Call one of the server's tools, from here, to find out whether it works.
+	 *
+	 * Through `jarvis/tools/call`, which is the SAME path and the same approval
+	 * gate the model goes through — so a Tier-3 tool tested from this button is
+	 * held for a human exactly as it would be mid-conversation. A second,
+	 * console-only execution path would be a way around the gate, and the whole
+	 * argument for the gate is that there is only one.
+	 *
+	 * No arguments: a test call is "is this server answering", not a form for
+	 * composing a real one. A tool that needs arguments will say so, and that
+	 * answer is the diagnosis.
+	 */
+	async function tryTool(toolName: string): Promise<void> {
+		if (!conn || busy) return;
+		busy = toolName;
+		try {
+			const result = await conn.client.callTool(toolName, {});
+			tried = { ...tried, [toolName]: JSON.stringify(result).slice(0, 400) };
+		} catch (e) {
+			tried = { ...tried, [toolName]: describeError(e) };
+		} finally {
+			busy = '';
+		}
+	}
 
 	async function add(): Promise<void> {
 		if (!conn || busy) return;
@@ -128,6 +177,8 @@
 		err = '';
 		try {
 			take(await conn.client.reconnectMcp(name));
+			// An open inspect panel is now stale by definition.
+			if (expanded) void inspect(expanded, true);
 		} catch (e) {
 			err = describeError(e);
 		} finally {
@@ -170,17 +221,15 @@
 						</span>
 						<span class="acts">
 							<span class="pill" data-tier={server.tier}>{tierLabel(server.tier)}</span>
-							{#if server.tools.length}
-								<button
-									type="button"
-									class="btn ghost"
-									data-testid="mcp-tools-{server.name}"
-									aria-expanded={expanded === server.name}
-									onclick={() => (expanded = expanded === server.name ? '' : server.name)}
-								>
-									{server.tool_count} TOOLS
-								</button>
-							{/if}
+							<button
+								type="button"
+								class="btn ghost"
+								data-testid="mcp-tools-{server.name}"
+								aria-expanded={expanded === server.name}
+								onclick={() => inspect(server.name)}
+							>
+								{server.tools.length ? `${server.tool_count} TOOLS` : 'INSPECT'}
+							</button>
 							<button
 								type="button"
 								class="btn ghost"
@@ -208,11 +257,63 @@
 						</span>
 					</div>
 					{#if expanded === server.name}
-						<ul class="tools" data-testid="mcp-tool-list-{server.name}">
-							{#each server.tools as tool (tool.name)}
-								<li><code>{tool.name}</code> <span class="eid">{tool.description}</span></li>
-							{/each}
-						</ul>
+						<div class="inspect" data-testid="mcp-inspect-{server.name}">
+							{#if detail[server.name]}
+								<dl class="facts">
+									<dt>protocol</dt>
+									<dd data-testid="mcp-protocol-{server.name}">
+										{detail[server.name].protocol_version || 'unknown'}
+									</dd>
+									<dt>server</dt>
+									<dd>
+										{String(
+											detail[server.name].server_info?.name ??
+												detail[server.name].server_info?.title ??
+												'—'
+										)}
+									</dd>
+									{#if detail[server.name].last_error}
+										<dt>last error</dt>
+										<dd class="bad" data-testid="mcp-last-error-{server.name}">
+											{detail[server.name].last_error}
+											{#if detail[server.name].next_attempt_in > 0}
+												· retrying in {Math.round(detail[server.name].next_attempt_in)}s
+											{/if}
+										</dd>
+									{/if}
+								</dl>
+							{/if}
+							<ul class="tools" data-testid="mcp-tool-list-{server.name}">
+								{#each detail[server.name]?.tools ?? server.tools as tool (tool.name)}
+									<li>
+										<code>{tool.name}</code>
+										<span class="eid">{tool.description}</span>
+										<button
+											type="button"
+											class="btn ghost"
+											data-testid="mcp-try-{tool.name}"
+											disabled={!!busy}
+											onclick={() => tryTool(tool.name)}
+											title="Call it through the same approval gate the assistant uses"
+										>
+											{busy === tool.name ? '…' : 'TEST CALL'}
+										</button>
+										{#if 'parameters' in tool && tool.parameters}
+											<pre class="schema" data-testid="mcp-schema-{tool.name}">{JSON.stringify(
+													tool.parameters,
+													null,
+													1
+												)}</pre>
+										{/if}
+										{#if tried[tool.name]}
+											<pre class="result" data-testid="mcp-result-{tool.name}">{tried[
+													tool.name
+												]}</pre>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						</div>
 					{/if}
 				</li>
 			{/each}
@@ -318,6 +419,42 @@
 {/if}
 
 <style>
+	.inspect {
+		padding: var(--jv-space-2) 0 var(--jv-space-2) var(--jv-space-3);
+	}
+	.facts {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: var(--jv-space-1) var(--jv-space-3);
+		margin: 0 0 var(--jv-space-2);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+	}
+	.facts dt {
+		color: var(--jv-text-faint);
+		text-transform: uppercase;
+		letter-spacing: var(--jv-track-wide);
+	}
+	.facts dd {
+		margin: 0;
+	}
+	.facts .bad {
+		color: var(--jv-danger);
+	}
+	.schema,
+	.result {
+		margin: var(--jv-space-1) 0 0;
+		padding: var(--jv-space-2);
+		background: var(--jv-surface-2);
+		border: 1px solid var(--jv-line);
+		border-radius: var(--jv-radius-sm);
+		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-xs);
+		max-height: var(--jv-measure-log);
+		overflow: auto;
+		white-space: pre-wrap;
+	}
+
 	/* Only what the shared chrome does not provide — `.panel`, `.row`, `.btn`,
 	   `.name`, `.eid`, `.muted`, `.err` and `.editor` all come from chrome.css. */
 	.lede {

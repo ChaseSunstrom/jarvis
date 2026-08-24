@@ -1,0 +1,20 @@
+name: research-deep-report
+capability: research
+gated-on: M18
+intent: >
+  Deep research, end to end: a plan the console can show, several sources
+  actually fetched, a report saved as a note, citations that resolve, and
+  factual claims that match the fixture site word for word. The judge only
+  grades the synthesis; every fact is checked against content this repo wrote.
+variants: [text]
+turns:
+  - say: "Do some deep research on the fixture handbook's heating advice and write me a report."
+    expect:
+      task: {kind: research, steps_at_least: 2, within: 60}
+      capability: research
+  - say: "Is that report finished?"
+    wait: 90
+    expect:
+      task: {kind: research, status: done, within: 600}
+      note: {title_contains: "heating", citations_at_least: 2}
+      reply_means: "says the research is finished and summarises what it found"

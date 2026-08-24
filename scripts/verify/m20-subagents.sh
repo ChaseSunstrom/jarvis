@@ -28,4 +28,10 @@ check_sh "fixture task: two parallel subagents + roll-up, with log evidence of c
     'timeout 900 python3 evals/subagents_eval.py --out .verify/subagents 2>&1 | tail -6'
 check "the roll-up artefact exists" test -f .verify/subagents/rollup.json
 check "concurrency evidence recorded" grep -q 'overlap' .verify/subagents/rollup.json
+# This milestone's own live scenarios. A capability is not done until it works
+# when a person talks to it — which is a different claim from "its unit tests
+# pass", and the only one an operator can feel. Its scenarios are gated on this
+# milestone, so they run here for the first time.
+check_sh "the live scenarios for subagents" \
+    'LIVE_CAPABILITY=subagents bash scripts/verify/live_interaction.sh --full 2>&1 | tail -6'
 verify_end

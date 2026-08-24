@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# scripts/verify/live_interaction.sh — talk to Jarvis and see what happens.
+#
+# Two modes, and the difference between them is the whole point:
+#
+#   --implemented-only   every scenario that is NOT gated on an unfinished
+#                        milestone. Must exit 0. Appended to every milestone's
+#                        verification from M24 onward, so a capability does not
+#                        count as done until it also works out loud.
+#   --full               everything, including the scenarios written against
+#                        capabilities that do not exist yet, plus the
+#                        thresholds from the brief (intent ≥ 95 %, WER ≤ 10 %,
+#                        routing ≥ 90 %, median round trip ≤ 2 s). Required at
+#                        final integration (M23) and nowhere else.
+#
+# What it boots: a real jarvis-core against the REAL Whisper, Piper and model
+# this host runs. Nothing is faked, which is why this is slow (minutes, not
+# seconds) and why it proves something the rest of the suite cannot.
+#
+#   bash scripts/verify/live_interaction.sh --implemented-only
+#   bash scripts/verify/live_interaction.sh --full --report
+#   LIVE_ONLY=house-light-on bash scripts/verify/live_interaction.sh --implemented-only
+source "$(dirname "$0")/lib.sh"
+
+MODE="--implemented-only"
+REPORT=""
+for arg in "$@"; do
+    case "$arg" in
+        --implemented-only|--full) MODE="$arg" ;;
+        --report) REPORT="1" ;;
+        *) printf 'unknown argument: %s\n' "$arg" >&2; exit 2 ;;
+    esac
+done
+
+verify_begin "LIVE" "interaction suite (${MODE#--})"
+use_venv
+
+# The rig speaks to the model server and the voice services the operator runs.
+# `.env` is where their addresses live, and it is gitignored — so this is read
+# rather than assumed, and its absence is a failure with a name.
+if [ -f "$ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$ROOT/.env"
+    set +a
+    _v_ok "read .env (LLM_URL, LLM_MODEL)"
+else
+    _v_fail ".env is missing — the live rig needs LLM_URL and LLM_MODEL" ""
+fi
+
+check "the synthetic user has a voice" python3 testing/live/fetch_voice.py --check
+check "piper-tts is installed" python3 -c 'import piper'
+check "the scenario suite parses" python3 -c '
+import sys; sys.path.insert(0, ".")
+from testing.live.scenario import load_all
+scenarios = load_all()
+gated = [s for s in scenarios if s.gated]
+print(f"{len(scenarios)} scenario(s), {len(gated)} gated")
+'
+check "every gated scenario names a real milestone" python3 -c '
+import re, sys; sys.path.insert(0, ".")
+from pathlib import Path
+from testing.live.scenario import load_all
+known = set(re.findall(r"\*\*(M[0-9]{2}) ", Path("MILESTONES.md").read_text()))
+bad = [(s.name, s.gated_on) for s in load_all() if s.gated and s.gated_on not in known]
+assert not bad, f"gated on milestones that do not exist: {bad}"
+'
+# Every capability the milestones promise must have at least one scenario, or
+# the suite grows a hole exactly where a capability was skipped.
+check "every capability has a scenario" python3 -c '
+import sys; sys.path.insert(0, ".")
+from testing.live.scenario import load_all
+want = {"house", "answer", "voice", "conversation", "task", "memory", "notes",
+        "research", "coding", "subagents", "interactions", "safety", "skills"}
+have = {s.capability for s in load_all()}
+missing = sorted(want - have)
+assert not missing, f"no live scenario covers: {missing}"
+print(f"{len(have)} capabilities covered")
+'
+
+ARGS=("$MODE")
+[ -n "${LIVE_ONLY:-}" ] && ARGS+=("--only" "$LIVE_ONLY")
+# One capability's scenarios. A milestone that builds a capability runs exactly
+# the scenarios written for it — including the ones gated on that milestone,
+# which is why those calls pass --full.
+[ -n "${LIVE_CAPABILITY:-}" ] && ARGS+=("--capability" "$LIVE_CAPABILITY")
+[ -n "${LIVE_NO_BROWSER:-}" ] && ARGS+=("--no-browser")
+[ -n "$REPORT" ] && ARGS+=("--write-report")
+
+check_sh "the scenarios run against a real Jarvis" \
+    "timeout ${LIVE_TIMEOUT:-5400} python3 -m testing.live.runner ${ARGS[*]} 2>&1 | grep -v pthread_setaffinity | tail -25"
+
+verify_end

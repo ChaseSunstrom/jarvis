@@ -1,0 +1,18 @@
+name: notes-write-and-find
+capability: notes
+gated-on: M16
+intent: >
+  "Note that…" is the second most common thing said to an assistant that can
+  take notes, and the note is worthless if it cannot be found again by
+  searching for a word that is in it.
+variants: [voice, text]
+turns:
+  - say: "Note that the boiler was serviced today and the pressure was one point two bar."
+    expect:
+      reply_means: "confirms it has written that down as a note"
+      note: {body_contains: "boiler"}
+      capability: notes
+  - say: "Find my note about the boiler."
+    expect:
+      reply_contains: ["boiler"]
+      reply_means: "reads back the note about the boiler being serviced"

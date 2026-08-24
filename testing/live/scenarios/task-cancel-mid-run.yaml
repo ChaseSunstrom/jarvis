@@ -1,0 +1,18 @@
+name: task-cancel-mid-run
+capability: task
+gated-on: M17
+intent: >
+  Stopping something that is already running, by voice. Cancelling is not
+  failing — the task must end as `cancelled`, and nothing may report it as an
+  error. Gated on M17: there is no tool that lets the model cancel a task, so
+  today this can only be done from the console.
+variants: [voice, text]
+turns:
+  - say: "Look into every sensor in the house and write me a long report about all of them."
+    expect:
+      task: {kind: background, within: 30}
+  - say: "Actually, stop that job."
+    wait: 3
+    expect:
+      task: {kind: background, status: cancelled, within: 60}
+      reply_means: "confirms it has stopped the job"

@@ -775,6 +775,10 @@ class PipelineRun:
             # is.
             await self._drain_turn_events()
 
+        # What the user is told, as distinct from everything the model said on
+        # the way there. See `_authoritative_answer`.
+        reply = self._authoritative_answer(reply)
+
         await self._emit(
             EVENT_INTENT_END,
             {
@@ -918,6 +922,34 @@ class PipelineRun:
         delta = _delta_text(result)
         if delta:
             yield delta
+
+    def _authoritative_answer(self, streamed: str) -> str:
+        """The agent's final answer, when it has one that differs from the stream.
+
+        The deltas are everything the model said, INCLUDING the words it wrote
+        in a round that then called a tool — a guess made before the tool ran.
+        Spoken, that is one breath containing both "the bed light is already
+        off, sir" and "the bed light is now off, sir", and there is no screen
+        out here to tell them apart.
+
+        `ConversationAgent` already separates the two (`ConversationResult.text`
+        versus `.preamble`). This asks for it, duck-typed and optional: any
+        other conversation agent — the stand-in, a test's two-line coroutine —
+        has no `last_result` and the stream is used unchanged. The prefix check
+        is what keeps a stale result from a previous turn out of this one.
+        """
+        agent = getattr(self.converse, "__self__", None)
+        result = getattr(agent, "last_result", None)
+        preamble = str(getattr(result, "preamble", "") or "")
+        answer = str(getattr(result, "text", "") or "")
+        if not preamble or not answer:
+            return streamed
+        if not streamed.strip().startswith(preamble.strip()[:40]):
+            return streamed
+        _LOGGER.debug(
+            "Dropping %d characters of preamble from the spoken answer", len(preamble)
+        )
+        return answer
 
     def _call_converse(self, text: str) -> Any:
         assert self.converse is not None

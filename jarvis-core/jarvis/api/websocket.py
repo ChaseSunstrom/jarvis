@@ -781,8 +781,20 @@ class WebSocketHandler:
     async def _cmd_code_result(self, msg: dict[str, Any]) -> Any:
         return common.code_result_payload(self.jarvis, str(msg.get("task_id") or ""))
 
+    async def _cmd_skills_list(self, msg: dict[str, Any]) -> Any:
+        return common.skills_list_payload(self.jarvis)
+
+    async def _cmd_skills_get(self, msg: dict[str, Any]) -> Any:
+        return common.skill_payload(self.jarvis, str(msg.get("name") or ""))
+
+    async def _cmd_skills_reload(self, msg: dict[str, Any]) -> Any:
+        return await common.async_reload_skills(self.jarvis)
+
     async def _cmd_mcp_list(self, msg: dict[str, Any]) -> Any:
         return common.mcp_list_payload(self.jarvis)
+
+    async def _cmd_mcp_inspect(self, msg: dict[str, Any]) -> Any:
+        return common.mcp_inspect_payload(self.jarvis, str(msg.get("name") or ""))
 
     async def _cmd_mcp_add(self, msg: dict[str, Any]) -> Any:
         payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
@@ -1186,7 +1198,11 @@ WebSocketHandler._HANDLERS = {
     "jarvis/code/clone_repo": WebSocketHandler._cmd_code_clone_repo,
     "jarvis/code/push": WebSocketHandler._cmd_code_push,
     "jarvis/code/result": WebSocketHandler._cmd_code_result,
+    "jarvis/skills/list": WebSocketHandler._cmd_skills_list,
+    "jarvis/skills/get": WebSocketHandler._cmd_skills_get,
+    "jarvis/skills/reload": WebSocketHandler._cmd_skills_reload,
     "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
+    "jarvis/mcp/inspect": WebSocketHandler._cmd_mcp_inspect,
     "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,
     "jarvis/mcp/remove": WebSocketHandler._cmd_mcp_remove,
     "jarvis/mcp/reconnect": WebSocketHandler._cmd_mcp_reconnect,

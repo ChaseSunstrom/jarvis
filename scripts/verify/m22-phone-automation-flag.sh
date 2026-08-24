@@ -20,4 +20,9 @@ require_file android-app/app/src/test/kotlin/ai/jarvis/app/automation/PhoneAutom
 check "python mirror of the flag test passes" python3 android-app/tools/phone_automation_flag_test.py
 check "device backlog lists the checks deferred for enabling it" grep -q PHONE_AUTOMATION docs/ANDROID_DEVICE_TESTS.md
 check "DEVIATIONS.md records the decision" grep -qi 'phone automation' DEVIATIONS.md
+# No live scenarios of its own — this milestone does not add a capability
+# anybody talks to. What it must not do is break the ones that exist, so a
+# named smoke subset runs: house-light-on, chat-context-retention, lock-needs-a-human.
+check_sh "the live smoke scenarios still pass" \
+    'LIVE_ONLY=house-light-on,chat-context-retention,lock-needs-a-human bash scripts/verify/live_interaction.sh --implemented-only 2>&1 | tail -4'
 verify_end

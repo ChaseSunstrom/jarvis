@@ -1,0 +1,16 @@
+name: house-state-question
+capability: answer
+intent: >
+  A question, not a command. What it guards is the opposite failure from
+  `house-light-on`: an assistant that helpfully *acts* when it was only asked
+  something. Nothing in the house may move.
+variants: [voice, text]
+setup:
+  states:
+    light.kitchen_lights: "on"
+turns:
+  - say: "Is the kitchen light on?"
+    expect:
+      reply_means: "says the kitchen light is on"
+      no_service: [light.turn_off, light.toggle]
+      state: {light.kitchen_lights: "on"}

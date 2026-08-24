@@ -35,4 +35,9 @@ check "Python mirrors still pass" make -s test-android
 require_file docs/ANDROID_DEVICE_TESTS.md
 check "device-test backlog has the columns" grep -qE '^\| *ID *\| *Area *\| *Check *\| *Why device-only *\|' docs/ANDROID_DEVICE_TESTS.md
 check_sh "device-test backlog has >= 20 entries" '[ "$(grep -cE "^\| *ADT-[0-9]{3} " docs/ANDROID_DEVICE_TESTS.md)" -ge 20 ]'
+# No live scenarios of its own — this milestone does not add a capability
+# anybody talks to. What it must not do is break the ones that exist, so a
+# named smoke subset runs: house-light-on, chat-context-retention, lock-needs-a-human.
+check_sh "the live smoke scenarios still pass" \
+    'LIVE_ONLY=house-light-on,chat-context-retention,lock-needs-a-human bash scripts/verify/live_interaction.sh --implemented-only 2>&1 | tail -4'
 verify_end

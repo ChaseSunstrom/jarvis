@@ -1,0 +1,14 @@
+name: voice-room-tone
+capability: voice
+intent: >
+  The harder negative: not digital silence but an empty room with an extractor
+  fan in it. A wake word that fires on this fires all night, and a detector
+  whose threshold was set by hope passes the silence test and fails this one.
+variants: [voice]
+tags: [wake-word, negative]
+turns:
+  - sound: room_tone
+    audio: {seconds: 4}
+    say: ""
+    expect:
+      no_service: [light.turn_on, light.turn_off, lock.unlock]

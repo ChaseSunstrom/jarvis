@@ -7,6 +7,53 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+### Added
+- M13 (skills): drop a folder with a `SKILL.md` in it into `config/skills/` and Jarvis knows
+  it — the open Agent Skills format, YAML frontmatter and a markdown body, no code and no
+  restart beyond `skills.reload`. Only the **name and description** reach the system prompt;
+  the body arrives when the model calls `use_skill`, because twelve skills of two thousand
+  words each would be twenty-four thousand words in front of every "turn the lights off". A
+  skill cannot run the scripts beside it (the loader has no execution primitive at all), cannot
+  grant itself a tool or lower a tier, and cannot forge a prompt section through a description
+  with a newline in it. WS `jarvis/skills/list|get|reload`, REST `/api/skills`, a panel on the
+  console's Tools page that also lists the skills that FAILED to load and why.
+- M14 (MCP inspect): `jarvis/mcp/inspect` (and `GET /api/mcp/servers/<name>/inspect`) returns
+  one server in full — protocol version, server info, every tool's JSON schema, and
+  `last_error`, which is the field that matters: a server missing from the tool list told
+  nobody why. The console draws it behind the INSPECT button with a **test call** per tool that
+  goes through `jarvis/tools/call` — the same approval gate the model uses, because a
+  console-only execution path would be a way around it. A server that is down is now retried
+  automatically with per-server backoff (30 s doubling to 30 minutes), so an MCP server that
+  starts a few seconds after jarvis-core no longer waits for a human to press reconnect.
+
+### Added
+- Live interaction testing (M24/M25, folded in mid-run): `testing/live/` talks to Jarvis the
+  way a person does — the user's speech is synthesised locally with Piper in `en_US-amy-low`
+  (Jarvis answers in `en_GB-alan-medium`, so no transcript can be attributed to the wrong
+  side), delivered through the audio-input API **and** through a real headless browser's
+  microphone, and Jarvis's spoken replies are transcribed back with the same Whisper the
+  system itself uses. Scenarios are YAML fixtures asserting on the house (the service called,
+  the state changed, the task created), with a local-LLM judge only where a deterministic
+  check cannot express the criterion — and every verdict logged with its reason. 27 scenarios
+  ship covering every capability; the 15 whose capability does not exist yet carry
+  `gated-on: <milestone>` and fail in full mode until it does.
+  `bash scripts/verify/live_interaction.sh --implemented-only` is now part of every remaining
+  milestone's verification, and `make verify-all` runs the whole ungated suite.
+
+### Fixed
+- The spoken reply carried every round's words, not the answer: a turn that guessed before
+  calling a tool said both out loud — "The bed light is already off, sir. The bed light is
+  now off, sir." — and after a narrated-call correction it read the correction out too
+  ("You're right, sir — I described the check without running it"). Text from a round that
+  then called a tool is now `ConversationResult.preamble`: still streamed, so a surface can
+  show the working, and no longer spoken, archived or returned as the answer. Found by
+  talking to it; see `ISSUES.md`.
+- A turn whose only words were written before a tool ran came back **empty** — a blank bubble
+  on the console and silence on the speaker. The "it said nothing" fallback was asked of
+  everything streamed rather than of the answer.
+- The voice path spoke the stream, not the answer, so the preamble fix above did not reach it:
+  `PipelineRun` now prefers the agent's own final text when the two differ.
+
 ### Changed
 - The console's palette, type and motion move to Reactor II's values (accent #4fe3ff, Barlow /
   Space Grotesk / JetBrains Mono, 160/260 ms); Compose is enabled in the Android build for the

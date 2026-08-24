@@ -1,0 +1,22 @@
+name: coding-fix-failing-tests
+capability: coding
+gated-on: M19
+intent: >
+  The whole coding agent, asked for by voice, and the containment claim that
+  makes it safe to have at all. Everything runs in a disposable container; the
+  diff waits for a human; approving it from the UI is what makes the commit
+  exist. The last expectation is the one that matters most — nothing outside
+  the sandbox's mount changed.
+variants: [voice]
+turns:
+  - say: "Fix the failing tests in the fixture repository."
+    expect:
+      task: {kind: code, within: 60}
+      capability: coding
+      reply_means: "says it has started work on the fixture repository"
+  - say: "Is that finished?"
+    wait: 120
+    expect:
+      task: {kind: code, status: blocked, within: 600}
+      approval: {tool: apply_code_task, decision: approve}
+      file: {path: "fixtures/coding/failing-tests/.git", exists: true}

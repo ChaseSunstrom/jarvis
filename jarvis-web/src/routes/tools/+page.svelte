@@ -5,6 +5,7 @@
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
 	import McpServers from '$lib/components/McpServers.svelte';
+	import SkillsPanel from '$lib/components/SkillsPanel.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { EmptyState, ScreenState } from '$lib/ui';
 	import {
@@ -570,6 +571,11 @@
      may call" is one idea, and an MCP server is the way you get a hundred of
      them at once. -->
 <McpServers {conn} />
+
+<!-- And the other way a capability arrives: not a tool the assistant may call,
+     but instructions this house has written down. Same page, because "what can
+     it do" is one question. -->
+<SkillsPanel {conn} />
 
 <section class="panel">
 	<div class="panel-head">

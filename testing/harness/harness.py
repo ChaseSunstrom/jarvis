@@ -312,6 +312,12 @@ sun:
 demo:
   create_areas: true
 
+# One skill, copied in beside this file by the harness. The live rig asks it
+# something only the skill knows, which is the only way to tell "the skill was
+# loaded" from "the persona happened to say something similar".
+skills:
+  path: skills
+
 voice:
   language: en
   stt:
@@ -474,6 +480,8 @@ class Harness:
         verbose: bool = False,
         boot_timeout: float = BOOT_TIMEOUT,
         save_audio: bool = True,
+        ollama_url: str | None = None,
+        wyoming: dict[str, Any] | None = None,
     ) -> None:
         self.host = host
         # The fakes never leave this box: jarvis-core reaches them over
@@ -492,6 +500,17 @@ class Harness:
         self.save_audio = save_audio
         self.transcript = transcript
         self.stt_mode = stt_mode
+        #: Point the server at a model server and voice services that are
+        #: ALREADY RUNNING instead of at the fakes. This is what the live
+        #: interaction rig uses: the whole point of that rig is that the STT is
+        #: really Whisper, the TTS is really Piper and the model really thinks,
+        #: so a fake in the middle of it would prove nothing about any of them.
+        #:
+        #: `wyoming` is `{"host": ..., "stt": port, "tts": port, "wake": port}`.
+        #: Either may be set without the other — a scripted model against real
+        #: voice services is a useful third thing.
+        self.external_ollama_url = str(ollama_url).rstrip("/") if ollama_url else ""
+        self.external_wyoming = dict(wyoming) if wyoming else {}
         self.ollama_script = Path(ollama_script).resolve() if ollama_script else DEFAULT_OLLAMA_SCRIPT
         self.wyoming_script = Path(wyoming_script).resolve() if wyoming_script else None
 
@@ -639,6 +658,13 @@ class Harness:
         return child
 
     def _start_fakes(self) -> None:
+        self._start_fake_ollama()
+        self._start_fake_wyoming()
+
+    def _start_fake_ollama(self) -> None:
+        if self.external_ollama_url:
+            self.ollama_url = self.external_ollama_url
+            return
         ollama_out = self.work_dir / "fake-ollama.json"
         # A reused --work-dir still holds the *last* run's port files. Reading
         # one of those would point this run's config at a dead port and the
@@ -658,6 +684,12 @@ class Harness:
         self.ports["ollama"] = int(info["port"])
         self.ollama_url = f"http://{self.fake_host}:{self.ports['ollama']}"
 
+    def _start_fake_wyoming(self) -> None:
+        if self.external_wyoming:
+            self.wyoming_host = str(self.external_wyoming.get("host") or "127.0.0.1")
+            for name, default in (("stt", 10300), ("tts", 10200), ("wake", 10400)):
+                self.ports[name] = int(self.external_wyoming.get(name) or default)
+            return
         wyoming_out = self.work_dir / "fake-wyoming.json"
         wyoming_out.unlink(missing_ok=True)
         argv = [
@@ -725,6 +757,7 @@ class Harness:
 
         shutil.rmtree(self.config_dir, ignore_errors=True)
         self.config_dir.mkdir(parents=True, exist_ok=True)
+        self._write_skills()
         (self.config_dir / "configuration.yaml").write_text(
             build_config(
                 port=self.port,
@@ -734,9 +767,27 @@ class Harness:
                 tts_port=self.ports["tts"],
                 wake_port=self.ports["wake"],
                 model=self.model,
-                wyoming_host=self.fake_host,
+                wyoming_host=getattr(self, "wyoming_host", self.fake_host),
             ),
             encoding="utf-8",
+        )
+
+    def _write_skills(self) -> None:
+        """Copy the shipped example skills into the throwaway config.
+
+        Copied rather than pointed at: `skills.reload` and the console both
+        write nothing, but a test that edits a skill must not be able to edit
+        the repository's own example.
+        """
+        source = Path(self.core_dir) / "config" / "examples" / "skills"
+        if not source.is_dir():
+            return
+        import shutil
+
+        target = self.config_dir / "skills"
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(
+            source, target, ignore=shutil.ignore_patterns("README.md", "__pycache__")
         )
 
     def _spawn_core(self) -> _Child:
@@ -800,6 +851,23 @@ class Harness:
                 self.ports["core"] = self.port
                 self._write_config()
 
+    def restart_core(self) -> "Harness":
+        """Stop jarvis-core and start it again, on the same config and port.
+
+        For the one class of claim that cannot be tested any other way: "it
+        remembered". A memory that lives in a process is not a memory, and the
+        only honest way to say so is to kill the process. The fakes and the
+        config directory are left exactly as they are — this restarts the
+        server, not the world.
+        """
+        for child in list(self._children):
+            if child.name.startswith("jarvis-core"):
+                child.stop()
+                self._children.remove(child)
+        self._start_core()
+        self._check_token()
+        return self
+
     @staticmethod
     def _port_was_contended(child: _Child) -> bool:
         """Did this jarvis-core die because something already had its port?"""
@@ -852,6 +920,15 @@ class Harness:
     # async test between awaits, and a great deal clearer than reaching into
     # a subprocess some other way.
     def _control(self, path: str, payload: Any = None) -> Any:
+        if self.external_ollama_url:
+            # A real model server has no `/_control` plane, and pretending the
+            # call worked would let a test "script" a model that then answers
+            # however it likes — which is worse than not being able to script
+            # it, because the assertions would still be written as if it had.
+            raise HarnessError(
+                "this harness talks to a real model server "
+                f"({self.external_ollama_url}); there is nothing to script"
+            )
         return http_json(f"{self.ollama_url}{path}", payload=payload, timeout=5.0)
 
     def set_ollama_script(self, script: Any = None) -> None:

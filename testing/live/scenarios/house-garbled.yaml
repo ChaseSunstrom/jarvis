@@ -1,0 +1,15 @@
+name: house-garbled
+capability: answer
+intent: >
+  A sentence that means nothing, delivered as sound. The assistant must not act
+  on a guess: acting on a misheard command is worse than asking again.
+variants: [voice]
+tags: [robustness]
+turns:
+  - say: "Fluxion the grendel past the kitchen wibble."
+    expect:
+      transcript_wer: 1.0
+      no_service: [light.turn_on, light.turn_off, lock.unlock]
+      reply_means: >
+        says it did not understand, or asks for the request again — it must not
+        claim to have done something

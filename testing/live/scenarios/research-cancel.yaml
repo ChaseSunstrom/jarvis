@@ -1,0 +1,17 @@
+name: research-cancel
+capability: research
+gated-on: M18
+intent: >
+  Stopping a long job mid-flight must leave nothing half-written: no orphan
+  note, no task stuck in `running`, no browser session left open. Cancellation
+  is the path nobody tests and everybody uses.
+variants: [text]
+turns:
+  - say: "Do deep research on every sensor in this house and write it all up."
+    expect:
+      task: {kind: research, within: 60}
+  - say: "Stop that research, I've changed my mind."
+    wait: 5
+    expect:
+      task: {kind: research, status: cancelled, within: 120}
+      reply_means: "confirms it has stopped"

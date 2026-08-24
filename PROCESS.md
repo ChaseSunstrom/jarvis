@@ -51,6 +51,33 @@ for the milestone run.
   tests where the logic is, a Playwright spec where the behaviour is visible,
   a contract table in `tests/contracts/` where two languages must agree.
 
+### 2a. And it has to work when somebody talks to it
+
+From M24 on, a capability is not done until its **live scenarios** pass:
+`testing/live/` synthesises a user's speech with Piper, delivers it through the
+real audio-input API and through a real browser's microphone, and transcribes
+Jarvis's spoken answers back with the same Whisper the system itself uses.
+
+- Every milestone that builds a capability runs its own slice of the suite
+  (`LIVE_CAPABILITY=<name>`); every other one runs a named smoke subset. Both
+  are in the milestone's verify script, and neither is optional.
+- Scenarios are written **against the target state, now** — a capability that
+  does not exist yet has its scenarios in the tree marked
+  `gated-on: <milestone>`. They are not skipped: `--implemented-only` does not
+  select them and full mode runs them and fails. There is still no third
+  outcome.
+- Assertions are about the *house*, not the wording: the service that was
+  called, the state that changed, the task that appeared, the file that was
+  not written. The local-LLM judge grades only what a deterministic check
+  cannot express, and every verdict it gives is logged with its reason.
+- A defect found by talking to Jarvis gets an `ISSUES.md` entry **and** a
+  regression scenario, in the same change that fixes it. An entry with no
+  regression scenario has to say why one cannot exist.
+- Thresholds (full mode): intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median
+  round trip ≤ 2 s, zero critical issues. A threshold that cannot be met on
+  this hardware is reported as missed in `docs/LIVE_TEST_REPORT.md` and
+  written up in `BLOCKERS.md` — never re-scored to fit.
+
 ## 3. Parallel work
 
 - Milestones marked `parallel-ok` in `MILESTONES.md`, with no shared files or

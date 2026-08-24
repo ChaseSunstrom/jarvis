@@ -1,0 +1,14 @@
+name: task-live-ui
+capability: task
+gated-on: M25
+intent: >
+  The same background task, watched through the console: the activity feed has
+  to update while it runs, not once it is over. Gated on M25 because asserting
+  on the live task UI needs the rig's browser assertions, which land with the
+  scenario suite itself.
+variants: [voice]
+turns:
+  - say: "Look into which lights are still on downstairs and then tell me what you found later."
+    expect:
+      task: {kind: background, within: 30}
+      ui: {testid: task-activity, contains: "step"}

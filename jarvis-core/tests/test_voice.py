@@ -1423,3 +1423,67 @@ async def test_a_real_reply_still_reaches_the_tts_service(tmp_path):
     run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=tts, converse=converse)
     await run.execute(await queue_of(sine_pcm(20)))
     assert [call[0] for call in tts.calls] == ["  Kitchen light on.  "]
+
+
+async def test_the_spoken_answer_is_the_answer_not_the_working(tmp_path):
+    """The pipeline speaks `result.text`, not every delta it streamed.
+
+    The deltas include what the model wrote in a round that then called a tool
+    — a guess made before the tool ran. Out loud that is one breath containing
+    both "the bed light is already off, sir" and "the bed light is now off,
+    sir", and there is no screen out here to tell them apart. Found by talking
+    to it; see ISSUES.md.
+    """
+
+    class Agent:
+        """Just enough of ConversationAgent: a stream and a last_result."""
+
+        def __init__(self) -> None:
+            self.last_result = type(
+                "R", (), {"text": "The bed light is now off, sir.",
+                          "preamble": "The bed light is already off, sir. "}
+            )()
+
+        async def converse(self, text, conversation_id=None, **kwargs):
+            for piece in ("The bed light is already off, sir. ",
+                          "The bed light is now off, sir."):
+                yield piece
+
+    agent = Agent()
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("turn off the bed light"),
+        tts=FakeTts(),
+        converse=agent.converse,
+        start_stage="intent",
+        end_stage="intent",
+    )
+    await run.execute(None, None, text="turn off the bed light")
+
+    assert run.response_text == "The bed light is now off, sir."
+    # The deltas still carried everything: a surface showing the working can.
+    progress = "".join(
+        str((event.data.get("chat_log_delta") or {}).get("content") or "")
+        for event in run.events
+        if event.type == "intent-progress"
+    )
+    assert "already off" in progress
+
+
+async def test_an_agent_with_no_last_result_is_left_alone(tmp_path):
+    """Duck-typed, and optional: the stand-in agent and every test's two-line
+    coroutine have no `last_result`, and their stream is the answer."""
+
+    async def converse(text, conversation_id=None, **kwargs):
+        yield "Very good, Sir."
+
+    run = PipelineRun(
+        Jarvis(tmp_path),
+        stt=FakeStt("hello"),
+        tts=FakeTts(),
+        converse=converse,
+        start_stage="intent",
+        end_stage="intent",
+    )
+    await run.execute(None, None, text="hello")
+    assert run.response_text == "Very good, Sir."

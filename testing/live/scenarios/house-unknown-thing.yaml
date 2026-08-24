@@ -1,0 +1,14 @@
+name: house-unknown-thing
+capability: answer
+intent: >
+  Graceful failure. Asked for something that does not exist, Jarvis must say so
+  rather than inventing a success — the single most damaging thing an assistant
+  can do, because the user walks away believing it happened.
+variants: [voice, text]
+turns:
+  - say: "Turn on the swimming pool lights."
+    expect:
+      reply_means: >
+        says it cannot find or does not have a swimming pool light — it must NOT
+        claim to have turned anything on
+      no_service: [light.turn_on]

@@ -366,6 +366,54 @@ trace, and the three harness tests.
 
 ---
 
+## Delta — live interaction testing (added 2026-08-24, mid-run)
+
+A late addition to the target state: a rig that talks to Jarvis the way a person does — spoken
+audio in, spoken audio out, and the real web UI in between — plus a scenario suite that
+exercises every capability through that rig rather than through the API, an intelligence
+scorecard, and an exploratory pass. What follows is what exists for it today and what each
+piece will cost, measured on this host rather than assumed.
+
+### What already exists and is reusable
+
+| Piece | Status | Where |
+|---|---|---|
+| A real jarvis-core, booted from a generated config, with fakes for the model and the voice services | done | `testing/harness/` (`Harness`, `JarvisClient`, `fake_ollama.py`, `fake_wyoming.py`) — M00 |
+| A websocket + REST client that can drive a pipeline run and read every event | done | `testing/harness/client.py` (`command`, `subscribe_events`, binary handlers) |
+| Headless Playwright against a built console, on a port of its own | done | `jarvis-web/playwright.config.ts`, `e2e/*.spec.ts`, `E2E_PORT` |
+| A voice pipeline whose every stage is an observable event | done | `jarvis/voice/pipeline.py` — 14 event types, mirrored onto the bus |
+| Wake-word detection as a first-class trigger | done | `platform: wake_word` — M12 |
+| Task lifecycle as distinct events the UI and automations both see | done | M10, M12 |
+| A scripted model that can answer planning, acting and verifying differently | done | `fake_ollama.py` rules — used by M11's end-to-end test |
+
+### What the rig needs, and whether this host can do it
+
+Every line below was **measured today**, not assumed:
+
+| Need | Verdict | Evidence |
+|---|---|---|
+| Synthesise the *user's* speech in a voice that is not Jarvis's | **yes** | `pip install piper-tts` (1.7.0) works in the repo venv; `en_US-amy-low` (60 MB) downloaded to `testing/live/voices/`; one sentence synthesises in 0.9 s at 16 kHz mono. Jarvis's own voice is `en_GB-alan-medium` — a different speaker, accent and sex, so a transcript cannot be confused for the other side |
+| Transcribe Jarvis's spoken reply with real Whisper | **yes** | the Wyoming faster-whisper on `:10300` returned `'Hey Jarvis, turn on the hall light.'` — exact — for the Piper-synthesised utterance above |
+| Deliver audio through the **real browser microphone path** | **yes** | headless Chromium with `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>%noloop` gives the page one live audio track carrying the file's signal (measured peak 1.0 on `http://127.0.0.1`, which is a secure context; `about:blank` is not, and `navigator.mediaDevices` is undefined there — the specs must navigate first) |
+| Deliver audio through the **audio-input API** | **yes** | `assist_pipeline/run` + binary frames; `testing/e2e/test_harness_selftest.py` already drives it |
+| A real model, for the intelligence eval and the judge | **yes** | llama-swap at `LLM_URL` answers `/v1/models`; `qwen3.8-27b` is loaded |
+| Noise overlays at several SNRs, silence, wake-word negatives | **yes** | arithmetic on PCM in `numpy`; no service needed |
+| A fixture website with known content, for checkable research | **yes** | a local HTTP server serving fixed pages |
+| **SearXNG pointed at it** | **blocked** | SearXNG is `--profile search` in compose and `jarvisdev` cannot reach the Docker socket. The rig therefore ships `testing/live/fixture_search.py`, which serves SearXNG's own `/search?format=json` response shape over the fixture pages — the research integration is exercised through its real search client, against a server that is not SearXNG. Recorded in `BLOCKERS.md`: it needs the operator to add `jarvisdev` to the `docker` group |
+| **The coding sandbox** (a real container per job) | **blocked** | same Docker-socket problem; already anticipated for M19 |
+| Barge-in | **partial** | the web HUD has always-on VAD and barge-in (`routes/+page.svelte`); the pipeline has no server-side interrupt, so the scenario covers the UI's behaviour and says so |
+
+### What this adds to the plan
+
+Four milestones — **M24–M27** — and one rule that changes every milestone after them: from M24 onward,
+a capability is not "done" until its live scenarios pass. `scripts/verify/live_interaction.sh
+--implemented-only` is appended to every remaining milestone's verification, and scenarios for
+capabilities that do not exist yet are written **now**, marked `gated-on: <milestone>`, and
+expected to fail until that milestone lands.
+
+The honesty rule from `PROCESS.md` applies unchanged: a scenario that cannot run on this host is
+a failure or a `BLOCKERS.md` entry, never a skip.
+
 ## Hard constraints
 
 | Constraint | Status | Evidence |

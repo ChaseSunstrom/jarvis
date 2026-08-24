@@ -26,4 +26,10 @@ check_sh "scripted eval, offline (recorded search/fetch): a report per question,
 check_sh "scripted eval, live (SearXNG + model): the Scripted claim" \
     'timeout 1800 python3 evals/research_eval.py --backend live --out .verify/research-live 2>&1 | tail -6'
 check_sh "research unit tests" 'cd jarvis-core && python3 -m pytest tests/test_research.py tests/test_research_plan.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+# This milestone's own live scenarios. A capability is not done until it works
+# when a person talks to it — which is a different claim from "its unit tests
+# pass", and the only one an operator can feel. Its scenarios are gated on this
+# milestone, so they run here for the first time.
+check_sh "the live scenarios for research" \
+    'LIVE_CAPABILITY=research bash scripts/verify/live_interaction.sh --full 2>&1 | tail -6'
 verify_end

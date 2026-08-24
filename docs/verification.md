@@ -334,6 +334,22 @@ they are the only places that particular bug can come back.
 | A **real** model planning a **real** request | **Scripted** | `./scripts/e2e-smoke.sh` with a model server up; the offline suites script the model, on purpose — what they pin is which prompt gets which answer |
 | The whole milestones | Automated | `bash scripts/verify/m09-llm.sh` · `m10-task-engine.sh` · `m11-agent-loop.sh` |
 
+### Talking to it: the live interaction rig
+
+| Claim | Level | Proof |
+|---|---|---|
+| A spoken sentence reaches Jarvis, changes the house, and comes back as speech | Automated | `bash scripts/verify/live_interaction.sh --implemented-only` — the user is synthesised with Piper (`en_US-amy-low`, deliberately not Jarvis's `en_GB-alan-medium`), Jarvis's reply is transcribed back with the real Whisper on `:10300` |
+| The same scenarios work through a real browser microphone, not only the API | Automated | headless Chromium with `--use-file-for-fake-audio-capture`, driving the real HUD (its own VAD, its own websocket); `testing/live/browser_turn.cjs` |
+| A question does not become an action, and an unknown thing is refused rather than invented | Automated | `house-state-question`, `house-unknown-thing` |
+| A Tier-3 request spoken out loud does not unlock the door | Automated | `lock-needs-a-human` — the lock is still locked at the end of the scenario |
+| The wake word fires on the phrase and NOT on silence or on an empty room | Automated | `voice-wake-word`, `voice-silence`, `voice-room-tone` — against the real openWakeWord |
+| Recognition survives a room with a fan in it | Automated *at a measured SNR* | `house-light-off-noisy` (10 dB, measured, deterministic) |
+| Word error rate, routing accuracy and per-stage latency | Automated *and reported* | `.verify/live/results.json`, `docs/LIVE_TEST_REPORT.md` |
+| Every capability, including the ones not built yet | Automated | `bash scripts/verify/live_interaction.sh --full` — scenarios for unfinished capabilities carry `gated-on:` and fail until their milestone lands |
+| A real SearXNG | **Blocked** | `jarvisdev` cannot reach the Docker socket; the research scenarios use `testing/live/fixture_search.py`, which serves SearXNG's `/search?format=json` shape over a fixture site — Jarvis's real search client, fetcher and reader run unchanged, SearXNG itself does not. See `BLOCKERS.md` |
+| A 2-second median round trip | **Missed, and reported** | measured 15–20 s per spoken turn on this host (27 B model, no GPU, four shared vCPUs). `ISSUES.md` and `BLOCKERS.md` say what it would take |
+| A real microphone in a real room | **Unproven** | the rig synthesises speech; acoustics are not simulated |
+
 ### The design system
 
 | Claim | Level | Proof |

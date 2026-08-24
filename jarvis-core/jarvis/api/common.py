@@ -1450,6 +1450,40 @@ def _mcp(jarvis: "Jarvis") -> Any:
     return manager
 
 
+def skills_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Every loaded skill, and every one that could not be loaded.
+
+    The errors are half the value: a skill somebody dropped in and mistyped is
+    otherwise simply absent, and "it does not appear" is the least diagnosable
+    failure a folder-based feature can have.
+    """
+    store = jarvis.data.get("skills")
+    if store is None:
+        return {"skills": [], "errors": [], "enabled": False}
+    return {
+        "skills": store.listing(),
+        "errors": list(store.errors),
+        "enabled": True,
+        "path": str(store.root),
+    }
+
+
+def skill_payload(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """One skill, body included. What the console shows when you open one."""
+    store = jarvis.data.get("skills")
+    skill = store.get(name) if store is not None else None
+    if skill is None:
+        raise ApiError("not_found", f"no skill named {name!r}", 404)
+    return {"skill": skill.as_dict(body=True)}
+
+
+async def async_reload_skills(jarvis: "Jarvis") -> dict[str, Any]:
+    store = jarvis.data.get("skills")
+    if store is None:
+        raise ApiError("not_configured", "the skills integration is not set up", 400)
+    return {"loaded": store.load(), "errors": list(store.errors)}
+
+
 def mcp_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
     manager = _mcp(jarvis)
     return {
@@ -1459,6 +1493,15 @@ def mcp_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
         "allow_stdio": manager.allow_stdio,
         "default_tier": manager.default_tier,
     }
+
+
+def mcp_inspect_payload(jarvis: "Jarvis", name: str) -> dict[str, Any]:
+    """One server in full: its schemas, its protocol version, its last error."""
+    manager = _mcp(jarvis)
+    try:
+        return {"server": manager.inspect(str(name or ""))}
+    except KeyError as err:
+        raise ApiError("not_found", f"no MCP server named {name!r}", 404) from err
 
 
 async def async_add_mcp_server(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:

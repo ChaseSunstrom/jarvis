@@ -612,6 +612,9 @@ class JarvisClient:
         timeout: float = 60.0,
         run_timeout: float | None = None,
         send_end_of_audio: bool = True,
+        wake_filler: bool = True,
+        keep_streaming: bool = False,
+        wake_audio: bytes | None = None,
     ) -> PipelineRun:
         """Run one pipeline end to end and collect every event it emitted.
 
@@ -649,6 +652,9 @@ class JarvisClient:
         feeder: asyncio.Task | None = None
         # Only meaningful for a wake-stage run; see _feed_audio.
         detected = asyncio.Event()
+        #: Set when the server has finished listening. `keep_streaming` uses it
+        #: to stop feeding the silence that keeps a real microphone alive.
+        listening_over = asyncio.Event()
         try:
             await self.send_raw(payload)
             try:
@@ -681,11 +687,24 @@ class JarvisClient:
                 self._check_closed(event_frame, f"pipeline run stopped after {run.types}")
                 event = event_frame.get("event") or {}
                 run.events.append(
-                    {"type": str(event.get("type") or ""), "data": event.get("data") or {}}
+                    {
+                        "type": str(event.get("type") or ""),
+                        "data": event.get("data") or {},
+                        # When this frame ARRIVED here, on this clock. The
+                        # server stamps its own `timestamp`, but what a person
+                        # waits for is the frame reaching them, and a stage
+                        # timing taken after the whole run has finished (which
+                        # is where the collected list is read) gives every
+                        # stage the same number. The live rig's latency table
+                        # is built from this.
+                        "at": time.monotonic(),
+                    }
                 )
                 latest = run.events[-1]["type"]
                 if latest in ("wake_word-end", "error", "run-end"):
                     detected.set()
+                if latest in ("stt-end", "error", "run-end"):
+                    listening_over.set()
                 if latest == "run-start" and audio is not None and feeder is None:
                     handler_id = run.binary_handler_id
                     if handler_id is None:
@@ -695,7 +714,9 @@ class JarvisClient:
                     feeder = asyncio.create_task(
                         self._feed_audio(
                             handler_id, audio, chunk_ms, sample_rate, send_end_of_audio,
-                            detected if start_stage == "wake" else None,
+                            detected if (start_stage == "wake" and wake_filler) else None,
+                            listening_over=listening_over if keep_streaming else None,
+                            wake_audio=wake_audio,
                         )
                     )
                 if latest == "run-end":
@@ -719,21 +740,55 @@ class JarvisClient:
         send_end: bool,
         wake_detected: asyncio.Event | None = None,
         max_wake_wait: float = 20.0,
+        listening_over: asyncio.Event | None = None,
+        max_tail_wait: float = 30.0,
+        wake_audio: bytes | None = None,
     ) -> None:
         """Stream PCM on the run's binary channel, as a satellite would.
 
-        `wake_detected` is what makes a wake-stage run work. The wake and STT
-        stages read the *same* audio queue one after the other, and the end-of-
-        audio marker ends the whole stream — so a client that pushes a fixed
-        buffer and immediately says "that's all" can have the wake stage drain
-        the marker before detection lands, leaving STT waiting on a queue
-        nothing will ever fill again. A real satellite does not behave that
-        way: it streams continuously until the wake word fires and only then
-        does the utterance follow. This does the same, so the utterance is
-        never spent on the wake stage and the marker is never lost.
+        `wake_detected` is what makes a wake-stage run work **against the fake
+        wake service**, which fires on a schedule rather than on a sound. The
+        wake and STT stages read the *same* audio queue one after the other,
+        and the end-of-audio marker ends the whole stream — so a client that
+        pushes a fixed buffer and immediately says "that's all" can have the
+        wake stage drain the marker before detection lands, leaving STT waiting
+        on a queue nothing will ever fill again. Filling with tone until
+        detection avoids that.
+
+        Against the **real** openWakeWord it is the wrong shape, and
+        `wake_filler=False` turns it off: there the wake word is IN the audio,
+        at the front of it, and the detector has to hear it. The stream is then
+        exactly what a satellite sends — "hey jarvis", the command, and the
+        silence that ends it — with the wake stage consuming the first part and
+        STT the rest. The trailing silence is what makes that work: without it
+        the marker can still arrive while the wake stage holds the queue.
         """
         prefix = bytes([handler_id & 0xFF])
-        if wake_detected is not None:
+        if wake_audio is not None:
+            # Real detector, real wake word: the phrase goes in FIRST, and the
+            # command only follows once it has fired. A satellite works exactly
+            # this way, and it is the only shape that survives the queue being
+            # shared — the wake stage reads until it detects, so anything sent
+            # before detection is spent on it. Sending "hey jarvis, turn on the
+            # lights" as one buffer put the command in the wake stage's mouth
+            # and left STT transcribing the silence after it ("You", which is
+            # what Whisper says when it is given nothing).
+            quiet = b"\x00\x00" * int(rate * chunk_ms / 1000)
+            deadline = time.monotonic() + max_wake_wait
+            for chunk in pcm_chunks(wake_audio, chunk_ms, rate):
+                await self.send_binary(prefix + chunk)
+                if wake_detected is not None and wake_detected.is_set():
+                    break
+                await asyncio.sleep(chunk_ms / 2000)
+            while (
+                wake_detected is not None
+                and not wake_detected.is_set()
+                and time.monotonic() < deadline
+            ):
+                await self.send_binary(prefix + quiet)
+                with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+                    await asyncio.wait_for(wake_detected.wait(), chunk_ms / 1000)
+        elif wake_detected is not None:
             filler = tone_pcm(chunk_ms, rate)
             deadline = time.monotonic() + max_wake_wait
             while not wake_detected.is_set() and time.monotonic() < deadline:
@@ -744,6 +799,28 @@ class JarvisClient:
                     await asyncio.wait_for(wake_detected.wait(), chunk_ms / 1000)
         for chunk in pcm_chunks(audio, chunk_ms, rate):
             await self.send_binary(prefix + chunk)
+            if listening_over is not None:
+                # Paced at half real time on a wake-stage run. Flooding the
+                # queue at full speed made faster-whisper decode the same
+                # sentence twice ("turn on the ceiling lights. turn on the
+                # ceiling lights."), which is a decoder artifact of being
+                # handed a short utterance all at once — and a WER of 1.0 for
+                # an utterance it actually got right.
+                await asyncio.sleep(chunk_ms / 2000)
+        if listening_over is not None:
+            # A microphone does not stop existing when the sentence ends, and
+            # against a REAL wake detector that matters: the wake stage holds
+            # the audio queue until it fires, so a client that stops feeding
+            # the moment its buffer runs out leaves the STT stage that follows
+            # with nothing to read and no end marker either — it waits until
+            # the whole run times out. Real silence, paced in real time, until
+            # the server says it has stopped listening.
+            quiet = b"\x00\x00" * int(rate * chunk_ms / 1000)
+            deadline = time.monotonic() + max_tail_wait
+            while not listening_over.is_set() and time.monotonic() < deadline:
+                await self.send_binary(prefix + quiet)
+                with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+                    await asyncio.wait_for(listening_over.wait(), chunk_ms / 1000)
         if send_end:
             # A lone handler-id byte is "that is all the audio".
             await self.send_binary(prefix)

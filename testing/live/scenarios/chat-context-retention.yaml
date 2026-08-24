@@ -1,0 +1,20 @@
+name: chat-context-retention
+capability: conversation
+intent: >
+  Multi-turn memory inside one conversation: the second turn says "it" and
+  means the thing from the first. Without this, every request has to be a
+  complete sentence with a noun in it, which is not how anybody speaks.
+variants: [voice, text]
+setup:
+  states:
+    light.bed_light: "off"
+turns:
+  - say: "Turn on the bed light."
+    expect:
+      service: {domain: light, service: turn_on, entity_id: light.bed_light}
+      state: {light.bed_light: "on"}
+  - say: "Now turn it off again."
+    expect:
+      service: {domain: light, service: turn_off, entity_id: light.bed_light}
+      state: {light.bed_light: "off"}
+      reply_means: "confirms the light is now off"

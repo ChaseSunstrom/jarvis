@@ -1,0 +1,14 @@
+name: voice-silence
+capability: voice
+intent: >
+  Silence must not become a turn. Whisper answers "You" when handed nothing at
+  all — a real and well-known hallucination — so "the recogniser produced text"
+  is not evidence that anybody spoke, and nothing in the house may move on it.
+variants: [voice]
+tags: [wake-word, negative]
+turns:
+  - sound: silence
+    audio: {seconds: 3}
+    say: ""
+    expect:
+      no_service: [light.turn_on, light.turn_off, lock.unlock, media_player.play_media]

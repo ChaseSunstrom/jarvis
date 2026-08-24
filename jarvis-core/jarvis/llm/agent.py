@@ -285,6 +285,16 @@ class ConversationResult:
     #: True when the model asked for reasoning on this turn. Also the flag the
     #: remaining rounds read — see `THINK_TOOL_NAME`.
     escalated: bool = False
+    #: Text the model wrote in a round that then called a tool, or that was
+    #: corrected — everything it said BEFORE it knew the answer.
+    #:
+    #: It is streamed (a surface may show it live) and it is not the answer.
+    #: Keeping it in `text` is what made Jarvis say, out loud, in one breath:
+    #: "The bed light is already off, sir. The bed light is now off, sir." —
+    #: and worse, after a narrated-call correction: "You're right, sir — I
+    #: described the check without running it. Let me actually look now."
+    #: which is Jarvis apologising to itself in front of the user.
+    preamble: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -295,6 +305,7 @@ class ConversationResult:
             "error": self.error,
             "thinking": self.thinking,
             "escalated": self.escalated,
+            "preamble": self.preamble,
         }
 
     def as_conversation_response(self, language: str = "en") -> dict[str, Any]:
@@ -621,8 +632,29 @@ class ConversationAgent:
         if areas:
             parts.append(f"Areas in this home: {areas}.")
         parts.append(self.house_summary())
+        parts.append(self.skill_index())
         parts.append(self.remembered_notes(query, semantic))
         return "\n\n".join(part for part in parts if part)
+
+    def skill_index(self) -> str:
+        """One line per loaded skill: its name and what it is for.
+
+        The bodies stay on disk until `use_skill` asks for one. Twelve skills
+        of two thousand words each would be twenty-four thousand words in front
+        of every "turn the lights off" — the house summary falls off the end of
+        the context and the assistant gets worse at everything in exact
+        proportion to how much it has been taught. Duck-typed and optional, the
+        same way memory is.
+        """
+        store = self.jarvis.data.get("skills")
+        index = getattr(store, "index_block", None)
+        if not callable(index):
+            return ""
+        try:
+            return str(index() or "")
+        except Exception:  # pragma: no cover - a broken store is not a dead turn
+            _LOGGER.exception("Could not read the skill index")
+            return ""
 
     def remembered_notes(
         self, query: str = "", semantic: dict[str, float] | None = None
@@ -885,7 +917,12 @@ class ConversationAgent:
                 # Nothing anywhere objected: the only fallback in this method
                 # was for `OllamaError`. One sentence is worth more than a
                 # blank, and the log line is what makes it diagnosable.
-                if not any(piece.strip() for piece in pieces):
+                # Asked of the ANSWER, not of everything that was streamed.
+                # A turn whose only words were written before a tool ran has
+                # said nothing to the user: stripping the preamble correctly
+                # left "", and without this the reply was empty — a blank
+                # bubble on the console and silence on the speaker.
+                if not _without_preamble("".join(pieces), result.preamble).strip():
                     _LOGGER.warning(
                         "The model produced no answer text (%d round(s), %d "
                         "characters of reasoning). Falling back to a sentence "
@@ -899,6 +936,10 @@ class ConversationAgent:
                     )
                     pieces.append(empty)
                     yield empty
+                    # The fallback IS the answer, so nothing about it may be
+                    # stripped: without this the preamble prefix would eat the
+                    # front of it on the way out.
+                    result.preamble = ""
             except OllamaError as exc:
                 _LOGGER.error("Ollama failed during conversation: %s", exc)
                 result.error = str(exc)
@@ -909,7 +950,12 @@ class ConversationAgent:
             # In a finally so an abandoned turn is still remembered: dropping
             # it would leave the next turn's history missing the exchange the
             # user just had.
-            result.text = "".join(pieces).strip()
+            # The answer is everything that was said MINUS the preamble: the
+            # words written before a tool ran, and the ones a correction
+            # replaced. Both were streamed, because a surface may show the
+            # working live; neither is spoken, archived or returned as the
+            # answer.
+            result.text = _without_preamble("".join(pieces), result.preamble)
             self._finish(conversation.id, result, user_text=message)
 
     @staticmethod
@@ -1045,6 +1091,12 @@ class ConversationAgent:
                 async for delta in deltas:
                     said.append(delta)
                     yield delta
+            if chat.pending_tool_calls:
+                # This round's words were written before the tool ran, so they
+                # are a guess about what it would find. They are kept, for a
+                # surface that wants to show the working, and they are NOT the
+                # answer — see `ConversationResult.preamble`.
+                result.preamble += "".join(said)
             if not chat.pending_tool_calls:
                 # A round that made no tool call but WROTE one out is the
                 # failure this catches: the model scripts the call in prose or
@@ -1070,6 +1122,11 @@ class ConversationAgent:
                             TURN_EVENT_TOOL_NARRATED,
                             {"tool": narrated, "round": result.rounds},
                         )
+                        # The words that described a call it never made are
+                        # not the answer either: the correction that follows
+                        # replaces them, and a user who hears both hears Jarvis
+                        # contradict itself.
+                        result.preamble += "".join(said)
                         messages.append(self._assistant_message_text("".join(said)))
                         messages.append(
                             {
@@ -1454,6 +1511,22 @@ def narrated_tool_call(text: str, names: Iterable[str]) -> str:
         if re.search(rf"(?<![\w]){re.escape(token)}(?![\w])", body):
             return token
     return ""
+
+
+def _without_preamble(said: str, preamble: str) -> str:
+    """`said` with the preamble taken off the front.
+
+    A prefix strip rather than a replace: the preamble is, by construction,
+    everything the model wrote in the rounds before the answering one, in
+    order. If it is not a prefix — a streaming client dropped a delta, a round
+    yielded nothing — the whole text is kept, because losing the answer is a
+    far worse failure than repeating a sentence.
+    """
+    answer = str(said or "")
+    lead = str(preamble or "")
+    if lead and answer.startswith(lead):
+        answer = answer[len(lead):]
+    return answer.strip()
 
 
 def _tool_name(entry: Any) -> str:

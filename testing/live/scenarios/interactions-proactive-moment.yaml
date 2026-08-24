@@ -1,0 +1,18 @@
+name: interactions-proactive-moment
+capability: interactions
+gated-on: M17
+intent: >
+  Something arriving without being asked for, and arriving properly: as a
+  moment on the surface the person is looking at, recorded so it can be found
+  afterwards. A notification that exists only as a log line is a notification
+  nobody got.
+variants: [text]
+turns:
+  - say: "Tell me when the background job about the downstairs lights is done."
+    expect:
+      task: {kind: background, within: 60}
+  - say: "What have you told me about recently?"
+    wait: 60
+    expect:
+      reply_contains: ["lights"]
+      reply_means: "lists the announcement it made about the finished job"

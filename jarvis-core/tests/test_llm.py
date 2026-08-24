@@ -1852,3 +1852,46 @@ async def test_an_automation_calling_a_script_is_held_because_it_cannot_be_read(
 
     assert held["status"] == "approval_required", held
     await shutdown(jarvis)
+
+
+# --- what the user actually hears --------------------------------------------
+
+
+async def test_words_written_before_a_tool_ran_are_not_the_answer(tmp_path):
+    """The defect the live rig found, spoken out loud in one breath:
+
+        "The bed light is already off, sir. The bed light is now off, sir."
+
+    Both sentences were real: the model guessed in the first round, called
+    `turn_off`, and answered in the second. Every round's text was concatenated
+    into the reply, so the user heard the guess and the answer as one
+    contradictory utterance — and on the voice path there is no screen to
+    disambiguate it. Worse, after a narrated-call correction the reply carried
+    "You're right, sir — I described the check without running it", which is
+    Jarvis apologising to itself in front of the user.
+    """
+    jarvis, objects = await build_house(tmp_path)
+    fake = FakeOllama(
+        say("The reading lamp is already off, Sir.")
+        + call_tool("turn_off", {"entity_id": "light.reading_lamp"}),
+        say("The reading lamp is now off, Sir."),
+    )
+    agent = make_agent(jarvis, fake)
+
+    deltas = await collect(agent, "turn off the reading lamp")
+
+    # Streamed in full: a surface that wants to show the working still can.
+    assert "already off" in "".join(deltas)
+    # But the answer — what is spoken, archived and returned — is the answer.
+    assert agent.last_result.text == "The reading lamp is now off, Sir."
+    assert agent.last_result.preamble == "The reading lamp is already off, Sir."
+    await shutdown(jarvis)
+
+
+async def test_an_answer_that_is_not_preceded_by_preamble_is_untouched(tmp_path):
+    jarvis, _ = await build_house(tmp_path)
+    agent = make_agent(jarvis, FakeOllama(say("Good evening, Sir.")))
+    await collect(agent, "hello")
+    assert agent.last_result.text == "Good evening, Sir."
+    assert agent.last_result.preamble == ""
+    await shutdown(jarvis)

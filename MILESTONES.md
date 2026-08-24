@@ -193,7 +193,7 @@ files both would touch, which the integrating session merges.
     automation per hook; `tests/test_hooks.py`.
   - Verify: `bash scripts/verify/m12-hooks.sh`
 
-- [ ] **M13 — Skills (SKILL.md loader)** · size M · deps M11 · parallel-ok M12, M14
+- [x] **M13 — Skills (SKILL.md loader)** · size M · deps M11 · parallel-ok M12, M14
   - Scope: `jarvis-core/jarvis/integrations/skills/` loading `config/skills/*/SKILL.md` in the
     open Agent Skills format (YAML frontmatter `name`, `description`, optional `allowed-tools`,
     `metadata`; `scripts/`, `references/`, `assets/` beside it); progressive disclosure — the
@@ -204,7 +204,7 @@ files both would touch, which the integrating session merges.
     `jarvis-core/docs/skills.md`; `tests/test_skills.py` (frontmatter, invalid, on_demand, gated).
   - Verify: `bash scripts/verify/m13-skills.sh`
 
-- [ ] **M14 — MCP: finish manage + inspect** · size S · deps M11 · parallel-ok M12, M13
+- [x] **M14 — MCP: finish manage + inspect** · size S · deps M11 · parallel-ok M12, M13
   - Scope: `jarvis/mcp/inspect` (WS + REST): server info, protocol version, tool schemas,
     `last_error`, and a gated test call from the console; automatic reconnect with backoff; tier
     semantics from `tool_tiers.json` in `test_mcp.py`; `McpServers.svelte` inspect view;
@@ -329,13 +329,89 @@ files both would touch, which the integrating session merges.
     `DEVIATIONS.md` entry. Nothing run on a device.
   - Verify: `bash scripts/verify/m22-phone-automation-flag.sh`
 
+## Live interaction (added mid-run, built before M13)
+
+These four are built **next**, out of numeric order, because everything after them depends on
+one of them: from M24 onward every milestone's verification ends with
+`bash scripts/verify/live_interaction.sh --implemented-only`, so a capability does not count as
+done until it also works when a person talks to it.
+
+The suite is written **whole, now**, against the target state. A scenario for a capability that
+does not exist yet carries `gated-on: <milestone>` in its fixture and is expected to fail; it
+runs in full mode only. `--implemented-only` runs the ungated ones and must exit 0 from here on.
+
+- [x] **M24 — Voice loopback rig** · size L · deps M00, M12
+  - Scope: `testing/live/` — a rig that interacts with Jarvis exactly as a user does.
+    `voice.py`: synthesises the user's utterances with **local Piper** in `en_US-amy-low`
+    (deliberately not Jarvis's `en_GB-alan-medium`, so neither side's transcript can be mistaken
+    for the other's), and transcribes Jarvis's spoken replies back with the **real Wyoming
+    Whisper** on `:10300`. Two delivery paths, both real: the audio-input API
+    (`assist_pipeline/run` + binary frames) and the **browser microphone** via headless Chromium
+    with `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>` — the page
+    must be on `http://127.0.0.1` or `navigator.mediaDevices` does not exist. `audio.py`: noise
+    overlays at a named SNR, silence, and clipping. `judge.py`: a local-LLM judge
+    (`LLM_URL`, the loaded model) that scores "is this reply semantically right", logging a
+    one-line reason per verdict. `report.py`: WER (Levenshtein over words), intent accuracy,
+    routing accuracy, per-stage latency. Text chat gets the same scenarios through the console
+    with Playwright. Wake-word positives *and* negatives, silence, and barge-in where the surface
+    implements it (the web HUD does; the server has no interrupt, and the scenario says so).
+  - Verify: `bash scripts/verify/m24-live-rig.sh`
+
+- [x] **M25 — Full-capability scenario suite** · size XL · deps M24
+  - Scope: `testing/live/scenarios/*.yaml` — multi-turn `say:` / `expect:` fixtures, each with a
+    voice and a text variant, exercising **every** capability end to end through real
+    interaction, never an API shortcut. Tasks (create by voice → the live task UI updates under
+    Playwright → completion announced; a scheduled task fires on time; a recurring one fires
+    twice; an injected failure shows retry/backoff and lands in history; cancel mid-run).
+    Research (a local fixture website with known content; quick lookup returns a correct, cited
+    answer; deep research shows its plan in the task UI, fetches several sources, saves a report
+    as a note with resolvable citations, and its factual claims match the fixture
+    deterministically, with synthesis quality additionally graded by the judge; cancelling
+    mid-research leaves clean state). Coding ("fix the failing tests in the fixture repo" by
+    voice → sandbox up, plan → edits → test runs streaming into the task UI, diff in the approval
+    UI, approve via the UI → commit exists, tests pass, containment holds; and a second scenario
+    where approval is denied and *nothing* is written anywhere). Subagents (a request that
+    genuinely needs parallel research + coding; the live agent tree renders, the logs evidence
+    concurrency, the roll-up is consistent with both children). Memory/notes/interactions (store
+    a fact by voice → restart the service → recall it; forget → gone from retrieval *and* the UI;
+    "note that…" → a note that exists, is linked and is searchable; a proactive hook fires → a
+    proper UI moment that is retrievable afterwards; one thread continued across two surfaces).
+    `scripts/verify/live_interaction.sh` gains its two modes and is appended to every remaining
+    milestone's verify script.
+  - Verify: `bash scripts/verify/m25-live-scenarios.sh`
+
+- [ ] **M26 — Intelligence eval and scorecard** · size L · deps M24, M25
+  - Scope: `evals/intelligence/` — a fixed eval set run through the **full voice pipeline**,
+    producing `.verify/live/scorecard.json` and a markdown table: multi-turn context retention
+    (later turns must reference earlier ones); tool-routing accuracy over prompts whose correct
+    handling is respectively a plain answer, a memory recall, a note, a task, a quick lookup,
+    deep research and a coding job; multi-step reasoning; instruction following (format, length,
+    constraint); graceful failure on impossible or garbled input; and per-stage latency (STT,
+    LLM TTFT, TTS start, total) measured **twice** — idle, and with a background task running.
+    Deterministic checks wherever the state is inspectable; the judge, with logged reasons,
+    only where it is not.
+  - Verify: `bash scripts/verify/m26-intelligence-eval.sh`
+
+- [ ] **M27 — Exploratory pass and the live test report** · size M · deps M25, M26
+  - Scope: with the scripted suite green for every implemented capability, ten or more
+    **unscripted** conversations through the rig, aimed at the weak spots `docs/AUDIT.md` names.
+    Every defect becomes an `ISSUES.md` entry *and* a new regression scenario, and is then fixed.
+    `docs/LIVE_TEST_REPORT.md`: per-capability pass rates, WER, routing accuracy, the latency
+    table, and the open issues. Full-mode thresholds, enforced by the runner: intent accuracy
+    ≥ 95 %, WER ≤ 10 %, routing accuracy ≥ 90 %, median round trip ≤ 2 s, zero critical issues.
+  - Verify: `bash scripts/verify/m27-live-report.sh`
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M22
-  - Scope: `make verify-all` green; a CI workflow runs `make verify-all` (JDK/SDK via actions);
-    `README.md`, `docs/verification.md` (re-measured, names the harness, the style guide,
-    dashboards, Robolectric, the desktop app), `DEVIATIONS.md`, `CHANGELOG.md` current;
-    `BLOCKERS.md` empty; no placeholder markers in any surface; stale counts gone.
+- [ ] **M23 — Final integration** · size M · deps M00–M27
+  - Scope: `make verify-all` green; **`bash scripts/verify/live_interaction.sh` in full mode
+    exits 0** — every scenario, including the ones that were gated, inside the thresholds
+    (intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median round trip ≤ 2 s, zero critical issues) —
+    and `docs/LIVE_TEST_REPORT.md` exists and is current; a CI workflow runs `make verify-all`
+    (JDK/SDK via actions); `README.md`, `docs/verification.md` (re-measured, names the harness,
+    the style guide, dashboards, Robolectric, the desktop app, the live rig), `DEVIATIONS.md`,
+    `CHANGELOG.md` current; `BLOCKERS.md` holds only device-access or user-input items; no
+    placeholder markers in any surface; stale counts gone.
   - Verify: `bash scripts/verify/m23-final-integration.sh`
 
 ---
@@ -350,4 +426,7 @@ files both would touch, which the integrating session merges.
 - M15 ∥ M16 after M10; M17 after both.
 - M18 ∥ M19 after M16/M11; M20 after M11 (needs M10's engine).
 - M21 ∥ M22.
+- M24 → M25 come **before** M13, because every milestone after them must pass
+  `live_interaction.sh --implemented-only`. M26 ∥ M27 only after the capabilities they measure
+  exist, so in practice they land last, before M23.
 - Everything else is serial in the order written.
