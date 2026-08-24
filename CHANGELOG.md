@@ -14,6 +14,12 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   `design/tokens.json` instead of `tokens.ts`.
 
 ### Added
+- M05 (dashboards): `jarvis/metrics/` defines one shape for anything graphable and ships the
+  `internal` source — the recorder's entity history, this host's load/memory/disk, and counters
+  for turns, tool calls and task outcomes; `integrations/dashboards/` stores layouts per token
+  (a token is the identity), with a shipped `homelab` example; `/dashboards` draws six chart
+  types with no charting dependency and lets a widget be added, resized, moved, swapped and
+  removed from the keyboard; `tests/contracts/dashboard_layout.json` binds both sides.
 - M04 (task-execution UI): `tests/contracts/task_events.json` binds server and console;
   `TaskRegistry` gains `tool_started`/`tool_finished`, `output()`, `raise_if_cancelled()` and a
   persisted per-task log replayed by `jarvis/tasks/log`; the coding agent and research emit tool

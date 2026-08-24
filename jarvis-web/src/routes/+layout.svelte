@@ -31,6 +31,7 @@
 		{ href: '/automations', label: 'AUTOMATIONS', chord: 'g a' },
 		{ href: '/tools', label: 'TOOLS', chord: 'g t' },
 		{ href: '/tasks', label: 'TASKS', chord: 'g k' },
+		{ href: '/dashboards', label: 'DASHBOARDS', chord: 'g b' },
 		{ href: '/code', label: 'CODE', chord: 'g c' },
 		{ href: '/settings', label: 'SETTINGS', chord: 'g s' }
 	];

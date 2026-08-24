@@ -57,7 +57,7 @@
 
 <style>
 	.out {
-		max-height: 22rem;
+		max-height: var(--jv-measure-log);
 		overflow: auto;
 		background: var(--jv-surface-sunken);
 		border: 1px solid var(--jv-line-hair);

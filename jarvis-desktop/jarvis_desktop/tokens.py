@@ -135,6 +135,7 @@ TOKENS: dict[str, str] = {
     "--jv-measure-orb": "520px",
     "--jv-measure-boot": "360px",
     "--jv-measure-qr": "260px",
+    "--jv-measure-log": "22rem",
 }
 
 # --- the palette, named for the desktop's jobs ---------------------------

@@ -1348,6 +1348,74 @@ def task_log_payload(jarvis: Any, task_id: str, limit: int = 200) -> dict[str, A
         return {"task_id": task_id, "log": []}
     return {"task_id": task_id, "log": registry.log_entries(task_id, limit=limit)}
 
+
+# ---------------------------------------------------------------------------
+# dashboards + metrics
+# ---------------------------------------------------------------------------
+
+
+def _dashboard_store(jarvis: Any) -> Any:
+    store = getattr(jarvis, "data", {}).get("dashboards")
+    if store is None:
+        raise ApiError("unsupported", "this backend has no dashboards integration", 501)
+    return store
+
+
+def dashboards_list_payload(jarvis: Any, owner: str) -> dict[str, Any]:
+    """This token's dashboards, plus the shared ones. Never somebody else's."""
+    store = _dashboard_store(jarvis)
+    return {"dashboards": store.visible_to(owner), "owner": owner}
+
+
+async def async_dashboard_save(jarvis: Any, raw: Any, owner: str) -> dict[str, Any]:
+    store = _dashboard_store(jarvis)
+    try:
+        board = await store.async_put(raw, owner)
+    except ValueError as err:
+        raise ApiError("invalid_format", str(err), 400) from err
+    return {"dashboard": board}
+
+
+async def async_dashboard_delete(jarvis: Any, dashboard_id: str, owner: str) -> dict[str, Any]:
+    store = _dashboard_store(jarvis)
+    if not await store.async_delete(dashboard_id, owner):
+        raise ApiError("not_found", f"no dashboard {dashboard_id!r} you own", 404)
+    return {"deleted": dashboard_id}
+
+
+async def async_metrics_sources(jarvis: Any) -> dict[str, Any]:
+    from ..integrations.dashboards import async_sources
+
+    return {"sources": await async_sources(jarvis)}
+
+
+async def async_metrics_query(jarvis: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """One widget's numbers.
+
+    A source that is down answers with an error per series rather than raising:
+    a dashboard with six widgets and one dead source should draw five graphs and
+    one honest "cannot reach it", not a page-wide failure.
+    """
+    from ..integrations.dashboards import async_query, window_for
+
+    keys = [str(k) for k in (payload.get("series") or []) if str(k).strip()][:20]
+    if not keys:
+        raise ApiError("invalid_format", "name at least one series", 400)
+    window = window_for(payload)
+    series = await async_query(
+        jarvis,
+        str(payload.get("source") or "internal"),
+        keys,
+        window,
+        str(payload.get("aggregate") or ""),
+    )
+    return {
+        "series": series,
+        "start": window.start,
+        "end": window.end,
+        "step": window.resolved_step(),
+    }
+
 def _mcp(jarvis: "Jarvis") -> Any:
     from ..integrations.mcp import get_manager
 

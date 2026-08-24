@@ -1039,3 +1039,27 @@ scene: !include scenes.yaml
 # examples/house/packages-laundry.yaml is a worked one — drop it into
 # packages/ to switch it on.
 packages: !include_dir_named packages
+
+# ---------------------------------------------------------------------------
+# Dashboards, and where their numbers come from
+# ---------------------------------------------------------------------------
+#
+# `dashboards:` turns on the graph screen in the console. Layouts a person
+# arranges are saved under the token that saved them (a token is the identity
+# here — there are no user accounts), in `.storage/dashboards.json`. The files
+# in `dashboards/` below are read-only examples that appear for everybody.
+#
+# `metrics:` is the list of places numbers may come from. `internal` is always
+# there and needs nothing: the recorder's history of every entity, this host's
+# load and disk, and the counters Jarvis keeps about its own work. Anything
+# else has to be named here, which is also the list of what Jarvis may reach.
+dashboards:
+  shipped: dashboards
+
+metrics:
+  sources: {}
+    # influx:
+    #   url: !env_var INFLUX_URL http://127.0.0.1:8086
+    #   token: !env_var INFLUX_TOKEN
+    #   org: !env_var INFLUX_ORG
+    #   bucket: !env_var INFLUX_BUCKET homelab

@@ -84,6 +84,11 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/tasks/list` | every tracked job, newest first: `{tasks: [...]}`. `kind` filters, `active: true` hides finished ones. Each row carries its own steps and a derived `fraction`, so a list of progress bars is one request rather than one per bar |
 | `jarvis/tasks/get` | `task_id`; one task in full |
 | `jarvis/tasks/log` | `task_id`, `limit`; the task's replayable history — every tool call, every line of output, oldest first. The activity events are fire-and-forget, so a client that opens a task's page two minutes in has missed them; this is how it catches up. See `tests/contracts/task_events.json`. |
+| `jarvis/dashboards/list` | every dashboard this token may see: the ones it saved, plus the shared and shipped ones |
+| `jarvis/dashboards/save` | `dashboard`; create or replace one. The server stamps the owner from the token — a client cannot save a board as somebody else |
+| `jarvis/dashboards/delete` | `id`; refuses one this token does not own |
+| `jarvis/metrics/sources` | what can be graphed, per source, with each source's health |
+| `jarvis/metrics/query` | `source`, `series`, and either `range` (`1h`…`7d`) or `start`/`end`/`step`; the points. A source that is down answers with an error per series rather than failing the request |
 | `jarvis/tasks/cancel` | `task_id`; **asks** the worker to stop. The registry is a record, not a scheduler — it cannot reach into the coroutine — so the reply carries `cancelled` and a `note` saying a worker that does not check may still be running |
 | `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
 | `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |

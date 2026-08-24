@@ -1,0 +1,71 @@
+{
+  "$comment": [
+    "What a saved dashboard is, on the wire and on disk.",
+    "",
+    "jarvis-core's tests/test_dashboards.py and the console's",
+    "src/lib/dashboards/layout.test.ts both read this file. A layout written by",
+    "one and refused by the other is the failure it exists to prevent: the",
+    "console is not the only client (the phone loads the same console), and a",
+    "layout is the one piece of state a user builds by hand and would be angry",
+    "to lose.",
+    "",
+    "Coordinates are a 12-column grid. `w`/`h` are in columns and rows; a row is",
+    "whatever height the console draws it at, which is a display decision and",
+    "deliberately not stored."
+  ],
+  "version": 1,
+  "columns": 12,
+  "dashboard": {
+    "required": ["id", "title", "widgets"],
+    "fields": {
+      "id": "slug, unique per owner",
+      "title": "what the user called it",
+      "owner": "the token id that saved it — see `owner` below",
+      "widgets": "array, in no particular order; `x`/`y` decide the layout",
+      "range": "the window the dashboard opens on: 1h | 6h | 24h | 7d",
+      "updated": "epoch seconds"
+    }
+  },
+  "widget": {
+    "required": ["id", "type", "source", "series", "x", "y", "w", "h"],
+    "fields": {
+      "id": "unique within the dashboard",
+      "title": "optional; the series' own label is used when absent",
+      "type": "one of `types` below",
+      "source": "a data source name: internal | influx | …",
+      "series": "array of series keys, as that source lists them",
+      "aggregate": "last | mean | min | max | sum | count",
+      "x": "0-11", "y": ">= 0", "w": "1-12", "h": ">= 1"
+    }
+  },
+  "types": {
+    "line": "a value over time",
+    "area": "the same, filled — for a quantity rather than a level",
+    "bar": "counts per bucket",
+    "stat": "one number, large, with an optional sparkline",
+    "gauge": "one number against a maximum",
+    "table": "several series' latest values, side by side"
+  },
+  "owner": {
+    "$comment": [
+      "There are no user accounts (jarvis/auth.py:3). A token IS the identity:",
+      "one per device, minted by the operator. So a dashboard belongs to the",
+      "token that saved it, and 'per user' means 'per token id'. A layout with no",
+      "owner is shared — the shipped examples are."
+    ],
+    "field": "owner",
+    "shared_value": ""
+  },
+  "storage": {
+    "key": "dashboards",
+    "path": "<config>/.storage/dashboards.json",
+    "shipped": "<config>/dashboards/*.yaml"
+  },
+  "commands": {
+    "jarvis/dashboards/list": "every dashboard this token may see: its own, plus the shared ones",
+    "jarvis/dashboards/save": "create or replace one; the server stamps `owner` from the token",
+    "jarvis/dashboards/delete": "by id; refuses one this token does not own",
+    "jarvis/metrics/sources": "what can be graphed, per source",
+    "jarvis/metrics/query": "`source`, `series`, `start`, `end`, `step`, `aggregate`"
+  }
+}

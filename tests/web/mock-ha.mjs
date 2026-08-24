@@ -674,6 +674,55 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	const taskLogs = new Map();
 
 	/**
+	 * Dashboards the mock serves. One shipped (owned by nobody, read-only) and
+	 * one this token owns, so the console's "yours vs shared" split is exercised
+	 * rather than assumed.
+	 * @type {any[]}
+	 */
+	let dashboards = [
+		{
+			id: 'homelab',
+			title: 'Homelab',
+			owner: '',
+			range: '6h',
+			shipped: true,
+			updated: Date.now() / 1000,
+			widgets: [
+				{ id: 'w1', title: 'Load', type: 'line', source: 'internal', series: ['host.load1'], aggregate: 'mean', x: 0, y: 0, w: 6, h: 2 },
+				{ id: 'w2', title: 'Disk free', type: 'stat', source: 'internal', series: ['host.disk_free'], aggregate: 'last', x: 6, y: 0, w: 3, h: 2 }
+			]
+		},
+		{
+			id: 'mine',
+			title: 'Mine',
+			owner: 'mock-token',
+			range: '6h',
+			updated: Date.now() / 1000,
+			widgets: [
+				{ id: 'w1', title: 'Tool calls', type: 'bar', source: 'internal', series: ['jarvis.tool_calls'], aggregate: 'sum', x: 0, y: 0, w: 6, h: 2 },
+				{ id: 'w2', title: 'Memory', type: 'gauge', source: 'internal', series: ['host.memory_percent'], aggregate: 'last', x: 6, y: 0, w: 3, h: 2 }
+			]
+		}
+	];
+
+	/** What can be graphed, as `jarvis/metrics/sources` describes it. */
+	const metricSources = [
+		{
+			name: 'internal',
+			description: 'Jarvis itself: entity history, this host, and the assistant’s own work.',
+			healthy: true,
+			detail: '',
+			series: [
+				{ key: 'host.load1', label: 'Load, 1 minute', unit: '', group: 'host', default_aggregate: 'mean' },
+				{ key: 'host.disk_free', label: 'Disk free', unit: 'GB', group: 'host', default_aggregate: 'last' },
+				{ key: 'host.memory_percent', label: 'Memory used', unit: '%', group: 'host', default_aggregate: 'last' },
+				{ key: 'jarvis.tool_calls', label: 'Tool calls', unit: 'calls', group: 'jarvis', default_aggregate: 'sum' },
+				{ key: 'jarvis.turns', label: 'Turns', unit: 'turns', group: 'jarvis', default_aggregate: 'sum' }
+			]
+		}
+	];
+
+	/**
 	 * Fire one activity event, and log it. The payload shape is
 	 * `tests/contracts/task_events.json`, which both suites read.
 	 */
@@ -2132,6 +2181,66 @@ index 1234567..89abcde 100644
 					const ids = [...taskStore.keys()];
 					for (const id of ids) removeTask(id);
 					ok(msg.id, { removed: ids.length });
+					break;
+				}
+
+				case 'jarvis/dashboards/list': {
+					ok(msg.id, { dashboards: dashboards.map((board) => ({ ...board })), owner: 'mock-token' });
+					break;
+				}
+
+				case 'jarvis/dashboards/save': {
+					const board = msg.dashboard || {};
+					if (!board.id || !board.title) {
+						fail(msg.id, 'invalid_format', 'a dashboard needs an id and a title');
+						break;
+					}
+					// The server stamps the owner; a client cannot save as somebody else.
+					const saved = { ...board, owner: 'mock-token', updated: Date.now() / 1000 };
+					const at = dashboards.findIndex((one) => one.id === saved.id && !one.shipped);
+					if (at >= 0) dashboards[at] = saved;
+					else dashboards.push(saved);
+					ok(msg.id, { dashboard: saved });
+					break;
+				}
+
+				case 'jarvis/dashboards/delete': {
+					const before = dashboards.length;
+					dashboards = dashboards.filter((one) => !(one.id === msg.id && !one.shipped));
+					if (dashboards.length === before) fail(msg.id, 'not_found', `no dashboard ${msg.id}`);
+					else ok(msg.id, { deleted: msg.id });
+					break;
+				}
+
+				case 'jarvis/metrics/sources': {
+					ok(msg.id, { sources: metricSources });
+					break;
+				}
+
+				case 'jarvis/metrics/query': {
+					// Points a chart can actually draw, with one deliberate gap: a
+					// null is what the server sends where it has nothing, and the
+					// console must break the line rather than draw through it.
+					const keys = Array.isArray(msg.series) ? msg.series : [];
+					const known = new Set(metricSources.flatMap((s) => s.series.map((one) => one.key)));
+					const end = Date.now() / 1000;
+					const step = 60;
+					ok(msg.id, {
+						start: end - step * 30,
+						end,
+						step,
+						series: keys.map((key, index) => {
+							if (!known.has(key)) {
+								return { key, label: key, unit: '', aggregate: '', error: `no series called '${key}'`, points: [] };
+							}
+							const points = [];
+							for (let i = 0; i < 30; i++) {
+								const at = end - step * (30 - i);
+								points.push([at, i === 12 ? null : 20 + index * 5 + Math.sin(i / 3) * 4]);
+							}
+							return { key, label: key, unit: key.includes('load') ? '' : 'ms', aggregate: msg.aggregate || 'mean', error: '', points };
+						})
+					});
 					break;
 				}
 

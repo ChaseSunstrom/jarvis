@@ -686,6 +686,31 @@ class WebSocketHandler:
     async def _cmd_task_get(self, msg: dict[str, Any]) -> Any:
         return common.task_get_payload(self.jarvis, str(msg.get("task_id") or ""))
 
+    # --- dashboards + metrics ---------------------------------------------
+    #
+    # `self.user_id` is the token this socket authenticated with, and a token IS
+    # the identity here (there are no user accounts). So "this user's
+    # dashboards" is "this token's", and the server stamps the owner rather than
+    # trusting a client to say whose board it is saving.
+    async def _cmd_dashboards_list(self, msg: dict[str, Any]) -> Any:
+        return common.dashboards_list_payload(self.jarvis, self.user_id or "")
+
+    async def _cmd_dashboards_save(self, msg: dict[str, Any]) -> Any:
+        return await common.async_dashboard_save(
+            self.jarvis, msg.get("dashboard"), self.user_id or ""
+        )
+
+    async def _cmd_dashboards_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_dashboard_delete(
+            self.jarvis, str(msg.get("id") or ""), self.user_id or ""
+        )
+
+    async def _cmd_metrics_sources(self, msg: dict[str, Any]) -> Any:
+        return await common.async_metrics_sources(self.jarvis)
+
+    async def _cmd_metrics_query(self, msg: dict[str, Any]) -> Any:
+        return await common.async_metrics_query(self.jarvis, msg)
+
     async def _cmd_task_log(self, msg: dict[str, Any]) -> Any:
         return common.task_log_payload(
             self.jarvis, str(msg.get("task_id") or ""), int(msg.get("limit") or 200)
@@ -1121,6 +1146,11 @@ WebSocketHandler._HANDLERS = {
     "jarvis/tasks/list": WebSocketHandler._cmd_task_list,
     "jarvis/tasks/get": WebSocketHandler._cmd_task_get,
     "jarvis/tasks/log": WebSocketHandler._cmd_task_log,
+    "jarvis/dashboards/list": WebSocketHandler._cmd_dashboards_list,
+    "jarvis/dashboards/save": WebSocketHandler._cmd_dashboards_save,
+    "jarvis/dashboards/delete": WebSocketHandler._cmd_dashboards_delete,
+    "jarvis/metrics/sources": WebSocketHandler._cmd_metrics_sources,
+    "jarvis/metrics/query": WebSocketHandler._cmd_metrics_query,
     "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
     "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,
     "jarvis/tasks/clear_finished": WebSocketHandler._cmd_task_clear_finished,

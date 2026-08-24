@@ -13,6 +13,17 @@
 import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import { type LogEntry, toLog } from './taskEvents';
+import { type Dashboard, toDashboard, toDashboards } from './dashboards/layout';
+import { type SeriesData, toSeries } from './dashboards/series';
+
+/** One data source, as `jarvis/metrics/sources` describes it. */
+export interface MetricSource {
+	name: string;
+	description: string;
+	healthy: boolean;
+	detail: string;
+	series: { key: string; label: string; unit: string; group: string; default_aggregate: string }[];
+}
 import type { McpServer } from './mcpDraft';
 import type { ScheduledJob } from './schedule';
 import type { CodeListing, CodeResult } from './code';
@@ -860,6 +871,51 @@ export class JarvisClient {
 		if (opts.kind) payload.kind = opts.kind;
 		if (opts.active) payload.active = true;
 		return toTaskList(await this.command(payload));
+	}
+
+	// --- dashboards + metrics ---------------------------------------------
+
+	/** Every dashboard this token may see: its own, plus the shared ones. */
+	async listDashboards(): Promise<Dashboard[]> {
+		return toDashboards(await this.command({ type: 'jarvis/dashboards/list' }));
+	}
+
+	/**
+	 * Create or replace one. The server stamps the owner from this socket's
+	 * token — a client cannot save a board as somebody else.
+	 */
+	async saveDashboard(dashboard: Dashboard): Promise<Dashboard | null> {
+		const result = await this.command<{ dashboard?: unknown }>({
+			type: 'jarvis/dashboards/save',
+			dashboard
+		});
+		return toDashboard(result?.dashboard);
+	}
+
+	async deleteDashboard(id: string): Promise<boolean> {
+		try {
+			await this.command({ type: 'jarvis/dashboards/delete', id });
+			return true;
+		} catch (err) {
+			if (err instanceof JarvisCommandError && err.code === 'not_found') return false;
+			throw err;
+		}
+	}
+
+	/** What can be graphed, per source, with each source's health. */
+	async metricsSources(): Promise<MetricSource[]> {
+		const result = await this.command<{ sources?: unknown }>({ type: 'jarvis/metrics/sources' });
+		return Array.isArray(result?.sources) ? (result.sources as MetricSource[]) : [];
+	}
+
+	/** One widget's numbers. */
+	async metricsQuery(request: {
+		source: string;
+		series: string[];
+		range?: string;
+		aggregate?: string;
+	}): Promise<SeriesData[]> {
+		return toSeries(await this.command({ type: 'jarvis/metrics/query', ...request }));
 	}
 
 	/**

@@ -130,7 +130,8 @@ export const TOKENS = {
 	'--jv-measure-dialog': '32rem',
 	'--jv-measure-orb': '520px',
 	'--jv-measure-boot': '360px',
-	'--jv-measure-qr': '260px'
+	'--jv-measure-qr': '260px',
+	'--jv-measure-log': '22rem'
 } as const;
 
 export type TokenName = keyof typeof TOKENS;

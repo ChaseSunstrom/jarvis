@@ -130,6 +130,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import shlex
 import uuid
 from dataclasses import dataclass, field, replace
@@ -779,10 +780,14 @@ async def reset_environment(
     )
 
 
-def _explain_docker_failure(out: str) -> str:
+def _explain_docker_failure(out: str, docker: str = "docker") -> str:
     """Turn a docker error into something an operator can act on."""
     said = (out or "").strip()
     lowered = said.lower()
+    if "docker is not installed" in lowered:
+        # `_spawn_plain` already worked out which failure it was by asking PATH;
+        # its sentence names the fix and this one would bury it in an errno.
+        return said
     if "permission denied" in lowered and "docker.sock" in lowered:
         return (
             "Jarvis cannot reach the Docker daemon: permission denied on the "
@@ -857,15 +862,30 @@ async def _spawn(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-    except FileNotFoundError:
-        return 1, (
-            "docker is not installed on this server, so the sandboxed "
-            "environment cannot be used. Install Docker, or remove the "
-            "`environment:` from this repository to fall back to its declared "
-            "checks."
-        )
     except (OSError, ValueError) as err:
-        return 1, f"could not start the container: {err}"
+        # Which failure it is decides what the operator should do, and the errno
+        # alone does not say. `ENOENT` is the obvious "no docker"; `EACCES` is
+        # the same situation whenever an unreadable directory sits earlier on
+        # PATH, because the exec search reports the first refusal it meets
+        # rather than the last miss. So ask PATH directly — the same lesson
+        # `_run_git` learned from `git init failed: [Errno 2] ... 'git'`.
+        # argv[0] is the binary that was actually attempted; `docker` is only
+        # this call's default and can differ (a session may be told to use
+        # another client, and the tests do exactly that).
+        wanted = str(argv[0]) if argv else docker
+        found = shutil.which(wanted) if wanted else None
+        if found is None:
+            return 1, (
+                "docker is not installed on this server, so the sandboxed "
+                "environment cannot be used. Install Docker, or remove the "
+                "`environment:` from this repository to fall back to its declared "
+                "checks."
+            )
+        return 1, (
+            f"{wanted} is installed at {found} but could not be started: {err}. "
+            "The usual cause is that this user is not in the `docker` group, or "
+            "the daemon is not running."
+        )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except (asyncio.TimeoutError, TimeoutError):

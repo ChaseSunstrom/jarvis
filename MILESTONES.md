@@ -89,7 +89,7 @@ files both would touch, which the integrating session merges.
     `jarvis_task_tool_*`; `e2e/task-live.spec.ts`; `jarvis-core/tests/test_task_events.py`.
   - Verify: `bash scripts/verify/m04-task-ui.sh`
 
-- [ ] **M05 — Dashboards + internal metrics source** · size XL · deps M03 · parallel-ok M04 (shared files as above)
+- [x] **M05 — Dashboards + internal metrics source** · size XL · deps M03 · parallel-ok M04 (shared files as above)
   - Scope: `jarvis-core/jarvis/metrics/` — `DataSource` protocol (`list_series()`,
     `query(series, range, step)`), `sources/internal.py` over recorder history/stats plus new
     system metrics (`/proc`, no psutil), LLM token/latency counters from turn events, task

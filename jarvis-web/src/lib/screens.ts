@@ -67,6 +67,13 @@ export const SCREENS: Screen[] = [
 		probe: 'tasks-lede'
 	},
 	{
+		path: '/dashboards',
+		name: 'Dashboards',
+		purpose: 'Graphs you arranged: Jarvis’s own numbers, this host, and anything else configured.',
+		nav: true,
+		probe: 'dashboards-screen'
+	},
+	{
 		path: '/code',
 		name: 'Code',
 		purpose: 'Repositories Jarvis may work in, and the jobs it has run in them.',
