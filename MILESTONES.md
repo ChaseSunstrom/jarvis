@@ -184,7 +184,7 @@ files both would touch, which the integrating session merges.
     `jarvis-core/docs/features.md` describes plan → act → verify.
   - Verify: `bash scripts/verify/m11-agent-loop.sh`
 
-- [ ] **M12 — Hooks** · size M · deps M10 · parallel-ok M13, M14
+- [x] **M12 — Hooks** · size M · deps M10 · parallel-ok M13, M14
   - Scope: trigger platforms `wake_word` (from `voice_pipeline_event wake_word-end`, optional
     pipeline/device filter) and `task` (`status: started|completed|failed`, `kind:`), with
     distinct `jarvis_task_started/completed/failed` events; `event` triggers match nested

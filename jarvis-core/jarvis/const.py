@@ -22,6 +22,29 @@ EVENT_AUTOMATION_TRIGGERED = "automation_triggered"
 #: automation can trigger on this to tell you.
 EVENT_AUTOMATION_FAILED = "automation_failed"
 
+#: A task's lifecycle, as three moments an automation can act on, rather than
+#: the `jarvis_task_updated` firehose that also carries every progress tick.
+#: Deriving "it just finished" from an update means knowing the status BEFORE
+#: the update, which a listener does not have — so "tell me when the research
+#: is done" became a notification per tick. `tasks.py` fires these on the
+#: transition only; `automation/triggers.py` maps them to `platform: task`.
+EVENT_TASK_STARTED = "jarvis_task_started"
+EVENT_TASK_COMPLETED = "jarvis_task_completed"
+EVENT_TASK_FAILED = "jarvis_task_failed"
+#: Cancelled is its own event and NOT a failure: somebody asked it to stop and
+#: it did. Folding it into `failed` would page a human about a thing a human
+#: just did.
+EVENT_TASK_CANCELLED = "jarvis_task_cancelled"
+
+#: Every voice-pipeline event, mirrored onto the bus as
+#: `{"run_id", "type", "data", "pipeline", "device_id"}`. Defined here rather
+#: than in `voice/pipeline.py` so the automation layer can listen for it on a
+#: build with no voice stack installed — importing the runner to learn a string
+#: is how an optional dependency becomes a required one.
+EVENT_VOICE_PIPELINE = "voice_pipeline_event"
+#: The one pipeline event `platform: wake_word` cares about.
+VOICE_WAKE_END = "wake_word-end"
+
 MATCH_ALL = "*"
 
 # --- common states ---------------------------------------------------------

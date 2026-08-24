@@ -1076,6 +1076,9 @@ class WebSocketHandler:
                 end_stage=end_stage,
                 conversation_id=msg.get("conversation_id"),
                 binary_handler_id=handler_id,
+                # Which satellite asked. A wake-word hook that cannot tell the
+                # workshop from the kitchen is a hook that fires in both.
+                device_id=self.device_id or "",
                 **_run_kwargs(msg),
             )
         except ApiError:

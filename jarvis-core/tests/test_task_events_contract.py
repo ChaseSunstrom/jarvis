@@ -59,7 +59,15 @@ async def test_the_payloads_carry_every_required_field():
     call = registry.tool_started(task.id, name="read_file", arguments={"path": "a"})
     registry.tool_finished(task.id, name="read_file", call_id=call, ok=True)
     registry.output(task.id, "hello")
+    # Every transition, because each is a separate event in the contract and a
+    # task can only make one of them per run: run it, finish it, then use two
+    # more tasks for the two endings this one cannot also have.
+    await registry.async_update(task.id, status="running")
     await registry.async_update(task.id, status="done")
+    failed = await registry.async_add("fails", kind="code")
+    await registry.async_update(failed.id, status="error", error="no")
+    stopped = await registry.async_add("stopped", kind="code")
+    await registry.async_update(stopped.id, status="cancelled")
     await registry.async_remove(task.id)
 
     seen: dict[str, dict] = {}

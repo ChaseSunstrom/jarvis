@@ -47,6 +47,8 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..const import EVENT_VOICE_PIPELINE as _EVENT_VOICE_PIPELINE
+from ..const import VOICE_WAKE_END as _VOICE_WAKE_END
 from .audio import DEFAULT_CHANNELS, DEFAULT_RATE, DEFAULT_WIDTH, rms, wav_bytes
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -59,7 +61,7 @@ _LOGGER = logging.getLogger(__name__)
 EVENT_RUN_START = "run-start"
 EVENT_RUN_END = "run-end"
 EVENT_WAKE_START = "wake_word-start"
-EVENT_WAKE_END = "wake_word-end"
+EVENT_WAKE_END = _VOICE_WAKE_END
 EVENT_STT_START = "stt-start"
 EVENT_STT_VAD_START = "stt-vad-start"
 EVENT_STT_VAD_END = "stt-vad-end"
@@ -101,7 +103,9 @@ EVENT_SPEAKER_END = "speaker-end"
 ERROR_NOT_RECOGNISED = "speaker-not-recognised"
 
 # Bus event mirroring every pipeline event (handy for the API/websocket layer).
-EVENT_VOICE_PIPELINE = "voice_pipeline_event"
+#: Imported rather than retyped: `automation/triggers.py` listens for this
+#: and a second copy of the string is a rename that half-lands.
+EVENT_VOICE_PIPELINE = _EVENT_VOICE_PIPELINE
 
 STAGES = ("wake", "stt", "intent", "tts")
 STAGE_ORDER = {name: index for index, name in enumerate(STAGES)}
@@ -272,6 +276,7 @@ class PipelineRun:
         vad_threshold: float = DEFAULT_VAD_THRESHOLD,
         vad_silence_ms: int = DEFAULT_VAD_SILENCE_MS,
         tts_cache: dict[str, tuple[bytes, str]] | None = None,
+        device_id: str | None = None,
     ) -> None:
         if start_stage not in STAGE_ORDER:
             raise ValueError(f"unknown start_stage: {start_stage!r}")
@@ -305,6 +310,12 @@ class PipelineRun:
         self.vad_threshold = float(vad_threshold)
         self.vad_silence_ms = int(vad_silence_ms)
         self._tts_cache = tts_cache
+
+        #: Which satellite this run belongs to, when it belongs to one. Empty
+        #: for a run started by a browser or a REST call. On the bus mirror so
+        #: an automation can say "the wake word, but only in the workshop" —
+        #: without it every hook on a house-wide event fires for every room.
+        self.device_id = str(device_id or "")
 
         self.pipeline_id = getattr(pipeline, "id", None) or "jarvis"
         self.language = language or getattr(pipeline, "language", None) or "en"
@@ -1006,7 +1017,15 @@ class PipelineRun:
             try:
                 self.jarvis.bus.fire(
                     EVENT_VOICE_PIPELINE,
-                    {"run_id": self.run_id, "type": event_type, "data": data},
+                    {
+                        "run_id": self.run_id,
+                        "type": event_type,
+                        "data": data,
+                        # Identity, so a listener can filter without having to
+                        # correlate run ids with a second event.
+                        "pipeline": self.pipeline_id,
+                        "device_id": self.device_id,
+                    },
                 )
             except Exception:  # pragma: no cover - a bad listener must not kill a run
                 _LOGGER.debug("Could not mirror %s onto the bus", event_type, exc_info=True)

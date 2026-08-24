@@ -53,10 +53,21 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from .const import (
+    EVENT_TASK_CANCELLED,
+    EVENT_TASK_COMPLETED,
+    EVENT_TASK_FAILED,
+    EVENT_TASK_STARTED,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "EVENT_TASK_ADDED",
+    "EVENT_TASK_CANCELLED",
+    "EVENT_TASK_COMPLETED",
+    "EVENT_TASK_FAILED",
+    "EVENT_TASK_STARTED",
     "EVENT_TASK_UPDATED",
     "EVENT_TASK_REMOVED",
     "EVENT_TASK_OUTPUT",
@@ -110,6 +121,17 @@ STATUSES = (
     STATUS_ERROR,
     STATUS_CANCELLED,
 )
+
+#: The lifecycle, one event per transition — `const.py` holds the strings so
+#: `automation/triggers.py` can map them without importing this module. Fired
+#: IN ADDITION to `jarvis_task_updated`, never instead of it: the console
+#: redraws from updates and would go blank if a finish stopped arriving there.
+STATUS_EVENTS: dict[str, str] = {
+    STATUS_RUNNING: EVENT_TASK_STARTED,
+    STATUS_DONE: EVENT_TASK_COMPLETED,
+    STATUS_ERROR: EVENT_TASK_FAILED,
+    STATUS_CANCELLED: EVENT_TASK_CANCELLED,
+}
 
 #: Kept, oldest finished first out. Generous — a task is a few hundred bytes —
 #: and bounded because the input is "however much the user asks for".
@@ -451,6 +473,11 @@ class TaskRegistry:
         if task is None:
             return None
 
+        #: The status BEFORE this update, which is the whole reason the
+        #: lifecycle events can exist: a listener sees `status: done` on every
+        #: subsequent update too, and cannot tell the finish from the echo.
+        was = task.status
+
         for title in add_steps:
             if len(task.steps) >= MAX_STEPS:
                 break
@@ -497,6 +524,8 @@ class TaskRegistry:
         task.updated = time.time()
         await self.async_save()
         self._fire(EVENT_TASK_UPDATED, task)
+        if task.status != was and task.status in STATUS_EVENTS:
+            self._fire(STATUS_EVENTS[task.status], task)
         return task
 
     async def async_remove(self, task_id: str) -> bool:

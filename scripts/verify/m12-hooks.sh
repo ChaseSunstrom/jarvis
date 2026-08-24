@@ -10,7 +10,12 @@ TRIG="$CORE/automation/triggers.py"
 
 check "trigger platform: wake_word" grep -qE '"wake_word"' "$TRIG"
 check "trigger platform: task (started/completed/failed)" grep -qE '"task"' "$TRIG"
-check "task lifecycle events are distinct" grep -qE 'jarvis_task_(started|completed|failed)' "$CORE/tasks.py"
+# The strings live in const.py so `automation/triggers.py` can map them without
+# importing the task registry — an optional-dependency import that would make
+# the automation layer depend on it. tasks.py is where they are FIRED.
+check "task lifecycle events are distinct" grep -qE 'jarvis_task_(started|completed|failed)' "$CORE/const.py"
+check "cancelled is its own event, not a failure" grep -q 'jarvis_task_cancelled' "$CORE/const.py"
+check "the lifecycle events are fired on the transition" grep -q 'STATUS_EVENTS\[task.status\]' "$CORE/tasks.py"
 check "event triggers can match nested event_data" grep -qiE 'nested|dotted|path' "$TRIG"
 check "trigger platform: webhook (kept)" grep -qE '"webhook"' "$TRIG"
 check "trigger platform: time_pattern / time (kept)" grep -qE '"time_pattern"' "$TRIG"

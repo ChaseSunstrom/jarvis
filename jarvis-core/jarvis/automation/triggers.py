@@ -9,8 +9,8 @@ Supported ``platform:`` (``trigger:`` is accepted as an alias, matching newer
 Home Assistant YAML)::
 
     state | numeric_state | time | sun | time_pattern | event | mqtt | webhook
-    template | jarvis_start (aliases: homeassistant_start, start, jarvis,
-    homeassistant with `event: start|shutdown`)
+    template | wake_word | task | jarvis_start (aliases: homeassistant_start,
+    start, jarvis, homeassistant with `event: start|shutdown`)
 """
 
 from __future__ import annotations
@@ -21,7 +21,17 @@ import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from ..const import EVENT_JARVIS_START, EVENT_JARVIS_STOP, EVENT_STATE_CHANGED
+from ..const import (
+    EVENT_JARVIS_START,
+    EVENT_JARVIS_STOP,
+    EVENT_STATE_CHANGED,
+    EVENT_TASK_CANCELLED,
+    EVENT_TASK_COMPLETED,
+    EVENT_TASK_FAILED,
+    EVENT_TASK_STARTED,
+    EVENT_VOICE_PIPELINE,
+    VOICE_WAKE_END,
+)
 from .util import (
     as_float,
     as_list,
@@ -109,6 +119,42 @@ def _matches_one(value: Any, expected: Any) -> bool:
     if value == expected:
         return True
     return str(value) == str(expected)
+
+
+def _dig(data: Any, path: str) -> Any:
+    """Follow a dotted path into nested mappings and lists.
+
+    `event_data: {wake_word_output.wake_word_id: hey_jarvis}` is the reason this
+    exists. Every interesting payload on this bus is nested — a pipeline event
+    puts its result under `data.wake_word_output`, a task event puts everything
+    under `task` — so a matcher that could only read top-level keys could match
+    on `run_id` and nothing anybody cares about. Writing `{"task": {...}}` out
+    in full in YAML is not an answer either: it would have to be an exact match
+    against a dict that grows a key.
+
+    A path segment that is all digits indexes a list, so `steps.0.status` works.
+    Missing anything returns None, which `_matches_one` treats as a non-match
+    unless the config asked for null.
+    """
+    current = data
+    for part in str(path).split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, (list, tuple)) and part.isdigit():
+            index = int(part)
+            current = current[index] if index < len(current) else None
+        else:
+            return None
+        if current is None:
+            return None
+    return current
+
+
+def _matches_all(data: Any, wanted: Any) -> bool:
+    """Every key in `wanted` matches `data`; keys may be dotted paths."""
+    if not isinstance(wanted, dict):
+        return True
+    return all(_matches(_dig(data, key), value) for key, value in wanted.items())
 
 
 def _state_value(state: "State | None", attribute: str | None) -> Any:
@@ -524,9 +570,11 @@ async def async_attach_event(
     emit = _wrap_fire(fire)
 
     async def _listener(event: "Event") -> None:
-        for key, value in wanted.items():
-            if not _matches_one(event.data.get(key), value):
-                return
+        # Dotted, and matching a LIST in the config means "any of these" —
+        # `_matches`, the same rule state triggers use, rather than a second
+        # dialect for the same idea.
+        if not _matches_all(event.data, wanted):
+            return
         trigger = _base_trigger(config, "event")
         trigger.update(
             {
@@ -539,6 +587,124 @@ async def async_attach_event(
         await emit(trigger, event.context)
 
     unsubs = [jarvis.bus.listen(event_type, _listener) for event_type in event_types]
+
+    def _detach() -> None:
+        for unsub in unsubs:
+            unsub()
+
+    return _detach
+
+
+# ---------------------------------------------------------------------------
+# wake_word
+# ---------------------------------------------------------------------------
+#
+# `platform: event, event_type: voice_pipeline_event` could express this, and
+# that is exactly why it is worth having: it took a nested match on an event
+# whose shape is a client contract, and it fired on every stage of every run
+# unless the author got the filter right. The failure was silent — an
+# automation that ran fourteen times per wake word instead of once.
+async def async_attach_wake_word(
+    jarvis: "Jarvis", config: dict[str, Any], fire: FireTrigger
+) -> Unsub:
+    """Fire when a wake word is detected — optionally on one satellite."""
+    want_word = config.get("wake_word", _UNSET)
+    want_pipeline = config.get("pipeline", _UNSET)
+    want_device = config.get("device_id", _UNSET)
+    emit = _wrap_fire(fire)
+
+    async def _listener(event: "Event") -> None:
+        if event.data.get("type") != VOICE_WAKE_END:
+            return
+        detected = _dig(event.data, "data.wake_word_output.wake_word_id")
+        if not _matches(detected, want_word):
+            return
+        if not _matches(event.data.get("pipeline"), want_pipeline):
+            return
+        # An empty device_id means "not a satellite". A config asking for a
+        # specific device must not match those, and `_matches_one` on "" vs
+        # "workshop" already says no — the check is here for the same reason
+        # the others are, to keep the four filters reading alike.
+        if not _matches(event.data.get("device_id"), want_device):
+            return
+        trigger = _base_trigger(config, "wake_word")
+        trigger.update(
+            {
+                "wake_word": detected,
+                "pipeline": event.data.get("pipeline"),
+                "device_id": event.data.get("device_id"),
+                "run_id": event.data.get("run_id"),
+                "description": f"wake word {detected or 'detected'}",
+            }
+        )
+        await emit(trigger, event.context)
+
+    return jarvis.bus.listen(EVENT_VOICE_PIPELINE, _listener)
+
+
+# ---------------------------------------------------------------------------
+# task
+# ---------------------------------------------------------------------------
+#
+# The lifecycle of a background job, as three distinct events rather than one
+# `jarvis_task_updated` fired on every step of every task. An automation
+# listening to the updates has to re-derive "did it just finish?" from a status
+# it cannot see the previous value of — which is how "tell me when the research
+# is done" became a notification per progress tick.
+TASK_STATUS_EVENTS: dict[str, str] = {
+    "started": EVENT_TASK_STARTED,
+    "completed": EVENT_TASK_COMPLETED,
+    "failed": EVENT_TASK_FAILED,
+    "cancelled": EVENT_TASK_CANCELLED,
+}
+
+
+async def async_attach_task(
+    jarvis: "Jarvis", config: dict[str, Any], fire: FireTrigger
+) -> Unsub:
+    """Fire when a task starts, completes, fails or is cancelled."""
+    wanted = [str(s).strip().lower() for s in as_list(config.get("status"))]
+    unknown = [s for s in wanted if s not in TASK_STATUS_EVENTS]
+    if unknown:
+        _LOGGER.warning(
+            "task trigger: unknown status %s (known: %s)",
+            ", ".join(unknown),
+            ", ".join(sorted(TASK_STATUS_EVENTS)),
+        )
+    statuses = [s for s in wanted if s in TASK_STATUS_EVENTS] or list(TASK_STATUS_EVENTS)
+    want_kind = config.get("kind", _UNSET)
+    want_source = config.get("source", _UNSET)
+    emit = _wrap_fire(fire)
+
+    def _make(status: str):
+        async def _listener(event: "Event") -> None:
+            task = event.data.get("task")
+            task = task if isinstance(task, dict) else {}
+            if not _matches(task.get("kind"), want_kind):
+                return
+            if not _matches(task.get("source"), want_source):
+                return
+            trigger = _base_trigger(config, "task")
+            trigger.update(
+                {
+                    "status": status,
+                    "task": task,
+                    "task_id": task.get("id"),
+                    "kind": task.get("kind"),
+                    # The two an automation actually says out loud.
+                    "title": task.get("title"),
+                    "result": task.get("result"),
+                    "error": task.get("error"),
+                    "description": f"task {status}: {task.get('title') or task.get('id')}",
+                }
+            )
+            await emit(trigger, event.context)
+
+        return _listener
+
+    unsubs = [
+        jarvis.bus.listen(TASK_STATUS_EVENTS[status], _make(status)) for status in statuses
+    ]
 
     def _detach() -> None:
         for unsub in unsubs:
@@ -770,6 +936,8 @@ TRIGGER_PLATFORMS: dict[str, Callable[..., Awaitable[Unsub]]] = {
     "sun": async_attach_sun,
     "time_pattern": async_attach_time_pattern,
     "event": async_attach_event,
+    "wake_word": async_attach_wake_word,
+    "task": async_attach_task,
     "mqtt": async_attach_mqtt,
     "webhook": async_attach_webhook,
     "template": async_attach_template,
@@ -832,6 +1000,7 @@ async def async_attach_triggers(
 
 
 __all__ = [
+    "TASK_STATUS_EVENTS",
     "TRIGGER_PLATFORMS",
     "WebhookHandler",
     "async_attach_trigger",

@@ -22,6 +22,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   OpenAI-compatible server serves it) instead of Ollama-only `/api/ps`.
 
 ### Added
+- M12 (hooks): two named trigger platforms, because both were being written as raw `event`
+  triggers and both were wrong. `platform: wake_word` fires once per detection instead of
+  fourteen times per voice run, and can be scoped to one satellite (`device_id:`), one word or
+  one pipeline. `platform: task` fires on the transition — `started`, `completed`, `failed`,
+  `cancelled` are four distinct bus events — so "tell me when the research is done" is one
+  notification rather than one per progress tick, and a cancelled job is not reported as a
+  failure. `event_data:` keys may now be dotted paths into nested payloads
+  (`parcel.carrier`, `steps.0.status`), which is the only way to match anything on this bus.
+  `jarvis-core/docs/hooks.md` and `config/examples/hooks.yaml` document all five hooks
+  including the webhook's "the id is the secret" and `webhook_require_auth`.
+
+### Added
 - M11 (plan → act → verify): background work with more than one thing in it is now planned
   before it is done. The plan's steps land on the task, so the console shows what Jarvis
   intends before it starts; each step is acted on as an ordinary tool-using turn; each outcome
