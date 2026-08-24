@@ -503,7 +503,7 @@ async def _run(
     )
 
     if remember and usable:
-        await _remember(jarvis, question, report)
+        await _keep_report(jarvis, question, report)
 
 
 def _check(jarvis: "Jarvis", task_id: str) -> None:
@@ -542,22 +542,31 @@ async def _read_one(
     return Note(source=source, ok=True, text="" if is_empty_note(said) else said.strip())
 
 
-async def _remember(jarvis: "Jarvis", question: str, report: str) -> None:
-    """Store the report, marked for what it is.
+async def _keep_report(jarvis: "Jarvis", question: str, report: str) -> None:
+    """Save the report as a NOTE.
 
-    `allow_untrusted` because the report IS derived from pages anyone can
-    write. The tags are not decoration: they are how a person listing their
-    notes can see which of them came from the open web.
+    It used to go into `memory`, and that was the wrong home for it. Memory
+    holds one-line facts about the user and every one of them is injected into
+    every system prompt; a four-page report there pushed their actual
+    preferences out of a bounded store and put four pages of prose in front of
+    every "turn the lights off". A report is a document, and documents are
+    notes — on disk, in markdown, findable by search, with its sources in it.
+
+    The tags are not decoration: they are how a person reading their notes can
+    see which of them were written from pages anyone can edit.
     """
     try:
         await jarvis.services.async_call(
-            "memory",
-            "add",
+            "notes",
+            "create",
             {
-                "text": f"Research — {question}\n\n{report}",
+                "title": f"Research — {question}"[:110],
+                "body": report,
                 "tags": ["research", "from-the-web"],
-                "source": "research",
-                "allow_untrusted": True,
+                # A second run of the same question updates the note rather
+                # than refusing: the newer report is the one worth keeping, and
+                # a "note already exists" error would strand it.
+                "overwrite": True,
             },
             blocking=True,
         )

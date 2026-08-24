@@ -113,16 +113,33 @@ def _stage_latencies(events: list[dict[str, Any]], started: float) -> dict[str, 
     return out
 
 
+class Link:
+    """Whichever websocket client is current.
+
+    A scenario can restart jarvis-core mid-way — that is the only honest way to
+    test "it remembered" — and the socket does not survive that. The transports
+    hold this rather than a client, so the restart swaps one attribute instead
+    of rebuilding everything that referred to the old one.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+
+
 class ApiVoice:
     """Audio in on the binary channel, audio out through the TTS proxy."""
 
     name = "voice-api"
 
-    def __init__(self, client, harness, mouth: Mouth, ears: Ears) -> None:
-        self.client = client
+    def __init__(self, link: "Link", harness, mouth: Mouth, ears: Ears) -> None:
+        self.link = link
         self.harness = harness
         self.mouth = mouth
         self.ears = ears
+
+    @property
+    def client(self):
+        return self.link.client
 
     async def say(
         self,
@@ -201,8 +218,12 @@ class Text:
 
     name = "text-api"
 
-    def __init__(self, client) -> None:
-        self.client = client
+    def __init__(self, link: "Link") -> None:
+        self.link = link
+
+    @property
+    def client(self):
+        return self.link.client
 
     async def say(self, text: str, *, conversation_id: str | None = None,
                   timeout: float = TURN_TIMEOUT, **_ignored: Any) -> Turn:

@@ -781,6 +781,79 @@ class WebSocketHandler:
     async def _cmd_code_result(self, msg: dict[str, Any]) -> Any:
         return common.code_result_payload(self.jarvis, str(msg.get("task_id") or ""))
 
+    async def _cmd_notes_list(self, msg: dict[str, Any]) -> Any:
+        return common.notes_list_payload(
+            self.jarvis,
+            tag=str(msg.get("tag") or ""),
+            query=str(msg.get("query") or ""),
+            limit=int(msg.get("limit") or 200),
+        )
+
+    async def _cmd_notes_get(self, msg: dict[str, Any]) -> Any:
+        # `note_id`, never `id`: every websocket frame already has an `id` and
+        # it is the correlation number. Reading it here returned "no note '7'"
+        # for a note called `boiler-serviced`, which is a bug that looks like
+        # a missing note.
+        return common.note_payload(
+            self.jarvis, str(msg.get("note_id") or msg.get("title") or "")
+        )
+
+    async def _cmd_notes_create(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_note_create(self.jarvis, payload)
+
+    async def _cmd_notes_update(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type", "note_id")}
+        return await common.async_note_update(
+            self.jarvis, str(msg.get("note_id") or ""), payload
+        )
+
+    async def _cmd_notes_append(self, msg: dict[str, Any]) -> Any:
+        return await common.async_note_append(
+            self.jarvis,
+            str(msg.get("note_id") or ""),
+            str(msg.get("text") or ""),
+        )
+
+    async def _cmd_notes_delete(self, msg: dict[str, Any]) -> Any:
+        return await common.async_note_delete(self.jarvis, str(msg.get("note_id") or ""))
+
+    async def _cmd_notes_search(self, msg: dict[str, Any]) -> Any:
+        return common.notes_list_payload(
+            self.jarvis,
+            tag=str(msg.get("tag") or ""),
+            query=str(msg.get("query") or msg.get("q") or ""),
+            limit=int(msg.get("limit") or 20),
+        )
+
+    async def _cmd_memory_list(self, msg: dict[str, Any]) -> Any:
+        return common.memory_list_payload(
+            self.jarvis,
+            tag=str(msg.get("tag") or ""),
+            query=str(msg.get("query") or ""),
+            limit=int(msg.get("limit") or 200),
+        )
+
+    async def _cmd_memory_add(self, msg: dict[str, Any]) -> Any:
+        payload = {k: v for k, v in msg.items() if k not in ("id", "type")}
+        return await common.async_memory_add(self.jarvis, payload)
+
+    async def _cmd_memory_forget(self, msg: dict[str, Any]) -> Any:
+        return await common.async_memory_forget(
+            self.jarvis,
+            entry_id=str(msg.get("entry_id") or msg.get("id_") or ""),
+            query=str(msg.get("query") or ""),
+            everything=bool(msg.get("all")),
+        )
+
+    async def _cmd_memory_pin(self, msg: dict[str, Any]) -> Any:
+        return await common.async_memory_pin(
+            self.jarvis, str(msg.get("entry_id") or ""), bool(msg.get("pinned", True))
+        )
+
+    async def _cmd_memory_export(self, msg: dict[str, Any]) -> Any:
+        return common.memory_export_payload(self.jarvis, str(msg.get("format") or "json"))
+
     async def _cmd_skills_list(self, msg: dict[str, Any]) -> Any:
         return common.skills_list_payload(self.jarvis)
 
@@ -1198,6 +1271,18 @@ WebSocketHandler._HANDLERS = {
     "jarvis/code/clone_repo": WebSocketHandler._cmd_code_clone_repo,
     "jarvis/code/push": WebSocketHandler._cmd_code_push,
     "jarvis/code/result": WebSocketHandler._cmd_code_result,
+    "jarvis/notes/list": WebSocketHandler._cmd_notes_list,
+    "jarvis/notes/get": WebSocketHandler._cmd_notes_get,
+    "jarvis/notes/create": WebSocketHandler._cmd_notes_create,
+    "jarvis/notes/update": WebSocketHandler._cmd_notes_update,
+    "jarvis/notes/append": WebSocketHandler._cmd_notes_append,
+    "jarvis/notes/delete": WebSocketHandler._cmd_notes_delete,
+    "jarvis/notes/search": WebSocketHandler._cmd_notes_search,
+    "jarvis/memory/list": WebSocketHandler._cmd_memory_list,
+    "jarvis/memory/add": WebSocketHandler._cmd_memory_add,
+    "jarvis/memory/forget": WebSocketHandler._cmd_memory_forget,
+    "jarvis/memory/pin": WebSocketHandler._cmd_memory_pin,
+    "jarvis/memory/export": WebSocketHandler._cmd_memory_export,
     "jarvis/skills/list": WebSocketHandler._cmd_skills_list,
     "jarvis/skills/get": WebSocketHandler._cmd_skills_get,
     "jarvis/skills/reload": WebSocketHandler._cmd_skills_reload,

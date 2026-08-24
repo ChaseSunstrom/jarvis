@@ -87,3 +87,24 @@ def test_prompt_states_the_same_rules():
     # every reply — otherwise an answered question goes to the phone.
     assert "status update or a finished task" in prompt
     assert "announce" in prompt
+
+
+# ---------------------------------------------------------------------------
+# "note that …" — which capability a spoken line is asking for
+# ---------------------------------------------------------------------------
+from routing import NOTE_INTENTS, note_intent  # noqa: E402
+
+
+@pytest.mark.parametrize("said,expected,why", NOTE_INTENTS)
+def test_a_spoken_line_asks_for_the_right_thing(said, expected, why):
+    assert note_intent(said) == expected, why
+
+
+def test_a_note_and_a_fact_about_the_user_are_not_the_same_thing():
+    """The distinction the notes integration exists for: a document goes on
+    disk and is found by searching; a fact about the user is one line and goes
+    into every system prompt. Confusing them is how a four-page research report
+    ended up in front of "turn the lights off"."""
+    assert note_intent("note that the boiler was serviced today") == "note"
+    assert note_intent("remember that I take my coffee black") == "memory"
+    assert note_intent("remember to put the bins out") == "task"

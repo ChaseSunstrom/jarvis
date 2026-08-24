@@ -1450,6 +1450,132 @@ def _mcp(jarvis: "Jarvis") -> Any:
     return manager
 
 
+def _notes(jarvis: "Jarvis") -> Any:
+    store = jarvis.data.get("notes")
+    if store is None:
+        raise ApiError("not_configured", "the notes integration is not set up", 400)
+    return store
+
+
+def notes_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
+                       limit: int = 200) -> dict[str, Any]:
+    store = _notes(jarvis)
+    rows = store.search(query, tag, limit) if query else store.listing(tag=tag, limit=limit)
+    return {"notes": rows, "total": len(store.notes), "query": query, "tag": tag}
+
+
+def note_payload(jarvis: "Jarvis", key: str) -> dict[str, Any]:
+    note = _notes(jarvis).get(str(key or ""))
+    if note is None:
+        raise ApiError("not_found", f"no note {key!r}", 404)
+    return {"note": note.as_dict(body=True)}
+
+
+async def async_note_create(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    store = _notes(jarvis)
+    result = store.create(
+        title=str(data.get("title") or ""),
+        body=str(data.get("body") or data.get("text") or ""),
+        tags=data.get("tags"),
+        overwrite=bool(data.get("overwrite")),
+    )
+    if not result.get("created"):
+        raise ApiError("invalid_format", str(result.get("error") or "could not create"), 400)
+    return result
+
+
+async def async_note_update(jarvis: "Jarvis", key: str, data: dict[str, Any]) -> dict[str, Any]:
+    result = _notes(jarvis).update(
+        key,
+        body=data.get("body"),
+        title=data.get("title"),
+        tags=data.get("tags"),
+    )
+    if not result.get("updated"):
+        raise ApiError("not_found", str(result.get("error") or "no such note"), 404)
+    return result
+
+
+async def async_note_append(jarvis: "Jarvis", key: str, text: str) -> dict[str, Any]:
+    result = _notes(jarvis).append(key, text)
+    if not result.get("appended"):
+        raise ApiError("not_found", str(result.get("error") or "no such note"), 404)
+    return result
+
+
+async def async_note_delete(jarvis: "Jarvis", key: str) -> dict[str, Any]:
+    result = _notes(jarvis).delete(key)
+    if not result.get("deleted"):
+        raise ApiError("not_found", str(result.get("error") or "no such note"), 404)
+    return result
+
+
+def _memory(jarvis: "Jarvis") -> Any:
+    store = jarvis.data.get("memory")
+    if store is None:
+        raise ApiError("not_configured", "the memory integration is not set up", 400)
+    return store
+
+
+def memory_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
+                        limit: int = 200) -> dict[str, Any]:
+    """Everything Jarvis remembers, newest first — or the matches for a query.
+
+    The whole store, not a page of it: the point of this route is that a person
+    can read what is held about them, and a listing that made that take three
+    clicks would be a promise kept badly.
+    """
+    store = _memory(jarvis)
+    entries = (
+        store.search(query=query, tags=tag or None, limit=limit)
+        if query
+        else store.all(tag=tag or None, limit=limit)
+    )
+    return {
+        "entries": [entry.as_dict() for entry in entries],
+        "total": len(store.entries),
+        "query": query,
+        "tag": tag,
+    }
+
+
+def memory_export_payload(jarvis: "Jarvis", fmt: str = "json") -> dict[str, Any]:
+    return _memory(jarvis).export(fmt)
+
+
+async def async_memory_forget(jarvis: "Jarvis", entry_id: str = "", query: str = "",
+                              everything: bool = False) -> dict[str, Any]:
+    store = _memory(jarvis)
+    if everything:
+        return await store.async_wipe()
+    if not entry_id and not query:
+        raise ApiError("invalid_format", "say which note: id or query", 400)
+    return await store.async_forget(entry_id=entry_id, query=query)
+
+
+async def async_memory_add(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    store = _memory(jarvis)
+    return await store.async_add(
+        text=str(data.get("text") or ""),
+        tags=data.get("tags"),
+        source=str(data.get("source") or "user"),
+        pinned=bool(data.get("pinned")),
+        # The console is the user typing, so it may store what the model may
+        # not: this is the "yes, I know where it came from" switch.
+        allow_untrusted=bool(data.get("allow_untrusted")),
+    )
+
+
+async def async_memory_pin(jarvis: "Jarvis", entry_id: str, pinned: bool) -> dict[str, Any]:
+    store = _memory(jarvis)
+    entry = store.get(str(entry_id or ""))
+    if entry is None:
+        raise ApiError("not_found", f"no note {entry_id!r}", 404)
+    entry.pinned = bool(pinned)
+    await store.async_save()
+    return {"entry": entry.as_dict()}
+
+
 def skills_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
     """Every loaded skill, and every one that could not be loaded.
 

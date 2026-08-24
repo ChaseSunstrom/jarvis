@@ -171,3 +171,30 @@ def test_the_summary_counts_what_actually_happened():
     assert totals["scenarios_passed"] == 0
     assert totals["round_trip_median"] == 2.0
     assert totals["wer_mean"] == 0.25
+
+
+# --- the routing table names real tools ---------------------------------------
+
+
+def test_every_tool_in_the_routing_table_exists():
+    """The table is how routing accuracy is measured, so a name that no tool
+    has makes the measurement quietly wrong rather than loudly broken.
+
+    It was: the table said `write_note`/`find_note`/`read_note` while the tools
+    are `note_create`/`note_append`/`note_search`, and every
+    note-taking turn was scored as "skills" because reading the house style
+    guide was the only thing it recognised.
+    """
+    from testing.live.runner import TOOL_CAPABILITY
+
+    core = REPO_ROOT / "jarvis-core" / "jarvis"
+    registered = set()
+    for path in core.rglob("*.py"):
+        registered.update(
+            match.group(1)
+            for match in __import__("re").finditer(
+                r'name="([a-z_]+)"', path.read_text(encoding="utf-8")
+            )
+        )
+    missing = sorted(name for name in TOOL_CAPABILITY if name not in registered)
+    assert not missing, f"the routing table names tools that do not exist: {missing}"

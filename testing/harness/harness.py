@@ -312,6 +312,21 @@ sun:
 demo:
   create_areas: true
 
+# Notes: documents on disk. On in the harness house because the live rig and
+# the research eval both write one, and because a research report landing in
+# `memory` instead is exactly the mistake this integration exists to prevent.
+notes:
+  path: notes
+
+# Durable memory, on by default in the harness house: the memory eval and the
+# live scenarios both need a store, and an integration that is absent fails
+# with "400 Bad Request" from a service that does not exist — which reads as a
+# broken API rather than as a feature nobody switched on.
+memory:
+  max_entries: 200
+  context_limit: 600
+  context_entries: 8
+
 # One skill, copied in beside this file by the harness. The live rig asks it
 # something only the skill knows, which is the only way to tell "the skill was
 # loaded" from "the persona happened to say something similar".

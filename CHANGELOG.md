@@ -8,6 +8,27 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Added
+- M15 (memory): Jarvis now learns facts in passing — after a turn that states one, a single
+  bounded model call proposes durable facts, stored as `source: extracted` and linked to the
+  turn, so they can be told apart from what you dictated and deleted on that basis. A word
+  ("off the record") turns it off for a turn, the transcript itself is never stored, and every
+  extracted fact goes through the same redaction and refusals as a dictated one. Plus the half
+  that makes "it's your data" true: `GET /api/memory/export` (JSON or markdown, as a file),
+  `memory.wipe` — which clears the **vector sidecar** too, because a store that reports itself
+  empty while a semantic index still ranks the old text has deleted nothing — and a `/memory`
+  console page that shows every note, where it came from, and the two buttons the model does
+  not get. `evals/memory_eval.py` proves store → **restart** → retrieve → forget → export →
+  wipe against a real server.
+- M16 (notes): documents, as markdown files under `<config>/notes/`, with YAML frontmatter,
+  `[[wiki links]]` resolved both ways and a SQLite FTS5 index that is *derived* — delete it and
+  it rebuilds from the files. Tools `note_create`/`note_append`/`note_search`, a
+  full REST and websocket API, a `/notes` console page, a NOTES tab on the phone, and two
+  desktop actions (`save_note`, `find_note`) so a snippet on the laptop lands in the house.
+  Research now writes its reports here instead of into memory: a four-page report as a
+  "remembered note" pushed the user's actual preferences out of a bounded store and put four
+  pages of prose in front of every "turn the lights off".
+
+### Added
 - M13 (skills): drop a folder with a `SKILL.md` in it into `config/skills/` and Jarvis knows
   it — the open Agent Skills format, YAML frontmatter and a markdown body, no code and no
   restart beyond `skills.reload`. Only the **name and description** reach the system prompt;

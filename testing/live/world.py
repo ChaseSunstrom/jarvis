@@ -155,6 +155,49 @@ class Observer:
             await asyncio.sleep(0.2)
         return False
 
+    async def notes(self, query: str = "") -> list[dict[str, Any]]:
+        """Every note the server holds, or the ones matching a query."""
+        try:
+            answer = await self.client.command(
+                "jarvis/notes/list", **({"query": query} if query else {})
+            )
+        except Exception:  # noqa: BLE001 - a build without notes fails the assertion
+            return []
+        return list((answer or {}).get("notes") or [])
+
+    async def note_body(self, note_id: str) -> str:
+        try:
+            answer = await self.client.command("jarvis/notes/get", note_id=note_id)
+        except Exception:  # noqa: BLE001
+            return ""
+        return str(((answer or {}).get("note") or {}).get("body") or "")
+
+    async def memories(self, query: str = "") -> list[dict[str, Any]]:
+        try:
+            answer = await self.client.command(
+                "jarvis/memory/list", **({"query": query} if query else {})
+            )
+        except Exception:  # noqa: BLE001
+            return []
+        return list((answer or {}).get("entries") or [])
+
+    async def wait_for_note(self, contains: str = "", title_contains: str = "",
+                            timeout: float = 60.0) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for note in await self.notes():
+                if title_contains and title_contains.lower() not in str(
+                    note.get("title") or ""
+                ).lower():
+                    continue
+                if contains:
+                    haystack = f"{note.get('title', '')} {await self.note_body(note['id'])}"
+                    if contains.lower() not in haystack.lower():
+                        continue
+                return note
+            await asyncio.sleep(0.5)
+        return None
+
     async def tasks(self) -> list[dict[str, Any]]:
         try:
             answer = await self.client.command("jarvis/tasks/list")

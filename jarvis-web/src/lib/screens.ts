@@ -81,6 +81,13 @@ export const SCREENS: Screen[] = [
 		probe: 'code-screen'
 	},
 	{
+		path: '/memory',
+		name: 'Memory',
+		purpose: 'What Jarvis remembers about you — and the buttons to take it back.',
+		nav: true,
+		probe: 'memory-screen'
+	},
+	{
 		path: '/settings',
 		name: 'Settings',
 		purpose: 'The backend’s own settings, pairing, voice identity and this console.',

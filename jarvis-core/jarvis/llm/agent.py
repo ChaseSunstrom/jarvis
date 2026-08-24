@@ -106,6 +106,9 @@ Tool use:
   answer or in your reasoning: describing a call does not perform it, and
   saying you have started something you have not is the one thing you must
   never do. If you cannot call it, say so plainly instead.
+- "Note that ...", "make a note", and anything longer than a sentence are
+  note_create. One-line facts about the user are remember, which is repeated
+  to you on every future turn.
 """
 
 #: The line that bounds the toolbox, mirroring the entity rule above.
@@ -285,6 +288,13 @@ class ConversationResult:
     #: True when the model asked for reasoning on this turn. Also the flag the
     #: remaining rounds read — see `THINK_TOOL_NAME`.
     escalated: bool = False
+    #: Which remembered notes went into this turn's system prompt, by id.
+    #:
+    #: The answer to "why did it say that?", and the only honest one: a model
+    #: asked to explain itself will produce a plausible account of notes it may
+    #: not have read. These are the entries `MemoryStore.get_context_block`
+    #: actually put in front of it.
+    memory_used: list[str] = field(default_factory=list)
     #: Text the model wrote in a round that then called a tool, or that was
     #: corrected — everything it said BEFORE it knew the answer.
     #:
@@ -306,6 +316,7 @@ class ConversationResult:
             "thinking": self.thinking,
             "escalated": self.escalated,
             "preamble": self.preamble,
+            "memory_used": list(self.memory_used),
         }
 
     def as_conversation_response(self, language: str = "en") -> dict[str, Any]:
@@ -680,7 +691,11 @@ class ConversationAgent:
         if not callable(block):
             return ""
         try:
-            return str(block(query=query, semantic=semantic) or "")
+            text = str(block(query=query, semantic=semantic) or "")
+            # Read straight after the call that set it: the store overwrites
+            # `last_used` per block, and one turn builds exactly one.
+            self.last_result.memory_used = list(getattr(store, "last_used", []) or [])
+            return text
         except TypeError:
             # A store that predates the parameter. Better the old block than no
             # block: this is duck-typed on purpose so memory can be absent.
@@ -1304,6 +1319,30 @@ class ConversationAgent:
         self.last_result = result
         self.last_response = result.text
         self.last_conversation_id = conversation_id
+        if record and user_text:
+            self._learn_from(conversation_id, user_text)
+
+    def _learn_from(self, conversation_id: str, user_text: str) -> None:
+        """Let memory decide whether this turn said anything worth keeping.
+
+        Fire and forget, after the answer has already gone out: extraction
+        costs a model call, and a user waiting on their reply must not be made
+        to wait on Jarvis noticing that their daughter is called Mira. A
+        failure here is a debug line — the turn already succeeded.
+        """
+        store = self.jarvis.data.get("memory") if self.jarvis is not None else None
+        extract = getattr(store, "async_extract", None)
+        if not callable(extract) or not getattr(store, "worth_extracting", lambda _t: False)(
+            user_text
+        ):
+            return
+        create = getattr(self.jarvis, "async_create_task", None)
+        if not callable(create):
+            return
+        try:
+            create(extract(user_text, agent=self, conversation_id=conversation_id))
+        except Exception:  # pragma: no cover - never load-bearing
+            _LOGGER.debug("Could not start memory extraction", exc_info=True)
 
 
 class _Round:
@@ -1470,6 +1509,22 @@ _CALL_CUE_RE = re.compile(
 )
 
 
+#: Words in front of a cue that turn a claim into an offer: "I can call…",
+#: "I'll invoke…", "shall I execute…". A model saying what it COULD do has not
+#: pretended to have done it.
+_INTENT_RE = re.compile(
+    r"\b(can|could|may|might|will|would|shall|should|able to|going to|"
+    r"'ll|about to|let me|shall i|want me to)\s*$",
+    re.IGNORECASE,
+)
+
+#: How close a call cue has to be to the tool's name, in characters. Wide
+#: enough for "[Tool Call] -> `code_task`" and for a name at the end of a
+#: sentence about calling it; narrow enough that a cue three paragraphs away
+#: does not count.
+_CUE_WINDOW = 60
+
+
 def narrated_tool_call(text: str, names: Iterable[str]) -> str:
     """The tool a turn TALKED about calling without calling it, or "".
 
@@ -1500,15 +1555,54 @@ def narrated_tool_call(text: str, names: Iterable[str]) -> str:
     Requires BOTH a registered tool name as a whole token and a call-shaped
     cue, because a name alone can appear in an honest sentence ("I can't run
     code_task — the orchestrator is not configured").
+
+    ## And why a cue anywhere in the turn was not enough
+
+    A cue somewhere and a name somewhere is not the same claim as "this text
+    scripts that call", and the difference cost a real turn. Asked to go
+    through every sensor, the model wrote a paragraph that happened to contain
+    the word "call" and, further down, a list of what it could do — including
+    `activate_scene`. The nudge fired, told it to make a call it had never
+    described, and the corrected round produced no answer at all: the user got
+    a canned apology instead of their work.
+
+    So the name has to be *near* the cue, or written as a call — and a turn
+    that names several tools is enumerating its toolbox, which is the honest
+    thing it looks like.
     """
     body = str(text or "")
-    if not body.strip() or not _CALL_CUE_RE.search(body):
+    if not body.strip():
         return ""
-    for name in names:
-        token = str(name or "").strip()
-        if not token:
-            continue
-        if re.search(rf"(?<![\w]){re.escape(token)}(?![\w])", body):
+    found = [
+        name
+        for name in (str(n or "").strip() for n in names)
+        if name and re.search(rf"(?<![\w]){re.escape(name)}(?![\w])", body)
+    ]
+    if not found:
+        return ""
+    if len(found) > 1:
+        # "I can call get_state, list_entities or activate_scene" — a model
+        # describing what it has, not pretending to have used one.
+        return ""
+    token = found[0]
+    # Written as a call: `code_task(repo="x")`, `code_task(` — unambiguous.
+    if re.search(rf"(?<![\w]){re.escape(token)}(?![\w])\s*[(\[]", body):
+        return token
+    if not _CALL_CUE_RE.search(body):
+        return ""
+    # Otherwise the cue has to be beside the name rather than anywhere in the
+    # turn: `[Tool Call] -> code_task`, "calling code_task", "code_task
+    # parameters: …".
+    for match in re.finditer(rf"(?<![\w]){re.escape(token)}(?![\w])", body):
+        window = body[max(0, match.start() - _CUE_WINDOW) : match.end() + _CUE_WINDOW]
+        for cue in _CALL_CUE_RE.finditer(window):
+            # "I can call on get_state for each of them" is an offer, not a
+            # claim. The nudge exists for a model that says it HAS called
+            # something; telling one that said it *could* to "make the call
+            # now" derails a turn that was going fine.
+            before = window[max(0, cue.start() - 20) : cue.start()]
+            if _INTENT_RE.search(before):
+                continue
             return token
     return ""
 

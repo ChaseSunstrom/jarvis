@@ -50,7 +50,13 @@ export function isBareKey(e: KeyLike): boolean {
 
 /**
  * `g`-prefixed navigation chords. `g a` is automations; areas takes `g r`
- * (rooms) and tasks takes `g k` — `g t` was already tools. Code takes `g c`.
+ * (rooms) and tasks takes `g k` — `g t` was already tools. Code takes `g c`,
+ * notes `g n`, memory `g m`.
+ *
+ * `/dashboards` has no chord, and that is not an oversight: `g b` is in the
+ * nav's own tooltip but was never in this table, and adding one now would
+ * change a key somebody may have learnt. It is in the palette like everything
+ * else.
  */
 export const CHORDS: Readonly<Record<string, string>> = {
 	'g d': '/devices',
@@ -59,6 +65,8 @@ export const CHORDS: Readonly<Record<string, string>> = {
 	'g t': '/tools',
 	'g k': '/tasks',
 	'g c': '/code',
+	'g n': '/notes',
+	'g m': '/memory',
 	'g s': '/settings',
 	'g h': '/'
 };

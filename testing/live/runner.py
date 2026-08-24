@@ -44,7 +44,14 @@ from testing.live.report import (  # noqa: E402
     write_json,
 )
 from testing.live.scenario import Scenario, load_all  # noqa: E402
-from testing.live.transport import TURN_TIMEOUT, ApiVoice, Browser, Console, Text  # noqa: E402
+from testing.live.transport import (  # noqa: E402
+    TURN_TIMEOUT,
+    ApiVoice,
+    Browser,
+    Console,
+    Link,
+    Text,
+)
 from testing.live.voice import Ears, Mouth, services_are_up  # noqa: E402
 from testing.live.world import Observer  # noqa: E402
 
@@ -77,12 +84,11 @@ TOOL_CAPABILITY = {
     "remember": "memory",
     "recall": "memory",
     "forget": "memory",
-    "write_note": "notes",
-    "find_note": "notes",
-    "read_note": "notes",
-    "research": "research",
+    "note_create": "notes",
+    "note_append": "notes",
+    "note_search": "notes",
     "deep_research": "research",
-    "start_code_task": "coding",
+    "code_task": "coding",
     "apply_code_task": "coding",
     "run_background_task": "task",
 }
@@ -188,6 +194,9 @@ class Runner:
         self.keep = keep
         self.verbose = verbose
         self.results: list[ScenarioResult] = []
+        #: Rebuilt whenever a scenario restarts the server.
+        self.link: Link | None = None
+        self.observer: Observer | None = None
         self.judge = Judge()
         self.mouth = Mouth()
         self.ears = Ears()
@@ -246,10 +255,12 @@ class Runner:
             # read like a server failure.
             client = JarvisClient(harness.base_url, harness.token, timeout=TURN_TIMEOUT)
             await client.connect()
+            self.link = Link(client)
             observer = await Observer(client).start()
+            self.observer = observer
             transports = {
-                "voice": ApiVoice(client, harness, self.mouth, self.ears),
-                "text": Text(client),
+                "voice": ApiVoice(self.link, harness, self.mouth, self.ears),
+                "text": Text(self.link),
             }
             if console is not None:
                 transports["voice-ui"] = Browser(console, self.mouth, self.ears)
@@ -260,13 +271,13 @@ class Runner:
                         if variant not in self.variants:
                             continue
                         result = await self._run_scenario(
-                            scenario, variant, transports, observer, client, harness
+                            scenario, variant, transports, harness
                         )
                         self.results.append(result)
                         self._say_result(result)
             finally:
-                await observer.stop()
-                await client.aclose()
+                await self.observer.stop()
+                await self.link.client.aclose()
         finally:
             if console is not None:
                 console.stop()
@@ -286,9 +297,11 @@ class Runner:
 
     # --- one scenario ------------------------------------------------------
     async def _run_scenario(
-        self, scenario: Scenario, variant: str, transports: dict[str, Any],
-        observer: Observer, client, harness
+        self, scenario: Scenario, variant: str, transports: dict[str, Any], harness
     ) -> ScenarioResult:
+        # Read through the link every time: a `restart: true` turn replaces
+        # both, and a captured client is a closed one from the turn after.
+        observer = self.observer
         started = time.monotonic()
         result = ScenarioResult(
             name=scenario.name,
@@ -304,15 +317,29 @@ class Runner:
             return result
 
         try:
-            await self._setup(scenario, client, observer)
+            await self._setup(scenario, self.link.client, observer)
             conversation_id: str | None = None
             for index, turn in enumerate(scenario.turns):
                 if turn.wait:
                     await asyncio.sleep(turn.wait)
                 if turn.restart:
+                    # The whole point of the turn: kill the process and see
+                    # what survived. The socket does not, so the client and
+                    # the observer are rebuilt around the new one — and the
+                    # old client is closed FIRST, because closing it after
+                    # dialling again leaves the new connection using a closed
+                    # transport ("Cannot send a request, as the client has
+                    # been closed").
+                    await observer.stop()
+                    await self.link.client.aclose()
                     harness.restart_core()
-                    await client.aclose()
-                    await client.connect()
+                    from testing.harness import JarvisClient as _Client
+
+                    fresh = _Client(harness.base_url, harness.token, timeout=TURN_TIMEOUT)
+                    await fresh.connect()
+                    self.link.client = fresh
+                    observer = await Observer(fresh).start()
+                    self.observer = observer
                 mark, event_mark = observer.mark(), observer.event_mark()
                 tool_mark = observer.tool_mark()
                 spoken = await self._speak(transport, turn, variant, conversation_id)
@@ -335,6 +362,25 @@ class Runner:
         return result
 
     async def _setup(self, scenario: Scenario, client, observer: Observer) -> None:
+        # `clear: [memory, notes]` — a scenario that asserts "it remembered"
+        # has to start from a house that does not already know. Without this
+        # the voice variant stored the fact and the text variant answered
+        # "already noted, sir" without calling anything, which is correct
+        # behaviour and a useless test.
+        for what in scenario.setup.get("clear") or []:
+            try:
+                if what == "memory":
+                    await client.command("jarvis/memory/forget", all=True)
+                elif what == "notes":
+                    for note in (await client.command("jarvis/notes/list")).get("notes") or []:
+                        await client.command("jarvis/notes/delete", note_id=note["id"])
+                else:
+                    raise LiveError(f"setup cannot clear {what!r}")
+            except LiveError:
+                raise
+            except Exception as err:  # noqa: BLE001 - a missing capability is a failure
+                raise LiveError(f"setup could not clear {what}: {err}") from err
+
         for entity_id, state in (scenario.setup.get("states") or {}).items():
             domain = str(entity_id).split(".", 1)[0]
             service = "turn_on" if str(state).lower() in ("on", "true") else "turn_off"
@@ -514,7 +560,8 @@ class Runner:
         ]
         kinds = [str(t.get("kind") or "") for t in fresh]
         calls = [f"{c.domain}.{c.service}" for c in observer.calls_since(mark)]
-        out.routed = _capability_of(kinds, calls, observer.tools_since(tool_mark), reply)
+        out.tools = observer.tools_since(tool_mark)
+        out.routed = _capability_of(kinds, calls, out.tools, reply)
         if expect.get("capability"):
             out.routed_expected = str(expect.get("capability"))
             if out.routed != out.routed_expected:
@@ -526,7 +573,37 @@ class Runner:
             if total > limit:
                 fail(f"the turn took {total:.1f}s, over its {limit:.1f}s budget")
 
-        for unsupported in ("note", "memory", "approval", "ui", "file"):
+        want_note = expect.get("note")
+        if want_note:
+            note = await observer.wait_for_note(
+                contains=str(want_note.get("body_contains") or ""),
+                title_contains=str(want_note.get("title_contains") or ""),
+                timeout=float(want_note.get("within") or 60.0),
+            )
+            if note is None:
+                have = [n.get("title") for n in await observer.notes()]
+                fail(f"no note matching {want_note} was written; notes are {have}")
+            elif want_note.get("citations_at_least"):
+                body = await observer.note_body(note["id"])
+                citations = len(re.findall(r"\[\d+\]|https?://", body))
+                if citations < int(want_note["citations_at_least"]):
+                    fail(
+                        f"the note has {citations} citation(s), expected at least "
+                        f"{want_note['citations_at_least']}"
+                    )
+
+        want_memory = expect.get("memory")
+        if want_memory:
+            recalls = str(want_memory.get("recalls") or "")
+            forgotten = str(want_memory.get("forgotten") or "")
+            entries = await observer.memories()
+            texts = " | ".join(str(entry.get("text") or "") for entry in entries)
+            if recalls and recalls.lower() not in texts.lower():
+                fail(f"memory does not hold {recalls!r}; it holds {texts[:200]!r}")
+            if forgotten and forgotten.lower() in texts.lower():
+                fail(f"memory still holds {forgotten!r} after it was forgotten")
+
+        for unsupported in ("approval", "ui", "file"):
             if unsupported in expect:
                 fail(
                     f"this scenario asserts {unsupported!r}, which the rig checks only "

@@ -214,7 +214,7 @@ files both would touch, which the integrating session merges.
 
 ## Memory, notes, interactions
 
-- [ ] **M15 — Memory: durable, transparent, user-owned** · size M · deps M09, M10 · parallel-ok M16
+- [x] **M15 — Memory: durable, transparent, user-owned** · size M · deps M09, M10 · parallel-ok M16
   - Scope: keep `integrations/memory/` (store, vector sidecar, redaction, trust rules,
     `remember`/`recall`/`forget`). Add: automatic extraction — after a turn, one bounded
     model call proposes durable facts (preferences, people, projects, standing instructions;
@@ -229,12 +229,13 @@ files both would touch, which the integrating session merges.
     no longer surfaces, export is complete, wipe empties everything — exit code.
   - Verify: `bash scripts/verify/m15-memory.sh`
 
-- [ ] **M16 — Notes: first-class, everywhere, an agent tool** · size M · deps M10 · parallel-ok M15
+- [x] **M16 — Notes: first-class, everywhere, an agent tool** · size M · deps M10 · parallel-ok M15
   - Scope: `integrations/notes/` — markdown files under `<config>/notes/<slug>.md` with
     frontmatter (title, tags, created, updated), a SQLite FTS5 index (`.storage/notes.db`),
     `[[wiki links]]` resolved and back-linked; REST `/api/notes*` + WS `jarvis/notes/*`
     (list/get/create/update/append/delete/search?q=&tag=); tools `note_create`, `note_append`,
-    `note_read`, `note_search`; research's "save the report" writes a note; the voice intent
+    `note_search` (which reads one whole note when given an id — three tools rather than four,
+    because `tests/test_prompt_budget.py` bounds what the toolbox may cost); research's "save the report" writes a note; the voice intent
     "note that …" / "make a note …" (routing table + `evals/routing` entry) creates one;
     `/notes` in the console (editor with preview, tags, search, link graph list) and the
     Android/desktop surfaces reach the same API. Tests: API CRUD + search + tag filter

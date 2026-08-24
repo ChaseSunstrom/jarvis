@@ -427,9 +427,9 @@ async def test_nothing_is_remembered_unless_somebody_asked(jarvis):
 
     async def remember(call) -> dict:
         stored.append(dict(call.data))
-        return {"ok": True}
+        return {"created": True}
 
-    jarvis.services.register("memory", "add", remember, supports_response=True)
+    jarvis.services.register("notes", "create", remember, supports_response=True)
 
     web = FakeWeb()
     web.default_search = web.results("https://a.test/1")
@@ -443,14 +443,23 @@ async def test_nothing_is_remembered_unless_somebody_asked(jarvis):
     assert stored == []
 
 
-async def test_remembering_marks_where_it_came_from(jarvis):
+async def test_the_report_is_kept_as_a_note_marked_for_where_it_came_from(jarvis):
+    """A report is a document, so it is a NOTE.
+
+    It used to be written into `memory`, which holds one-line facts about the
+    user and injects every one of them into every system prompt: a four-page
+    report there pushed their actual preferences out of a bounded store and put
+    four pages of prose in front of "turn the lights off". The tags are how a
+    person reading their notes can tell which were written from pages anyone
+    can edit.
+    """
     stored: list[dict] = []
 
-    async def remember(call) -> dict:
+    async def write_note(call) -> dict:
         stored.append(dict(call.data))
-        return {"ok": True}
+        return {"created": True}
 
-    jarvis.services.register("memory", "add", remember, supports_response=True)
+    jarvis.services.register("notes", "create", write_note, supports_response=True)
 
     web = FakeWeb()
     web.default_search = web.results("https://a.test/1")
@@ -462,11 +471,12 @@ async def test_remembering_marks_where_it_came_from(jarvis):
     await finish(jarvis, task.id)
 
     assert len(stored) == 1
+    assert stored[0]["title"].startswith("Research — ")
     assert "research" in stored[0]["tags"]
     assert "from-the-web" in stored[0]["tags"]
-    assert stored[0]["source"] == "research"
-    # It is untrusted by construction, and only a deliberate flag stores it.
-    assert stored[0]["allow_untrusted"] is True
+    # A second run of the same question updates the note rather than being
+    # refused and stranding the newer report.
+    assert stored[0]["overwrite"] is True
 
 
 async def test_a_run_that_learned_nothing_is_not_remembered(jarvis):
@@ -474,9 +484,9 @@ async def test_a_run_that_learned_nothing_is_not_remembered(jarvis):
 
     async def remember(call) -> dict:
         stored.append(dict(call.data))
-        return {"ok": True}
+        return {"created": True}
 
-    jarvis.services.register("memory", "add", remember, supports_response=True)
+    jarvis.services.register("notes", "create", remember, supports_response=True)
     web = FakeWeb()
     web.default_search = web.results("https://dead.test/1")
     model = FakeModel(['["one"]'])

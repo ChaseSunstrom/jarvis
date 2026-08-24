@@ -1083,6 +1083,57 @@ index 1234567..89abcde 100644
 	/** Read only from the mock's own "config"; no frame may set it. */
 	let mcpAllowStdio = false;
 
+	// Notes: documents, on disk, in markdown. One written by a person and one
+	// written by Jarvis's research, because telling those apart matters on the
+	// page — and because a research report in `memory` instead of here is the
+	// mistake the notes integration exists to prevent.
+	let notes = [
+		{
+			id: "boiler-serviced",
+			slug: "boiler-serviced",
+			title: "Boiler serviced",
+			body: "Pressure was 1.2 bar cold. Next service due March.\n\nSee [[heating]].",
+			tags: ["house", "maintenance"],
+			created: new Date(Date.now() - 86_400_000).toISOString(),
+			updated: new Date(Date.now() - 86_400_000).toISOString(),
+			links: ["heating"],
+			backlinks: []
+		},
+		{
+			id: "research-heat-pumps",
+			slug: "research-heat-pumps",
+			title: "Research — heat pumps",
+			body: "Three sources agree that flow temperature is the thing that matters. [1]",
+			tags: ["research", "from-the-web"],
+			created: new Date(Date.now() - 3600_000).toISOString(),
+			updated: new Date(Date.now() - 3600_000).toISOString(),
+			links: [],
+			backlinks: []
+		}
+	];
+
+	// Memory: what Jarvis has kept between conversations. Two sources on
+	// purpose — one the user said, one Jarvis worked out — because telling
+	// those apart is the whole point of the console's memory page.
+	let memoryEntries = [
+		{
+			id: "mem1",
+			text: "The spare key is in the blue tin on the shelf.",
+			tags: ["house"],
+			created: Date.now() / 1000 - 86_400,
+			source: "user",
+			pinned: true
+		},
+		{
+			id: "mem2",
+			text: "They drink tea, not coffee.",
+			tags: ["extracted"],
+			created: Date.now() / 1000 - 3600,
+			source: "extracted",
+			conversation_id: "conv-7"
+		}
+	];
+
 	// Skills: folders of instructions the operator wrote. The console lists
 	// them beside the tools, because "a thing the assistant knows how to do" is
 	// one idea whether it arrives as a tool or as a document.
@@ -1170,6 +1221,31 @@ index 1234567..89abcde 100644
 			return;
 		}
 		// Test-only introspection: what service calls has the mock seen?
+		// The export route is a DOWNLOAD, not a socket command: "you can leave
+		// with your data" means a file, and the console opens this in a tab.
+		if (url.pathname === '/api/memory/export') {
+			const format = url.searchParams.get('format') || 'json';
+			if (format === 'markdown') {
+				const lines = ['# What Jarvis remembers', ''];
+				for (const entry of memoryEntries) lines.push(`- ${entry.text}`);
+				res.writeHead(200, {
+					'content-type': 'text/markdown; charset=utf-8',
+					'content-disposition': 'attachment; filename="jarvis-memory.md"'
+				});
+				res.end(lines.join('\n'));
+				return;
+			}
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(
+				JSON.stringify({
+					format: 'json',
+					count: memoryEntries.length,
+					entries: memoryEntries
+				})
+			);
+			return;
+		}
+
 		if (url.pathname === '/_test/calls') {
 			res.writeHead(200, { 'content-type': 'application/json' });
 			res.end(JSON.stringify(world.calls));
@@ -1819,6 +1895,149 @@ index 1234567..89abcde 100644
 					ok(msg.id, { jobs: [...scheduled.values()] });
 					break;
 				}
+
+				// --- notes ---------------------------------------------------
+				case 'jarvis/notes/list':
+				case 'jarvis/notes/search': {
+					const q = String(msg.query || msg.q || '').toLowerCase();
+					const rows = notes
+						.filter(
+							(n) =>
+								!q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)
+						)
+						.map(({ body, ...rest }) => ({
+							...rest,
+							excerpt: q ? body.slice(0, 120) : undefined
+						}));
+					ok(msg.id, { notes: rows, total: notes.length, query: msg.query || '', tag: '' });
+					break;
+				}
+
+				case 'jarvis/notes/get': {
+					const note = notes.find((n) => n.id === String(msg.note_id || msg.title || ''));
+					if (!note) {
+						fail(msg.id, 'not_found', `no note '${msg.note_id}'`);
+						break;
+					}
+					ok(msg.id, { note });
+					break;
+				}
+
+				case 'jarvis/notes/create': {
+					const title = String(msg.title || '').trim();
+					const id = title
+						.toLowerCase()
+						.replace(/[^a-z0-9]+/g, '-')
+						.replace(/^-+|-+$/g, '');
+					if (!id) {
+						fail(msg.id, 'invalid_format', 'a note needs a title');
+						break;
+					}
+					const note = {
+						id,
+						slug: id,
+						title,
+						body: String(msg.body || ''),
+						tags: Array.isArray(msg.tags) ? msg.tags : [],
+						created: new Date().toISOString(),
+						updated: new Date().toISOString(),
+						links: [],
+						backlinks: []
+					};
+					notes.unshift(note);
+					ok(msg.id, { created: true, note });
+					break;
+				}
+
+				case 'jarvis/notes/update': {
+					const note = notes.find((n) => n.id === String(msg.note_id || ''));
+					if (!note) {
+						fail(msg.id, 'not_found', `no note '${msg.note_id}'`);
+						break;
+					}
+					if (typeof msg.body === 'string') note.body = msg.body;
+					if (msg.title) note.title = String(msg.title);
+					note.updated = new Date().toISOString();
+					ok(msg.id, { updated: true, note });
+					break;
+				}
+
+				case 'jarvis/notes/append': {
+					const note = notes.find((n) => n.id === String(msg.note_id || ''));
+					if (!note) {
+						fail(msg.id, 'not_found', `no note '${msg.note_id}'`);
+						break;
+					}
+					note.body = `${note.body}\n\n${String(msg.text || '')}`.trim();
+					ok(msg.id, { appended: true, note });
+					break;
+				}
+
+				case 'jarvis/notes/delete': {
+					const before = notes.length;
+					notes = notes.filter((n) => n.id !== String(msg.note_id || ''));
+					ok(msg.id, { deleted: notes.length < before, id: msg.note_id });
+					break;
+				}
+
+				// --- memory --------------------------------------------------
+				case 'jarvis/memory/list': {
+					const q = String(msg.query || '').toLowerCase();
+					const rows = memoryEntries.filter(
+						(e) => !q || e.text.toLowerCase().includes(q) || e.tags.some((t) => t.includes(q))
+					);
+					ok(msg.id, { entries: rows, total: memoryEntries.length, query: msg.query || '', tag: '' });
+					break;
+				}
+
+				case 'jarvis/memory/add': {
+					const entry = {
+						id: `mem${memoryEntries.length + 1}`,
+						text: String(msg.text || ''),
+						tags: Array.isArray(msg.tags) ? msg.tags : [],
+						created: Date.now() / 1000,
+						source: String(msg.source || 'user'),
+						pinned: Boolean(msg.pinned)
+					};
+					memoryEntries.unshift(entry);
+					ok(msg.id, { stored: true, entry });
+					break;
+				}
+
+				case 'jarvis/memory/forget': {
+					if (msg.all) {
+						const wiped = memoryEntries.length;
+						memoryEntries.length = 0;
+						ok(msg.id, { wiped });
+						break;
+					}
+					const before = memoryEntries.length;
+					const id = String(msg.entry_id || '');
+					const gone = memoryEntries.filter((e) => e.id === id);
+					memoryEntries = memoryEntries.filter((e) => e.id !== id);
+					ok(msg.id, { forgotten: gone, removed: before - memoryEntries.length });
+					break;
+				}
+
+				case 'jarvis/memory/pin': {
+					const entry = memoryEntries.find((e) => e.id === String(msg.entry_id || ''));
+					if (!entry) {
+						fail(msg.id, 'not_found', `no note '${msg.entry_id}'`);
+						break;
+					}
+					entry.pinned = Boolean(msg.pinned);
+					ok(msg.id, { entry });
+					break;
+				}
+
+				case 'jarvis/memory/export':
+					ok(msg.id, {
+						format: 'json',
+						count: memoryEntries.length,
+						exported: Date.now() / 1000,
+						entries: memoryEntries
+					});
+					break;
 
 				// --- skills --------------------------------------------------
 				case 'jarvis/skills/list':

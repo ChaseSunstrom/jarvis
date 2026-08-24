@@ -39,9 +39,17 @@ export const TRIGGER_PLATFORMS = [
 	// beside it is what said so — until it was added here the console refused a
 	// trigger jarvis-core can attach perfectly well.
 	'sun',
+	// The two hooks M12 named. Both could already be written as `event`
+	// triggers against a raw bus event, and both were wrong when they were:
+	// `wake_word` fires once per detection instead of fourteen times per voice
+	// run, and `task` fires on the transition instead of on every progress
+	// tick. Refusing them here would have made the console the surface that
+	// could not express what the engine does.
+	'task',
 	'template',
 	'time',
 	'time_pattern',
+	'wake_word',
 	'webhook'
 ] as const;
 

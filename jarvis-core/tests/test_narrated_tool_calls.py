@@ -398,3 +398,33 @@ def test_the_persona_file_names_no_tool_it_cannot_guarantee():
         "Let the toolbox sentence, built from the live registry, name the "
         "tools instead."
     )
+
+
+def test_a_turn_that_lists_its_tools_is_not_narrating_a_call():
+    """The false positive that cost a real turn.
+
+    Asked to go through every sensor, the model wrote a paragraph containing
+    the word "call" and, further down, a list of what it could do. The detector
+    matched `activate_scene`, the nudge told it to make a call it had never
+    described, and the corrected round produced no answer at all — the user got
+    a canned apology instead of their work.
+    """
+    said = (
+        "I'll go through the sensors, Sir. I can call on get_state for each of "
+        "them, and activate_scene if anything needs setting right."
+    )
+    assert narrated_tool_call(said, NAMES) == ""
+
+
+def test_a_cue_three_paragraphs_away_is_not_a_narrated_call():
+    said = (
+        "Very good, Sir — I shall call on the usual sources.\n\n"
+        "The kitchen is warm and the hall is cold.\n\n"
+        "Nothing else to report; the scene for the evening is activate_scene."
+    )
+    assert narrated_tool_call(said, NAMES) == ""
+
+
+def test_a_cue_beside_the_name_still_counts():
+    assert narrated_tool_call("Now calling code_task with the repo name.", NAMES) == "code_task"
+    assert narrated_tool_call("[Tool Call] -> `code_task`", NAMES) == "code_task"

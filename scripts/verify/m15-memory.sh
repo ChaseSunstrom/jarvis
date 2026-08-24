@@ -12,7 +12,14 @@ check "automatic extraction of durable facts after a turn" grep -qiE 'def .*extr
 check "extracted entries are marked as such" grep -q '"extracted"' "$M"
 check "export: everything in one file" grep -qE 'def .*export' "$M"
 check "wipe: everything, including the vector sidecar" grep -qE 'def .*wipe' "$M"
-check "REST: /api/memory/export" grep -q '/api/memory/export' jarvis-core/jarvis/api/rest.py
+# Asked of the route table: the routes are declared on `api_router`, which
+# carries the `/api` prefix, so the literal string is nowhere in the source.
+check "REST: /api/memory/export" python3 -c '
+import sys; sys.path.insert(0, "jarvis-core")
+from jarvis.api.rest import api_router
+paths = {getattr(r, "path", "") for r in api_router.routes}
+assert "/api/memory/export" in paths, sorted(p for p in paths if "memory" in p)
+'
 check "WS: jarvis/memory/list" grep -q '"jarvis/memory/list"' jarvis-core/jarvis/api/websocket.py
 check "the turn records which memory entries it used (memory_used)" grep -q 'memory_used' jarvis-core/jarvis/llm/agent.py
 check_not "research no longer writes reports into memory (notes own that)" grep -n '_remember' jarvis-core/jarvis/integrations/research/__init__.py

@@ -106,6 +106,18 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/code/clone_repo` | `forge`, `project` (`owner/name`), optional `name` and `environment`. Clones into the workspace. Refused unless that path is on the forge's allow-list — the console has no more reach here than the model, because the constraint is the operator's configuration rather than who is asking |
 | `jarvis/code/push` | `repo`, `branch`; pushes one `jarvis/…` branch to the forge it came from. Never `main`, never forced, and refused if `origin` was rewritten |
 | `jarvis/code/result` | `task_id`; the branch, the diff, the checks and the tool trail from one finished job |
+| `jarvis/notes/list` | optional `tag`, `query`, `limit`; every note, newest first — titles, tags, links and back-links, no bodies |
+| `jarvis/notes/get` | `note_id` (slug or title); one note with its `body`. **Not `id`** — every frame has one of those already, and it is the correlation number |
+| `jarvis/notes/create` | `title`, optional `body`, `tags`, `overwrite`. Writes `<config>/notes/<slug>.md`; the file IS the note |
+| `jarvis/notes/update` | `note_id` plus any of `body`, `title`, `tags` |
+| `jarvis/notes/append` | `note_id`, `text`; adds to the end, which is what "add to my list" means |
+| `jarvis/notes/delete` | `note_id`; removes the file |
+| `jarvis/notes/search` | `query` and/or `tag`; full text through SQLite FTS5, with a word-by-word fallback so a query containing punctuation returns notes rather than a syntax error |
+| `jarvis/memory/list` | optional `query`, `tag`, `limit`; every durable note, newest first, or the matches for a query — `{entries: [...], total, query, tag}`. The whole store rather than a page of it: the point of the route is that a person can read what is held about them |
+| `jarvis/memory/add` | `text`, optional `tags`, `pinned`, `allow_untrusted`. The console is a person typing, so it may store what the model may not |
+| `jarvis/memory/forget` | `entry_id` or `query`, or `all: true` for everything **including the vector sidecar** — a store that reported itself empty while an index still ranked the old text would be the least visible kind of broken promise |
+| `jarvis/memory/pin` | `entry_id`, `pinned`; a pinned note keeps its place in the prompt whatever the turn is about |
+| `jarvis/memory/export` | optional `format` (`json` or `markdown`); everything in one document. `GET /api/memory/export?format=markdown` returns it as a file |
 | `jarvis/skills/list` | every loaded skill — `{skills: [{name, description, allowed_tools, metadata, version, resources, path, body_chars}], errors: [{path, error}], enabled, path}`. Names and descriptions only: the body is what `use_skill` fetches, and shipping every body here would be the same context bloat on the wire that progressive disclosure exists to avoid. `errors` carries the skills that could NOT be read, with the reason — a mistyped frontmatter otherwise just makes a skill silently absent |
 | `jarvis/skills/get` | `name`; one skill with its `body`. What the console shows when you open one |
 | `jarvis/skills/reload` | re-reads the skills directory: `{loaded, errors}`. The only write, and it writes nothing — a skill is created by putting a folder on disk |

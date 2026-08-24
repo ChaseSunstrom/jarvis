@@ -33,6 +33,8 @@
 		{ href: '/tasks', label: 'TASKS', chord: 'g k' },
 		{ href: '/dashboards', label: 'DASHBOARDS', chord: 'g b' },
 		{ href: '/code', label: 'CODE', chord: 'g c' },
+		{ href: '/notes', label: 'NOTES', chord: 'g n' },
+		{ href: '/memory', label: 'MEMORY', chord: 'g m' },
 		{ href: '/settings', label: 'SETTINGS', chord: 'g s' }
 	];
 

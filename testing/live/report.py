@@ -111,6 +111,10 @@ class TurnResult:
     wer: float | None = None
     routed: str = ""
     routed_expected: str = ""
+    #: Every tool this turn called, in order. In the report because "what did
+    #: it actually do" is the first question about any failure, and because
+    #: routing accuracy is derived from exactly this.
+    tools: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +133,7 @@ class TurnResult:
             "wer": None if self.wer is None else round(self.wer, 4),
             "routed": self.routed,
             "routed_expected": self.routed_expected,
+            "tools": list(self.tools),
         }
 
 

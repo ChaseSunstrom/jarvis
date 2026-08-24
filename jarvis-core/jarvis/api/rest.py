@@ -26,7 +26,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ..auth import TokenInfo, extract_bearer_token, get_auth
 from ..const import VERSION
@@ -672,6 +672,112 @@ async def code_push(request: Request) -> dict[str, Any]:
 async def code_result(request: Request, task_id: str) -> dict[str, Any]:
     try:
         return common.code_result_payload(get_jarvis(request), task_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- notes ------------------------------------------------------------------
+#
+# Ordinary CRUD, because a note is an ordinary document. The files on disk are
+# the notes; this is one way in among several (the console, the phone, an
+# editor, a sync client), which is the point of them being markdown.
+@api_router.get("/notes")
+async def notes_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.notes_list_payload(
+            get_jarvis(request),
+            tag=str(request.query_params.get("tag") or ""),
+            query=str(request.query_params.get("q") or request.query_params.get("query") or ""),
+            limit=int(request.query_params.get("limit") or 200),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/notes")
+async def notes_create(request: Request) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_note_create(get_jarvis(request), body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/notes/{note_id}")
+async def notes_get(request: Request, note_id: str) -> dict[str, Any]:
+    try:
+        return common.note_payload(get_jarvis(request), note_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.put("/notes/{note_id}")
+async def notes_update(request: Request, note_id: str) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_note_update(get_jarvis(request), note_id, body)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/notes/{note_id}/append")
+async def notes_append(request: Request, note_id: str) -> dict[str, Any]:
+    body = await json_body(request)
+    try:
+        return await common.async_note_append(
+            get_jarvis(request), note_id, str(body.get("text") or "")
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.delete("/notes/{note_id}")
+async def notes_delete(request: Request, note_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_note_delete(get_jarvis(request), note_id)
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+# --- memory -----------------------------------------------------------------
+#
+# The export route is the one that matters: "it is your data" is a claim, and a
+# claim about data is only true if you can leave with it.
+@api_router.get("/memory")
+async def memory_list(request: Request) -> dict[str, Any]:
+    try:
+        return common.memory_list_payload(
+            get_jarvis(request),
+            tag=str(request.query_params.get("tag") or ""),
+            query=str(request.query_params.get("query") or ""),
+            limit=int(request.query_params.get("limit") or 200),
+        )
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.get("/memory/export")
+async def memory_export(request: Request) -> Any:
+    fmt = str(request.query_params.get("format") or "json")
+    try:
+        payload = common.memory_export_payload(get_jarvis(request), fmt)
+    except ApiError as err:
+        raise _api_error(err) from err
+    if payload.get("format") == "markdown":
+        # As a file, not as JSON with a string in it: this is the route
+        # somebody uses to keep their own copy.
+        return PlainTextResponse(
+            payload["text"],
+            media_type="text/markdown; charset=utf-8",
+            headers={"content-disposition": 'attachment; filename="jarvis-memory.md"'},
+        )
+    return payload
+
+
+@api_router.delete("/memory/{entry_id}")
+async def memory_forget(request: Request, entry_id: str) -> dict[str, Any]:
+    try:
+        return await common.async_memory_forget(get_jarvis(request), entry_id=entry_id)
     except ApiError as err:
         raise _api_error(err) from err
 

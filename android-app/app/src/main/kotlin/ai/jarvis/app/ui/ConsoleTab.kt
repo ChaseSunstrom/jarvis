@@ -58,6 +58,8 @@ enum class ConsoleTab(
     TASKS("TASKS", "/tasks"),
     DASHBOARDS("DASHBOARDS", "/dashboards"),
     CODE("CODE", "/code"),
+    NOTES("NOTES", "/notes"),
+    MEMORY("MEMORY", "/memory"),
     SETTINGS("SETTINGS", "/settings");
 
     companion object {

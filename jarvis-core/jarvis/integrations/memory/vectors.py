@@ -236,6 +236,17 @@ class VectorIndex:
             self.forget(entry_id)
         return len(stale)
 
+    async def async_clear(self) -> None:
+        """Drop every vector and write the empty sidecar out.
+
+        Saved rather than merely emptied in memory: "delete everything" that
+        leaves a file full of embeddings on disk has deleted nothing a user
+        would recognise as their data.
+        """
+        self._vectors.clear()
+        self._hashes.clear()
+        await self.async_save()
+
     async def async_index(self, items: Sequence[tuple[str, str]]) -> int:
         """Embed and store `(id, text)` pairs whose vectors are missing or stale."""
         if not self.enabled:
