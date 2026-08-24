@@ -33,8 +33,8 @@
 	.mode {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
-		padding: 0.24rem 0.7rem;
+		gap: var(--jv-space-2);
+		padding: var(--jv-space-1) var(--jv-space-3);
 		border: 1px solid var(--jv-line-soft);
 		border-radius: var(--jv-radius-pill);
 		font-family: var(--jv-font-chrome);
@@ -46,8 +46,7 @@
 		background: transparent;
 		cursor: pointer;
 		white-space: nowrap;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out),
 			background var(--jv-dur-fast) var(--jv-ease-out);
 	}

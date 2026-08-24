@@ -58,6 +58,7 @@ export const TOKENS = {
 	'--jv-orb-error-blob-1': '#e0344b',
 	'--jv-orb-error-blob-2': '#ff9a6b',
 	'--jv-orb-error-core': '#ffd9d2',
+	'--jv-paper': '#ffffff',
 	'--jv-font-chrome': "'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace",
 	'--jv-font-body': "Barlow, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
 	'--jv-font-display': "'Space Grotesk', Barlow, system-ui, sans-serif",
@@ -76,6 +77,9 @@ export const TOKENS = {
 	'--jv-track-chrome': '0.16em',
 	'--jv-track-wide': '0.24em',
 	'--jv-track-logo': '0.5em',
+	'--jv-track-snug': '0.04em',
+	'--jv-rel-caret': '1.05em',
+	'--jv-rel-line': '1.5em',
 	'--jv-space-1': '0.25rem',
 	'--jv-space-2': '0.45rem',
 	'--jv-space-3': '0.7rem',
@@ -98,6 +102,8 @@ export const TOKENS = {
 	'--jv-dur-slow': '320ms',
 	'--jv-dur-pulse': '620ms',
 	'--jv-dur-enter': '900ms',
+	'--jv-dur-sweep': '1.4s',
+	'--jv-dur-blink': '2.4s',
 	'--jv-ease-out': 'cubic-bezier(0.22, 0.61, 0.36, 1)',
 	'--jv-ease-in-out': 'cubic-bezier(0.65, 0, 0.35, 1)',
 	'--jv-ease-overshoot': 'cubic-bezier(0.34, 1.56, 0.64, 1)',
@@ -111,6 +117,9 @@ export const TOKENS = {
 	'--jv-rx-breathe': '5s',
 	'--jv-rx-glint': '14s',
 	'--jv-rx-level': '3.4s',
+	'--jv-amb-blink-slow': '2.6s',
+	'--jv-amb-drift': '18s',
+	'--jv-amb-drift-slow': '40s',
 	'--jv-grid-size': '46px',
 	'--jv-grid-mask': 'radial-gradient(ellipse 85% 70% at 50% 30%, #000 30%, transparent 90%)',
 	'--jv-bracket-size': 'clamp(20px, 3vw, 38px)',
@@ -118,7 +127,10 @@ export const TOKENS = {
 	'--jv-focus-outline': '2px solid #4fe3ff',
 	'--jv-focus-offset': '2px',
 	'--jv-rule-live': '2px',
-	'--jv-measure-dialog': '32rem'
+	'--jv-measure-dialog': '32rem',
+	'--jv-measure-orb': '520px',
+	'--jv-measure-boot': '360px',
+	'--jv-measure-qr': '260px'
 } as const;
 
 export type TokenName = keyof typeof TOKENS;

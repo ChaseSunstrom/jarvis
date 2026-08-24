@@ -3,9 +3,8 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
-	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
-	import { EmptyState } from '$lib/ui';
+	import { EmptyState, ScreenState } from '$lib/ui';
 	import {
 		areaForEntity,
 		areaKey,
@@ -114,7 +113,7 @@
 	}
 
 	// Dial and load, as a function the RECONNECT button can run again. See
-	// Reconnect.svelte for why a page's socket does not reattach on its own.
+	// `$lib/ui` OfflineState for why a page’s socket does not reattach on its own.
 	let disposed = false;
 	let redialling = $state(false);
 	// The socket being replaced reports its close asynchronously; without a
@@ -158,16 +157,30 @@
 			conn = null;
 		};
 	});
+
+	// The screen's status region. Loading and empty belong to the individual
+	// lists below (this page has more than one); what is page-wide is the link
+	// being down and the page's own failure, and `ScreenState` owns both.
+	let screen = $derived<'ready' | 'error' | 'offline'>(
+		status === 'closed' || status === 'error' ? 'offline' : err ? 'error' : 'ready'
+	);
 </script>
 
 <svelte:head><title>Jarvis · Areas</title></svelte:head>
 
 <h1>AREAS</h1>
-<p class="lede">{areas.length} area(s) · link {status}</p>
+<p class="lede" data-testid="areas-screen">{areas.length} area(s) · link {status}</p>
 
-<Reconnect {status} busy={redialling} retry={connect} />
+<ScreenState
+	status={screen}
+	errorTitle="This page hit an error"
+	errorDetail={err}
+	onretry={connect}
+	onreconnect={connect}
+	busy={redialling}
+	errorTestid="error"
+/>
 
-{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
 <section class="panel">
@@ -180,7 +193,17 @@
 			bind:value={newAreaName}
 			onkeydown={(e) => e.key === 'Enter' && createArea()}
 		/>
-		<button class="btn" data-testid="create-area" disabled={busy || !newAreaName.trim()} onclick={createArea}>
+		<button
+			class="btn"
+			data-testid="create-area"
+			disabled={busy || !newAreaName.trim()}
+			title={busy
+				? 'Waiting for the backend to answer'
+				: !newAreaName.trim()
+					? 'Type a name for the area first'
+					: 'Create this area'}
+			onclick={createArea}
+		>
 			CREATE
 		</button>
 	</div>

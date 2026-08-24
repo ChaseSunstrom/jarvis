@@ -237,13 +237,13 @@
 	.ctl {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
+		gap: var(--jv-space-2);
 		flex-wrap: wrap;
 	}
 	.slider {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: var(--jv-space-2);
 	}
 	/*
 	 * Tokens, not `--chrome` / `--dim`.

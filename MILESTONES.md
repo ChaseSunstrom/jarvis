@@ -61,7 +61,7 @@ files both would touch, which the integrating session merges.
 
 ## Web
 
-- [ ] **M03 — Web console redesigned on the system** · size XL · deps M02
+- [x] **M03 — Web console redesigned on the system** · size XL · deps M02
   - Scope: every route re-expressed through `src/lib/ui`; `src/lib/screens.ts` manifest;
     `<ScreenState>` on every page (loading / empty / error / offline); `routes/+error.svelte`;
     `navigator.onLine` + socket state → offline; HUD gets a reconnect control; `/settings` gets

@@ -235,11 +235,11 @@
 	/* Floating way in to the management UI from the voice HUD. */
 	.hud-console-link {
 		position: fixed;
-		top: 14px;
+		top: calc(var(--jv-space-1) * 3.5);
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 5;
-		padding: 0.3rem 0.9rem;
+		padding: var(--jv-space-1) var(--jv-space-4);
 		border: 1px solid var(--jv-line);
 		border-radius: var(--jv-radius-pill);
 		font-family: var(--jv-font-chrome);
@@ -247,10 +247,9 @@
 		letter-spacing: var(--jv-track-wide);
 		color: var(--jv-accent);
 		text-decoration: none;
-		background: rgba(4, 12, 18, 0.6);
+		background: color-mix(in srgb, var(--jv-field) 60%, transparent);
 		backdrop-filter: blur(2px);
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out),
 			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
 	}
@@ -263,7 +262,7 @@
 	.brand {
 		display: flex;
 		flex-direction: column;
-		gap: 0.1rem;
+		gap: var(--jv-space-1);
 		text-decoration: none;
 	}
 	.logo {
@@ -284,7 +283,7 @@
 	nav {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.3rem;
+		gap: var(--jv-space-1);
 		min-width: 0;
 	}
 
@@ -315,16 +314,15 @@
 	nav a {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-xs);
-		letter-spacing: 0.2em;
+		letter-spacing: var(--jv-track-wide);
 		color: var(--jv-text-dim);
 		text-decoration: none;
-		padding: 0.42rem 0.7rem;
+		padding: var(--jv-space-2) var(--jv-space-3);
 		border: 1px solid transparent;
 		border-radius: var(--jv-radius-sm);
 		white-space: nowrap;
 		position: relative;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out),
 			background var(--jv-dur-fast) var(--jv-ease-out);
 	}
@@ -342,10 +340,10 @@
 	nav a.active::after {
 		content: '';
 		position: absolute;
-		left: 0.6rem;
-		right: 0.6rem;
+		left: var(--jv-space-3);
+		right: var(--jv-space-3);
 		bottom: -0.42rem;
-		height: 2px;
+		height: var(--jv-rule-live);
 		background: var(--jv-accent);
 		box-shadow: var(--jv-glow-md);
 	}
@@ -366,7 +364,7 @@
 	.palette-open {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
+		gap: var(--jv-space-2);
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
@@ -374,10 +372,9 @@
 		background: transparent;
 		border: 1px solid var(--jv-line-soft);
 		border-radius: var(--jv-radius-pill);
-		padding: 0.24rem 0.7rem;
+		padding: var(--jv-space-1) var(--jv-space-3);
 		cursor: pointer;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.palette-open:hover {

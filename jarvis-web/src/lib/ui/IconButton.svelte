@@ -46,8 +46,7 @@ with no name is a control nobody can describe.
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-md);
 		cursor: pointer;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.icon:hover:not(:disabled) {

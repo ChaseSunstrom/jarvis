@@ -135,7 +135,7 @@
 		border-left: 1px solid var(--jv-line-soft);
 		border-radius: 0;
 		margin-left: auto;
-		max-width: min(46rem, 88%);
+		max-width: min(calc(var(--jv-space-7) * 15.3333), 88%);
 	}
 	.msg.assistant {
 		border-left: 2px solid var(--jv-accent);
@@ -178,7 +178,7 @@
 	}
 	.text.waiting {
 		color: var(--jv-text-faint);
-		min-height: 1.5em;
+		min-height: var(--jv-rel-line);
 	}
 	.sr {
 		font-family: var(--jv-font-chrome);
@@ -189,12 +189,12 @@
 	.caret {
 		display: inline-block;
 		width: 0.5ch;
-		height: 1.05em;
+		height: var(--jv-rel-caret);
 		margin-left: 0.15em;
 		vertical-align: -0.15em;
 		background: var(--jv-accent);
 		box-shadow: var(--jv-glow-sm);
-		animation: caret 1s steps(2) infinite;
+		animation: caret var(--jv-dur-enter) steps(2) infinite;
 	}
 	@keyframes caret {
 		0%,
@@ -235,11 +235,11 @@
 		outline-offset: var(--jv-focus-offset);
 	}
 	.spark {
-		width: 6px;
-		height: 6px;
+		width: var(--jv-radius-md);
+		height: var(--jv-radius-md);
 		border-radius: 50%;
 		background: var(--jv-amber);
-		box-shadow: 0 0 8px var(--jv-amber);
+		box-shadow: 0 0 calc(var(--jv-space-1) * 2) var(--jv-amber);
 	}
 	.thinking p {
 		margin: 0;
@@ -250,7 +250,7 @@
 		color: var(--jv-text-faint);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		max-height: 22rem;
+		max-height: calc(var(--jv-space-7) * 7.33333);
 		overflow-y: auto;
 	}
 
@@ -261,7 +261,7 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--jv-rule-live);
 	}
 	.tools li {
 		display: grid;
@@ -274,15 +274,15 @@
 		animation: jv-rise var(--jv-dur-fast) var(--jv-ease-out) both;
 	}
 	.dot {
-		width: 6px;
-		height: 6px;
+		width: var(--jv-radius-md);
+		height: var(--jv-radius-md);
 		border-radius: 50%;
 		background: var(--jv-line);
 		justify-self: center;
 	}
 	li.running .dot {
 		background: var(--jv-accent);
-		animation: jv-tool-pulse 1s ease-in-out infinite;
+		animation: jv-tool-pulse var(--jv-dur-enter) ease-in-out infinite;
 	}
 	li.ok .dot {
 		background: var(--jv-ok);

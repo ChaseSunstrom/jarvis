@@ -50,13 +50,13 @@
 <style>
 	.track {
 		position: relative;
-		height: 3px;
-		border-radius: 2px;
+		height: var(--jv-radius-sm);
+		border-radius: var(--jv-rule-live);
 		background: var(--jv-line-hair);
 		overflow: hidden;
 	}
 	.track.compact {
-		height: 2px;
+		height: var(--jv-rule-live);
 	}
 	.fill {
 		display: block;
@@ -77,7 +77,7 @@
 		inset: 0 auto 0 0;
 		width: 40%;
 		background: linear-gradient(90deg, transparent, var(--jv-accent), transparent);
-		animation: task-sweep 1.4s var(--jv-ease-in-out) infinite;
+		animation: task-sweep var(--jv-dur-sweep) var(--jv-ease-in-out) infinite;
 	}
 	@keyframes task-sweep {
 		0% {

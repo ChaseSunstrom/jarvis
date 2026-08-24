@@ -62,8 +62,7 @@ reachable by keyboard and announced as one.
 		border-radius: var(--jv-radius-pill);
 		background: var(--jv-field);
 		position: relative;
-		transition:
-			background var(--jv-dur-fast) var(--jv-ease-out),
+		transition: background var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.knob {
@@ -74,8 +73,7 @@ reachable by keyboard and announced as one.
 		height: var(--jv-space-3);
 		border-radius: var(--jv-radius-pill);
 		background: var(--jv-text-dim);
-		transition:
-			transform var(--jv-dur-base) var(--jv-ease-out),
+		transition: transform var(--jv-dur-base) var(--jv-ease-out),
 			background var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	input:checked + .track {

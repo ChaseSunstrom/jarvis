@@ -112,7 +112,8 @@ def css_name(path: tuple[str, ...]) -> str | None:
         return "--jv-" + "-".join(rest)
     if group == "type":
         kind, name = rest[0], "-".join(rest[1:])
-        prefix = {"family": "font", "size": "fs", "weight": "weight", "tracking": "track"}[kind]
+        prefix = {"family": "font", "size": "fs", "weight": "weight", "tracking": "track",
+                  "relative": "rel"}[kind]
         return f"--jv-{prefix}-{name}"
     if group == "space":
         return "--jv-space-" + "-".join(rest)
@@ -125,7 +126,7 @@ def css_name(path: tuple[str, ...]) -> str | None:
         kind = rest[0]
         if kind == "drift":
             return "--jv-drift"
-        prefix = {"dur": "dur", "ease": "ease", "stagger": "stagger", "reactor": "rx"}[kind]
+        prefix = {"dur": "dur", "ease": "ease", "stagger": "stagger", "reactor": "rx", "ambient": "amb"}[kind]
         return f"--jv-{prefix}-" + "-".join(rest[1:])
     if group == "chrome":
         return "--jv-" + "-".join(rest)

@@ -21,6 +21,7 @@ every routed page to use it, and `e2e/states.spec.ts` drives all four.
 	import EmptyState from './EmptyState.svelte';
 	import ErrorState from './ErrorState.svelte';
 	import OfflineState from './OfflineState.svelte';
+	import { isOnline } from '../online';
 
 	export type Status = 'loading' | 'ready' | 'empty' | 'error' | 'offline';
 
@@ -32,11 +33,22 @@ every routed page to use it, and `e2e/states.spec.ts` drives all four.
 		emptyBody?: string;
 		errorTitle?: string;
 		errorDetail?: string;
-		offlineBody?: string;
+		offlineBody?: string | undefined;
 		onretry?: () => void;
 		onreconnect?: () => void;
+		/** Mid-reconnect, for the offline state's button. */
+		busy?: boolean;
 		testid?: string;
-		children: Snippet;
+		/** Test ids for the individual states, when a page's suite names them. */
+		errorTestid?: string;
+		emptyTestid?: string;
+		offlineTestid?: string;
+		/**
+		 * The screen, when the status is `ready`. Omit it on a page that renders
+		 * its own regions: this then draws only the state that is not `ready`,
+		 * which is how a page with several lists keeps one status region.
+		 */
+		children?: Snippet;
 		/** A control that would fill an empty screen. */
 		emptyAction?: Snippet;
 	}
@@ -47,25 +59,41 @@ every routed page to use it, and `e2e/states.spec.ts` drives all four.
 		emptyBody = '',
 		errorTitle = "Couldn't load this",
 		errorDetail = '',
-		offlineBody = 'Reconnecting. What you see is the last state Jarvis sent.',
+		offlineBody = undefined,
 		onretry,
 		onreconnect,
+		busy = false,
 		testid = '',
+		errorTestid = '',
+		emptyTestid = '',
+		offlineTestid = 'link-dropped',
 		children,
 		emptyAction
 	}: Props = $props();
+
+	// Two failures look identical on screen and are not: the relay socket closed,
+	// or this machine has no network. Pressing RECONNECT on a laptop whose wifi
+	// dropped re-dials into the same wall, so say which one it is.
+	const body = $derived(
+		isOnline()
+			? offlineBody
+			: 'This device has no network. Jarvis is probably fine; nothing can reach it from here until the connection is back.'
+	);
 </script>
 
 <div class="screen" data-screen-state={status} data-testid={testid || undefined}>
-	{#if status === 'loading'}
+	{#if status === 'offline'}
+		<!-- The banner AND what was already there: the copy says this is the last
+		     state Jarvis sent, so hiding it would make the sentence a lie. -->
+		<OfflineState {body} {onreconnect} {busy} testid={offlineTestid} />
+		{#if children}{@render children()}{/if}
+	{:else if status === 'loading'}
 		<SkeletonRows {rows} />
-	{:else if status === 'offline'}
-		<OfflineState body={offlineBody} {onreconnect} />
 	{:else if status === 'error'}
-		<ErrorState title={errorTitle} detail={errorDetail} {onretry} />
+		<ErrorState title={errorTitle} detail={errorDetail} {onretry} testid={errorTestid} />
 	{:else if status === 'empty'}
-		<EmptyState title={emptyTitle} body={emptyBody} action={emptyAction} />
-	{:else}
+		<EmptyState title={emptyTitle} body={emptyBody} action={emptyAction} testid={emptyTestid} />
+	{:else if children}
 		{@render children()}
 	{/if}
 </div>

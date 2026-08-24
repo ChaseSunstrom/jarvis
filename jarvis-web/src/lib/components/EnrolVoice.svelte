@@ -261,8 +261,8 @@
 		border-bottom: 0;
 	}
 	.bar {
-		height: 4px;
-		border-radius: 2px;
+		height: var(--jv-space-1);
+		border-radius: var(--jv-rule-live);
 		background: var(--jv-line-hair);
 		overflow: hidden;
 		margin: 0 0 var(--jv-space-3);
@@ -315,9 +315,9 @@
 	}
 	.meter {
 		display: inline-block;
-		width: 4rem;
-		height: 4px;
-		border-radius: 2px;
+		width: var(--jv-space-7);
+		height: var(--jv-space-1);
+		border-radius: var(--jv-rule-live);
 		background: var(--jv-line-hair);
 		overflow: hidden;
 	}

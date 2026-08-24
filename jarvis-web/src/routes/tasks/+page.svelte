@@ -11,7 +11,6 @@
 	 */
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import ScheduledJobs from '$lib/components/ScheduledJobs.svelte';
 	import TaskCard from '$lib/components/TaskCard.svelte';
@@ -19,7 +18,7 @@
 	import { isUnsupported, type Subscription } from '$lib/jarvisClient';
 	import { staggerStyle } from '$lib/motion';
 	import { toasts } from '$lib/toast';
-	import { EmptyState } from '$lib/ui';
+	import { EmptyState, ScreenState } from '$lib/ui';
 	import {
 		TASK_EVENTS,
 		activeTasks,
@@ -197,6 +196,13 @@
 			conn = null;
 		};
 	});
+
+	// The screen's status region. Loading and empty belong to the individual
+	// lists below (this page has more than one); what is page-wide is the link
+	// being down and the page's own failure, and `ScreenState` owns both.
+	let screen = $derived<'ready' | 'error' | 'offline'>(
+		status === 'closed' || status === 'error' ? 'offline' : err ? 'error' : 'ready'
+	);
 </script>
 
 <svelte:head><title>Jarvis · Tasks</title></svelte:head>
@@ -207,7 +213,15 @@
 	· link {status}
 </p>
 
-<Reconnect {status} busy={redialling} retry={connect} />
+<ScreenState
+	status={screen}
+	errorTitle="This page hit an error"
+	errorDetail={err}
+	onretry={connect}
+	onreconnect={connect}
+	busy={redialling}
+	errorTestid="error"
+/>
 
 <!-- Above the task list, not on a page of its own: a scheduled job and the
      task it mints are the same thing at two moments, and putting them a
@@ -215,7 +229,6 @@
      question. -->
 <ScheduledJobs {conn} />
 
-{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
 <div class="toolbar">

@@ -1,13 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
-	import { EmptyState } from '$lib/ui';
+	import { EmptyState, ScreenState } from '$lib/ui';
 	import {
 		applyStateChanged,
 		friendlyName,
@@ -248,7 +247,7 @@
 	}
 
 	// Dial, load, subscribe — as a function the RECONNECT button can run again.
-	// See Reconnect.svelte for why a page's socket does not reattach on its own.
+	// See `$lib/ui` OfflineState for why a page’s socket does not reattach.
 	let disposed = false;
 	let sub: Subscription | null = null;
 	let redialling = $state(false);
@@ -309,6 +308,13 @@
 			conn = null;
 		};
 	});
+
+	// The screen's status region. Loading and empty belong to the individual
+	// lists below (this page has more than one); what is page-wide is the link
+	// being down and the page's own failure, and `ScreenState` owns both.
+	let screen = $derived<'ready' | 'error' | 'offline'>(
+		status === 'closed' || status === 'error' ? 'offline' : err ? 'error' : 'ready'
+	);
 </script>
 
 <svelte:head><title>Jarvis · Automations</title></svelte:head>
@@ -362,11 +368,18 @@
 {/snippet}
 
 <h1>AUTOMATIONS</h1>
-<p class="lede">{automations.length} automation(s) · link {status}</p>
+<p class="lede" data-testid="automations-screen">{automations.length} automation(s) · link {status}</p>
 
-<Reconnect {status} busy={redialling} retry={connect} />
+<ScreenState
+	status={screen}
+	errorTitle="This page hit an error"
+	errorDetail={err}
+	onretry={connect}
+	onreconnect={connect}
+	busy={redialling}
+	errorTestid="error"
+/>
 
-{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if flash}<p class="notice" data-testid="flash">{flash}</p>{/if}
 
 {#if manageable}

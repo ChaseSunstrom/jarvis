@@ -72,8 +72,7 @@ slides to the selected one. A tab may carry a count and a live dot.
 		color: var(--jv-text-dim);
 		cursor: pointer;
 		white-space: nowrap;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-base) var(--jv-ease-out);
 	}
 	.tab:hover {

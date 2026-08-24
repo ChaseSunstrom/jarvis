@@ -237,7 +237,7 @@
 		background: none;
 		border: 1px solid var(--jv-line-soft);
 		border-radius: var(--jv-radius-sm);
-		padding: 2px var(--jv-space-2);
+		padding: var(--jv-rule-live) var(--jv-space-2);
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
@@ -258,7 +258,7 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--jv-rule-live);
 		border-top: 1px dashed var(--jv-line-hair);
 		padding-top: var(--jv-space-2);
 	}

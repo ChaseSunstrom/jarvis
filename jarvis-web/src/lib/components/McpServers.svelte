@@ -368,7 +368,7 @@
 		display: flex;
 		gap: var(--jv-space-2);
 		font-size: var(--jv-fs-xs);
-		padding: 2px 0;
+		padding: var(--jv-rule-live) 0;
 	}
 	.hint {
 		margin: 0 0 var(--jv-space-2);

@@ -99,7 +99,7 @@
 		transform: scale(1.06);
 	}
 	100% {
-		box-shadow: 0 0 0 10px transparent;
+		box-shadow: 0 0 0 calc(var(--jv-space-1) * 2.5) transparent;
 		transform: scale(1);
 	}
 }
@@ -163,7 +163,7 @@
 .jv-skeleton {
 	position: relative;
 	overflow: hidden;
-	height: 0.75rem;
+	height: var(--jv-space-3);
 	border-radius: var(--jv-radius-sm);
 	background: var(--jv-line-hair);
 }
@@ -172,7 +172,7 @@
 	position: absolute;
 	inset: 0;
 	background: linear-gradient(90deg, transparent, var(--jv-line-soft), transparent);
-	animation: jv-sweep 1.4s var(--jv-ease-in-out) infinite;
+	animation: jv-sweep var(--jv-dur-sweep) var(--jv-ease-in-out) infinite;
 }
 .jv-skeleton-row {
 	display: flex;
@@ -188,12 +188,12 @@
 	flex: 1 1 12rem;
 }
 .jv-skeleton.pill {
-	width: 3.4rem;
+	width: var(--jv-space-7);
 	border-radius: var(--jv-radius-pill);
 }
 .jv-skeleton.btn {
-	width: 5rem;
-	height: 1.5rem;
+	width: calc(var(--jv-space-7) * 1.66667);
+	height: var(--jv-space-5);
 }
 
 .jv-empty {
@@ -227,7 +227,7 @@
 	font-size: var(--jv-fs-xs);
 	letter-spacing: var(--jv-track-tight);
 	color: var(--jv-text-dim);
-	max-width: 34rem;
+	max-width: calc(var(--jv-space-7) * 11.3333);
 	line-height: 1.7;
 }
 
@@ -246,7 +246,7 @@
 	color: var(--jv-text-dim);
 	border: 1px solid var(--jv-line-soft);
 	border-radius: var(--jv-radius-pill);
-	padding: 0.22rem 0.6rem;
+	padding: var(--jv-space-1) var(--jv-space-3);
 	white-space: nowrap;
 }
 .jv-link .jv-link-text {
@@ -255,8 +255,8 @@
 	text-overflow: ellipsis;
 }
 .jv-link .jv-link-dot {
-	width: 0.45rem;
-	height: 0.45rem;
+	width: var(--jv-space-2);
+	height: var(--jv-space-2);
 	border-radius: 50%;
 	background: currentColor;
 	flex: none;
@@ -267,20 +267,20 @@
 }
 .jv-link[data-status='connected'] .jv-link-dot {
 	box-shadow: var(--jv-glow-sm);
-	animation: jv-blink 2.6s var(--jv-ease-in-out) infinite;
+	animation: jv-blink var(--jv-amb-blink-slow) var(--jv-ease-in-out) infinite;
 }
 .jv-link[data-status='connecting'],
 .jv-link[data-status='reconnecting'] {
 	color: var(--jv-gold);
-	border-color: rgba(255, 207, 92, 0.32);
+	border-color: color-mix(in srgb, var(--jv-gold) 32%, transparent);
 }
 .jv-link[data-status='connecting'] .jv-link-dot,
 .jv-link[data-status='reconnecting'] .jv-link-dot {
-	animation: jv-blink 0.9s var(--jv-ease-in-out) infinite;
+	animation: jv-blink var(--jv-dur-enter) var(--jv-ease-in-out) infinite;
 }
 .jv-link[data-status='offline'] {
 	color: var(--jv-danger-text);
-	border-color: rgba(255, 107, 92, 0.32);
+	border-color: color-mix(in srgb, var(--jv-danger) 32%, transparent);
 }
 
 /* ===================================================================== *
@@ -289,13 +289,13 @@
 
 .jv-toasts {
 	position: fixed;
-	right: clamp(0.6rem, 2vw, 1.4rem);
-	bottom: clamp(0.6rem, 2vh, 1.4rem);
+	right: clamp(var(--jv-space-3), 2vw, var(--jv-space-5));
+	bottom: clamp(var(--jv-space-3), 2vh, var(--jv-space-5));
 	z-index: 60;
 	display: flex;
 	flex-direction: column;
 	gap: var(--jv-space-2);
-	width: min(24rem, calc(100vw - 1.2rem));
+	width: min(calc(var(--jv-space-7) * 8), calc(100vw - var(--jv-space-5)));
 	pointer-events: none;
 }
 .jv-toast {
@@ -347,8 +347,8 @@
 }
 .jv-toast-close {
 	flex: none;
-	width: 1.4rem;
-	height: 1.4rem;
+	width: var(--jv-space-5);
+	height: var(--jv-space-5);
 	display: grid;
 	place-items: center;
 	font-family: var(--jv-font-chrome);
@@ -373,20 +373,20 @@
 	position: fixed;
 	inset: 0;
 	z-index: 70;
-	background: rgba(2, 5, 9, 0.72);
+	background: color-mix(in srgb, var(--jv-bg) 72%, transparent);
 	backdrop-filter: blur(3px);
 	animation: jv-fade var(--jv-dur-fast) var(--jv-ease-out) both;
 }
 .jv-palette {
 	position: fixed;
 	z-index: 71;
-	top: clamp(1rem, 12vh, 8rem);
+	top: clamp(var(--jv-space-4), 12vh, calc(var(--jv-space-7) * 2.66667));
 	left: 50%;
 	transform: translateX(-50%);
-	width: min(40rem, calc(100vw - 1.6rem));
+	width: min(calc(var(--jv-space-7) * 13.3333), calc(100vw - var(--jv-space-5)));
 	display: flex;
 	flex-direction: column;
-	max-height: min(30rem, 74vh);
+	max-height: min(calc(var(--jv-space-7) * 10), 74vh);
 	border: 1px solid var(--jv-line);
 	border-radius: var(--jv-radius-md);
 	background: var(--jv-panel-solid);
@@ -472,7 +472,7 @@
 }
 .jv-palette-kind {
 	flex: none;
-	width: 5.2rem;
+	width: calc(var(--jv-space-7) * 1.73333);
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-2xs);
 	letter-spacing: var(--jv-track-chrome);
@@ -560,8 +560,8 @@
 	position: relative;
 	display: grid;
 	place-items: center;
-	width: min(52vmin, 360px);
-	height: min(52vmin, 360px);
+	width: min(52vmin, var(--jv-measure-boot));
+	height: min(52vmin, var(--jv-measure-boot));
 }
 .jv-boot-core {
 	position: absolute;
@@ -576,7 +576,7 @@
 	width: 100%;
 	height: 100%;
 	border-radius: 50%;
-	background: radial-gradient(circle, rgba(63, 216, 255, 0.4) 0%, transparent 48%);
+	background: radial-gradient(circle, color-mix(in srgb, var(--jv-accent) 40%, transparent) 0%, transparent 48%);
 }
 .jv-boot-ring {
 	position: absolute;
@@ -611,7 +611,7 @@
 	bottom: -3.2rem;
 	display: flex;
 	font-family: var(--jv-font-chrome);
-	font-size: clamp(1rem, 3.4vw, 1.7rem);
+	font-size: var(--jv-fs-2xl);
 	font-weight: 600;
 	color: var(--jv-accent);
 	text-shadow: var(--jv-glow-md);
@@ -621,13 +621,13 @@
 	bottom: -7.6rem;
 	display: flex;
 	flex-direction: column;
-	gap: 0.2rem;
+	gap: var(--jv-space-1);
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-2xs);
 	letter-spacing: var(--jv-track-chrome);
 	text-transform: uppercase;
 	color: var(--jv-text-dim);
-	min-width: 12rem;
+	min-width: calc(var(--jv-space-7) * 4);
 }
 .jv-boot-checks span:not(:empty)::before {
 	content: '› ';
@@ -650,11 +650,11 @@
  */
 .jv-alerts {
 	position: fixed;
-	top: 3.4rem;
+	top: var(--jv-space-7);
 	left: 50%;
 	transform: translateX(-50%);
 	z-index: 50;
-	width: min(46rem, calc(100vw - 1.6rem));
+	width: min(calc(var(--jv-space-7) * 15.3333), calc(100vw - var(--jv-space-5)));
 	pointer-events: none;
 }
 .jv-alerts > * {
@@ -677,12 +677,12 @@
 	 * stretch this column past the viewport and take the whole page with it.
 	 */
 	grid-template-columns: minmax(0, 1fr);
-	padding: clamp(0.7rem, 2.2vw, 1.8rem);
-	gap: clamp(0.6rem, 2vh, 1.2rem);
+	padding: clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6));
+	gap: clamp(var(--jv-space-3), 2vh, var(--jv-space-5));
 	color: var(--jv-text);
 	font-family: var(--jv-font-body);
 	background:
-		radial-gradient(ellipse 80% 50% at 50% 0%, rgba(63, 216, 255, 0.1), transparent 70%),
+		radial-gradient(ellipse 80% 50% at 50% 0%, color-mix(in srgb, var(--jv-accent) 10%, transparent), transparent 70%),
 		var(--jv-bg);
 }
 
@@ -696,10 +696,10 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: var(--jv-space-2) var(--jv-space-5);
-	margin: calc(-1 * clamp(0.7rem, 2.2vw, 1.8rem)) calc(-1 * clamp(0.7rem, 2.2vw, 1.8rem)) 0;
-	padding: clamp(0.5rem, 1.4vw, 0.9rem) clamp(0.7rem, 2.2vw, 1.8rem);
+	margin: calc(-1 * clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6))) calc(-1 * clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6))) 0;
+	padding: clamp(var(--jv-space-2), 1.4vw, var(--jv-space-4)) clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6));
 	border-bottom: 1px solid var(--jv-line-soft);
-	background: rgba(4, 7, 12, 0.86);
+	background: color-mix(in srgb, var(--jv-bg) 86%, transparent);
 	backdrop-filter: blur(8px);
 }
 
@@ -739,14 +739,13 @@
 	 * which is why the flat version never looked wrong either.
 	 */
 	background:
-		linear-gradient(180deg, rgba(63, 216, 255, 0.045), transparent 42%),
+		linear-gradient(180deg, color-mix(in srgb, var(--jv-accent) 4.5%, transparent), transparent 42%),
 		var(--jv-panel);
 	border-radius: var(--jv-radius-sm);
 	padding: var(--jv-space-4) var(--jv-space-4);
 	margin-bottom: var(--jv-space-3);
-	box-shadow:
-		var(--jv-elev-panel),
-		inset 0 1px 0 rgba(63, 216, 255, 0.12);
+	box-shadow: var(--jv-elev-panel),
+		inset 0 1px 0 color-mix(in srgb, var(--jv-accent) 12%, transparent);
 }
 /*
  * The corner tick. A HUD panel is bolted to something; a two-line mark at the
@@ -758,8 +757,8 @@
 	position: absolute;
 	top: -1px;
 	left: -1px;
-	width: 14px;
-	height: 14px;
+	width: calc(var(--jv-space-1) * 3.5);
+	height: calc(var(--jv-space-1) * 3.5);
 	border-top: 1px solid var(--jv-line);
 	border-left: 1px solid var(--jv-line);
 	border-top-left-radius: var(--jv-radius-sm);
@@ -879,7 +878,7 @@
 	color: var(--jv-text-dim);
 	border: 1px solid var(--jv-line-soft);
 	border-radius: var(--jv-radius-pill);
-	padding: 0.15rem 0.55rem;
+	padding: var(--jv-space-1) var(--jv-space-2);
 	white-space: nowrap;
 }
 .console .pill.on {
@@ -905,12 +904,11 @@
 	background: var(--jv-wash);
 	border: 1px solid var(--jv-line);
 	border-radius: var(--jv-radius-sm);
-	padding: 0.42rem 0.78rem;
-	min-height: 1.9rem;
+	padding: var(--jv-space-2) var(--jv-space-3);
+	min-height: var(--jv-space-6);
 	cursor: pointer;
 	text-decoration: none;
-	transition:
-		background var(--jv-dur-fast) var(--jv-ease-out),
+	transition: background var(--jv-dur-fast) var(--jv-ease-out),
 		box-shadow var(--jv-dur-fast) var(--jv-ease-out),
 		color var(--jv-dur-fast) var(--jv-ease-out),
 		transform var(--jv-dur-instant) var(--jv-ease-out);
@@ -948,22 +946,21 @@
 .console button.btn.danger,
 .jv-alerts .btn.danger {
 	color: var(--jv-danger-text);
-	border-color: rgba(255, 107, 92, 0.4);
-	background: rgba(255, 107, 92, 0.08);
+	border-color: color-mix(in srgb, var(--jv-danger) 40%, transparent);
+	background: color-mix(in srgb, var(--jv-danger) 8%, transparent);
 }
 .console button.btn.danger:hover,
 .jv-alerts .btn.danger:hover {
-	background: rgba(255, 107, 92, 0.18);
-	box-shadow: 0 0 18px rgba(255, 107, 92, 0.25);
+	background: color-mix(in srgb, var(--jv-danger) 18%, transparent);
+	box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-danger) 25%, transparent);
 }
 .console button.btn.on {
 	color: var(--jv-accent-ink);
 	/* Lit from above, like every other surface here. */
 	background: linear-gradient(180deg, var(--jv-accent-lift), var(--jv-accent));
 	border-color: var(--jv-accent);
-	box-shadow:
-		var(--jv-glow-lg),
-		inset 0 1px 0 rgba(255, 255, 255, 0.45);
+	box-shadow: var(--jv-glow-lg),
+		inset 0 1px 0 color-mix(in srgb, var(--jv-text-bright) 45%, transparent);
 }
 
 /* The strip above a panel holding the page's one primary action and a line of
@@ -978,7 +975,7 @@
 }
 .console .toolbar input {
 	flex: 1 1 18rem;
-	max-width: 26rem;
+	max-width: calc(var(--jv-space-7) * 8.66667);
 }
 
 /* The editor panel that drops out of a row on Devices and Automations. It is
@@ -1031,7 +1028,7 @@
 	font-family: var(--jv-font-chrome);
 	line-height: 1.5;
 	resize: vertical;
-	min-height: 5rem;
+	min-height: calc(var(--jv-space-7) * 1.66667);
 	white-space: pre;
 	overflow-wrap: normal;
 	overflow-x: auto;
@@ -1078,10 +1075,9 @@
 	background: var(--jv-field);
 	border: 1px solid var(--jv-line-soft);
 	border-radius: var(--jv-radius-sm);
-	padding: 0.42rem 0.55rem;
-	min-height: 1.9rem;
-	transition:
-		border-color var(--jv-dur-fast) var(--jv-ease-out),
+	padding: var(--jv-space-2) var(--jv-space-2);
+	min-height: var(--jv-space-6);
+	transition: border-color var(--jv-dur-fast) var(--jv-ease-out),
 		box-shadow var(--jv-dur-fast) var(--jv-ease-out);
 }
 .console input::placeholder,
@@ -1097,7 +1093,7 @@
 }
 .console input[type='range'] {
 	accent-color: var(--jv-accent);
-	width: 8rem;
+	width: calc(var(--jv-space-7) * 2.66667);
 	min-height: 0;
 }
 .console .muted {
@@ -1132,8 +1128,8 @@
 	letter-spacing: var(--jv-track-tight);
 	line-height: 1.6;
 	color: var(--jv-gold);
-	border: 1px solid rgba(255, 207, 92, 0.3);
-	background: rgba(255, 207, 92, 0.07);
+	border: 1px solid color-mix(in srgb, var(--jv-gold) 30%, transparent);
+	background: color-mix(in srgb, var(--jv-gold) 7%, transparent);
 	border-radius: var(--jv-radius-sm);
 	padding: var(--jv-space-2) var(--jv-space-3);
 	margin-bottom: var(--jv-space-3);
@@ -1146,8 +1142,8 @@
 	letter-spacing: var(--jv-track-tight);
 	line-height: 1.6;
 	color: var(--jv-danger-text);
-	border: 1px solid rgba(255, 107, 92, 0.32);
-	background: rgba(255, 107, 92, 0.07);
+	border: 1px solid color-mix(in srgb, var(--jv-danger) 32%, transparent);
+	background: color-mix(in srgb, var(--jv-danger) 7%, transparent);
 	border-radius: var(--jv-radius-sm);
 	padding: var(--jv-space-2) var(--jv-space-3);
 	margin-bottom: var(--jv-space-3);
@@ -1164,11 +1160,11 @@
 	padding: var(--jv-space-3);
 	margin: 0;
 	overflow-x: auto;
-	max-height: 22rem;
+	max-height: calc(var(--jv-space-7) * 7.33333);
 }
 .console code {
 	font-family: var(--jv-font-chrome);
-	font-size: 0.95em;
+	font-size: var(--jv-fs-sm);
 	color: var(--jv-accent);
 }
 .console label.check {
@@ -1185,8 +1181,8 @@
 }
 .console label.check input {
 	appearance: none;
-	width: 0.85rem;
-	height: 0.85rem;
+	width: var(--jv-space-4);
+	height: var(--jv-space-4);
 	border: 1px solid var(--jv-line);
 	border-radius: var(--jv-radius-sm);
 	background: transparent;
@@ -1220,7 +1216,7 @@
 		display: none;
 	}
 	.jv-link {
-		padding: 0.22rem 0.42rem;
+		padding: var(--jv-space-1) var(--jv-space-2);
 	}
 	.console .row {
 		align-items: flex-start;
@@ -1233,17 +1229,17 @@
 		width: 100%;
 	}
 	.console input[type='range'] {
-		width: 6rem;
+		width: calc(var(--jv-space-7) * 2);
 	}
 	.jv-palette {
-		top: 0.6rem;
+		top: var(--jv-space-3);
 		max-height: 84vh;
 	}
 	.jv-palette-kind {
 		display: none;
 	}
 	.jv-toasts {
-		left: clamp(0.6rem, 2vw, 1.4rem);
+		left: clamp(var(--jv-space-3), 2vw, var(--jv-space-5));
 		width: auto;
 	}
 }

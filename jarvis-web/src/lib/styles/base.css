@@ -18,7 +18,16 @@ body {
 	color: var(--jv-text);
 	font-family: var(--jv-font-body);
 	/* Nothing in this app scrolls sideways. A wide table scrolls inside itself. */
-	overflow-x: hidden;
+	/*
+	 * The page itself never clips horizontally.
+	 *
+	 * Clipping hid the very defect a responsive check exists to find: a row that was
+	 * 40px too wide at 360px scrolled nothing and simply clipped, so the page
+	 * looked fine and the content was gone. Wide things (tables, diffs, code,
+	 * the nav) scroll inside their own `overflow-x: auto` container instead, and
+	 * `e2e/responsive.spec.ts` asserts the body never scrolls sideways at any of
+	 * the five widths.
+	 */
 }
 
 body {
@@ -49,13 +58,13 @@ body {
 }
 
 ::selection {
-	background: rgba(63, 216, 255, 0.28);
+	background: color-mix(in srgb, var(--jv-accent) 28%, transparent);
 	color: var(--jv-text-bright);
 }
 
 ::-webkit-scrollbar {
-	width: 9px;
-	height: 9px;
+	width: calc(var(--jv-space-1) * 2.25);
+	height: calc(var(--jv-space-1) * 2.25);
 }
 ::-webkit-scrollbar-track {
 	background: transparent;
@@ -75,7 +84,7 @@ body {
 	left: 50%;
 	transform: translate(-50%, -120%);
 	z-index: 90;
-	padding: 0.5rem 1rem;
+	padding: var(--jv-space-2) var(--jv-space-4);
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-xs);
 	letter-spacing: var(--jv-track-chrome);
@@ -116,11 +125,11 @@ body {
 	*,
 	*::before,
 	*::after {
-		animation-duration: 0.001ms !important;
+		animation: none !important;
 		animation-iteration-count: 1 !important;
-		animation-delay: 0ms !important;
-		transition-duration: 0.001ms !important;
-		transition-delay: 0ms !important;
+		
+		transition: none !important;
+		
 		scroll-behavior: auto !important;
 	}
 }

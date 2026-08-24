@@ -14,6 +14,13 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   `design/tokens.json` instead of `tokens.ts`.
 
 ### Added
+- M03 (web console on the system): every screen declares its status through `ScreenState`
+  (loading · empty · error · offline), `src/lib/screens.ts` is the manifest three things read,
+  `+error.svelte` catches a thrown route, and `src/lib/online.ts` tells a dead relay from a dead
+  network. Page-level horizontal clipping is gone and `e2e/responsive.spec.ts` proves every
+  screen fits at 360/414/768/1024/1440; `e2e/states.spec.ts` drives every screen into the states
+  it can be driven into; `e2e/controls.spec.ts` requires every control to be nameable, focusable,
+  and — when disabled — to say why. `jarvis-web/src` is clean under the token lint.
 - M02 (component library): `$lib/ui` — 18 token-only components (Button, IconButton, Input,
   Select, Toggle, Field, Panel, Row, Pill, Toolbar, Tabs, Dialog, SkeletonRows, EmptyState,
   ErrorState, OfflineState, `ScreenState`, and the `Reactor` instrument), each with a

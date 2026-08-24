@@ -15,8 +15,11 @@ check "no dead controls (web_dead_controls.mjs)" node scripts/verify/web_dead_co
 check "every screen is declared and uses <ScreenState> (web_states_check.py)" python3 scripts/verify/web_states_check.py
 check_not "overflow is not hidden at the page level (it would mask the responsive check)" \
     grep -nE 'overflow-x:\s*hidden' jarvis-web/src/lib/styles/base.css
-check_not "HUD does not re-derive its own colour layer" \
-    grep -nE '^\s*--(accent|dim|line|line-soft):' jarvis-web/src/routes/+page.svelte
+# A private colour layer is one whose values are typed, or whose names sit
+# outside the system's namespace. The HUD's state tint is neither: it is
+# `--jv-state-*`, mixed from the accent the pipeline state chooses.
+check_not "no colour custom property outside the --jv- namespace" \
+    grep -rnE '^\s*--(?!jv-)[a-z-]+:\s*(#|rgb|hsl|color-mix)' jarvis-web/src
 check_not "no placeholder markers in web sources" \
     grep -rniE 'TODO|FIXME|coming soon|not implemented' jarvis-web/src --include='*.svelte' --include='*.ts' --include='*.css'
 for spec in states responsive controls; do

@@ -470,6 +470,11 @@
 				class="btn"
 				data-testid="pair-unlock"
 				disabled={unlocking || password.trim().length < minChars}
+				title={unlocking
+					? 'Setting the password'
+					: password.trim().length < minChars
+						? `At least ${minChars} characters`
+						: 'Set this console password'}
 				onclick={unlock}
 			>
 				{unlocking ? 'SETTING…' : 'SET PASSWORD'}
@@ -498,6 +503,11 @@
 				class="btn"
 				data-testid="pair-unlock"
 				disabled={unlocking || !password.trim()}
+				title={unlocking
+					? 'Checking'
+					: !password.trim()
+						? 'Type the console password first'
+						: 'Unlock pairing'}
 				onclick={unlock}
 			>
 				{unlocking ? 'CHECKING…' : 'UNLOCK'}
@@ -680,11 +690,11 @@
 		padding: var(--jv-space-3) 0;
 	}
 	.qr :global(svg) {
-		width: min(260px, 60vw);
+		width: min(var(--jv-measure-qr), 60vw);
 		height: auto;
 		/* The quiet zone is drawn by qrSvg; this only keeps the light modules
 		   readable when the console is in its dark theme. */
-		background: #fff;
+		background: var(--jv-paper);
 		border-radius: var(--jv-radius-sm);
 	}
 	.small {

@@ -1,13 +1,13 @@
 <script lang="ts">
 	import EnrolVoice from '$lib/components/EnrolVoice.svelte';
 	import Pairing from '$lib/components/Pairing.svelte';
-	import Reconnect from '$lib/components/Reconnect.svelte';
 	import { onMount } from 'svelte';
 	import { openConnection, describeError, relayUrl, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import { TEXT_SIZES, applyTextSize, readTextSize, writeTextSize } from '$lib/textSize';
 	import { coerceSetting } from '$lib/settingsDraft';
 	import type { BusEvent, SettingRow, Subscription } from '$lib/jarvisClient';
+	import { ScreenState, SkeletonRows } from '$lib/ui';
 
 	interface ClientConfig {
 		pipeline?: string;
@@ -259,7 +259,7 @@
 	}
 
 	// Dial, load, subscribe — as a function the RECONNECT button can run again.
-	// See Reconnect.svelte for why a page's socket does not reattach on its own.
+	// See `$lib/ui` OfflineState for why a page’s socket does not reattach.
 	let disposed = false;
 	let redialling = $state(false);
 	// The socket being replaced reports its close asynchronously; without a
@@ -327,16 +327,30 @@
 			conn = null;
 		};
 	});
+
+	// The screen's status region. Loading and empty belong to the individual
+	// lists below (this page has more than one); what is page-wide is the link
+	// being down and the page's own failure, and `ScreenState` owns both.
+	let screen = $derived<'ready' | 'error' | 'offline'>(
+		status === 'closed' || status === 'error' ? 'offline' : err ? 'error' : 'ready'
+	);
 </script>
 
 <svelte:head><title>Jarvis · Settings</title></svelte:head>
 
-<h1>SETTINGS</h1>
+<h1 data-testid="settings-screen">SETTINGS</h1>
 <p class="lede">link {status} · relay {typeof location === 'undefined' ? '' : relayUrl()}</p>
 
-<Reconnect {status} busy={redialling} retry={connect} />
+<ScreenState
+	status={screen}
+	errorTitle="This page hit an error"
+	errorDetail={err}
+	onretry={connect}
+	onreconnect={connect}
+	busy={redialling}
+	errorTestid="error"
+/>
 
-{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 {#if config.problem}<p class="err" data-testid="config-problem" role="alert">{config.problem}</p>{/if}
 
@@ -348,6 +362,15 @@
 {/if}
 
 {#if settingsSupported}
+	{#if !groups.length && status !== 'closed' && status !== 'error'}
+		<!-- Connected, and told nothing yet: the window a skeleton is for. The
+		     settings arrive in one command, so this is usually brief — and a brief
+		     blank page is still a blank page. -->
+		<section class="panel" aria-label="Loading settings">
+			<div class="panel-head"><span>Settings</span><span class="muted">…</span></div>
+			<SkeletonRows rows={6} label="Loading settings" />
+		</section>
+	{/if}
 	{#each groups as [group, rows] (group)}
 		<section class="panel" data-testid="group-{group.toLowerCase()}">
 			<div class="panel-head"><span>{group}</span></div>
@@ -405,6 +428,13 @@
 						class="btn"
 						data-testid="save-{row.key}"
 						disabled={locked || busyKey === row.key || !isDirty(row)}
+						title={locked
+							? 'This setting is fixed in configuration.yaml'
+							: busyKey === row.key
+								? 'Saving'
+								: !isDirty(row)
+									? 'Nothing has changed yet'
+									: `Save ${row.label}`}
 						onclick={() => saveSetting(row)}
 					>
 						{busyKey === row.key ? '…' : 'SAVE'}
@@ -668,7 +698,7 @@
 	/* A setting's note belongs under its row, indented to the row's control
 	   column so it reads as belonging to that setting and not the next one. */
 	.note {
-		margin: 0 0 0.5rem;
+		margin: 0 0 var(--jv-space-2);
 	}
 
 	/* The collapsed diagnostic. `.panel-head` already lays this out; the marker

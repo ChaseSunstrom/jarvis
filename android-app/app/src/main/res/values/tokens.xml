@@ -53,6 +53,7 @@
     <color name="jv_orb_error_blob_1">#FFE0344B</color>
     <color name="jv_orb_error_blob_2">#FFFF9A6B</color>
     <color name="jv_orb_error_core">#FFFFD9D2</color>
+    <color name="jv_paper">#FFFFFFFF</color>
     <color name="jv_text_dim_80">#CC7C9EA9</color>
     <color name="jv_scrim">#E603070B</color>
     <dimen name="jv_space_hairline">1dp</dimen>

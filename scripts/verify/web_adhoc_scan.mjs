@@ -20,6 +20,15 @@ import { join, extname } from 'node:path';
 
 const roots = process.argv.slice(2).length ? process.argv.slice(2) : ['jarvis-web/src'];
 const MARK = '@generated from design/tokens.json';
+// The same documented exceptions the token lint honours, from the same file, so
+// the two scanners cannot disagree about what the rule is: a GLSL shader cannot
+// read a custom property, and a QR's two colours are what a camera needs.
+const EXEMPT = new Set(
+	Object.keys(
+		JSON.parse(readFileSync(new URL('../../design/token-lint.baseline.json', import.meta.url), 'utf8'))
+			.exceptions ?? {}
+	)
+);
 const EXT = new Set(['.svelte', '.css', '.ts']);
 const PROPS = /^\s*(?:margin|padding|gap|row-gap|column-gap|inset|top|right|bottom|left|width|height|min-width|max-width|min-height|max-height|font-size|letter-spacing|line-height|border-radius|box-shadow|text-shadow|transition|transition-duration|transition-delay|animation|animation-duration|animation-delay|translate|outline-offset)\s*:\s*([^;{}]*)/;
 
@@ -42,6 +51,7 @@ const files = roots.flatMap((r) => {
 });
 const hits = [];
 for (const file of files) {
+	if (EXEMPT.has(file)) continue;
 	const text = readFileSync(file, 'utf8');
 	if (text.includes(MARK)) continue;
 	const lines = text.split('\n');

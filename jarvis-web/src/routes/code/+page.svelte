@@ -18,7 +18,6 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import CodeDiff from '$lib/components/CodeDiff.svelte';
-	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import TaskCard from '$lib/components/TaskCard.svelte';
 	import {
@@ -41,7 +40,7 @@
 	import { staggerStyle } from '$lib/motion';
 	import { TASK_EVENTS, applyTaskEvent, mergeTaskList, type TaskRow } from '$lib/tasks';
 	import { toasts } from '$lib/toast';
-	import { EmptyState } from '$lib/ui';
+	import { EmptyState, ScreenState } from '$lib/ui';
 
 	let conn = $state<Connection | null>(null);
 	let status = $state('connecting');
@@ -286,20 +285,34 @@
 			conn = null;
 		};
 	});
+
+	// The screen's status region. Loading and empty belong to the individual
+	// lists below (this page has more than one); what is page-wide is the link
+	// being down and the page's own failure, and `ScreenState` owns both.
+	let screen = $derived<'ready' | 'error' | 'offline'>(
+		status === 'closed' || status === 'error' ? 'offline' : err ? 'error' : 'ready'
+	);
 </script>
 
 <svelte:head><title>Jarvis · Code</title></svelte:head>
 
-<h1>CODE</h1>
+<h1 data-testid="code-screen">CODE</h1>
 <p class="lede" data-testid="code-lede" data-redialling={redialling}>
 	{repos.length} repositor{repos.length === 1 ? 'y' : 'ies'} · {mine.length} job{mine.length === 1
 		? ''
 		: 's'} · link {status}
 </p>
 
-<Reconnect {status} busy={redialling} retry={connect} />
+<ScreenState
+	status={screen}
+	errorTitle="This page hit an error"
+	errorDetail={err}
+	onretry={connect}
+	onreconnect={connect}
+	busy={redialling}
+	errorTestid="error"
+/>
 
-{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
 {#if loading}
@@ -553,6 +566,7 @@
 				class="btn"
 				data-testid="code-start"
 				disabled={!!blocked || starting}
+				title={blocked || (starting ? 'Starting the job' : 'Start this coding job')}
 				onclick={start}
 			>
 				{starting ? 'STARTING…' : 'START'}
@@ -696,7 +710,7 @@
 		justify-content: space-between;
 		gap: var(--jv-space-2);
 		border-bottom: 1px dashed var(--jv-line-hair);
-		padding: 2px 0;
+		padding: var(--jv-rule-live) 0;
 	}
 	.checklist li[data-ok='false'] span {
 		color: var(--jv-danger-text);

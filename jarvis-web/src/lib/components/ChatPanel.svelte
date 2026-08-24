@@ -142,7 +142,7 @@
 	class="chat"
 	data-testid="chat-panel"
 	data-state={turnState}
-	style={accent ? `--accent: ${accent}` : undefined}
+	style={accent ? `--jv-state-accent: ${accent}` : undefined}
 >
 	<!-- The same two pieces of chrome every other surface draws, so chat mode
 	     reads as part of the HUD rather than a plain document pasted over it:
@@ -321,12 +321,12 @@
 		 * The line and dim tokens are re-derived from it, which is what lets the
 		 * shared .jv-* utilities pick the state colour up by inheritance.
 		 */
-		--accent: var(--jv-accent);
-		--line: color-mix(in srgb, var(--accent) 30%, transparent);
-		--line-soft: color-mix(in srgb, var(--accent) 13%, transparent);
-		--jv-line: var(--line);
-		--jv-line-soft: var(--line-soft);
-		--jv-grid-mask: radial-gradient(ellipse 90% 70% at 50% 30%, #000 35%, transparent 92%);
+		--jv-state-accent: var(--jv-accent);
+		--jv-state-line: color-mix(in srgb, var(--jv-state-accent) 30%, transparent);
+		--jv-state-line-soft: color-mix(in srgb, var(--jv-state-accent) 13%, transparent);
+		--jv-line: var(--jv-state-line);
+		--jv-line-soft: var(--jv-state-line-soft);
+		--jv-grid-mask: radial-gradient(ellipse 90% 70% at 50% 30%, var(--jv-bg) 35%, transparent 92%);
 		--jv-bracket-size: clamp(18px, 2.6vw, 34px);
 		--jv-bracket-inset: 10px;
 
@@ -341,7 +341,7 @@
 		background:
 			radial-gradient(
 				ellipse 60% 45% at 78% 0%,
-				color-mix(in srgb, var(--accent) 10%, transparent),
+				color-mix(in srgb, var(--jv-state-accent) 10%, transparent),
 				transparent 72%
 			),
 			var(--jv-bg);
@@ -389,7 +389,7 @@
 		background: var(--jv-wash);
 		border: 1px solid var(--jv-line);
 		border-radius: var(--jv-radius-pill);
-		padding: 0.28rem 0.7rem;
+		padding: var(--jv-space-1) var(--jv-space-3);
 		cursor: pointer;
 		white-space: nowrap;
 	}
@@ -404,7 +404,7 @@
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--jv-rule-live);
 		min-height: 0;
 	}
 	.past li {
@@ -417,7 +417,7 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-areas: 'title meta' 'preview preview';
-		gap: 0.1rem var(--jv-space-2);
+		gap: var(--jv-space-1) var(--jv-space-2);
 		text-align: left;
 		background: transparent;
 		border: 1px solid transparent;
@@ -444,7 +444,7 @@
 		white-space: nowrap;
 	}
 	li.current .row-title {
-		color: var(--accent);
+		color: var(--jv-state-accent);
 	}
 	.row-meta {
 		grid-area: meta;
@@ -466,7 +466,7 @@
 	}
 	.forget {
 		flex: 0 0 auto;
-		width: 1.9rem;
+		width: var(--jv-space-6);
 		background: transparent;
 		border: none;
 		color: var(--jv-text-faint);
@@ -505,16 +505,16 @@
 		align-items: center;
 		gap: var(--jv-space-3);
 		padding: var(--jv-space-3) var(--jv-space-4);
-		border-bottom: 1px solid var(--line-soft);
+		border-bottom: 1px solid var(--jv-state-line-soft);
 		background: linear-gradient(
 			180deg,
-			color-mix(in srgb, var(--accent) 6%, transparent),
+			color-mix(in srgb, var(--jv-state-accent) 6%, transparent),
 			transparent
 		);
 	}
 	.mini-orb {
-		width: 2rem;
-		height: 2rem;
+		width: var(--jv-space-6);
+		height: var(--jv-space-6);
 		flex: 0 0 auto;
 	}
 	.thread-title {
@@ -536,13 +536,13 @@
 		background: transparent;
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-pill);
-		padding: 0.24rem 0.7rem;
+		padding: var(--jv-space-1) var(--jv-space-3);
 		cursor: pointer;
 		white-space: nowrap;
 	}
 	.chip:hover {
-		color: var(--accent);
-		border-color: var(--line);
+		color: var(--jv-state-accent);
+		border-color: var(--jv-state-line);
 	}
 	.chip.on {
 		color: var(--jv-gold);
@@ -554,7 +554,7 @@
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-sm);
 		color: var(--jv-text-dim);
-		padding: 0.2rem 0.5rem;
+		padding: var(--jv-space-1) var(--jv-space-2);
 		cursor: pointer;
 	}
 
@@ -570,18 +570,17 @@
 	.empty {
 		margin: auto;
 		text-align: center;
-		max-width: 28rem;
+		max-width: calc(var(--jv-space-7) * 9.33333);
 	}
 	.empty-mark {
 		display: block;
-		width: 34px;
-		height: 34px;
+		width: calc(var(--jv-space-1) * 8.5);
+		height: calc(var(--jv-space-1) * 8.5);
 		margin: 0 auto var(--jv-space-4);
-		border: 1px solid var(--line);
+		border: 1px solid var(--jv-state-line);
 		border-radius: 50%;
-		box-shadow:
-			0 0 18px color-mix(in srgb, var(--accent) 30%, transparent),
-			inset 0 0 12px color-mix(in srgb, var(--accent) 22%, transparent);
+		box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-state-accent) 30%, transparent),
+			inset 0 0 var(--jv-radius-lg) color-mix(in srgb, var(--jv-state-accent) 22%, transparent);
 	}
 	.empty-head {
 		margin: 0 0 var(--jv-space-2);
@@ -608,13 +607,13 @@
 	}
 	textarea {
 		resize: none;
-		min-height: 2.6rem;
-		max-height: 12rem;
+		min-height: var(--jv-space-7);
+		max-height: calc(var(--jv-space-7) * 4);
 		/* `field-sizing` grows the box with its content where it is supported and
 		   is ignored where it is not, which is why max-height is set above and
 		   the rows attribute is 1: the fallback is a one-line box that scrolls. */
 		field-sizing: content;
-		padding: 0.6rem 0.8rem;
+		padding: var(--jv-space-3) var(--jv-space-3);
 		font-family: var(--jv-font-body);
 		font-size: var(--jv-fs-sm);
 		line-height: 1.45;
@@ -638,11 +637,10 @@
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
 		border-radius: var(--jv-radius-pill);
-		padding: 0.66rem 1rem;
+		padding: var(--jv-space-3) var(--jv-space-4);
 		cursor: pointer;
 		white-space: nowrap;
-		transition:
-			background var(--jv-dur-fast) var(--jv-ease-out),
+		transition: background var(--jv-dur-fast) var(--jv-ease-out),
 			box-shadow var(--jv-dur-fast) var(--jv-ease-out),
 			color var(--jv-dur-fast) var(--jv-ease-out);
 	}
@@ -662,19 +660,19 @@
 	.mic {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
+		gap: var(--jv-space-2);
 		color: var(--jv-text-dim);
 		background: transparent;
-		border: 1px solid var(--line-soft);
+		border: 1px solid var(--jv-state-line-soft);
 	}
 	.mic:hover {
-		color: var(--accent);
-		border-color: var(--line);
+		color: var(--jv-state-accent);
+		border-color: var(--jv-state-line);
 		background: var(--jv-wash);
 	}
 	.mic-dot {
-		width: 7px;
-		height: 7px;
+		width: calc(var(--jv-space-1) * 1.75);
+		height: calc(var(--jv-space-1) * 1.75);
 		border-radius: 50%;
 		background: currentColor;
 		opacity: 0.55;
@@ -692,8 +690,8 @@
 	.mic.live .mic-dot {
 		background: var(--jv-danger);
 		opacity: 1;
-		box-shadow: 0 0 8px var(--jv-danger);
-		animation: mic-live 1.1s ease-in-out infinite;
+		box-shadow: 0 0 calc(var(--jv-space-1) * 2) var(--jv-danger);
+		animation: mic-live var(--jv-dur-enter) ease-in-out infinite;
 	}
 	@keyframes mic-live {
 		0%,
@@ -716,7 +714,7 @@
 			position: absolute;
 			inset: 0 auto 0 0;
 			z-index: 4;
-			width: min(18rem, 84vw);
+			width: min(calc(var(--jv-space-7) * 6), 84vw);
 			transform: translateX(-102%);
 			transition: transform var(--jv-dur-base) var(--jv-ease-out);
 			box-shadow: var(--jv-elev-float);

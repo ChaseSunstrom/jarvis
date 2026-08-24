@@ -198,8 +198,8 @@
 		color: var(--jv-accent);
 	}
 	.track {
-		height: 3px;
-		border-radius: 2px;
+		height: var(--jv-radius-sm);
+		border-radius: var(--jv-rule-live);
 		background: var(--jv-line-hair);
 		overflow: hidden;
 	}
@@ -218,7 +218,7 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--jv-rule-live);
 	}
 	li {
 		display: grid;
@@ -231,15 +231,15 @@
 		animation: jv-rise var(--jv-dur-fast) var(--jv-ease-out) both;
 	}
 	.dot {
-		width: 6px;
-		height: 6px;
+		width: var(--jv-radius-md);
+		height: var(--jv-radius-md);
 		border-radius: 50%;
 		background: var(--jv-line);
 		justify-self: center;
 	}
 	li.running .dot {
 		background: var(--jv-accent);
-		animation: jv-pulse 1s ease-in-out infinite;
+		animation: jv-pulse var(--jv-dur-enter) ease-in-out infinite;
 	}
 	li.ok .dot {
 		background: var(--jv-ok);

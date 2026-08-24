@@ -968,9 +968,9 @@ void main() {
 		height: 100%;
 		border-radius: 50%;
 		background:
-			radial-gradient(circle at 33% 29%, rgba(255, 255, 255, 0.5) 0%, transparent 16%),
-			radial-gradient(circle at 33% 29%, rgba(255, 255, 255, 0.22) 0%, transparent 38%),
-			radial-gradient(circle at 70% 76%, rgba(255, 255, 255, 0.1) 0%, transparent 26%),
+			radial-gradient(circle at 33% 29%, color-mix(in srgb, var(--jv-text-bright) 50%, transparent) 0%, transparent 16%),
+			radial-gradient(circle at 33% 29%, color-mix(in srgb, var(--jv-text-bright) 22%, transparent) 0%, transparent 38%),
+			radial-gradient(circle at 70% 76%, color-mix(in srgb, var(--jv-text-bright) 10%, transparent) 0%, transparent 26%),
 			radial-gradient(
 				circle at 50% 50%,
 				color-mix(in srgb, var(--orb) 30%, transparent) 62%,
@@ -984,32 +984,28 @@ void main() {
 				color-mix(in srgb, var(--orb) 8%, var(--jv-bg)) 76%,
 				transparent 80%
 			);
-		box-shadow:
-			0 0 60px 10px color-mix(in srgb, var(--orb) 26%, transparent),
-			inset 0 -10px 24px -8px rgba(0, 0, 0, 0.7);
+		box-shadow: 0 0 calc(var(--jv-space-7) * 1.25) calc(var(--jv-space-1) * 2.5) color-mix(in srgb, var(--orb) 26%, transparent),
+			inset 0 -10px calc(var(--jv-space-1) * 6) -8px rgba(0, 0, 0, 0.7);
 		transform: scale(calc(1 + var(--lvl, 0) * 0.15));
 		animation: breathe 3.5s ease-in-out infinite;
 	}
 	.orb-fallback.listening {
 		--orb: var(--jv-accent);
-		box-shadow:
-			0 0 80px 16px color-mix(in srgb, var(--orb) 45%, transparent),
-			inset 0 -10px 24px -8px rgba(0, 0, 0, 0.7);
+		box-shadow: 0 0 calc(var(--jv-space-7) * 1.667) calc(var(--jv-space-1) * 4) color-mix(in srgb, var(--orb) 45%, transparent),
+			inset 0 -10px calc(var(--jv-space-1) * 6) -8px rgba(0, 0, 0, 0.7);
 		animation-duration: 1.4s;
 	}
 	.orb-fallback.thinking {
 		--orb: var(--jv-amber);
-		box-shadow:
-			0 0 80px 16px color-mix(in srgb, var(--orb) 40%, transparent),
-			inset 0 -10px 24px -8px rgba(0, 0, 0, 0.7);
-		animation-duration: 1s;
+		box-shadow: 0 0 calc(var(--jv-space-7) * 1.667) calc(var(--jv-space-1) * 4) color-mix(in srgb, var(--orb) 40%, transparent),
+			inset 0 -10px calc(var(--jv-space-1) * 6) -8px rgba(0, 0, 0, 0.7);
+		animation-duration: var(--jv-dur-enter);
 	}
 	.orb-fallback.speaking {
 		--orb: var(--jv-gold);
-		box-shadow:
-			0 0 90px 18px color-mix(in srgb, var(--orb) 45%, transparent),
-			inset 0 -10px 24px -8px rgba(0, 0, 0, 0.7);
-		animation-duration: 1.2s;
+		box-shadow: 0 0 calc(var(--jv-space-7) * 1.875) calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--orb) 45%, transparent),
+			inset 0 -10px calc(var(--jv-space-1) * 6) -8px rgba(0, 0, 0, 0.7);
+		animation-duration: var(--jv-dur-enter);
 	}
 	@keyframes breathe {
 		0%,

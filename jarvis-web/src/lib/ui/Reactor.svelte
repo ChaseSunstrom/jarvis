@@ -85,7 +85,7 @@ Every colour is a token; nothing here is typed.
 				const slot = Math.floor((i * segments.total) / blades);
 				if (slot < segments.done) tone = 'done';
 				else if (slot < segments.done + segments.running) tone = 'running';
-				else tone = 'todo';
+				else tone = 'pending';
 			}
 			return {
 				d: `M${x0.toFixed(2)} ${y0.toFixed(2)} A${rBlade} ${rBlade} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`,
@@ -186,7 +186,7 @@ Every colour is a token; nothing here is typed.
 		stroke: var(--jv-accent);
 		animation: pulse-stroke var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
 	}
-	.blade.todo {
+	.blade.pending {
 		stroke: var(--jv-line-soft);
 		animation: none;
 	}

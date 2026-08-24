@@ -49,7 +49,7 @@
 	}
 	.diff {
 		margin: 0;
-		max-height: 26rem;
+		max-height: calc(var(--jv-space-7) * 8.66667);
 		overflow: auto;
 		border: 1px solid var(--jv-line-hair);
 		background: var(--jv-surface-sunken, transparent);

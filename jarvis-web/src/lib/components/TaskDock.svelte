@@ -170,7 +170,7 @@
 	li {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
+		gap: var(--jv-radius-sm);
 		animation: jv-rise var(--jv-dur-fast) var(--jv-ease-out) both;
 	}
 	.top {

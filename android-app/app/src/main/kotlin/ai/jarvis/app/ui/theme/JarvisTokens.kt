@@ -61,6 +61,7 @@ object JarvisTokens {
         const val ORB_ERROR_BLOB_1 = 0xFFE0344B.toInt() // --jv-orb-error-blob-1
         const val ORB_ERROR_BLOB_2 = 0xFFFF9A6B.toInt() // --jv-orb-error-blob-2
         const val ORB_ERROR_CORE = 0xFFFFD9D2.toInt() // --jv-orb-error-core
+        const val PAPER = 0xFFFFFFFF.toInt() // --jv-paper
         const val TEXT_DIM_80 = 0xCC7C9EA9.toInt() // --jv-text-dim at 80%
         const val SCRIM = 0xE603070B.toInt() // --jv-bg at 90%
     }

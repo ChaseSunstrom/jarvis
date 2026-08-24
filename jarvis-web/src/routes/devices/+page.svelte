@@ -2,13 +2,12 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import EntityRow from '$lib/components/EntityRow.svelte';
-	import Reconnect from '$lib/components/Reconnect.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard } from '$lib/unsaved';
-	import { EmptyState } from '$lib/ui';
+	import { EmptyState, ScreenState } from '$lib/ui';
 	import {
 		applyStateChanged,
 		type CompanionDevice,
@@ -224,7 +223,7 @@
 	// --- the socket, and getting it back ------------------------------------
 	// Dial, load, subscribe: the three steps that make this page's rows true.
 	// `connect()` is a function rather than the body of onMount so the RECONNECT
-	// button can run all three again — see Reconnect.svelte for why a page's
+	// button can run all three again — see `$lib/ui` OfflineState for why a page’s
 	// socket does not reattach on its own.
 	let disposed = false;
 	let subs: Subscription[] = [];
@@ -299,6 +298,13 @@
 			conn = null;
 		};
 	});
+
+	// The screen's status region. Loading and empty belong to the individual
+	// lists below (this page has more than one); what is page-wide is the link
+	// being down and the page's own failure, and `ScreenState` owns both.
+	let screen = $derived<'ready' | 'error' | 'offline'>(
+		status === 'closed' || status === 'error' ? 'offline' : err ? 'error' : 'ready'
+	);
 </script>
 
 <svelte:head><title>Jarvis · Devices</title></svelte:head>
@@ -314,9 +320,16 @@
 	{total} entit{total === 1 ? 'y' : 'ies'} · live over websocket · link {status}
 </p>
 
-<Reconnect {status} busy={redialling} retry={connect} />
+<ScreenState
+	status={screen}
+	errorTitle="This page hit an error"
+	errorDetail={err}
+	onretry={connect}
+	onreconnect={connect}
+	busy={redialling}
+	errorTestid="error"
+/>
 
-{#if err}<p class="err" data-testid="error" role="alert">{err}</p>{/if}
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
 <div class="toolbar">

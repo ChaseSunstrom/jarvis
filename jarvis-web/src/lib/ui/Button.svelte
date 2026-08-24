@@ -58,8 +58,7 @@ for), `danger` (destructive, and it says so in the label too).
 		padding: var(--jv-space-2) var(--jv-space-4);
 		cursor: pointer;
 		white-space: nowrap;
-		transition:
-			color var(--jv-dur-fast) var(--jv-ease-out),
+		transition: color var(--jv-dur-fast) var(--jv-ease-out),
 			border-color var(--jv-dur-fast) var(--jv-ease-out),
 			background var(--jv-dur-fast) var(--jv-ease-out);
 	}
