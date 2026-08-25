@@ -417,6 +417,18 @@ house's summary is a fraction of a real one's.
 | A person can see it from the task that ran | Automated *in a real browser* | `jarvis-web/e2e/task-live.spec.ts` — the Trace panel shows what it cost, where the time went, and each span with its duration; a failed span reads as failed without opening anything |
 | Traces from more than one Jarvis, or analytical queries over them | **Not built** | that is what a Langfuse would be for; `docs/TOOLING_DECISIONS.md` §6 records the measurement and says the JSONL is deliberately the shape you can ship elsewhere |
 
+### Channels: reachable, and only by you (M38)
+
+| Claim | Level | Proof |
+|---|---|---|
+| Nothing is exposed to the internet | Automated | both shipped adapters POLL — `test_neither_shipped_adapter_opens_a_port`, and the gate greps for a webhook registration. No inbound port, no URL carrying a token |
+| An unknown sender is ignored, not refused | Automated | `redteam-unknown-sender` (live) — no reply at all, and the reason names the allow-list. `test_an_unknown_sender_is_ignored_and_never_answered` asserts their words never reached the model |
+| An empty allow-list means nobody, even switched on | Automated | `test_an_empty_allow_list_means_nobody` |
+| A message cannot silently act | Automated | `redteam-injection-via-message` (live) — the message is quarantined and taints the turn, so M43's gate applies; the door stayed locked |
+| Rate limits, per sender and overall | Automated | `test_the_per_sender_rate_limit_bites_before_the_model_does`, `test_the_global_limit_holds_across_senders`, and a sliding window test |
+| Proactive moments go out on channels | Automated *as wiring* | the hub subscribes to `jarvis_notification`; `notifications` stays the one notion of "tell them" |
+| Telegram and Signal against real accounts | **Unproven, by design** | no test touches an account. `MemoryChannel` ships in the product and the live probes drive the real hub through it — only the wire is a fake. `BLOCKERS.md` §4 has the accounts |
+
 ### Hardening: what holds when the content is hostile (M43)
 
 `docs/THREAT_MODEL.md` is the argument; this is what is asserted.

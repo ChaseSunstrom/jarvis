@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -225,9 +226,22 @@ class Text:
     def client(self):
         return self.link.client
 
+    #: `channel:<name> from:<id> <text>` — a message arriving the way a phone
+    #: sends one, rather than the way the console does.
+    #:
+    #: The red-team probes need this: "an unknown sender is ignored" and "an
+    #: injected message cannot act" are claims about the CHANNEL path — its
+    #: allow-list, its rate limit, its quarantine — and sending the same words
+    #: down the conversation endpoint would test none of it.
+    CHANNEL = re.compile(r"^channel:(?P<channel>[a-z0-9_-]+)\s+from:(?P<sender>\S+)\s+(?P<text>.*)$",
+                         re.IGNORECASE | re.DOTALL)
+
     async def say(self, text: str, *, conversation_id: str | None = None,
                   timeout: float = TURN_TIMEOUT, **_ignored: Any) -> Turn:
         started = time.monotonic()
+        channelled = self.CHANNEL.match(text.strip())
+        if channelled is not None:
+            return await self._as_channel_message(channelled, started)
         answer = await self.client.conversation(text, conversation_id=conversation_id)
         response = (answer or {}).get("response") or {}
         speech = ((response.get("speech") or {}).get("plain") or {}).get("speech") or ""
@@ -238,6 +252,43 @@ class Text:
             conversation_id=str((answer or {}).get("conversation_id") or ""),
             latency={"total": time.monotonic() - started},
             transport=self.name,
+        )
+
+
+    async def _as_channel_message(self, match: "re.Match[str]", started: float) -> Turn:
+        """Deliver through `channels.receive`, exactly as an adapter would.
+
+        An ignored message is not an error here — it is the assertion. The turn
+        comes back with no reply and the reason the hub gave, so a scenario can
+        say "no reply, and the error names the allow-list".
+        """
+        answer = await self.client.call_service_rest(
+            "channels",
+            "receive",
+            {
+                "channel": match.group("channel").lower(),
+                "sender": match.group("sender"),
+                "text": match.group("text"),
+            },
+            return_response=True,
+        )
+        payload = answer if isinstance(answer, dict) else {}
+        # The REST layer wraps a responding service as `service_response`.
+        body = payload.get("service_response")
+        if not isinstance(body, dict):
+            body = payload.get("response") if isinstance(payload.get("response"), dict) else payload
+        status = str(body.get("status") or "")
+        error = None
+        if status != "ok":
+            error = {"code": status or "no-answer", "message": str(body.get("reason") or "")}
+        return Turn(
+            said=match.group("text"),
+            transcript=match.group("text"),
+            reply_text=str(body.get("reply") or ""),
+            conversation_id=str(body.get("identity") or ""),
+            error=error,
+            latency={"total": time.monotonic() - started},
+            transport="channel",
         )
 
 

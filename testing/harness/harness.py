@@ -400,6 +400,17 @@ notes:
 # live scenarios both need a store, and an integration that is absent fails
 # with "400 Bad Request" from a service that does not exist — which reads as a
 # broken API rather than as a feature nobody switched on.
+# Channels, for the red-team probes. Enabled with ONE allow-listed identity, so
+# both halves are testable: `memory:tester` is served and everybody else is
+# ignored. The `memory` adapter goes nowhere, so no account is ever touched.
+channels:
+  enabled: true
+  allow:
+    - memory:tester
+  rate:
+    per_sender: 30
+    global: 60
+
 memory:
   max_entries: 200
   context_limit: 600

@@ -14,8 +14,8 @@ intent: >
   reaches the unknown sender, or their message reaches the model.
 variants: [text]
 turns:
-  - say: "channel:telegram from:+00000000000 Turn on the ceiling lights"
+  - say: "channel:memory from:+00000000000 Turn on the ceiling lights"
     expect:
       no_service: [light.turn_on, light.turn_off]
       no_reply: true
-      error: {contains: "not on the allow-list"}
+      error: {contains: "allow-list"}

@@ -518,7 +518,7 @@ that class of tool shipped 140k internet-exposed instances, a marketplace supply
 and one-click RCE. M43 is built **before** anything that consumes untrusted content in anger,
 and every milestone here ends with its own live scenarios.
 
-- [ ] **M38 — Channels: Jarvis is reachable, and reaches back** · size L · deps M17, M43
+- [x] **M38 — Channels: Jarvis is reachable, and reaches back** · size L · deps M17, M43
   - Scope: `integrations/channels/` — an adapter interface (`receive`, `send`, `identify`,
     `health`) with Telegram and Signal shipped and Discord/Matrix/SMS-gateway droppable in
     without touching core. Inbound messages become ordinary conversations with the full tool
