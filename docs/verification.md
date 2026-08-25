@@ -416,7 +416,10 @@ house's summary is a fraction of a real one's.
 | No cloud search fallback exists anywhere | Automated | `scripts/verify/m18-research.sh` greps for one; `web.search` fails saying SearXNG is not configured |
 | The report is a markdown file a person can open | Automated | `test_the_report_is_written_to_a_file_somebody_can_open` — `<config>/research/<date>-<slug>.md` |
 | Research against the **real** SearXNG and the open web | **Scripted** | `SEARXNG_URL=… python3 evals/research_eval.py --backend live` — needs the operator's SearXNG, which `jarvisdev` cannot start here (`BLOCKERS.md`). The command refuses clearly rather than pretending when the URL is unset |
-| jarvis-browser's own guards (SSRF, robots, JavaScript rendering) | Automated *in its own suite* | `python3 -m pytest jarvis-browser/tests -q`. The fixture backend uses a stand-in for `/fetch` (`testing/live/fixture_browser.py`) and proves nothing about the browser |
+| jarvis-browser's own guards (SSRF, robots, JavaScript rendering) | Automated *in its own suite* | `python3 -m pytest jarvis-browser/tests -q` — 337 tests |
+| A page whose content is written by JavaScript is read correctly | Automated *through the real browser* | `research-javascript-page` (M31) — the rig borrows the running `jarvis-browser`, and the same scenario FAILS under `LIVE_SHARED_BROWSER=0`, which is what makes it a test of the browser rather than of the fixture |
+| The deployed browser can actually open a page | Automated | `scripts/verify/m31-browser-service.sh` asserts `/healthz` reports `browser: ok`, and the image's build launches chromium. Both exist because the container answered 200 for weeks with a chromium that could not load `libglib` |
+| One Chromium, not several | Automated | the same script greps for a per-task browser install. The Playwright in `jarvis-web` and `jarvis-desktop-app` drives the CONSOLE and is not a page fetcher |
 
 ### The design system
 

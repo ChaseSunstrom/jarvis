@@ -13,6 +13,53 @@ and is not misled).
 
 ---
 
+## The browser container could not open a page, and said it was healthy
+
+severity: critical
+status: **fixed** (`jarvis-browser/Dockerfile`, `jarvis_browser/browser.py`,
+`jarvis_browser/app.py`, `jarvis-core/docker-compose.yml`)
+Regression: `research-javascript-page` (live), and the `/healthz` check in
+`scripts/verify/m31-browser-service.sh`
+Found by: M31, the first time anything asked the running service to fetch a page
+
+`jarvis-browser` reported `{"status":"ok","backend":"PlaywrightBackend"}` and
+answered every `/fetch` with a 500. Nothing in the repository noticed, because
+every research test in it talked to `testing/live/fixture_browser.py` — a
+stand-in that serves the same two routes and is not a browser. The operator's
+Jarvis could not read a web page at all.
+
+Three separate faults, each hiding the next:
+
+1. **`playwright install-deps chromium` installed nothing.** Playwright 1.49
+   does not recognise Debian trixie (which `python:3.12-slim` now is), falls
+   back to its Ubuntu 20.04 package list, and that list names `ttf-unifont` and
+   `ttf-ubuntu-font-family` — neither of which exists in trixie. apt fails the
+   whole transaction on one unavailable package, so *none* of chromium's
+   libraries were installed. The build printed its warning and carried on, as
+   designed. Chromium died with `libglib-2.0.so.0: cannot open shared object
+   file`. The Dockerfile now installs the library list by name, and **launches
+   the browser at build time** so an image that cannot browse fails loudly.
+2. **A launch failure was a 500.** Playwright raises its own error type, which
+   nothing handled, so a broken image produced a stack trace instead of the
+   documented 502 with a reason. It is a `BrowserError` now, and its message
+   says what a missing shared library means and what to do about it.
+3. **`/healthz` did not ask.** It reported the backend class name, which is a
+   fact about the code rather than about the browser. It now launches once,
+   caches the result, and returns `browser: ok` or the error. The status stays
+   `ok`: the security core is genuinely unaffected by a missing browser, and
+   the Dockerfile documents building without one. What must not happen is that
+   nobody can tell.
+
+And one more underneath, found once the libraries were there: chromium's own
+sandbox needs an unprivileged user namespace, which Docker's default seccomp
+profile blocks. The service is the thing that opens pages nobody here wrote, so
+the renderer sandbox is the layer worth keeping: `seccomp:unconfined` is set
+and everything else stays (non-root, all capabilities dropped,
+no-new-privileges, tmpfs). `DEVIATIONS.md` records the trade and what a better
+answer would look like.
+
+---
+
 ## A question asked through the notification channel, and denied, sounds like nonsense
 
 severity: minor

@@ -457,7 +457,7 @@ after number must be better than the before or the service comes out**. Choices 
     two snapshots and exits non-zero when a metric got worse.
   - Verify: `bash scripts/verify/m30-toolbelt.sh`
 
-- [ ] **M31 — One headless browser service, shared** · size M · deps M28, M30
+- [x] **M31 — One headless browser service, shared** · size M · deps M28, M30
   - Scope: `jarvis-browser` becomes the only Chromium in the system — the research engine's
     agentic browsing and the test rig's browser transport both use it, and
     `testing/live/fixture_browser.py` becomes a fallback for a host with no stack rather than

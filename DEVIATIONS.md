@@ -318,6 +318,36 @@ one would have made the milestone unmergeable until M03 and M08 finished; the
 ratchet keeps the rule enforceable now and makes "baseline empty" the
 finishing line those milestones check.
 
+## 13. The browser container trades Docker's syscall filter for chromium's sandbox
+
+`jarvis-browser` runs with `security_opt: [no-new-privileges:true,
+seccomp:unconfined]`. That is a real reduction and it buys back exactly one
+thing: `clone(CLONE_NEWUSER)`, which chromium's own sandbox needs and which
+Docker's default seccomp profile blocks.
+
+The choice is between two layers and you cannot have both here:
+
+* **Docker's default seccomp**, a broad filter over ~44 syscalls, written for
+  containers in general.
+* **Chromium's sandbox**, written for exactly this service's job — opening
+  pages nobody in this house wrote, in a renderer that is assumed to be
+  exploitable.
+
+Keeping the first meant setting `BROWSER_CHROMIUM_NO_SANDBOX=1`, and a renderer
+with no sandbox parsing hostile HTML is the worse of the two. Measured on this
+host, the alternative was not theoretical: with the default profile chromium
+refused to start at all (`No usable sandbox!`) and every fetch failed.
+
+Everything else stays: uid 10003, `cap_drop: [ALL]`, `no-new-privileges`, `/tmp`
+on tmpfs, no host mounts, and chromium's sandbox ON.
+
+The better answer is a chromium-specific seccomp profile — Docker's default
+plus the clone/unshare flags, which is what Docker's own `chrome.json` example
+is. This repository does not carry one because it is a thousand lines of JSON
+that drifts with every Docker release, and a stale copy of a syscall allowlist
+is worse than a documented absence. If you maintain one, point `security_opt`
+at it; nothing else has to change.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

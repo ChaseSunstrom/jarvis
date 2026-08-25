@@ -19,6 +19,7 @@ link-local/metadata address (SSRF defence, see safety.is_blocked_host).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shutil
@@ -270,7 +271,21 @@ class PlaywrightBackend:
                 "the playwright-managed chromium",
                 self.s.executable_path,
             )
-        self._browser = await self._pw.chromium.launch(**kwargs)
+        try:
+            self._browser = await self._pw.chromium.launch(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - every launch failure, named
+            # Playwright raises its own error type, which nothing here handles,
+            # so /fetch answered 500 with a stack trace for what is a broken
+            # image. The commonest cause by far is the one this container hit:
+            # the chromium binary downloaded and its shared libraries did not.
+            detail = str(exc).strip().splitlines()
+            raise BrowserError(
+                "chromium would not start: "
+                + (detail[-1] if detail else type(exc).__name__)
+                + ". If that mentions a missing shared library, the image was "
+                "built without chromium's system libraries — rebuild it "
+                "(jarvis-browser/Dockerfile installs them by name)."
+            ) from exc
 
     async def close(self) -> None:
         for sid in list(self._contexts):
@@ -340,6 +355,24 @@ class PlaywrightBackend:
         page.on("popup", lambda p: asyncio.ensure_future(p.close()))
         page.on("dialog", lambda d: asyncio.ensure_future(d.dismiss()))
 
+    async def _settle(self, page) -> None:
+        """Let a page that writes itself finish writing itself.
+
+        `load` means the document's own resources arrived. A dashboard's
+        numbers arrive after that — from a fetch, or from a timer — and taking
+        `content()` at `load` captured the "Loading…" placeholder instead of
+        the page. Two waits, because pages do it two ways: network idle for the
+        one that asks a server, and a short settle for the one that does not.
+        Both are bounded and both are allowed to time out; a slow page is still
+        worth reading, and this must never turn a fetch into a failure.
+        """
+        if self.s.settle_ms <= 0:
+            return
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("networkidle", timeout=self.s.settle_ms * 5)
+        with contextlib.suppress(Exception):
+            await page.wait_for_timeout(self.s.settle_ms)
+
     # -- one-shot operations ----------------------------------------------
     async def fetch(
         self, url: str, *, render: bool = True, javascript: bool = True
@@ -349,6 +382,8 @@ class PlaywrightBackend:
             page = await ctx.new_page()
             wait_until = "load" if render else "domcontentloaded"
             resp = await page.goto(url, wait_until=wait_until)
+            if render:
+                await self._settle(page)
             html = await page.content()
             data = html.encode("utf-8", "replace")
             if len(data) > self.s.max_page_bytes:

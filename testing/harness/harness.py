@@ -259,6 +259,7 @@ def build_config(
     wyoming_host: str = "127.0.0.1",
     search_url: str = "",
     browser_url: str = "",
+    browser_token: str = "",
     code: dict[str, Any] | None = None,
 ) -> str:
     """A complete jarvis-core configuration.yaml, pointed at the fakes.
@@ -282,7 +283,9 @@ web:
   # A token, because `browser_configured` is url AND token — a browser_url with
   # no token leaves every fetch failing with "not configured", which is the
   # right refusal and a confusing way to discover a harness is half-wired.
-  browser_token: harness-browser-token
+  # The caller's, when it borrowed the operator's real jarvis-browser; a
+  # made-up one is enough for the fixture stand-in, which checks no bearer.
+  browser_token: {browser_token}
   safe_search: 1
 """
         if search_url and browser_url
@@ -561,6 +564,7 @@ class Harness:
         wyoming: dict[str, Any] | None = None,
         search_url: str | None = None,
         browser_url: str | None = None,
+        browser_token: str | None = None,
         code: dict[str, Any] | None = None,
     ) -> None:
         self.host = host
@@ -597,6 +601,7 @@ class Harness:
         #: for a harness that must never reach the internet by accident.
         self.search_url = str(search_url or "").rstrip("/")
         self.browser_url = str(browser_url or "").rstrip("/")
+        self.browser_token = str(browser_token or "harness-browser-token")
         #: A `code:` block for this run — repositories, environments and the
         #: permission mode. `evals/coding_eval.py` is the caller that matters.
         self.code_config = dict(code) if code else {}
@@ -860,6 +865,7 @@ class Harness:
                 wyoming_host=getattr(self, "wyoming_host", self.fake_host),
                 search_url=self.search_url,
                 browser_url=self.browser_url,
+                browser_token=self.browser_token,
                 code=self.code_config,
             ),
             encoding="utf-8",

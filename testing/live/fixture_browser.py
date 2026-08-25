@@ -35,6 +35,15 @@ from .fixture_site import free_port
 
 _TAG = re.compile(r"<[^>]+>")
 
+#: Blocks whose CONTENT is not page text. Stripped before the tags are,
+#: because `<[^>]+>` alone leaves the script's source behind — which is how a
+#: stand-in that cannot run JavaScript came to "read" a page rendered by it,
+#: and, in anything that reaches a model, how a page's <script> becomes text
+#: somebody's assistant is reading. The real extractor drops the same set
+#: (`jarvis-browser/jarvis_browser/extract.py`, DROP_TAGS).
+_DEAD = re.compile(r"<(script|style|noscript|template)\b.*?</\1>", re.S | re.I)
+
+
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     #: Every fixture site this fake will read. Anything else is refused, the
@@ -82,7 +91,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         except Exception as err:  # noqa: BLE001
             self._json({"detail": f"fetch failed: {err}"}, 502)
             return
-        text = " ".join(_TAG.sub(" ", html).split())
+        text = " ".join(_TAG.sub(" ", _DEAD.sub(" ", html)).split())
         title = re.search(r"<title>(.*?)</title>", html, re.DOTALL)
         self._json(
             {

@@ -8,6 +8,24 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Fixed
+- **The browser could not open a page, and said it was healthy.** `jarvis-browser` answered
+  `/healthz` with 200 and every `/fetch` with a 500: `playwright install-deps chromium` had
+  installed nothing, because Playwright 1.49 does not know Debian trixie and its fallback
+  package list names two fonts that trixie dropped — apt fails the whole transaction on one
+  missing package, so chromium's libraries were never installed. Nothing in the repository
+  noticed, because every research test talked to the fixture stand-in. The libraries are
+  installed by name now, the build launches the browser to prove it can, a launch failure says
+  what it is instead of raising a 500, and `/healthz` reports `browser: ok` or the error.
+  M31 found it the first time anything asked the real service for a page.
+- Chromium's own sandbox now runs in the deployment. It needs an unprivileged user namespace,
+  which Docker's default seccomp profile blocks, so the service ran with no renderer sandbox at
+  all — on a container whose job is opening pages nobody here wrote. `DEVIATIONS.md` §13 records
+  the trade: the syscall filter goes, the renderer sandbox and every other guard stay.
+- A rendered fetch waited for `load`, which on a page that writes itself is before there is
+  anything to read. It now waits for network idle and a bounded settle (`BROWSER_SETTLE_MS`,
+  400 ms, 0 to turn it off).
+- `<script>` source counted as page text in the rig's fixtures. It is not text, and in anything
+  a model reads it is an injection surface — the real extractor already dropped it.
 - A skill was being read before every answer, at a model round trip each. The skill index said
   to read one "before doing anything it covers", and a skill describing itself as *how Jarvis
   should answer in this house* covers every answer — so "which room is the coffee machine in?"
@@ -50,6 +68,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   Measured on this host: context retention 4/4, routing 7/8, reasoning 5/5, instruction
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
+
+- M31 (one headless browser, shared): the live rig now borrows the **running** `jarvis-browser`
+  instead of talking to a stand-in that cannot run JavaScript. Borrowing means recreating the
+  container with the fixture web's two loopback addresses in the operator's own LAN exemption
+  and taking them off again afterwards — the SSRF guard that refuses loopback is right and
+  stays. When the container cannot be borrowed the run says why, in a sentence, and falls back
+  to the stand-in; `LIVE_SHARED_BROWSER=0` asks for that on purpose, which is how
+  `research-javascript-page` proves it fails without a real browser.
+
+  That scenario is the new one: a handbook page whose appliance register is written by a script
+  a tick after load. Its HTML says "Loading the appliance register…" and nothing else, so a
+  fetcher that reads markup and stops answers the question wrong while sounding exactly as
+  certain as one that read the page.
 
 - M30 (the toolbelt contract): `docs/TOOLING_DECISIONS.md` — one section per service the next
   seven milestones propose, each naming what was chosen, what was turned down and what it costs

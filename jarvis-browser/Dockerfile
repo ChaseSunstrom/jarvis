@@ -39,13 +39,57 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     || echo "WARN: pip install failed — fix outbound HTTPS to PyPI and rebuild."
 
-# Chromium + its shared libraries. `install-deps` needs apt; `install` needs
-# the Playwright CDN. Both are optional at build time.
-RUN ( timeout 600 python -m playwright install-deps chromium \
-      || echo "WARN: playwright install-deps failed (apt unreachable)." ) ; \
+# Chromium's shared libraries, by name.
+#
+# NOT `playwright install-deps chromium`, which is what this used to be and
+# which silently produced an image whose browser could not start. Playwright
+# 1.49 does not recognise Debian trixie, falls back to its Ubuntu 20.04 package
+# list, and that list still names `ttf-unifont` and `ttf-ubuntu-font-family` —
+# gone from trixie. apt fails the WHOLE transaction on an unavailable package,
+# so *none* of the libraries were installed, chromium died with
+# "libglib-2.0.so.0: cannot open shared object file", and /fetch returned 500
+# while /healthz said 200. This host ran that image for weeks.
+#
+# The list below is Playwright's own, with the two dead font packages replaced
+# by `fonts-unifont`. The unsuffixed names resolve to the t64 packages on
+# trixie, so it works on both.
+RUN ( timeout 300 apt-get -o Acquire::ForceIPv4=true update \
+      && timeout 600 apt-get -o Acquire::ForceIPv4=true install -y \
+           --no-install-recommends \
+           libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 \
+           libatk-bridge2.0-0 libatspi2.0-0 libcups2 libdrm2 libgbm1 libegl1 \
+           libgtk-3-0 libpango-1.0-0 libcairo2 libx11-6 libx11-xcb1 libxcb1 \
+           libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 \
+           libxshmfence1 libxkbcommon0 libasound2 libfontconfig1 libfreetype6 \
+           fonts-liberation fonts-unifont \
+      && rm -rf /var/lib/apt/lists/* ) \
+    || echo "WARN: chromium's libraries could not be installed (apt \
+unreachable); /fetch, /crawl, /screenshot and /act will fail until they are." ; \
     ( timeout 900 python -m playwright install chromium \
       || echo "WARN: playwright install chromium failed — the browser is \
 missing; /fetch, /crawl, /screenshot and /act will 502 until it is installed." )
+
+# And prove it can actually start, at BUILD time, so an image that cannot
+# browse is not something a deployment discovers. Best-effort like everything
+# else here — a build with no network never got a browser to test — but when
+# there IS one, this is the check that would have caught the trixie breakage.
+RUN python - <<'PROBE' || echo "WARN: chromium is present but did not launch."
+import asyncio
+from playwright.async_api import async_playwright
+
+async def main():
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
+        page = await browser.new_page()
+        await page.set_content("<h1>ok</h1>")
+        assert await page.inner_text("h1") == "ok"
+        await browser.close()
+    print("chromium launches")
+
+asyncio.run(main())
+PROBE
 
 # Playwright unpacks to /opt/pw-browsers/chromium-<rev>/chrome-linux/chrome.
 # Pin a stable path so BROWSER_EXECUTABLE_PATH is predictable; the service

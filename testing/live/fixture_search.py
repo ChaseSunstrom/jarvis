@@ -30,8 +30,17 @@ from .fixture_site import free_port, pages_for
 _TAG = re.compile(r"<[^>]+>")
 
 
+#: Blocks whose CONTENT is not page text. Stripped before the tags are,
+#: because `<[^>]+>` alone leaves the script's source behind — which is how a
+#: stand-in that cannot run JavaScript came to "read" a page rendered by it,
+#: and, in anything that reaches a model, how a page's <script> becomes text
+#: somebody's assistant is reading. The real extractor drops the same set
+#: (`jarvis-browser/jarvis_browser/extract.py`, DROP_TAGS).
+_DEAD = re.compile(r"<(script|style|noscript|template)\b.*?</\1>", re.S | re.I)
+
+
 def _text(html: str) -> str:
-    return " ".join(_TAG.sub(" ", html).split())
+    return " ".join(_TAG.sub(" ", _DEAD.sub(" ", html)).split())
 
 
 def _pages(sites: dict[str, str]) -> list[dict[str, str]]:

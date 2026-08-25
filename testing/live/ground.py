@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import LiveError
+from .browser_service import SharedBrowser
 from .stack import Snapshot, Stack, StateGuard, docker_available, live_credentials
 from .transport import Console
 
@@ -89,6 +90,10 @@ class HarnessGround(Ground):
         self.web = web or {}
         self.harness: Any = None
         self._console: Console | None = None
+        #: The operator's own jarvis-browser, borrowed for the run. There is
+        #: one Chromium in this system and this is it; `fixture_browser.py` is
+        #: what happens when it cannot be had, and it says so out loud.
+        self.browser = SharedBrowser()
 
     def _coding_fixture(self, work_dir: Path) -> dict[str, Any]:
         """A copy of `fixtures/coding/failing-tests`, as a repository Jarvis owns.
@@ -139,12 +144,35 @@ class HarnessGround(Ground):
             "max_minutes": 10,
         }
 
+    def _browser_for(self) -> tuple[str, str]:
+        """The real browser if it can be borrowed, else the stand-in.
+
+        The real one refuses loopback by design, so borrowing means recreating
+        it with the fixture web's two addresses in the operator's LAN exemption
+        — and putting that back in `stop()`. When it cannot be borrowed the
+        reason is printed rather than swallowed: a run that quietly used the
+        fake is a run whose browser claims prove nothing, and that was the
+        state of things until M31.
+        """
+        url = self.browser.start()
+        if url:
+            print(f"live: using the running jarvis-browser at {url}", flush=True)
+            return url, self.browser.token
+        print(
+            f"live: jarvis-browser could not be borrowed ({self.browser.why}); "
+            "falling back to the fixture stand-in, which proves nothing about "
+            "the browser itself",
+            flush=True,
+        )
+        return self.web.get("browser", ""), "harness-browser-token"
+
     def start(self) -> "HarnessGround":
         from testing.harness import Harness
 
         work_dir = os.environ.get("LIVE_WORK_DIR") or str(
             REPO_ROOT / ".verify" / "live" / "harness"
         )
+        browser_url, browser_token = self._browser_for()
         self.harness = Harness(
             work_dir=work_dir,
             keep=True,
@@ -158,7 +186,8 @@ class HarnessGround(Ground):
                 "wake": int(os.environ.get("LIVE_WAKE_PORT", "10400")),
             },
             search_url=self.web.get("search", ""),
-            browser_url=self.web.get("browser", ""),
+            browser_url=browser_url,
+            browser_token=browser_token,
             code=self._coding_fixture(Path(work_dir)),
         )
         self.harness.start()
@@ -183,6 +212,9 @@ class HarnessGround(Ground):
         if self.harness is not None:
             self.harness.stop(cleanup=not self.keep)
             self.harness = None
+        # Last, and unconditionally: the LAN exemption this run added to the
+        # operator's browser has to come off even when everything above threw.
+        self.browser.stop()
 
 
 class StackGround(Ground):

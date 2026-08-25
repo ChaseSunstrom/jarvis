@@ -146,6 +146,14 @@ class Settings:
     user_agent: str = DEFAULT_USER_AGENT
     javascript_enabled: bool = True
     nav_timeout_ms: int = 20_000
+    #: How long a rendered fetch waits AFTER `load` for the page to finish
+    #: writing itself. `load` fires when the document's own resources are in,
+    #: which on a page whose figures arrive from a script is before there is
+    #: anything to read: this service returned "Loading the appliance
+    #: register…" for a page whose register was 120 ms away. Network idle
+    #: covers a page that fetches its data; the settle covers one that does not.
+    #: Set to 0 to turn both off and pay nothing.
+    settle_ms: int = 400
     viewport_width: int = 1280
     viewport_height: int = 800
     max_screenshot_bytes: int = 3_000_000
@@ -204,6 +212,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         user_agent=e.str("BROWSER_USER_AGENT", DEFAULT_USER_AGENT),
         javascript_enabled=e.bool("BROWSER_JAVASCRIPT", True),
         nav_timeout_ms=e.int("BROWSER_NAV_TIMEOUT_MS", 20_000),
+        settle_ms=e.int("BROWSER_SETTLE_MS", 400),
         viewport_width=e.int("BROWSER_VIEWPORT_WIDTH", 1280),
         viewport_height=e.int("BROWSER_VIEWPORT_HEIGHT", 800),
         max_screenshot_bytes=e.int("BROWSER_MAX_SCREENSHOT_BYTES", 3_000_000),

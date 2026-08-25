@@ -77,10 +77,12 @@ _CONTINUATION = ("  ", "\t", "Traceback (most recent call last)")
 _EXCEPTION_LINE = re.compile(r"[A-Za-z_][\w.]*(Error|Exception|Exit|Interrupt|Timeout)\b")
 
 
-def _run(argv: list[str], timeout: float = 600.0, check: bool = True) -> str:
+def _run(argv: list[str], timeout: float = 600.0, check: bool = True,
+         env: dict[str, str] | None = None) -> str:
     try:
         done = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT)
+            argv, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT),
+            env={**os.environ, **env} if env else None,
         )
     except subprocess.TimeoutExpired as err:
         raise LiveError(f"{' '.join(argv[:3])}… timed out after {timeout:g}s") from err
@@ -288,6 +290,30 @@ class Stack:
             )
             found.extend(_records(raw.splitlines()))
         return found
+
+    def recreate(self, service: str, env: dict[str, str] | None = None,
+                 wait: float = 300.0) -> None:
+        """Bring one service back up with an environment override.
+
+        Compose substitutes `${VAR}` in the service's `environment:` from the
+        process environment, so this is how a run says "and allow these hosts"
+        without editing the operator's `.env`. Passing no override puts the
+        service back the way their `.env` describes it, which is how the
+        override is undone.
+
+        Only the file that defines the service is used: `up -d` on a file that
+        does not name it is an error, and running both files would recreate
+        every service in them.
+        """
+        for path in self.files:
+            if f"  {service}:" not in path.read_text(encoding="utf-8"):
+                continue
+            _run(
+                ["docker", "compose", "-f", str(path), "up", "-d", "--wait", service],
+                timeout=wait, env=env,
+            )
+            return
+        raise LiveError(f"no compose file here defines {service!r}")
 
     def restart(self, container: str, wait: float = 120.0) -> None:
         _run(["docker", "restart", container], timeout=wait + 30)

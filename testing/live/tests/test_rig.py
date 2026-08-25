@@ -351,3 +351,90 @@ def test_the_stack_ground_refuses_a_house_with_nothing_in_it():
         assert "packages-demo-house.yaml" in str(err)
     else:  # pragma: no cover - the point of the test
         raise AssertionError("an empty house was accepted")
+
+
+# --- the one browser (M31) -------------------------------------------------
+def _borrower(monkeypatch, *, health="healthy", token="t0ken", docker=True):
+    """A `SharedBrowser` whose container and docker are whatever the test says."""
+    from testing.live import browser_service
+
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(browser_service, "docker_available", lambda: docker)
+    monkeypatch.setattr(browser_service, "browser_token", lambda: token)
+    borrower = browser_service.SharedBrowser()
+    monkeypatch.setattr(borrower.stack, "health_of", lambda _s: health)
+    monkeypatch.setattr(
+        borrower.stack, "recreate",
+        lambda service, env=None, **_k: calls.append((service, dict(env or {}))),
+    )
+    return borrower, calls
+
+
+def test_borrowing_the_browser_exempts_only_the_fixture_hosts(monkeypatch):
+    """The SSRF guard is not weakened — two loopback addresses are exempted."""
+    from testing.live.browser_service import FIXTURE_HOSTS
+
+    monkeypatch.delenv("LIVE_SHARED_BROWSER", raising=False)
+    borrower, calls = _borrower(monkeypatch)
+    assert borrower.start().endswith(":8210")
+    (service, env), = calls
+    assert service == "jarvis-browser"
+    assert env["BROWSER_LAN_ALLOWLIST"] == ",".join(FIXTURE_HOSTS)
+    assert set(FIXTURE_HOSTS) == {"127.0.0.2", "127.0.0.3"}
+
+
+def test_giving_it_back_takes_the_exemption_off(monkeypatch):
+    """An exemption left behind is a guard quietly weakened for good."""
+    monkeypatch.delenv("LIVE_SHARED_BROWSER", raising=False)
+    borrower, calls = _borrower(monkeypatch)
+    borrower.start()
+    borrower.stop()
+    assert calls[-1] == ("jarvis-browser", {"BROWSER_LAN_ALLOWLIST": ""})
+    # And twice is not an error: `stop()` runs in a `finally` that may already
+    # have run.
+    borrower.stop()
+    assert len(calls) == 2
+
+
+def test_it_will_not_borrow_a_browser_that_is_not_healthy(monkeypatch):
+    monkeypatch.delenv("LIVE_SHARED_BROWSER", raising=False)
+    borrower, calls = _borrower(monkeypatch, health="unhealthy")
+    assert borrower.start() == ""
+    assert "unhealthy" in borrower.why
+    assert calls == []
+
+
+def test_it_will_not_mint_itself_a_token(monkeypatch):
+    """The operator's token or nothing: a suite must not issue its own key."""
+    monkeypatch.delenv("LIVE_SHARED_BROWSER", raising=False)
+    borrower, calls = _borrower(monkeypatch, token="")
+    assert borrower.start() == ""
+    assert "JARVIS_BROWSER_TOKEN" in borrower.why
+    assert calls == []
+
+
+def test_the_stand_in_can_be_asked_for_on_purpose(monkeypatch):
+    """So that "this scenario fails without a real browser" can be proven."""
+    monkeypatch.setenv("LIVE_SHARED_BROWSER", "0")
+    borrower, calls = _borrower(monkeypatch)
+    assert borrower.start() == ""
+    assert "LIVE_SHARED_BROWSER=0" in borrower.why
+    assert calls == []
+
+
+def test_script_source_is_not_page_text():
+    """It is not text, and in a page a model reads it is an injection surface.
+
+    Also the difference between a browser test that means something and one
+    that reads the answer out of a <script> the fetcher never ran.
+    """
+    from testing.live.fixture_search import _text
+
+    html = (
+        "<!doctype html><title>T</title><p>visible</p>"
+        "<script>const secret = 'immersion heater 3 kW';</script>"
+        "<style>.x { content: 'css'; }</style>"
+    )
+    text = _text(html)
+    assert "visible" in text
+    assert "immersion" not in text and "css" not in text

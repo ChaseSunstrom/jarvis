@@ -437,7 +437,25 @@ services:
     shm_size: 512m
     tmpfs:
       - /tmp:size=512m
-    security_opt: [no-new-privileges:true]
+    # `seccomp:unconfined` buys back ONE syscall and it is the important one.
+    #
+    # Chromium's own sandbox is the layer that contains a renderer exploit —
+    # the layer that exists for exactly this service's job, which is opening
+    # pages nobody here wrote. It needs an unprivileged user namespace, and
+    # Docker's default seccomp profile blocks `clone(CLONE_NEWUSER)`. On this
+    # host that meant chromium died with "No usable sandbox!" and every /fetch
+    # failed; the alternative on offer, BROWSER_CHROMIUM_NO_SANDBOX=1, keeps
+    # the syscall filter and throws away the renderer sandbox instead.
+    #
+    # So: the syscall filter goes, and everything else stays — non-root (uid
+    # 10003), every capability dropped, no-new-privileges, /tmp on tmpfs, and
+    # chromium's sandbox ON. The better answer is a chromium-specific seccomp
+    # profile (Docker's default plus `clone`/`unshare`); this repository does
+    # not carry one because it would be a thousand lines that drift with every
+    # Docker release. `DEVIATIONS.md` records the trade.
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined
     cap_drop: [ALL]
     healthcheck:
       test: ["CMD", "python", "-c", "import os,urllib.request as u; r=u.Request('http://127.0.0.1:8210/healthz', headers={'Authorization':'Bearer '+os.environ.get('JARVIS_BROWSER_TOKEN','')}); exit(0 if u.urlopen(r,timeout=4).status==200 else 1)"]

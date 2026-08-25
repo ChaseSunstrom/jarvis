@@ -438,11 +438,35 @@ def _page_payload(page_html: str, final_url: str, s: Settings) -> dict:
 def _register_routes(app: FastAPI) -> None:
 
     @app.get("/healthz", dependencies=AUTH)
-    async def healthz():
+    async def healthz(probe: bool = True):
+        """Alive, and — unless asked not to — able to open a page.
+
+        `browser` is here because of what its absence allowed: an image whose
+        chromium could not load its shared libraries answered this route 200
+        for weeks while every /fetch returned 500. "Up" and "able to do the job"
+        are different questions and this route now answers both.
+
+        The probe launches the browser once and the result is cached, so the
+        container's own healthcheck (every 30 s) costs nothing after the first.
+        The status stays `ok` when it fails, deliberately: the security core —
+        auth, the SSRF policy, the approval gate — is unaffected by a missing
+        browser, and the Dockerfile documents building without one. What must
+        not happen is that nobody can TELL.
+        """
         s: Settings = app.state.settings
+        browser = "unknown"
+        if probe:
+            if getattr(app.state, "browser_probe", None) is None:
+                try:
+                    await app.state.backend.start()
+                    app.state.browser_probe = "ok"
+                except Exception as exc:  # noqa: BLE001 - the answer is the message
+                    app.state.browser_probe = str(exc).strip()[:300] or type(exc).__name__
+            browser = app.state.browser_probe
         return {
             "status": "ok",
             "backend": type(app.state.backend).__name__,
+            "browser": browser,
             "sessions": len(app.state.sessions),
             "searxng_configured": bool(s.searxng_url),
             "act_allowlist_size": len(s.act_allowlist),
