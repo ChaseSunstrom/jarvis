@@ -380,6 +380,12 @@ memory:
 skills:
   path: skills
 
+# The specialists a fan-out reaches. Copied into the throwaway config beside the
+# skills, for the same reason: a test must not be able to edit the repository's
+# own definitions.
+agents:
+  path: agents
+
 voice:
   language: en
   stt:
@@ -419,6 +425,9 @@ llm:
   # `configuration.yaml` says; this is the harness being generous enough to see
   # the behaviour rather than the ceiling.
   max_tool_rounds: 6
+  # Below the live rig's turn timeout on purpose: when the model server stalls,
+  # the failure should be Jarvis saying so, not the test giving up first.
+  call_timeout: 200
   approval_ttl: 60
   options:
     temperature: 0
@@ -838,6 +847,7 @@ class Harness:
         shutil.rmtree(self.config_dir, ignore_errors=True)
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self._write_skills()
+        self._write_agents()
         (self.config_dir / "configuration.yaml").write_text(
             build_config(
                 port=self.port,
@@ -854,6 +864,17 @@ class Harness:
             ),
             encoding="utf-8",
         )
+
+    def _write_agents(self) -> None:
+        """Copy the shipped agent definitions into the throwaway config."""
+        source = Path(self.core_dir) / "config" / "agents"
+        if not source.is_dir():
+            return
+        import shutil
+
+        target = self.config_dir / "agents"
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("README.md"))
 
     def _write_skills(self) -> None:
         """Copy the shipped example skills into the throwaway config.

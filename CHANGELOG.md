@@ -26,6 +26,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M20 (subagents): specialists are markdown files under `config/agents/` — frontmatter for the
+  tool allow-list, the model, the reply cap and the context budget; the body is the system
+  prompt — and four ship (researcher, coder, verifier, summarizer). `delegate_to_agents` runs
+  them as child tasks, in parallel, behind `llm/pool.py`: a bounded FIFO queue in front of the
+  model server, because four concurrent prompts against one KV cache is not four times the work
+  and the voice path pays for the eviction. Each subagent gets its own narrowed toolbox (an
+  intersection with the lead's — a definition cannot grant itself anything), its prompt cut to
+  its budget *before* the call, and no delegation tool of its own, so the tree is one level
+  deep by construction. The fan-out acknowledges and reports rather than blocking a
+  conversational turn, the console draws the tree live from `jarvis_task_child_added`, and
+  `evals/subagents_eval.py` proves the parallelism with overlapping clocks rather than with
+  structure: 0.6 s for work that takes 1.2 s serially.
 - M19 (the coding agent): a verify-until-green loop that runs the repository's own check after
   the job says it is finished — and **when it changed nothing**, which is the case that matters,
   because a model that decides it is done before it starts looks exactly like success; one

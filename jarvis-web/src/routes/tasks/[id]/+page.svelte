@@ -18,6 +18,7 @@
 	import {
 		TASK_ACTIVITY_EVENTS,
 		applyActivityEvent,
+		applyChildEvent,
 		describeArguments,
 		emptyActivity,
 		hasRunningCall,
@@ -76,6 +77,9 @@
 					}
 					const row = toTaskRow(data.task);
 					if (row?.id === taskId) task = row;
+					// A subagent's own updates arrive as ordinary task events; the
+					// tree has to follow them or a child sits at "queued" forever.
+					else if (row) activity = applyChildEvent(activity, bus?.data);
 				}, event);
 			}
 
@@ -83,6 +87,7 @@
 			// What happened before this page was open.
 			activity = { ...activity, log: await link.client.taskLog(taskId) };
 			await loadCode();
+			await loadChildren();
 			err = '';
 		} catch (error) {
 			err = error instanceof Error ? error.message : String(error);
@@ -99,6 +104,25 @@
 	 * written when the run ends, and asking earlier gets a `not_found` that is
 	 * not an error, only an "of course not yet".
 	 */
+	/**
+	 * Subagents that were spawned before this page was open.
+	 *
+	 * The child event only reaches a page that is already watching, and a
+	 * fan-out is over in twenty seconds — so arriving late is the normal case,
+	 * not the exception.
+	 */
+	async function loadChildren() {
+		if (!conn) return;
+		try {
+			const all = await conn.client.listTasks();
+			for (const row of all) {
+				if (row.parent_id === taskId) activity = applyChildEvent(activity, { task: row });
+			}
+		} catch {
+			/* the tree is an extra; the page is still the page without it */
+		}
+	}
+
 	async function loadCode() {
 		if (!conn || task?.kind !== 'code') return;
 		try {
@@ -289,6 +313,35 @@
 				</Panel>
 			{/if}
 
+			{#if activity.children.length}
+				<Panel title="Specialists" meta={`${activity.children.length}`}>
+					{#snippet children()}
+						<ul class="tree" data-testid="task-children">
+							{#each activity.children as child (child.id)}
+								<li>
+									<Row>
+										{#snippet children()}
+											<Pill
+												tone={child.status === 'error'
+													? 'danger'
+													: child.status === 'done'
+														? 'ok'
+														: 'live'}>{child.agent || 'agent'}</Pill
+											>
+											<span class="grow">{child.title}</span>
+											<span class="stat">{child.status}</span>
+										{/snippet}
+									</Row>
+									{#if child.result}
+										<p class="finding">{child.result}</p>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/snippet}
+				</Panel>
+			{/if}
+
 			{#if code}
 				{@const job = code}
 				<Panel title="Branch" meta={job.branch}>
@@ -370,6 +423,21 @@
 		overflow-wrap: anywhere;
 		max-height: 12rem;
 		overflow-y: auto;
+	}
+	.tree {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: var(--jv-space-3);
+	}
+	.finding {
+		margin: var(--jv-space-1) 0 0;
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-dim);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 	.commits {
 		margin: 0 0 var(--jv-space-3);

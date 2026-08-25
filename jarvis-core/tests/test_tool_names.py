@@ -43,12 +43,23 @@ INTEGRATIONS = Path(__file__).resolve().parents[1] / "jarvis" / "integrations"
 #: Empty, and that is the point: every entry here is a place where two things
 #: share a name and somebody has decided which wins. If you add one, say why
 #: and pass `replaces=` at the registration so the intent is in the diff too.
-DELIBERATE_SHARING: dict[str, str] = {}
+DELIBERATE_SHARING: dict[str, str] = {
+    # `agents` runs specialists in this process — definitions in a folder,
+    # child tasks, one pool in front of the model (M20). `orchestrator` has a
+    # tool of the same name that forwards the work to a separate service, and
+    # it now registers only when no `agents:` block is configured, so the two
+    # can never both exist. The core one passes `replaces=` as well, which is
+    # the same decision written at the registration.
+    "delegate_to_agents": "core runs the specialists; the orchestrator forwards",
+}
 
 
 def _claims() -> dict[str, set[str]]:
     """name -> the integration packages that register it."""
-    call = re.compile(r"registry\.register\((?P<body>.*?)\n    \)", re.S)
+    # The closing paren may be indented: a registration inside an `if` is
+    # still a registration, and matching only column 4 quietly stopped seeing
+    # the orchestrator's tools the day one of them grew a condition.
+    call = re.compile(r"registry\.register\((?P<body>.*?)\n\s*\)", re.S)
     named = re.compile(r'name="(?P<name>[a-z0-9_]+)"')
     out: dict[str, set[str]] = {}
     for path in sorted(INTEGRATIONS.rglob("*.py")):

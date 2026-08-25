@@ -294,7 +294,7 @@ files both would touch, which the integrating session merges.
     Records the Docker-access prerequisite for this host in `BLOCKERS.md` if it cannot run.
   - Verify: `bash scripts/verify/m19-coding-agent.sh`
 
-- [ ] **M20 — Subagents & orchestration** · size L · deps M11, M10
+- [x] **M20 — Subagents & orchestration** · size L · deps M11, M10
   - Scope: `jarvis/agents/` — drop-in markdown definitions under `<config>/agents/<name>.md`
     (frontmatter: `name`, `role`, `tools` allow-list, `model`, `max_tokens`, `context_budget`;
     body = system prompt); ship `researcher`, `coder`, `verifier`, `summarizer`; the agent loop

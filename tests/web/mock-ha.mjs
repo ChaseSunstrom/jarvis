@@ -2533,6 +2533,33 @@ index 1234567..89abcde 100644
 				}
 
 				// --- tasks -------------------------------------------------
+				// A fan-out to draw: a lead with two subagents under it. M20's tree
+				// is the one panel that cannot be exercised from a single task.
+				case 'jarvis/test/delegation': {
+					const lead = addTask({
+						kind: 'delegation',
+						title: 'delegating 2 pieces of work',
+						steps: ['researcher: boiler pressure', 'researcher: service interval'],
+						status: 'running'
+					});
+					for (const [agent, title, status, result] of [
+						['researcher', 'boiler pressure', 'done', 'between 1.0 and 1.5 bar'],
+						['researcher', 'service interval', 'running', '']
+					]) {
+						const child = addTask({
+							kind: 'subagent',
+							title,
+							status,
+							result,
+							parent_id: lead.id,
+							agent
+						});
+						broadcast('jarvis_task_child_added', { task: taskDict(child) });
+					}
+					ok(msg.id, { task_id: lead.id });
+					break;
+				}
+
 				case 'jarvis/tasks/list':
 					ok(msg.id, {
 						tasks: taskListing({ kind: msg.kind || null, activeOnly: Boolean(msg.active) })

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from contextlib import aclosing
 from pathlib import Path
 
@@ -1919,3 +1920,54 @@ async def test_a_turn_that_only_spoke_before_its_tool_still_says_that(tmp_path):
     assert agent.last_result.text == "Very good, Sir — I shall look into it."
     assert "didn't manage" not in agent.last_result.text
     await shutdown(jarvis)
+
+
+# --- a model server that stalls -----------------------------------------------
+#
+# Found by the live suite (M20). `llm: timeout:` is httpx's, and httpx's is per
+# READ: every byte resets it. llama-swap sends an SSE keepalive comment once a
+# second while its backend is busy, so a stalled call never trips it — a
+# conversation hung for ten minutes with `timeout: 120` configured, and the
+# person talking to it got no answer and no error, only silence.
+
+
+class _KeepaliveOnly(httpx.AsyncByteStream):
+    """Headers, then keepalive comments forever, and never a token."""
+
+    async def __aiter__(self):
+        for _ in range(1000):
+            yield b": keepalive\n\n"
+            await asyncio.sleep(0.05)
+
+
+class _StallingTransport(httpx.AsyncBaseTransport):
+    async def handle_async_request(self, request):
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=_KeepaliveOnly()
+        )
+
+
+async def test_a_stalled_model_call_is_abandoned_rather_than_waited_on():
+    from jarvis.llm.ollama import OllamaError
+    from jarvis.llm.openai_compat import OpenAICompatClient
+
+    client = OpenAICompatClient(
+        url="http://stalled/v1", model="m", timeout=1.0, transport=_StallingTransport()
+    )
+    client.call_timeout = 1.0
+
+    started = time.monotonic()
+    with pytest.raises(OllamaError, match="stall, not an outage"):
+        await asyncio.wait_for(
+            client.chat(messages=[{"role": "user", "content": "hello"}]), timeout=20
+        )
+    # It gave up on its own clock, not on the test's.
+    assert time.monotonic() - started < 10
+
+
+def test_the_whole_call_deadline_is_never_shorter_than_the_read_one():
+    """Otherwise raising `llm: timeout:` would quietly lower the real bound."""
+    from jarvis.llm.ollama import CALL_TIMEOUT, OllamaClient
+
+    assert OllamaClient(timeout=30.0).call_timeout == CALL_TIMEOUT
+    assert OllamaClient(timeout=900.0).call_timeout == 900.0

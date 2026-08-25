@@ -49,6 +49,7 @@ from typing import Any
 
 import httpx
 
+
 from .ollama import ChatResult, ChatStream, OllamaError, ToolCall, parse_arguments
 
 _LOGGER = logging.getLogger(__name__)

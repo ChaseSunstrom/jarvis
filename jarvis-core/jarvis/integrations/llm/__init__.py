@@ -7,6 +7,8 @@ Configuration::
       model: qwen3:8b
       persona_file: prompts/jarvis.txt
       max_tool_rounds: 5
+      max_concurrent: 2        # model calls in flight at once (subagents)
+      call_timeout: 300        # seconds for one whole model call, stall or not
       approval_ttl: 300
       options: {temperature: 0.6}
       expose:
@@ -110,6 +112,9 @@ DATA_TOOLS = "llm_tools"
 #: under `<config>/.storage/`. The API layer reads the first without importing
 #: this module, the way every other registry is reached.
 DATA_HISTORY = "llm_history"
+#: How many model calls may be in flight at once. Read by `llm/pool.py` through
+#: `max_concurrent_for`; see `DEFAULT_MAX_CONCURRENT` there for why it is two.
+DATA_MAX_CONCURRENT = "llm_max_concurrent"
 HISTORY_STORE_KEY = "conversations"
 
 AGENT_ID = "jarvis"
@@ -147,6 +152,29 @@ def _as_dict(config: Any) -> dict[str, Any]:
     if isinstance(config, list) and config and isinstance(config[0], dict):
         return config[0]
     return {}
+
+
+def _bounded_concurrency(value: Any) -> int:
+    """A sane `max_concurrent`, whatever the config file says.
+
+    Bounded at eight because this is one model server: a config that asked for
+    forty would not get forty times the work, it would get a queue inside
+    llama-swap instead of one here, where it can be seen.
+    """
+    from ...llm.pool import DEFAULT_MAX_CONCURRENT
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_CONCURRENT
+    return max(1, min(number, 8))
+
+
+def max_concurrent_for(jarvis: "Jarvis") -> int:
+    """What the operator set, or the default if the llm block never loaded."""
+    from ...llm.pool import DEFAULT_MAX_CONCURRENT
+
+    return _bounded_concurrency(jarvis.data.get(DATA_MAX_CONCURRENT) or DEFAULT_MAX_CONCURRENT)
 
 
 def create_http_client(jarvis: "Jarvis", timeout: float) -> httpx.AsyncClient:
@@ -380,11 +408,23 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
             _LOGGER.error("llm: refusing to use a non-local model server. %s", why)
             return False
     timeout = float(options.get("timeout") or DEFAULT_TIMEOUT)
+    # The absolute bound on ONE call, as distinct from `timeout`, which is
+    # httpx's per-read one and is reset by every keepalive byte. See
+    # `OllamaClient.call_timeout`: without this a stalled server hangs a turn
+    # for ever, which is what it did.
+    call_timeout = float(options.get("call_timeout") or 0.0)
     max_tool_rounds = int(options.get("max_tool_rounds") or DEFAULT_MAX_TOOL_ROUNDS)
+    # Kept on the instance rather than read where it is used: the pool is built
+    # lazily by whoever fans out first, and by then the config is gone.
+    jarvis.data[DATA_MAX_CONCURRENT] = _bounded_concurrency(options.get("max_concurrent"))
     approval_ttl = float(options.get("approval_ttl") or DEFAULT_APPROVAL_TTL)
 
     client = create_http_client(jarvis, timeout)
     ollama = _build_model_client(options, url, model, timeout, client)
+    if call_timeout:
+        # Never below the per-read timeout: raising `timeout` must not quietly
+        # lower the real bound.
+        ollama.call_timeout = max(call_timeout, timeout)
 
     exposure = Exposure.from_config(options.get("expose"))
     registry = ToolRegistry(jarvis, exposure=exposure, approval_ttl=approval_ttl)

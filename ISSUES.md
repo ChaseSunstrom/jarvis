@@ -13,6 +13,42 @@ and is not misled).
 
 ---
 
+## A model server that stalls made Jarvis wait for ever
+
+severity: critical — **fixed**
+status: **fixed** (`jarvis-core/jarvis/llm/ollama.py`, `call_timeout`)
+Regression: `subagents-parallel-work`
+Test: `jarvis-core/tests/test_llm.py::test_a_stalled_model_call_is_abandoned_rather_than_waited_on`
+
+A four-part question, three tool calls, and then nothing. Ten minutes of
+nothing, with `llm: timeout: 120` in the configuration and the model server
+answering a one-word request in 0.2 s the whole time.
+
+`llm.timeout` is httpx's timeout, and httpx's is **per read**: every byte
+resets it. llama-swap sends an SSE keepalive comment about once a second while
+its backend is busy, so the read timeout never fires and the call never ends.
+There was no other bound anywhere: not in the client, not in the agent loop,
+not in the API layer. A person talking to Jarvis got no answer and no error —
+only silence, for as long as the server felt like being quiet.
+
+Recorded as **critical** even though nothing was damaged, because of what it
+does to the product: an assistant that can hang for ever on one unlucky turn is
+one nobody can rely on in a room, and the failure is invisible from every side
+— the server thinks it answered, the client is still politely waiting, and the
+logs show a successful `200 OK`.
+
+`OllamaClient.call_timeout` is an absolute deadline for one whole call —
+`max(llm.timeout, 300s)`, so raising the read timeout can never lower the real
+bound — applied at `ChatStream._collect`, which is the one place every consumer
+of a model call goes through. A stall is now an error that says it was a stall
+and not an outage.
+
+Found by the live suite, four levels down: a scenario for subagents timed out,
+which looked like a delegation bug, which looked like a tool bug, and was
+neither.
+
+---
+
 ## "How is that going?" — "I have no way to check on the job's progress"
 
 severity: major

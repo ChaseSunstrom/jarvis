@@ -53,6 +53,10 @@ export interface TaskRow {
 	done_steps: number;
 	total_steps: number;
 	finished: boolean;
+	/** The lead this task was spawned under, for a subagent. "" for a lead. */
+	parent_id?: string;
+	/** Which specialist ran it: `researcher`, `verifier`, … */
+	agent?: string;
 }
 
 const TERMINAL: readonly TaskStatus[] = ['done', 'error', 'cancelled'];
@@ -101,7 +105,9 @@ export function toTaskRow(raw: unknown): TaskRow | null {
 		done_steps: typeof r.done_steps === 'number' ? r.done_steps : steps.filter(isStepOver).length,
 		total_steps: typeof r.total_steps === 'number' ? r.total_steps : steps.length,
 		finished:
-			typeof r.finished === 'boolean' ? r.finished : TERMINAL.includes(status)
+			typeof r.finished === 'boolean' ? r.finished : TERMINAL.includes(status),
+		parent_id: str(r.parent_id),
+		agent: str(r.agent)
 	};
 }
 

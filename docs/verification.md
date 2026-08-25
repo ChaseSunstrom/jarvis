@@ -485,6 +485,22 @@ they are the only places that particular bug can come back.
 | The whole thing, asked for out loud | Automated *live* | `coding-fix-failing-tests` — spoken instruction, Tier-3 start approved, every held action answered, task `done`, and the fixture it was copied from still red |
 | The console shows the commits, the diff, and the buttons | Automated | `task-commits` / `approve-held` in the task detail page; `tests/web/mock-ha.mjs` carries the new keys |
 
+### Subagents (M20)
+
+| Claim | Level | Proof |
+|---|---|---|
+| Specialists are files, not code: drop a markdown file in and it exists | Automated | `jarvis/agents/` + `config/agents/*.md`; `test_agents.py::test_the_four_shipped_specialists_load` |
+| A definition cannot grant itself a tool the lead does not have | Automated | `AgentDefinition.allowed` is an intersection; `test_a_definition_cannot_grant_itself_a_tool_that_does_not_exist` |
+| A subagent cannot spawn another | Automated | `test_none_of_them_can_delegate` — the tree is one level deep by construction, because recursion is how a fan-out becomes forty model calls |
+| Independent pieces really do run at the same time | Automated *and measured* | `evals/subagents_eval.py` — `pool.overlap_seconds` over two calls with a known delay, against the same work done with one slot: 0.6 s parallel vs 1.2 s serial, 0.60 s overlapped |
+| The model server is not stampeded | Automated | `llm/pool.py` — `llm.max_concurrent` (2 here, measured) with a FIFO queue; `test_llm_pool.py` pins the limit, the fairness and the release-on-failure |
+| Each subagent's prompt is cut to its budget before the call | Automated | `budgeted()` at the call site; `test_the_task_a_specialist_is_given_is_cut_to_its_budget` |
+| Each is a child task, attributed to the agent that ran it | Automated | `parent_id` + `agent` on `Task`, `jarvis_task_child_added` in `tests/contracts/task_events.json`, read by both suites |
+| The console draws the tree, live | Automated | `applyChildEvent` + `task-children` in the task detail page; `taskEvents.test.ts` |
+| One slow specialist does not lose the others' answers | Automated | `test_a_slow_specialist_does_not_lose_the_others` |
+| A person can ask for specialists and get their findings | Automated *live* | `subagents-parallel-work` — a researcher and a verifier, started, polled, and reported separately |
+| How many pieces the work splits into | **Not asserted** | That is the model's judgement, and asserting it made the live scenario fail three ways on three runs while the machinery worked every time. The parallelism is measured by the eval instead |
+
 ### The security model
 
 | Property | Level | Proof |

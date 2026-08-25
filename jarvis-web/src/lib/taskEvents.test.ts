@@ -8,11 +8,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+	EVENT_TASK_CHILD_ADDED,
 	EVENT_TASK_OUTPUT,
 	EVENT_TASK_TOOL_FINISHED,
 	EVENT_TASK_TOOL_STARTED,
 	MAX_OUTPUT_CHUNKS,
 	applyActivityEvent,
+	applyChildEvent,
 	describeArguments,
 	emptyActivity,
 	hasRunningCall,
@@ -199,5 +201,57 @@ describe('the replayed log', () => {
 	it('survives a payload with no log at all', () => {
 		expect(toLog(undefined)).toEqual([]);
 		expect(toLog({})).toEqual([]);
+	});
+});
+
+// --- the subagent tree -------------------------------------------------------
+//
+// M20. A fan-out is the one shape where "what is this task doing" cannot be
+// answered by a line of detail: five specialists are running and the
+// interesting thing is which of them has come back.
+
+describe('subagents', () => {
+	const lead = () => emptyActivity('lead-1');
+	const child = (over: Record<string, unknown> = {}) => ({
+		task: {
+			id: 'child-1',
+			parent_id: 'lead-1',
+			agent: 'researcher',
+			title: 'when was the boiler serviced',
+			status: 'running',
+			...over
+		}
+	});
+
+	it('hangs a child off the task it belongs to', () => {
+		const after = applyActivityEvent(lead(), EVENT_TASK_CHILD_ADDED, child());
+		expect(after.children).toHaveLength(1);
+		expect(after.children[0].agent).toBe('researcher');
+	});
+
+	it('ignores a child of some other task', () => {
+		const after = applyActivityEvent(
+			lead(),
+			EVENT_TASK_CHILD_ADDED,
+			child({ parent_id: 'somebody-else' })
+		);
+		expect(after.children).toHaveLength(0);
+	});
+
+	it('follows a child rather than duplicating it', () => {
+		// The child's own lifecycle events arrive as ordinary task updates; a
+		// tree that appended each one would show the same specialist four times.
+		let activity = applyChildEvent(lead(), child());
+		activity = applyChildEvent(activity, child({ status: 'done', result: 'March' }));
+		expect(activity.children).toHaveLength(1);
+		expect(activity.children[0].status).toBe('done');
+		expect(activity.children[0].result).toBe('March');
+	});
+
+	it('keeps the order they were spawned in', () => {
+		let activity = applyChildEvent(lead(), child({ id: 'a', agent: 'researcher' }));
+		activity = applyChildEvent(activity, child({ id: 'b', agent: 'verifier' }));
+		activity = applyChildEvent(activity, child({ id: 'a', status: 'done' }));
+		expect(activity.children.map((c) => c.id)).toEqual(['a', 'b']);
 	});
 });

@@ -68,6 +68,10 @@ async def test_the_payloads_carry_every_required_field():
     await registry.async_update(failed.id, status="error", error="no")
     stopped = await registry.async_add("stopped", kind="code")
     await registry.async_update(stopped.id, status="cancelled")
+    # And a subagent, which is the only thing that fires the child event.
+    await registry.async_add(
+        "look it up", kind="subagent", parent_id=task.id, agent="researcher"
+    )
     await registry.async_remove(task.id)
 
     seen: dict[str, dict] = {}

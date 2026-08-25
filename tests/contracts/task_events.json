@@ -55,6 +55,21 @@
       ],
       "audience": "console"
     },
+    "jarvis_task_child_added": {
+      "when": "A subagent was spawned under a lead task. Fired IN ADDITION to jarvis_task_added, so a client that knows nothing about trees still sees the child in its list.",
+      "required": [
+        "task"
+      ],
+      "task_fields": [
+        "id",
+        "kind",
+        "title",
+        "status",
+        "parent_id",
+        "agent"
+      ],
+      "audience": "console"
+    },
     "jarvis_task_started": {
       "when": "The task's status became `running`. Fired on the transition only.",
       "required": [

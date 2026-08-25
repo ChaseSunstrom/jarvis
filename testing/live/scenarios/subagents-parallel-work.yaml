@@ -1,23 +1,52 @@
 name: subagents-parallel-work
 capability: subagents
-# Not the stack: it researches, so it needs the fixture web too.
+# Not the stack: the specialists read the fixture web, so the answers have to
+# come from pages this repository owns.
 ground: fixture
 gated-on: M20
-intent: >
-  A request that genuinely needs two different kinds of work at once. What is
-  being tested is not speed but honesty: the tree the console draws must match
-  the children that really ran, and the roll-up must not claim a finding
-  neither child produced.
 variants: [text]
+# Four specialists reading pages on a 27-B model with no GPU is minutes of real
+# work, not a slow chat turn. The rig's default patience is 240 s, which is
+# right for a conversation and wrong for this.
+timeout: 420
+intent: >
+  Two DIFFERENT specialists at once, which is the request only a fan-out can
+  serve: `deep_research` can do the looking-up half — and choosing it for four
+  ordinary lookups is the right behaviour, which is why an earlier version of
+  this scenario proved nothing — but it cannot verify a claim. What must follow
+  is a lead task with one step per piece of work, a child task per specialist
+  attributed to the agent that ran it, and an acknowledgement rather than an
+  invented answer.
 turns:
   - say: >
-      Research what the fixture handbook says about boiler pressure and at the
-      same time fix the failing tests in the fixture repository, then tell me
-      about both.
+      Two of your specialists at once, please: put a researcher on what the
+      boiler pressure range is, and have your verifier check whether it is true
+      that the water stopcock is under the stairs. Just get them started.
     expect:
-      task: {kind: background, steps_at_least: 2, within: 60}
+      # The lead task a fan-out creates. NOT `steps_at_least: 2`: how many
+      # pieces the work splits into is the model's judgement, and asserting it
+      # made this scenario fail three different ways on three runs while the
+      # machinery worked every time. That the specialists really do run at the
+      # same time is measured — with overlapping clocks — by
+      # `evals/subagents_eval.py`, which is the right instrument for it.
+      task: {kind: delegation, within: 180}
       capability: subagents
-  - say: "How are those two going?"
-    wait: 60
+      reply_means: >
+        says the work has been handed to two specialists and is under way. It
+        must NOT state the answers — nothing has read anything yet.
+  - say: "Are they still going?"
+    wait: 30
     expect:
-      reply_means: "reports on both pieces of work separately, without confusing them"
+      # The long wait lives HERE, in a poll, rather than in a model turn: two
+      # researchers searching and reading cost 4–8 minutes on this host, and a
+      # conversational turn held open that long is a different test (and a
+      # timeout).
+      task: {kind: delegation, status: done, within: 900}
+      reply_means: >
+        says whether they have finished — it must not invent findings that have
+        not arrived
+  - say: "What did the two of them find?"
+    expect:
+      reply_means: >
+        reports both findings, keeping the two questions apart rather than
+        merging them into one claim

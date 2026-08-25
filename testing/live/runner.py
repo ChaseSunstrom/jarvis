@@ -123,6 +123,10 @@ TOOL_CAPABILITY = {
     "code_task": "coding",
     "apply_code_task": "coding",
     "run_background_task": "task",
+    # A fan-out is its own capability, and it takes precedence below: a lead
+    # that delegated three lookups to researchers did subagent work, and
+    # scoring it as "research" would hide the thing that was under test.
+    "delegate_to_agents": "subagents",
     # Asking how a job is going is about the job, not about starting one.
     "task_status": "task",
     "cancel_task": "task",
@@ -152,7 +156,7 @@ def _capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
         chosen.add("memory")
     if any(call.startswith("notes.") for call in calls):
         chosen.add("notes")
-    for capability in ("coding", "research", "memory", "notes"):
+    for capability in ("subagents", "coding", "research", "memory", "notes"):
         if capability in chosen:
             return capability
     if task_kinds or "run_background_task" in tools:
@@ -385,7 +389,12 @@ class Runner:
             # transport is one REST call that waits for the whole answer, and
             # a 30 s default cut a 27-second turn off as a `ReadTimeout` that
             # read like a server failure.
-            client = JarvisClient(ground.base_url, ground.token, timeout=TURN_TIMEOUT)
+            # Long enough for the most patient scenario in this group: the REST
+            # transport is one call that waits for the whole answer, so a
+            # scenario's own `timeout:` has to reach the HTTP client or it is
+            # only an opinion.
+            patience = max([TURN_TIMEOUT, *(s.timeout for s in scenarios if s.timeout)])
+            client = JarvisClient(ground.base_url, ground.token, timeout=patience)
             await client.connect()
             self.link = Link(client)
             observer = await Observer(client).start()
@@ -490,7 +499,9 @@ class Runner:
                     self.observer = observer
                 mark, event_mark = observer.mark(), observer.event_mark()
                 tool_mark, approval_mark = observer.tool_mark(), observer.approval_mark()
-                spoken = await self._speak(transport, turn, variant, conversation_id)
+                spoken = await self._speak(
+                    transport, turn, variant, conversation_id, scenario.timeout
+                )
                 conversation_id = spoken.conversation_id or conversation_id
                 turn_result = await self._check(
                     scenario, variant, index, turn, spoken, observer, mark,
@@ -662,7 +673,8 @@ class Runner:
             except Exception as err:  # noqa: BLE001 - a bad fixture must say so
                 raise LiveError(f"setup could not put {entity_id} to {state}: {err}") from err
 
-    async def _speak(self, transport, turn, variant: str, conversation_id: str | None):
+    async def _speak(self, transport, turn, variant: str, conversation_id: str | None,
+                     timeout: float = 0.0):
         if turn.sound:
             pcm = (
                 audio_mod.silence(float(turn.audio.get("seconds") or 2.0))
@@ -670,7 +682,8 @@ class Runner:
                 else audio_mod.room_tone(float(turn.audio.get("seconds") or 2.0))
             )
             return await transport.say(
-                "(no speech)", pcm=pcm, rate=16000, conversation_id=conversation_id
+                "(no speech)", pcm=pcm, rate=16000, conversation_id=conversation_id,
+                timeout=timeout or TURN_TIMEOUT,
             )
 
         pcm = rate = None
@@ -693,6 +706,7 @@ class Runner:
             rate=rate,
             conversation_id=conversation_id,
             wake_phrase=wake_phrase,
+            timeout=timeout or TURN_TIMEOUT,
         )
 
     # --- the assertions ----------------------------------------------------

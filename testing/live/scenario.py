@@ -122,6 +122,11 @@ class Scenario:
     #: Why this scenario exists — printed with a failure, so a red line in CI
     #: says what a person lost rather than only which assert tripped.
     intent: str = ""
+    #: Seconds one turn of THIS scenario may take, overriding the rig's default.
+    #: A fan-out to four specialists is minutes of real work; a light chat turn
+    #: that took two minutes is a defect. One number for both would have to be
+    #: the larger, and then the second case would never fail.
+    timeout: float = 0.0
     #: Where it runs: `stack` (the operator's containers, the default) or
     #: `fixture` (a jarvis-core of our own, behind this repository's fixture
     #: web). Only a scenario whose assertions are about page content this
@@ -180,6 +185,7 @@ def load_scenario(path: str | Path) -> Scenario:
         tags=tuple(str(t) for t in (raw.get("tags") or ())),
         intent=str(raw.get("intent") or "").strip(),
         ground=str(raw.get("ground") or "stack"),
+        timeout=float(raw.get("timeout") or 0.0),
         turns=[_turn(turn, i, name) for i, turn in enumerate(turns)],
         path=path,
     )

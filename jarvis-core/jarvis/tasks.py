@@ -64,6 +64,7 @@ _LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "EVENT_TASK_ADDED",
+    "EVENT_TASK_CHILD_ADDED",
     "EVENT_TASK_CANCELLED",
     "EVENT_TASK_COMPLETED",
     "EVENT_TASK_FAILED",
@@ -101,6 +102,10 @@ EVENT_TASK_TOOL_FINISHED = "jarvis_task_tool_finished"
 #: Output worth watching while it happens: a check's stdout, a command's log.
 #: The contract in `tests/contracts/task_events.json` is what both sides read.
 EVENT_TASK_OUTPUT = "jarvis_task_output"
+#: A subagent was spawned under a lead. Carries the child task AND the parent's
+#: id, so a console that is watching one task can draw the tree without
+#: re-fetching the whole list on every child.
+EVENT_TASK_CHILD_ADDED = "jarvis_task_child_added"
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -254,6 +259,14 @@ class Task:
     #: Monotonic per task, so a client can tell a dropped frame from a
     #: reordered one. Not persisted: a restart ends the run anyway.
     seq: int = 0
+    #: The task that spawned this one, for a subagent. Empty for the lead.
+    #:
+    #: One level, by construction: a subagent has no delegation tool, so a tree
+    #: is a lead and its children and never a recursion that turns "look three
+    #: things up" into forty model calls.
+    parent_id: str = ""
+    #: Which agent definition ran this child, for the tree in the task UI.
+    agent: str = ""
 
     # --- derived ----------------------------------------------------------
     @property
@@ -291,6 +304,8 @@ class Task:
             "updated": self.updated,
             "source": self.source,
             "open_ended": self.open_ended,
+            "parent_id": self.parent_id,
+            "agent": self.agent,
             # The log is deliberately NOT here: the lifecycle events carry the
             # whole task on every update, and a 200-entry log on every frame is
             # a websocket carrying the same kilobytes forty times a minute.
@@ -439,6 +454,8 @@ class TaskRegistry:
         detail: str = "",
         open_ended: bool = False,
         task_id: str | None = None,
+        parent_id: str = "",
+        agent: str = "",
     ) -> Task:
         task = Task(
             id=task_id or uuid.uuid4().hex[:12],
@@ -448,11 +465,18 @@ class TaskRegistry:
             detail=_clip(detail, MAX_DETAIL_CHARS),
             source=_clip(source, 80),
             open_ended=bool(open_ended),
+            parent_id=_clip(parent_id, 40),
+            agent=_clip(agent, 60),
         )
         self.tasks.append(task)
         self._trim()
         await self.async_save()
         self._fire(EVENT_TASK_ADDED, task)
+        if task.parent_id:
+            # Both events, deliberately: a client that only knows about tasks
+            # still sees the child appear in its list, and one that draws a
+            # tree gets told where to hang it without diffing.
+            self._fire(EVENT_TASK_CHILD_ADDED, task)
         return task
 
     async def async_update(

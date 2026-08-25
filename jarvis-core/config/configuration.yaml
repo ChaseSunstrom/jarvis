@@ -258,6 +258,16 @@ llm:
   # Tool-call rounds per turn. Higher lets the model chain more steps; it also
   # multiplies worst-case latency by the same factor.
   max_tool_rounds: 5
+
+  # Model calls in flight at once, across every subagent a fan-out spawns.
+  #
+  # Two, measured rather than chosen: one 27-B model on a remote llama-swap
+  # answers a specialist's prompt in about six seconds; two at once cost about
+  # eight each, four cost twenty-two each AND make the house's own voice turn
+  # wait behind them. Raise it only if the model server is genuinely several
+  # machines.
+  max_concurrent: 2
+
   # Seconds a Tier-3 approval request stays valid before it expires unused.
   approval_ttl: 300
   options:
@@ -1086,6 +1096,26 @@ command_line:
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
+
+# ---------------------------------------------------------------------------
+# Specialists — one markdown file each, under config/agents/
+# ---------------------------------------------------------------------------
+#
+# A subagent is a model call with a specialist prompt, a narrowed tool list, a
+# context budget and a task of its own, and `delegate_to_agents` is the only
+# thing that reaches one. Four ship: researcher, coder, verifier, summarizer.
+#
+# They run at the same time, bounded by `llm.max_concurrent` above, because the
+# model server is one machine: four concurrent prompts against one KV cache is
+# not four times the work, and the voice path pays for the eviction.
+#
+# Nothing here is dangerous by itself — a specialist's tools are the lead's
+# tools, tier-checked in the same registry — but a fan-out is up to six model
+# calls, so the tool is Tier 2: it goes away and does something you can watch
+# on the task list.
+agents:
+  path: agents
+  # enabled: [researcher, summarizer]   # omit for all of them
 
 # ---------------------------------------------------------------------------
 # Packages — self-contained features in one file each.

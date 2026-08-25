@@ -25,6 +25,7 @@ export const EVENT_TASK_OUTPUT = 'jarvis_task_output';
  * lets it appear on the job it belongs to instead of only in the global
  * approval banner.
  */
+export const EVENT_TASK_CHILD_ADDED = 'jarvis_task_child_added';
 export const EVENT_APPROVAL_REQUIRED = 'jarvis_approval_required';
 export const EVENT_APPROVAL_RESOLVED = 'jarvis_approval_resolved';
 
@@ -33,6 +34,7 @@ export const TASK_ACTIVITY_EVENTS = [
 	EVENT_TASK_TOOL_STARTED,
 	EVENT_TASK_TOOL_FINISHED,
 	EVENT_TASK_OUTPUT,
+	EVENT_TASK_CHILD_ADDED,
 	EVENT_APPROVAL_REQUIRED,
 	EVENT_APPROVAL_RESOLVED
 ] as const;
@@ -75,6 +77,17 @@ export interface HeldAction {
 	at: number;
 }
 
+/** One subagent under this task, as the tree draws it. */
+export interface ChildRow {
+	id: string;
+	title: string;
+	/** Which specialist ran it: `researcher`, `verifier`, … */
+	agent: string;
+	status: string;
+	result: string;
+	at: number;
+}
+
 export interface Activity {
 	taskId: string;
 	calls: ToolCall[];
@@ -85,6 +98,14 @@ export interface Activity {
 	 * and a second request arriving would otherwise replace the first silently.
 	 */
 	held: HeldAction[];
+	/**
+	 * Subagents spawned under this task, oldest first.
+	 *
+	 * A fan-out is the one shape where "what is this task doing" cannot be
+	 * answered by a line of detail: five specialists are running at once, and
+	 * the interesting thing is which of them has come back.
+	 */
+	children: ChildRow[];
 	/**
 	 * Everything that happened, oldest first: replayed once when the page opens
 	 * (so somebody arriving late sees what they missed) and extended by every
@@ -103,7 +124,7 @@ export const MAX_OUTPUT_CHUNKS = 400;
 export const MAX_CALLS = 200;
 
 export function emptyActivity(taskId: string): Activity {
-	return { taskId, calls: [], output: [], held: [], log: [] };
+	return { taskId, calls: [], output: [], held: [], children: [], log: [] };
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -121,6 +142,39 @@ const num = (value: unknown, fallback = 0): number =>
  * Returns the same object when the event is for another task or is not one of
  * ours, so a caller can use identity to decide whether to re-render.
  */
+/**
+ * A child task appearing or changing under this one.
+ *
+ * Separate from `applyActivityEvent` because the payload is shaped differently:
+ * the watching events carry `task_id` and a fragment, while a lifecycle event
+ * carries the whole task — and the id that matters here is the child's
+ * `parent_id`, not the task the page is watching.
+ */
+export function applyChildEvent(
+	activity: Activity,
+	data: unknown,
+	now: number = Date.now()
+): Activity {
+	const task = asRecord(asRecord(data).task);
+	if (!task.id || str(task.parent_id) !== activity.taskId) return activity;
+	const row: ChildRow = {
+		id: str(task.id),
+		title: str(task.title),
+		agent: str(task.agent),
+		status: str(task.status, 'queued'),
+		result: str(task.result ?? task.error),
+		at: now
+	};
+	const known = activity.children.findIndex((child) => child.id === row.id);
+	const children =
+		known === -1
+			? [...activity.children, row]
+			: activity.children.map((child, index) =>
+					index === known ? { ...row, at: child.at } : child
+				);
+	return { ...activity, children };
+}
+
 export function applyActivityEvent(
 	activity: Activity,
 	eventType: string,
@@ -128,6 +182,7 @@ export function applyActivityEvent(
 	now: number = Date.now()
 ): Activity {
 	const payload = asRecord(data);
+	if (eventType === EVENT_TASK_CHILD_ADDED) return applyChildEvent(activity, data, now);
 	if (str(payload.task_id) !== activity.taskId) return activity;
 
 	const note = (kind: LogEntry['kind'], text: string): LogEntry[] =>
