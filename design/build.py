@@ -339,6 +339,26 @@ def value_of(tokens: dict, path: tuple[str, ...]) -> str:
     return str(resolve(tokens, node["$value"]))
 
 
+def ms_of(value: object) -> int:
+    """`"260ms"` / `"1.4s"` -> 260 / 1400. Android animates in whole ms."""
+    text = str(value).strip()
+    if text.endswith("ms"):
+        return int(round(float(text[:-2])))
+    if text.endswith("s"):
+        return int(round(float(text[:-1]) * 1000))
+    return int(round(float(text)))
+
+
+def bezier_points(value: str) -> list[str]:
+    """`cubic-bezier(0.22, 0.61, 0.36, 1)` -> the four numbers, as written."""
+    import re as _re
+
+    found = _re.search(r"cubic-bezier\(([^)]*)\)", value)
+    if not found:
+        return []
+    return [part.strip() for part in found.group(1).split(",") if part.strip()]
+
+
 def gen_kotlin_tokens(tokens: dict) -> str:
     lines = [
         "package ai.jarvis.app.ui.theme",
@@ -389,6 +409,32 @@ def gen_kotlin_tokens(tokens: dict) -> str:
         px = str(value)
         if px.endswith("px") and px[:-2].isdigit():
             lines.append(f"        const val {const_name(path)} = {px[:-2]}")
+    lines.append("    }")
+    lines.append("")
+    # Motion (M44). The phone had colour, type, spacing and radii generated and
+    # animated with numbers somebody typed — so the one property that is FELT
+    # rather than seen was the one not coming from the design system.
+    lines.append("    /** Durations in milliseconds, and the curves, for animators. */")
+    lines.append("    object Motion {")
+    lines.append("        object Dur {")
+    for path, _kind, value in leaves(tokens["motion"]["dur"]):
+        lines.append(f"            const val {const_name(path)} = {ms_of(value)}")
+    lines.append("        }")
+    lines.append("")
+    lines.append("        /** Cubic-bezier control points, as (x1, y1, x2, y2). */")
+    lines.append("        object Ease {")
+    for path, _kind, value in leaves(tokens["motion"]["ease"]):
+        points = bezier_points(str(value))
+        if points:
+            joined = ", ".join(f"{p}f" for p in points)
+            lines.append(f"            val {const_name(path)} = floatArrayOf({joined})")
+    lines.append("        }")
+    lines.append("")
+    lines.append("        /** Stagger between one row and the next, in milliseconds. */")
+    lines.append("        object Stagger {")
+    for path, _kind, value in leaves(tokens["motion"]["stagger"]):
+        lines.append(f"            const val {const_name(path)} = {ms_of(value)}")
+    lines.append("        }")
     lines.append("    }")
     lines.append("}")
     return "\n".join(lines) + "\n"

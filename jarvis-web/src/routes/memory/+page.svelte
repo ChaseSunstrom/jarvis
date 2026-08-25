@@ -14,7 +14,12 @@
 	 * of it is the user's, and it is theirs through this page.
 	 */
 	import { onMount } from 'svelte';
-	import { openConnection, describeError, type Connection } from '$lib/connection';
+	import {
+		openConnection,
+		describeError,
+		type Connection,
+		type ConnectionStatus
+	} from '$lib/connection';
 	import { isUnsupported } from '$lib/jarvisClient';
 	import { toasts } from '$lib/toast';
 	import { ScreenState, type Status } from '$lib/ui';
@@ -39,10 +44,28 @@
 	let supported = $state(true);
 	let busy = $state('');
 	let confirmingWipe = $state(false);
+	let link = $state<ConnectionStatus>('connecting');
 
 	const extracted = $derived(entries.filter((e) => e.source === 'extracted').length);
+	/*
+	 * Offline is first, and it is a state this page did not have.
+	 *
+	 * Everything below the fold here is a list read once over a socket. When
+	 * that socket died the page kept showing the list it had, which is the
+	 * worst of the four states to get wrong on THIS screen: what Jarvis
+	 * remembers is exactly the thing you would act on, and stale is
+	 * indistinguishable from current unless the page says so.
+	 */
 	const status = $derived<Status>(
-		loading ? 'loading' : err ? 'error' : entries.length === 0 ? 'empty' : 'ready'
+		link === 'closed' || link === 'error'
+			? 'offline'
+			: loading
+				? 'loading'
+				: err
+					? 'error'
+					: entries.length === 0
+						? 'empty'
+						: 'ready'
 	);
 
 	async function load(): Promise<void> {
@@ -63,11 +86,27 @@
 		}
 	}
 
+	/** Reconnect dials again: `load()` would reuse the socket that just died. */
+	async function reconnect(): Promise<void> {
+		conn?.close();
+		conn = null;
+		link = 'connecting';
+		err = '';
+		loading = true;
+		try {
+			conn = await openConnection({ onStatus: (s) => (link = s) });
+			await load();
+		} catch (e) {
+			err = describeError(e);
+			loading = false;
+		}
+	}
+
 	onMount(() => {
 		let live: Connection | null = null;
 		void (async () => {
 			try {
-				live = await openConnection();
+				live = await openConnection({ onStatus: (s) => (link = s) });
 				conn = live;
 				await load();
 			} catch (e) {
@@ -201,7 +240,7 @@
 		errorTitle="Couldn't read what Jarvis remembers"
 		errorDetail={err}
 		onretry={load}
-		onreconnect={load}
+		onreconnect={reconnect}
 		testid="memory-state"
 		emptyTestid="memory-empty"
 		errorTestid="memory-error"

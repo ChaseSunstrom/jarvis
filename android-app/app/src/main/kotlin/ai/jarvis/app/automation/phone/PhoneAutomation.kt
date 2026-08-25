@@ -96,6 +96,20 @@ interface PhoneAutomation {
         val available: Boolean get() = BuildConfig.PHONE_AUTOMATION
 
         /**
+         * The action-id prefixes this feature owns.
+         *
+         * Here rather than in `AutomationBridge`, which had copies as string
+         * literals. Two lists of the same thing is how a door ends up
+         * refusing a slightly different set from the one behind it — and it
+         * left this module with a spec and no caller, which is its own kind
+         * of lie (`no_empty_seams_test.py`).
+         */
+        val ACTION_PREFIXES: List<String> = listOf("ui_", "phone_")
+
+        /** True when an action id belongs to this feature, flag or no flag. */
+        fun owns(action: String): Boolean = ACTION_PREFIXES.any { action.startsWith(it) }
+
+        /**
          * The implementation, or null.
          *
          * Null in every shipped build. Wiring one in is a deliberate act: set

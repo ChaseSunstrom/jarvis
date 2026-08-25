@@ -60,6 +60,10 @@ enum class ConsoleTab(
     CODE("CODE", "/code"),
     NOTES("NOTES", "/notes"),
     MEMORY("MEMORY", "/memory"),
+    // M07 put the console in a desktop window and gave it a page; the phone
+    // gained nothing, so a browser at the same URL showed strictly more app
+    // than the phone did. `console_parity_test.py` is the check that noticed.
+    DESKTOP("DESKTOP", "/desktop"),
     SETTINGS("SETTINGS", "/settings");
 
     companion object {

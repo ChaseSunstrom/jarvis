@@ -96,3 +96,116 @@ export function watchReducedMotion(
 	}
 	return () => {};
 }
+
+// --- the primitives (M44) ---------------------------------------------------
+//
+// Every animation in the console comes from one of these, and each is a token
+// lookup rather than a number. That is what makes "consistent motion" a
+// property the token lint can enforce instead of a thing everybody remembers
+// differently: a hand-written `transition: all 0.3s ease` is a hard-coded
+// value, and `scripts/verify/token_lint.py` fails on it.
+//
+// All six honour reduced motion by returning a zero-duration style. Not "a
+// faster animation" — nothing. Somebody who has asked their operating system
+// for less movement has told you what they want, and 80 ms of it is still
+// movement.
+
+/** The named curves. `standard` is the default; `spring` overshoots. */
+export const EASE = {
+	standard: 'var(--jv-ease-standard)',
+	decelerate: 'var(--jv-ease-decelerate)',
+	accelerate: 'var(--jv-ease-accelerate)',
+	spring: 'var(--jv-ease-spring)'
+} as const;
+
+export type EaseName = keyof typeof EASE;
+export type DurationName = keyof typeof DURATION;
+
+export interface MotionOptions {
+	duration?: DurationName;
+	ease?: EaseName;
+	delay?: number;
+	/** Distance for a slide, in px. Ignored by the others. */
+	distance?: number;
+	/** Start scale for a scale-in. Ignored by the others. */
+	from?: number;
+	reduced?: boolean;
+}
+
+function inert(reduced: boolean | undefined): boolean {
+	return reduced ?? prefersReducedMotion();
+}
+
+function base(options: MotionOptions): string {
+	const ms = DURATION[options.duration ?? 'base'];
+	const ease = EASE[options.ease ?? 'standard'];
+	const delay = options.delay ? ` ${Math.round(options.delay)}ms` : '';
+	return `${ms}ms ${ease}${delay}`;
+}
+
+/** Fade in. The one to reach for when nothing else is warranted. */
+export function fade(options: MotionOptions = {}): string {
+	if (inert(options.reduced)) return 'opacity:1;';
+	return `animation: jv-fade ${base(options)} both;`;
+}
+
+/**
+ * Slide in from below (or from `distance` px away).
+ *
+ * Paired with a fade by convention: a thing that slides without fading reads
+ * as a thing that was already there and moved, which is a different sentence.
+ */
+export function slide(options: MotionOptions = {}): string {
+	if (inert(options.reduced)) return 'opacity:1;transform:none;';
+	const distance = options.distance ?? 8;
+	return (
+		`--jv-slide-from:${distance}px;` +
+		`animation: jv-slide ${base({ ease: 'decelerate', ...options })} both;`
+	);
+}
+
+/** Scale in. `spring` by default, because a thing that pops should overshoot. */
+export function scale(options: MotionOptions = {}): string {
+	if (inert(options.reduced)) return 'opacity:1;transform:none;';
+	const from = options.from ?? 0.96;
+	return (
+		`--jv-scale-from:${from};` +
+		`animation: jv-scale ${base({ ease: 'spring', ...options })} both;`
+	);
+}
+
+/**
+ * The shimmer a skeleton uses while something loads.
+ *
+ * Reduced motion gets a still placeholder rather than a slower shimmer: the
+ * animation IS the content here, and a slow one is a distraction that never
+ * ends.
+ */
+export function shimmer(options: MotionOptions = {}): string {
+	if (inert(options.reduced)) return 'opacity:0.6;';
+	return `animation: jv-shimmer var(--jv-dur-sweep) ${EASE.standard} infinite;`;
+}
+
+/** The slow glow that says something is alive — a running task, a live orb. */
+export function glowPulse(options: MotionOptions = {}): string {
+	if (inert(options.reduced)) return '';
+	return `animation: jv-glow-pulse var(--jv-dur-pulse) ${EASE.standard} infinite alternate;`;
+}
+
+/**
+ * A shared-element transition: the same thing in two places, moved.
+ *
+ * Returns the `view-transition-name` the browser needs on BOTH ends. Where the
+ * View Transitions API is missing the name is inert and the change is a cut,
+ * which is the correct fallback — a polyfill that animates a clone is how you
+ * get two of something on screen at once.
+ */
+export function sharedElement(name: string, reduced?: boolean): string {
+	if (inert(reduced) || !name) return '';
+	return `view-transition-name: ${name.replace(/[^a-zA-Z0-9_-]/g, '-')};`;
+}
+
+/** True when the browser can do shared-element transitions at all. */
+export function supportsSharedElement(host: Document | undefined = globalThis.document): boolean {
+	return typeof (host as any)?.startViewTransition === 'function';
+}

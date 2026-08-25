@@ -1,5 +1,6 @@
 package ai.jarvis.app.automation
 
+import ai.jarvis.app.automation.phone.PhoneAutomation
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -320,14 +321,6 @@ object AutomationBridge {
     // --- convenience --------------------------------------------------------
 
     /**
-     * Dispatch with a `command_id`, picking the richer overload when the
-     * registered dispatcher supports it.
-     *
-     * For callers that are not the channel — the task runner, a UI tap — so
-     * they do not each have to repeat the type check. Returns null when no
-     * dispatcher is registered, which means automation is not running.
-     */
-    /**
      * Whether an action id belongs to the phone-automation feature (M22).
      *
      * Those actions are gated at compile time and refused here as well: the
@@ -335,8 +328,16 @@ object AutomationBridge {
      * it is worth more than a rule that lives only in the thing behind it.
      */
     private fun isPhoneAutomation(action: String): Boolean =
-        action.startsWith("ui_") || action.startsWith("phone_")
+        PhoneAutomation.owns(action)
 
+    /**
+     * Dispatch with a `command_id`, picking the richer overload when the
+     * registered dispatcher supports it.
+     *
+     * For callers that are not the channel — the task runner, a UI tap — so
+     * they do not each have to repeat the type check. Returns null when no
+     * dispatcher is registered, which means automation is not running.
+     */
     suspend fun dispatchCommand(
         actionId: String,
         params: JSONObject,

@@ -117,3 +117,25 @@ To turn it on:
       enabled: true
       api_key: !secret anthropic_api_key
 
+
+## 5. The motion taste checkpoint (M44)
+
+**Needed by:** M44's own completion clause — "the milestone is not done until
+they have signed off", and the notes worked through as a second pass.
+
+The harness proves motion is smooth, token-generated, reduced-motion-safe and
+never blocking. It cannot prove it is *cool*, which is the half that matters,
+so four headless Chromium recordings are waiting in `docs/motion-review/`:
+
+| File | What it shows |
+| --- | --- |
+| `1-boot.webm` | the staged boot sequence, subsystems coming online |
+| `2-orb-states.webm` | idle → listening → thinking → speaking |
+| `3-task-running.webm` | a task view: streaming cursor, tool nodes, resolution |
+| `4-navigation.webm` | shared-element transitions between pages |
+
+They play in any browser (`webm`/VP8, no GUI or device needed). What would
+unblock it is notes — "the boot is a beat too slow", "the thinking state reads
+as an error", "the orb should breathe, not pulse" — at whatever length. A
+second pass follows; the milestone is ticked for the buildable half only, and
+`docs/motion-review/README.md` says the same thing next to the files.

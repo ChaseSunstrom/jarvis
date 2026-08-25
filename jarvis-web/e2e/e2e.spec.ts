@@ -1098,10 +1098,23 @@ test("the console header stays put when the page scrolls", async ({ page }) => {
 
   // `overflow-x: hidden` on the root is one careless line away from turning the
   // document into a scroll container and quietly breaking `position: sticky`.
+  //
+  // Measured against the HEADER's own box, not a fixed 80px. The number was a
+  // proxy for "the header is one row tall", which is not what this test is
+  // about: the eleventh section (`/desktop`) made the header wrap to two rows
+  // at 1280px and this went red while `position: sticky` was working
+  // perfectly. Making the nav scroll instead of wrap fixes the height and
+  // hides SETTINGS behind an invisible scroll, which is worse — so the header
+  // is two rows for now (M48 owns the nav's real overflow answer) and this
+  // asserts the thing in its own name.
+  const header = (await page.locator(".console-top").boundingBox())!;
+  expect(header.y).toBe(0);
   const nav = (await page.getByTestId("nav-devices").boundingBox())!;
-  expect(nav.y).toBeLessThan(80);
+  expect(nav.y).toBeGreaterThanOrEqual(0);
+  expect(nav.y + nav.height).toBeLessThanOrEqual(header.y + header.height);
   const badge = (await page.getByTestId("link-status").boundingBox())!;
-  expect(badge.y).toBeLessThan(80);
+  expect(badge.y).toBeGreaterThanOrEqual(0);
+  expect(badge.y + badge.height).toBeLessThanOrEqual(header.y + header.height);
 });
 
 // The tab icon. Committing a favicon proves nothing on its own — it has to be

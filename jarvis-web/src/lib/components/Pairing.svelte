@@ -110,6 +110,25 @@
 	const secondsLeft = $derived(expiresAt ? Math.max(0, Math.round(expiresAt - now / 1000)) : 0);
 	const live = $derived(Boolean(code) && secondsLeft > 0);
 	const canIssue = $derived(lock === 'open' && secretHeld);
+	/*
+	 * Why the button is off, in the button itself.
+	 *
+	 * A disabled control with no explanation is a dead end: the two reasons
+	 * here are "the panel is still locked" and "already working", and neither
+	 * is visible from the greyed-out button. `e2e/controls.spec.ts` requires
+	 * every disabled control to carry a title or an aria description, and it
+	 * caught this one intermittently — only when the page happened to be
+	 * sampled while it was busy.
+	 */
+	const issueBlockedBecause = $derived(
+		busy
+			? 'A code is being generated.'
+			: lock !== 'open'
+				? 'Unlock this panel with the console password first.'
+				: !secretHeld
+					? 'The server has not handed over the pairing secret yet.'
+					: ''
+	);
 
 	/**
 	 * `jarvis://pair?v=1&u=<url>&c=<code>` — what `PairingPayload.kt` parses.
@@ -626,6 +645,7 @@
 			class="btn"
 			data-testid="pair-new"
 			disabled={busy || !canIssue}
+			title={issueBlockedBecause || 'Generate a one-time pairing code.'}
 			onclick={issue}
 		>
 			{busy ? 'GENERATING…' : 'GENERATE CODE'}

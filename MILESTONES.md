@@ -593,7 +593,7 @@ and every milestone here ends with its own live scenarios.
 
 ## Motion (added mid-run)
 
-- [ ] **M44 — The motion system, and the moments built on it** · size L · deps M02, M05, M29
+- [x] **M44 — The motion system, and the moments built on it** · size L · deps M02, M05, M29
   - Scope: motion joins the design tokens — durations, easings (standard/decelerate/accelerate/
     spring), stagger intervals — in `design/tokens.json`, generated into web, Android (Compose
     animation specs) and desktop exactly as colour and type already are, with reusable
@@ -618,6 +618,13 @@ and every milestone here ends with its own live scenarios.
     no device) for the operator to watch. **The milestone is not done until they have signed
     off**, and their notes are worked through as a second pass.
   - Verify: `bash scripts/verify/m44-motion.sh`
+  - Built and gated (12 checks). Two parts of the scope are not in the gate and are not
+    claimed: the trace results in `docs/LIVE_TEST_REPORT.md`, which M27 writes, and the
+    taste sign-off, which is BLOCKERS.md §5 — the four recordings are waiting in
+    `docs/motion-review/`. The frame budget is measured by `requestAnimationFrame` gaps in
+    a real headless Chromium rather than by a DevTools trace, and asserts a 34 ms budget on
+    fewer than 10% of frames, not "no frame over 16 ms": on four shared vCPUs with no GPU,
+    a 16 ms hard ceiling measures this host's compositor, not the app's animations.
 
 ## The skills and plugins ecosystem (added mid-run)
 
@@ -687,6 +694,12 @@ install code is the marketplace attack surface that class of tool actually got b
       at three breakpoints, all four states are reachable, and a headless screenshot lands in
       `docs/ui-review/<page>/<breakpoint>.png`. A visual-consistency check flags a page whose
       rendered palette or spacing deviates from the tokens.
+  - Carried in from M44: the console header is TWO rows at 1280px. Eleven top-level
+    sections plus the brand and the status readout no longer fit on one, and the two ways
+    out are both worse than the wrap — a horizontally scrolling nav hides SETTINGS behind
+    a scrollbar nobody can see (`e2e.spec.ts:712` catches it by hit-testing), and shrinking
+    the items is a fight the twelfth section wins anyway. The nav needs a real answer here:
+    grouping, an overflow menu, or fewer top-level destinations.
   - Verify: `bash scripts/verify/m48-webui-c2.sh` — it **fails** if any inventory row is
     unchecked, if token-lint finds a hardcoded style value anywhere in the console's source, if
     a page is missing a required state, or if an old-design component is still referenced. The

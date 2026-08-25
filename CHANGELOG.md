@@ -50,6 +50,22 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M44 (motion): durations, easings and stagger intervals are design tokens now, generated into
+  the console's CSS and TypeScript and into `JarvisTokens.Motion` for Compose from the same
+  `design/tokens.json` as colour and type — so a duration cannot drift from the design system
+  by being typed twice, and `token_lint.py` treats a raw `transition:` the way it already
+  treats a raw `#hex`. Five primitives (fade, slide, scale, shimmer, glow-pulse) every
+  animation draws from, each of which returns non-animating styles under
+  `prefers-reduced-motion` rather than a shorter animation. Measured in headless Chromium
+  rather than asserted: rAF frame gaps over the boot sequence and a busy task view, layout
+  shift, the reduced-motion path with the preference actually emulated, and typing into the
+  composer while the boot timeline runs — because a decorative sequence that eats a keystroke
+  is the failure worth catching. What the harness cannot prove is whether it looks good, so
+  four recordings are in `docs/motion-review/` waiting for the operator (`BLOCKERS.md` §5).
+  The token ratchet was re-measured while proving the new rule bites: `token-lint.baseline.json`
+  still carried the per-file allowances from the day the rule landed, all long since cleaned to
+  zero, so a hard-coded `transition: all 240ms ease-in-out` planted in `base.css` passed the gate.
+  The allowance file is empty now — any raw colour, size, type or duration in app code fails.
 - M26 (the intelligence scorecard): `evals/intelligence/` — twenty-seven fixed prompts through
   the **full voice pipeline**, scoring the six things a person notices in the first week:
   whether a later turn knows what an earlier one said, which capability a request actually

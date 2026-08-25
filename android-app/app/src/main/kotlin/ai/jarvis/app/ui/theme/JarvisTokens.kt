@@ -122,4 +122,35 @@ object JarvisTokens {
         const val LG = 12
         const val PILL = 999
     }
+
+    /** Durations in milliseconds, and the curves, for animators. */
+    object Motion {
+        object Dur {
+            const val INSTANT = 90
+            const val FAST = 160
+            const val BASE = 260
+            const val SLOW = 320
+            const val PULSE = 620
+            const val ENTER = 900
+            const val SWEEP = 1400
+            const val BLINK = 2400
+        }
+
+        /** Cubic-bezier control points, as (x1, y1, x2, y2). */
+        object Ease {
+            val OUT = floatArrayOf(0.22f, 0.61f, 0.36f, 1f)
+            val IN_OUT = floatArrayOf(0.65f, 0f, 0.35f, 1f)
+            val OVERSHOOT = floatArrayOf(0.34f, 1.56f, 0.64f, 1f)
+            val STANDARD = floatArrayOf(0.22f, 0.61f, 0.36f, 1f)
+            val DECELERATE = floatArrayOf(0f, 0f, 0.2f, 1f)
+            val ACCELERATE = floatArrayOf(0.4f, 0f, 1f, 1f)
+            val SPRING = floatArrayOf(0.34f, 1.56f, 0.64f, 1f)
+        }
+
+        /** Stagger between one row and the next, in milliseconds. */
+        object Stagger {
+            const val STEP = 26
+            const val CAP = 320
+        }
+    }
 }

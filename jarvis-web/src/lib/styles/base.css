@@ -133,3 +133,35 @@ body {
 		scroll-behavior: auto !important;
 	}
 }
+
+/* --- motion primitives (M44) ------------------------------------------------
+ *
+ * The keyframes `lib/motion.ts` names. Every value here is a token or a custom
+ * property the caller sets, so a duration cannot drift from the design system
+ * by being typed twice.
+ *
+ * Reduced motion is handled by the kill switch ABOVE, which cuts every
+ * animation in the app to none — these keyframes need no exception of their
+ * own, and adding a second, weaker rule here (shortening durations rather than
+ * removing animations) would have quietly overridden the stronger one.
+ */
+@keyframes jv-fade {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+@keyframes jv-slide {
+	from { opacity: 0; transform: translateY(var(--jv-slide-from, 8px)); }
+	to { opacity: 1; transform: none; }
+}
+@keyframes jv-scale {
+	from { opacity: 0; transform: scale(var(--jv-scale-from, 0.96)); }
+	to { opacity: 1; transform: none; }
+}
+@keyframes jv-shimmer {
+	from { opacity: 0.35; }
+	to { opacity: 0.75; }
+}
+@keyframes jv-glow-pulse {
+	from { filter: brightness(1); }
+	to { filter: brightness(1.25); }
+}

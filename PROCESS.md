@@ -197,3 +197,12 @@ milestone in progress is left as a WIP commit on its own branch with
 
 Report to the owner in plain terms: what got ticked, what is red and why,
 what is next. No "should work"; if it was not run, say it was not run.
+
+**Never `git checkout <path>` to undo a probe.** Proving a check still bites
+means planting a violation and taking it out again, and `git checkout` takes
+out everything else in that file too — under M44 it silently reverted an
+uncommitted afternoon of `motion.ts` and `base.css` to the last commit, and the
+gate stayed green because it had already run. Copy the file aside first and
+copy it back, or `git stash` the whole tree. The rule generalises: any command
+whose scope is "the file" is the wrong tool while the file holds work that is
+not committed yet.
