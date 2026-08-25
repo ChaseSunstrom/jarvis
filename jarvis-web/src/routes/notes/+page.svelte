@@ -13,7 +13,12 @@
 	 * this?".
 	 */
 	import { onMount } from 'svelte';
-	import { openConnection, describeError, type Connection } from '$lib/connection';
+	import {
+		openConnection,
+		describeError,
+		type Connection,
+		type ConnectionStatus
+	} from '$lib/connection';
 	import { isUnsupported } from '$lib/jarvisClient';
 	import { toasts } from '$lib/toast';
 	import { ScreenState, type Status } from '$lib/ui';
@@ -41,8 +46,23 @@
 	let creating = $state(false);
 	let newTitle = $state('');
 
+	let link = $state<ConnectionStatus>('connecting');
+	/*
+	 * Offline first, and it is a state this page did not have — the same gap
+	 * Memory had (M44). The socket died and the list stayed on screen looking
+	 * current; a note somebody is about to act on is exactly the wrong thing
+	 * to show a stale copy of without saying so.
+	 */
 	const status = $derived<Status>(
-		loading ? 'loading' : err ? 'error' : notes.length === 0 ? 'empty' : 'ready'
+		link === 'closed' || link === 'error'
+			? 'offline'
+			: loading
+				? 'loading'
+				: err
+					? 'error'
+					: notes.length === 0
+						? 'empty'
+						: 'ready'
 	);
 	const dirty = $derived(Boolean(open) && draft !== (open?.body ?? ''));
 
@@ -63,11 +83,27 @@
 		}
 	}
 
+	/** Reconnect dials again: `load()` would reuse the socket that just died. */
+	async function reconnect(): Promise<void> {
+		conn?.close();
+		conn = null;
+		link = 'connecting';
+		err = '';
+		loading = true;
+		try {
+			conn = await openConnection({ onStatus: (s) => (link = s) });
+			await load();
+		} catch (e) {
+			err = describeError(e);
+			loading = false;
+		}
+	}
+
 	onMount(() => {
 		let live: Connection | null = null;
 		void (async () => {
 			try {
-				live = await openConnection();
+				live = await openConnection({ onStatus: (s) => (link = s) });
 				conn = live;
 				await load();
 			} catch (e) {
@@ -195,7 +231,7 @@
 			errorTitle="Couldn't read the notes"
 			errorDetail={err}
 			onretry={load}
-			onreconnect={load}
+			onreconnect={reconnect}
 			emptyTestid="notes-empty"
 			errorTestid="notes-error"
 		>

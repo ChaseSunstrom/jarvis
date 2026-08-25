@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from .catalog import Catalog, CatalogError, Source
+from .install import InstallError
 from .manifest import KINDS, PERMISSIONS, Manifest, ManifestError, schema
 from .registry import ExtensionRegistry, get_registry
 from .scaffold import SKILL_TEMPLATE, ScaffoldError, scaffold_skill
@@ -30,7 +32,10 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "extensions"
 
 __all__ = [
+    "Catalog",
+    "CatalogError",
     "DOMAIN",
+    "InstallError",
     "ExtensionRegistry",
     "ExtensionState",
     "Manifest",
@@ -118,6 +123,77 @@ def _register_services(
     async def service_template(call: Any) -> Any:
         return {"template": SKILL_TEMPLATE, "permissions": list(PERMISSIONS)}
 
+    # --- the catalog (M47) -------------------------------------------------
+    def _catalog() -> Catalog:
+        store = jarvis.data.get("extension_catalog")
+        return store if isinstance(store, Catalog) else Catalog()
+
+    async def service_sources(call: Any) -> Any:
+        catalog = _catalog()
+        return {
+            "sources": [s.as_dict() for s in catalog.sources.values()],
+            # Said out loud rather than left as an empty list: an operator
+            # looking at nothing should learn that nothing is the default.
+            "note": (
+                "There is no default source. Nothing installs from an origin "
+                "nobody named, so a fresh install can reach nothing at all."
+            ),
+        }
+
+    async def service_browse(call: Any) -> Any:
+        data = call.data or {}
+        catalog = _catalog()
+        if not catalog.sources:
+            return {"entries": [], "sources": [], "error": "no catalog source is configured"}
+        entries = catalog.search(str(data.get("query") or ""), str(data.get("kind") or ""))
+        return {
+            "entries": [e.as_dict() for e in entries],
+            "sources": sorted(catalog.sources),
+        }
+
+    async def service_plan(call: Any) -> Any:
+        """What would happen, and what it would cost. Fetches; installs nothing."""
+        from .install import fetch_local, plan as build_plan, prepare
+
+        data = call.data or {}
+        try:
+            entry = prepare(
+                _catalog(),
+                str(data.get("source") or ""),
+                str(data.get("id") or ""),
+                [str(r) for r in (data.get("refs") or [])],
+            )
+            files = fetch_local(entry)
+            proposal = build_plan(entry, files, expected_sha=str(data.get("sha256") or ""))
+        except (CatalogError, InstallError) as err:
+            return {"error": str(err)}
+        proposal["description"] = entry.description
+        return {"plan": proposal}
+
+    async def service_install(call: Any) -> Any:
+        """Write what was approved. Refuses anything that was not."""
+        from .install import apply as apply_install, fetch_local, prepare
+
+        data = call.data or {}
+        approved = data.get("approved")
+        if not isinstance(approved, dict):
+            return {
+                "error": (
+                    "install takes the plan a human approved. Call extensions.plan, "
+                    "show its permissions and hooks to a person, and pass it back."
+                )
+            }
+        try:
+            entry = prepare(_catalog(), str(data.get("source") or ""), str(data.get("id") or ""))
+            entry.ref = str(approved.get("ref") or entry.ref)
+            files = fetch_local(entry)
+            result = apply_install(jarvis, entry, files, approved)
+        except (CatalogError, InstallError) as err:
+            return {"error": str(err)}
+        registry.index()
+        apply_decisions(jarvis, registry, state)
+        return result
+
     async def service_get(call: Any) -> Any:
         key = str((call.data or {}).get("key") or "")
         record = registry.get(key)
@@ -154,6 +230,40 @@ def _register_services(
     jarvis.services.register(DOMAIN, "health", service_health, supports_response=True)
     jarvis.services.register(DOMAIN, "permissions", service_permissions, supports_response=True)
     jarvis.services.register(DOMAIN, "schema", service_schema, supports_response=True)
+    jarvis.services.register(DOMAIN, "sources", service_sources, supports_response=True)
+    jarvis.services.register(DOMAIN, "browse", service_browse, supports_response=True)
+    jarvis.services.register(DOMAIN, "plan", service_plan, supports_response=True)
+    jarvis.services.register(DOMAIN, "install", service_install, supports_response=True)
+
+
+def _build_catalog(raw: Any) -> Catalog:
+    """The operator's allowlist of origins, and nothing else.
+
+    A source that will not build is DROPPED with a warning rather than taken
+    as far as it goes: half a source is an origin somebody half-allowed.
+    """
+    catalog = Catalog()
+    for entry in (raw or {}).get("sources") or [] if isinstance(raw, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            catalog.add(
+                Source(
+                    name=str(entry.get("name") or ""),
+                    url=str(entry.get("url") or ""),
+                    kind=str(entry.get("kind") or "skill"),
+                    enabled=bool(entry.get("enabled", True)),
+                )
+            )
+        except CatalogError as err:
+            _LOGGER.warning("extensions: catalog source ignored: %s", err)
+    if catalog.sources:
+        _LOGGER.info(
+            "extensions: %d catalog source(s): %s",
+            len(catalog.sources),
+            ", ".join(sorted(catalog.sources)),
+        )
+    return catalog
 
 
 async def _index_and_report(
@@ -209,6 +319,9 @@ def _track_use(jarvis: "Jarvis", registry: ExtensionRegistry, state: ExtensionSt
 
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     from ...const import EVENT_JARVIS_START
+
+    cfg = config if isinstance(config, dict) else {}
+    jarvis.data["extension_catalog"] = _build_catalog(cfg.get("catalog"))
 
     registry = get_registry(jarvis)
     state = ExtensionState(jarvis)

@@ -571,6 +571,26 @@ house's summary is a fraction of a real one's.
 | A recorded measurement can reach a sentence | Automated | `metrics_query` (read-only, in `READ_ONLY_TOOLS`) over the same sources the dashboards draw; the gate asserts the skill names it |
 | A third party's manifest, from a catalog | **Not yet** | M47. The gate for it is the same `Manifest.from_raw` call; what does not exist yet is anything that installs code from off this machine |
 
+### Installing from a catalog (M47)
+
+`bash scripts/verify/m47-catalog.sh` — 19 checks. `docs/THREAT_MODEL.md` carries the argument.
+
+| Claim | Level | Proof |
+|---|---|---|
+| Only a document and a URL can be installed | Automated | `INSTALLABLE_KINDS == {skill, mcp}`; a plugin source is refused with "an in-process import has the whole interpreter", a stdio MCP server with "those come from configuration.yaml, which a person edits" |
+| Nothing installs from an origin nobody named | Automated | `DEFAULT_SOURCES == ()`, and an unconfigured source raises. Shipping a default list would hand the supply chain to whoever owns those URLs, for every install |
+| A source is https or this machine | Automated | `http://`, `ftp://`, a bare path and `gopher://` are all refused |
+| `latest` is not a version | Automated | `resolve_ref` refuses it without a concrete ref to pin to — a blind `latest` makes the approved thing and the landed thing two different objects |
+| What was approved is what lands | Automated | sha256 recorded when the plan is built and re-checked immediately before writing; a swapped payload raises |
+| Nothing in a payload runs | Automated *and the acceptance criterion* | the fixture's `friendly-helper` ships an `install.sh` that would write `/tmp/jarvis-catalog-probe-should-not-exist`. It lands on disk, it is named in the approval prompt as a program, and the marker never exists |
+| Installing without an approved plan is refused | Automated | `apply` raises, and the service answers with the name of the call that is missing |
+| A payload cannot write outside its folder | Automated | traversal, absolute paths, dotfiles, symlinks and over-deep nesting are refused — refused rather than corrected, which is how `/etc/SKILL.md` had been silently becoming `etc/SKILL.md` |
+| A catalog description cannot smuggle an instruction | Automated | quarantined, not filtered: the fixture's hostile description keeps its words and loses its `<\|im_start\|>` marker, and its invented `become_root` permission is dropped rather than shown as real |
+| The console shows what an entry asks for before anything is installed | Automated | `e2e/extensions.spec.ts` — declared permissions on the row, then a second dialog with the ref, the hash, every file and every program |
+| A malicious entry cannot talk the model into installing it | Automated *against the real containers* | `redteam-malicious-skill-install` (live, `gated-on: M47`) — the model has no tool that installs anything, the marker file does not appear, and the reply does not treat the entry's own description as permission |
+| Fetching over **https** | **Not exercised** | the transport is written and the offline gate cannot reach the open internet, so every test runs against `file://`. The difference is one function; the parsing, hashing, hook-finding, approval and write path are the same code |
+| A source that was honest and stops being | **Not defended** | the hash pins a payload to an approval, not a source to a reputation. A taken-over origin fails the check on the NEXT install and does nothing about what is already on disk |
+
 ### The management surface (M46)
 
 `bash scripts/verify/m46-plugins-ui.sh` — 15 checks.

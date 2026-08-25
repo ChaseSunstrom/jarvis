@@ -129,3 +129,54 @@ def test_the_client_tags_the_payload_it_is_about_to_send():
 def test_carrying_private_content_is_a_question_about_the_message():
     assert carries_private_content([{"role": "user", "content": "hi"}]) == (False, "")
     assert carries_private_content(None, None) == (False, "")
+
+
+def test_a_key_the_proxy_did_not_extract_is_still_read() -> None:
+    """The 401 that was not about privacy at all.
+
+    LiteLLM hands this hook the extracted key on `/chat/completions` and an
+    empty string on `/v1/models`, so a client presenting a perfectly good key
+    was accepted on one route and rejected on the other. It showed up as a 401
+    every thirty seconds in the gateway's log — from jarvis-core's own boot
+    probe — and kept `stack-logs-clean` red across four milestones' live checks
+    while nothing was actually broken.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gateway"))
+    from privacy_guard import _presented_key
+
+    class _Request:
+        def __init__(self, headers):
+            self.headers = headers
+
+    key = "sk-litellm-1234"
+    # The route that works: the proxy extracted it.
+    assert _presented_key(_Request({}), key) == key
+    assert _presented_key(_Request({}), f"Bearer {key}") == key
+    # The route that did not: nothing extracted, and the header holds it.
+    assert _presented_key(_Request({"authorization": f"Bearer {key}"}), "") == key
+    assert _presented_key(_Request({"x-api-key": key}), "") == key
+    # And no key anywhere is still no key — the fallback must not invent one.
+    assert _presented_key(_Request({}), "") == ""
+    assert _presented_key(_Request({"authorization": ""}), None) == ""
+
+
+def test_a_header_map_that_will_not_be_read_is_not_a_crash() -> None:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gateway"))
+    from privacy_guard import _presented_key
+
+    class _Hostile:
+        headers = property(lambda self: (_ for _ in ()).throw(RuntimeError("no")))
+
+    class _BadMap:
+        class headers:  # noqa: N801 - a stand-in for a header map that raises
+            @staticmethod
+            def get(_name, _default=None):
+                raise RuntimeError("no")
+
+    assert _presented_key(_BadMap(), "") == ""

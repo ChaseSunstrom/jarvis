@@ -923,6 +923,15 @@ class WebSocketHandler:
             },
         )
 
+    async def _cmd_extensions_browse(self, msg: dict[str, Any]) -> Any:
+        return await common.extensions_browse_payload(self.jarvis, msg)
+
+    async def _cmd_extensions_plan(self, msg: dict[str, Any]) -> Any:
+        return await common.extensions_plan_payload(self.jarvis, msg)
+
+    async def _cmd_extensions_install(self, msg: dict[str, Any]) -> Any:
+        return await common.async_install_extension(self.jarvis, msg)
+
     async def _cmd_extensions_scaffold(self, msg: dict[str, Any]) -> Any:
         return await common.async_scaffold_skill(
             self.jarvis,
@@ -1367,6 +1376,9 @@ WebSocketHandler._HANDLERS = {
     "jarvis/extensions/list": WebSocketHandler._cmd_extensions_list,
     "jarvis/extensions/set": WebSocketHandler._cmd_extensions_set,
     "jarvis/extensions/scaffold": WebSocketHandler._cmd_extensions_scaffold,
+    "jarvis/extensions/browse": WebSocketHandler._cmd_extensions_browse,
+    "jarvis/extensions/plan": WebSocketHandler._cmd_extensions_plan,
+    "jarvis/extensions/install": WebSocketHandler._cmd_extensions_install,
     "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
     "jarvis/mcp/inspect": WebSocketHandler._cmd_mcp_inspect,
     "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,

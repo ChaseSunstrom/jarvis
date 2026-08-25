@@ -54,6 +54,32 @@ study.
 		last_used: number | null;
 	}
 
+	interface CatalogEntry {
+		id: string;
+		kind: string;
+		source: string;
+		url: string;
+		version: string;
+		description: string;
+		author: string;
+		permissions: string[];
+		ref: string;
+		sha256: string;
+	}
+
+	interface InstallPlan {
+		id: string;
+		kind: string;
+		source: string;
+		ref: string;
+		sha256: string;
+		permissions: string[];
+		files: string[];
+		hooks: string[];
+		warning: string;
+		description?: string;
+	}
+
 	interface Props {
 		/** The page's connection. Null while it is dialling. */
 		conn: Connection | null;
@@ -68,6 +94,12 @@ study.
 	let busy = $state('');
 	let opened = $state<string | null>(null);
 	let creating = $state(false);
+	let browsing = $state(false);
+	let catalogQuery = $state('');
+	let catalogEntries = $state<CatalogEntry[]>([]);
+	let catalogSources = $state<string[]>([]);
+	let catalogError = $state('');
+	let proposal = $state<InstallPlan | null>(null);
 	let newName = $state('');
 	let newDescription = $state('');
 	let newTools = $state('');
@@ -150,6 +182,63 @@ study.
 		}
 	}
 
+	async function browse(): Promise<void> {
+		if (!conn) return;
+		catalogError = '';
+		try {
+			const answer = await conn.client.command<{ entries: CatalogEntry[]; sources: string[]; error?: string }>(
+				{ type: 'jarvis/extensions/browse', query: catalogQuery.trim() }
+			);
+			catalogEntries = answer.entries ?? [];
+			catalogSources = answer.sources ?? [];
+			if (answer.error) catalogError = answer.error;
+		} catch (e) {
+			catalogError = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	/** Ask what would happen. Fetches and hashes; installs nothing. */
+	async function propose(entry: CatalogEntry): Promise<void> {
+		if (!conn) return;
+		catalogError = '';
+		busy = entry.id;
+		try {
+			const answer = await conn.client.command<{ plan?: InstallPlan; error?: string }>({
+				type: 'jarvis/extensions/plan',
+				source: entry.source,
+				// `entry`, not `id`: `id` is the websocket envelope's message id.
+				entry: entry.id
+			});
+			if (answer.error) catalogError = answer.error;
+			else proposal = answer.plan ?? null;
+		} catch (e) {
+			catalogError = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = '';
+		}
+	}
+
+	/** Install exactly what is on screen: the plan goes back as approved. */
+	async function confirmInstall(): Promise<void> {
+		if (!conn || !proposal) return;
+		busy = proposal.id;
+		try {
+			await conn.client.command({
+				type: 'jarvis/extensions/install',
+				source: proposal.source,
+				entry: proposal.id,
+				approved: proposal
+			});
+			proposal = null;
+			browsing = false;
+			await load();
+		} catch (e) {
+			catalogError = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = '';
+		}
+	}
+
 	function ago(at: number | null): string {
 		if (!at) return 'never used';
 		const seconds = Math.max(0, Math.floor(Date.now() / 1000 - at));
@@ -192,9 +281,20 @@ study.
 				What has been added to Jarvis, and what each one is allowed to reach. Turning one off
 				takes its tools off the model, not just off this page.
 			</p>
-			<Button variant="primary" testid="extensions-new" onclick={() => (creating = true)}>
-				NEW SKILL
-			</Button>
+			<div class="actions">
+				<Button
+					testid="extensions-browse"
+					onclick={() => {
+						browsing = true;
+						void browse();
+					}}
+				>
+					BROWSE CATALOG
+				</Button>
+				<Button variant="primary" testid="extensions-new" onclick={() => (creating = true)}>
+					NEW SKILL
+				</Button>
+			</div>
 		</div>
 
 		{#each grouped as group (group.kind)}
@@ -319,6 +419,102 @@ study.
 		</p>
 	{/if}
 </Panel>
+
+<!--
+  The catalog. Two dialogs on purpose: browsing is reading, installing is a
+  decision, and the second one shows what the first cannot — the exact ref, the
+  hash, every file, and every program in the payload.
+-->
+<Dialog open={browsing} title="Catalog" onclose={() => (browsing = false)}>
+	{#if catalogSources.length === 0 && !catalogError}
+		<EmptyState
+			title="No catalog source is configured"
+			body="Nothing installs from an origin nobody named. Add one under `extensions: catalog: sources:` in configuration.yaml — https or a folder on this machine."
+			testid="catalog-no-sources"
+		/>
+	{:else}
+		<div class="search">
+			<Input
+				bind:value={catalogQuery}
+				testid="catalog-query"
+				placeholder="Search {catalogSources.join(', ')}"
+			/>
+			<Button testid="catalog-search" onclick={browse}>SEARCH</Button>
+		</div>
+		{#if catalogError}
+			<p class="notice" role="alert" data-testid="catalog-error">{catalogError}</p>
+		{/if}
+		{#each catalogEntries as entry (entry.source + entry.id)}
+			<div class="row" data-testid={`catalog-${entry.id}`}>
+				<div class="line">
+					<span class="name">
+						<span class="id">{entry.id}</span>
+						<span class="what">{entry.description}</span>
+					</span>
+					<div class="marks">
+						<Pill>{entry.source}</Pill>
+						{#if entry.ref}<Pill>{entry.ref}</Pill>{/if}
+						<Button
+							testid={`catalog-install-${entry.id}`}
+							disabled={busy === entry.id}
+							onclick={() => propose(entry)}
+						>
+							REVIEW
+						</Button>
+					</div>
+				</div>
+				{#if entry.permissions.length}
+					<p class="muted small" data-testid={`catalog-perms-${entry.id}`}>
+						Asks for: {entry.permissions.join(', ')}
+					</p>
+				{/if}
+			</div>
+		{/each}
+		{#if catalogEntries.length === 0 && !catalogError}
+			<EmptyState title="Nothing matched" body="Try a different word, or a different source." />
+		{/if}
+	{/if}
+</Dialog>
+
+<Dialog
+	open={Boolean(proposal)}
+	title={`Install ${proposal?.id ?? ''}?`}
+	onclose={() => (proposal = null)}
+>
+	{#if proposal}
+		<dl data-testid="install-plan">
+			<dt>From</dt>
+			<dd>{proposal.source} at {proposal.ref || 'no ref'}</dd>
+			<dt>Checksum</dt>
+			<dd class="hash">{proposal.sha256}</dd>
+			<dt>Asks for</dt>
+			<dd data-testid="install-permissions">
+				{proposal.permissions.length ? proposal.permissions.join(', ') : 'nothing'}
+			</dd>
+			<dt>Files</dt>
+			<dd>{proposal.files.join(', ')}</dd>
+		</dl>
+		{#if proposal.hooks.length}
+			<p class="notice" role="alert" data-testid="install-hooks">{proposal.warning}</p>
+		{/if}
+		<p class="muted small">
+			Nothing in this payload is run — a skill folder is read, never executed. What it can do
+			is tell the model things, and every action it suggests still goes through that action's
+			own approval.
+		</p>
+	{/if}
+	{#snippet actions()}
+		<Button onclick={() => (proposal = null)}>CANCEL</Button>
+		<Button
+			variant="primary"
+			testid="install-confirm"
+			disabled={busy === proposal?.id}
+			onclick={confirmInstall}
+		>
+			INSTALL
+		</Button>
+	{/snippet}
+</Dialog>
 
 <Dialog open={creating} title="New skill" onclose={() => (creating = false)}>
 	<Field label="Name" hint="Lowercase, hyphens. It becomes the folder.">
@@ -456,5 +652,24 @@ study.
 	.small {
 		font-size: var(--jv-fs-2xs);
 		margin: var(--jv-space-2) 0 0;
+	}
+	.actions {
+		display: flex;
+		gap: var(--jv-space-2);
+		flex-shrink: 0;
+	}
+	.search {
+		display: flex;
+		gap: var(--jv-space-2);
+		align-items: flex-end;
+		margin-bottom: var(--jv-space-3);
+	}
+	.search :global(label) {
+		flex: 1 1 auto;
+	}
+	.hash {
+		font-family: var(--jv-font-mono);
+		font-size: var(--jv-fs-2xs);
+		word-break: break-all;
 	}
 </style>

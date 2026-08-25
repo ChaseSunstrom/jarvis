@@ -808,7 +808,31 @@ skills:
 #   jarvis.services.call("extensions", "permissions") who holds each permission
 #   jarvis.services.call("extensions", "health")      is each one working
 #   jarvis.services.call("extensions", "schema")      the manifest schema
+#
+# The catalog is where things are installed FROM, and it is empty by default.
+# There is no shipped source list on purpose: one would hand the supply chain
+# to whoever owns those URLs, for every install, without anybody choosing it.
+#
+# Only two things can be installed, and neither is code this machine runs — a
+# skill (a document; nothing in a skill folder is ever executed) and an http
+# MCP server (a URL and a tier). A plugin is Python running inside Jarvis and a
+# stdio MCP server is a program this machine starts; both are refused, with the
+# reason, and arrive by somebody editing this file or the repository instead.
+#
+# Installing is two steps on purpose: `extensions.plan` fetches, hashes and
+# reads the payload, and shows the declared permissions and every file in it
+# that looks like a program; `extensions.install` takes that plan back and
+# writes it. Nothing installs without one, and the hash is re-checked before
+# anything lands. See `docs/THREAT_MODEL.md`.
 extensions:
+  catalog:
+    sources: []
+      # - name: my-skills
+      #   url: file:///home/you/skills     # a folder on this machine
+      #   kind: skill
+      # - name: some-list
+      #   url: https://example.org/skills  # https only; never http
+      #   kind: skill
 
 # ---------------------------------------------------------------------------
 # MCP — anybody else's tools, inside Jarvis.

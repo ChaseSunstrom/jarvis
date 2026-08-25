@@ -679,7 +679,7 @@ install code is the marketplace attack surface that class of tool actually got b
     plugin case, where turning one off withdraws its tools from the registry the model is
     offered, is `tests/test_extensions.py` against a real registry.
 
-- [ ] **M47 — The catalog, and installing from it safely** · size XL · deps M45, M43, M19
+- [x] **M47 — The catalog, and installing from it safely** · size XL · deps M45, M43, M19
   - Scope: discovery and installation from configured catalog sources — Anthropic's own
     skills and plugins, the curated community lists (`awesome-claude-*`), MCP directories, and
     a named GitHub repository the operator points at — with a browser in the console: search,
@@ -695,7 +695,16 @@ install code is the marketplace attack surface that class of tool actually got b
     (M43) covers catalog metadata, so a description field cannot smuggle an instruction.
     `docs/THREAT_MODEL.md` gains the supply-chain surface. The red-team file gains a
     malicious-skill-install probe, and the suite fails if anything unapproved executes.
-  - Verify: `bash scripts/verify/m47-catalog.sh`
+  - Verify: `bash scripts/verify/m47-catalog.sh` — 19 checks.
+  - The design is mostly refusals, and the two big ones are worth restating: a **plugin**
+    cannot be installed (Python in this process has the whole interpreter, and there is no
+    sandbox for that), and a **stdio MCP server** cannot (it is a program this machine starts,
+    and those come from the file a person edits). What remains — a document and a URL — is
+    installable precisely because neither is code this machine runs, which is also how "runs
+    under the same sandbox and approval system" is satisfied: there is nothing to run. Sources
+    are https or `file://` and there is no default list. Fetching over https is written but
+    exercised only against `file://` here, because the offline gate cannot reach the open
+    internet; the transport is the only difference and it is one function.
 
 ## The console, finished (added mid-run)
 

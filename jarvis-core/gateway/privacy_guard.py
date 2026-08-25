@@ -133,6 +133,32 @@ def refusal(model: str, tag: str) -> str:
     return ""
 
 
+def _presented_key(request: Any, api_key: str) -> str:
+    """The key the caller actually sent.
+
+    `api_key` alone was not enough. The proxy hands this hook the extracted key
+    on `/chat/completions` and an EMPTY STRING on `/v1/models`, so a client
+    presenting a perfectly good key was rejected on one route and accepted on
+    the other — which showed up as a 401 every thirty seconds in the gateway's
+    log from jarvis-core's own boot probe, and kept `stack-logs-clean` red
+    across four milestones' live checks while nothing was actually broken.
+
+    Falling back to the header is not a weakening: it is the same value the
+    proxy would have extracted, read from the same place.
+    """
+    given = str(api_key or "").replace("Bearer ", "").strip()
+    if given:
+        return given
+    headers = getattr(request, "headers", None)
+    raw = ""
+    if headers is not None:
+        try:
+            raw = str(headers.get("authorization") or headers.get("x-api-key") or "")
+        except Exception:  # noqa: BLE001 - a header map that will not be read
+            raw = ""
+    return raw.replace("Bearer ", "").strip()
+
+
 async def privacy_auth(request: Any, api_key: str) -> Any:
     """Authenticate, then refuse anything private that was aimed off-network.
 
@@ -140,7 +166,7 @@ async def privacy_auth(request: Any, api_key: str) -> Any:
     Starlette caches it, so the proxy's own read afterwards sees the same bytes.
     """
     master = os.environ.get("LITELLM_MASTER_KEY", "")
-    given = str(api_key or "").replace("Bearer ", "").strip()
+    given = _presented_key(request, api_key)
     if master and given != master:
         raise HTTPException(status_code=401, detail="invalid key")
 

@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { NAV_SCREENS } from '$lib/screens';
 
 	import '$lib/styles/fonts.css';
 	import '$lib/styles/tokens.css';
@@ -26,19 +27,14 @@
 	// preference that only applied to the settings page would be a joke.
 	onMount(() => applyTextSize(document, readTextSize(localStorage)));
 
-	const NAV = [
-		{ href: '/devices', label: 'DEVICES', chord: 'g d' },
-		{ href: '/areas', label: 'AREAS', chord: 'g r' },
-		{ href: '/automations', label: 'AUTOMATIONS', chord: 'g a' },
-		{ href: '/tools', label: 'TOOLS', chord: 'g t' },
-		{ href: '/tasks', label: 'TASKS', chord: 'g k' },
-		{ href: '/dashboards', label: 'DASHBOARDS', chord: 'g b' },
-		{ href: '/code', label: 'CODE', chord: 'g c' },
-		{ href: '/notes', label: 'NOTES', chord: 'g n' },
-		{ href: '/memory', label: 'MEMORY', chord: 'g m' },
-		{ href: '/desktop', label: 'DESKTOP', chord: 'g e' },
-		{ href: '/settings', label: 'SETTINGS', chord: 'g s' }
-	];
+	// The tab strip, from the one place a route is declared. This was a
+	// second copy of it — eleven entries beside `screens.ts`'s nine — and
+	// `/notes` and `/desktop` were reachable and undeclared as a result.
+	const NAV = NAV_SCREENS.map((screen) => ({
+		href: screen.path,
+		label: screen.name.toUpperCase(),
+		chord: screen.chord ?? ''
+	}));
 
 	// The voice HUD owns the whole viewport and paints its own chrome, so the
 	// console frame is only drawn for the management routes.

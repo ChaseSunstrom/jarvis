@@ -55,21 +55,29 @@ MAIN = ANDROID / "app/src/main/kotlin/ai/jarvis/app/MainActivity.kt"
 SETTINGS = ANDROID / "app/src/main/kotlin/ai/jarvis/app/SettingsActivity.kt"
 FRAME = ANDROID / "app/src/main/kotlin/ai/jarvis/app/ui/ConsoleFrame.kt"
 LAYOUT = REPO / "jarvis-web/src/routes/+layout.svelte"
+SCREENS = REPO / "jarvis-web/src/lib/screens.ts"
 ROUTES = REPO / "jarvis-web/src/routes"
 
 
 def console_nav() -> list[tuple[str, str]]:
-    """The console's own nav, in order: [(LABEL, /path), ...]."""
-    src = LAYOUT.read_text(encoding="utf-8")
-    block = re.search(r"const NAV = \[(.*?)\];", src, re.S)
-    if not block:
-        return []
-    return [
-        (label, href)
-        for href, label in re.findall(
-            r"\{\s*href:\s*'([^']+)',\s*label:\s*'([^']+)'", block.group(1)
-        )
-    ]
+    """The console's own nav, in order: [(LABEL, /path), ...].
+
+    Read from `screens.ts`, which is where a route is declared. It used to be
+    read from a `const NAV = [...]` literal in `+layout.svelte`, and that was a
+    SECOND copy of the same list: eleven entries there against nine here, with
+    `/notes` and `/desktop` reachable and undeclared. The layout builds its tab
+    strip from this file now, so this reads what the console actually renders
+    rather than a list that happened to agree with it.
+    """
+    src = SCREENS.read_text(encoding="utf-8")
+    out: list[tuple[str, str]] = []
+    for block in re.findall(r"\{\s*\n(.*?)\n\t\}", src, re.S):
+        path = re.search(r"path: '([^']+)'", block)
+        name = re.search(r"name: '([^']+)'", block)
+        nav = re.search(r"nav: (true|false)", block)
+        if path and name and nav and nav.group(1) == "true":
+            out.append((name.group(1).upper(), path.group(1)))
+    return out
 
 
 def phone_tabs() -> list[tuple[str, str]]:

@@ -48,7 +48,21 @@ for group in color type space radius elevation motion chrome; do
     check "style guide renders the $group tokens (data-tokens=\"$group\")" \
         grep -q "data-tokens=\"$group\"" jarvis-web/src/routes/styleguide/+page.svelte
 done
-check "style guide shows the four screen states" grep -q 'data-state="offline"' jarvis-web/src/routes/styleguide/+page.svelte
+# The four states, asserted as CONTROLS rather than as a marker attribute.
+# This grepped for `data-state="offline"`, which the page stopped emitting
+# when the states moved into `<ScreenState>` — so the check was red while the
+# states were more real than they had ever been. `e2e/styleguide.spec.ts`
+# clicks each of these and asserts the page changes, which is the claim.
+check "style guide can be driven into all four screen states" python3 -c '
+from pathlib import Path
+src = Path("jarvis-web/src/routes/styleguide/+page.svelte").read_text()
+wanted = ("loading", "empty", "error", "offline")
+missing = [s for s in wanted if s not in src]
+assert not missing, f"the style guide cannot show: {missing}"
+assert "ScreenState" in src, "the states are drawn by something other than the shared component"
+assert "state-{s}" in src, "no per-state control for e2e/styleguide.spec.ts to click"
+print("loading, empty, error and offline, each with a control")
+'
 check "style guide has no dead controls" node scripts/verify/web_dead_controls.mjs jarvis-web/src/routes/styleguide
 
 # The skill that binds future sessions, and the rule that loads it.

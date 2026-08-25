@@ -83,3 +83,45 @@ test('a name that is nearly a path is refused, and says so in the dialog', async
 	await expect(page.getByTestId('new-skill-error')).toBeVisible();
 	await expect(page.getByTestId('ext-skill:../escape')).toHaveCount(0);
 });
+
+test('the catalog shows what an entry asks for before anything is installed', async ({ page }) => {
+	await open(page);
+	await page.getByTestId('extensions-browse').click();
+
+	// Both entries, with their declared permissions on the row.
+	await expect(page.getByTestId('catalog-bin-day')).toBeVisible();
+	await expect(page.getByTestId('catalog-perms-friendly-helper')).toContainText('run_process');
+
+	// The hostile description arrives wrapped, and it is shown as text rather
+	// than obeyed — the marker is the visible evidence that it is data.
+	await expect(page.getByTestId('catalog-friendly-helper')).toContainText('untrusted_content');
+});
+
+test('installing is a second decision, with the hash and every program named', async ({ page }) => {
+	await open(page);
+	await page.getByTestId('extensions-browse').click();
+	await page.getByTestId('catalog-install-friendly-helper').click();
+
+	const plan = page.getByTestId('install-plan');
+	await expect(plan).toBeVisible();
+	// Pinned, hashed, and the permissions are the ones the entry declared.
+	await expect(plan).toContainText('v2.1.0');
+	await expect(plan).toContainText('a'.repeat(16));
+	await expect(page.getByTestId('install-permissions')).toContainText('run_process');
+	// The program in the payload is named before the button is pressed.
+	await expect(page.getByTestId('install-hooks')).toContainText('install.sh');
+	await expect(page.getByTestId('install-hooks')).toContainText('will not run');
+
+	await page.getByTestId('install-confirm').click();
+	await expect(page.getByTestId('ext-skill:friendly-helper')).toBeVisible();
+});
+
+test('a benign entry installs with no program to warn about', async ({ page }) => {
+	await open(page);
+	await page.getByTestId('extensions-browse').click();
+	await page.getByTestId('catalog-install-bin-day').click();
+	await expect(page.getByTestId('install-plan')).toBeVisible();
+	await expect(page.getByTestId('install-hooks')).toHaveCount(0);
+	await page.getByTestId('install-confirm').click();
+	await expect(page.getByTestId('ext-skill:bin-day')).toBeVisible();
+});

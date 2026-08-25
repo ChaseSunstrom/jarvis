@@ -1,3 +1,4 @@
+import { CHORD_ROUTES } from './screens';
 // Keyboard shortcuts for the management console.
 //
 // The console is a keyboard-first surface: `/` focuses the filter, `g d` goes
@@ -53,23 +54,13 @@ export function isBareKey(e: KeyLike): boolean {
  * (rooms) and tasks takes `g k` — `g t` was already tools. Code takes `g c`,
  * notes `g n`, memory `g m`.
  *
- * `/dashboards` has no chord, and that is not an oversight: `g b` is in the
- * nav's own tooltip but was never in this table, and adding one now would
- * change a key somebody may have learnt. It is in the palette like everything
- * else.
+ * Built from `screens.ts`, which is the one place a route is declared. It was
+ * a hand-written table, and it drifted: the nav's tooltip advertised `g b` for
+ * dashboards and this table had no such entry, so the tooltip promised a key
+ * that did nothing. Deriving it only ever ADDS a chord — nothing anybody
+ * learnt has moved.
  */
-export const CHORDS: Readonly<Record<string, string>> = {
-	'g d': '/devices',
-	'g a': '/automations',
-	'g r': '/areas',
-	'g t': '/tools',
-	'g k': '/tasks',
-	'g c': '/code',
-	'g n': '/notes',
-	'g m': '/memory',
-	'g s': '/settings',
-	'g h': '/'
-};
+export const CHORDS: Readonly<Record<string, string>> = CHORD_ROUTES;
 
 /** How long a chord's first key stays armed. */
 export const CHORD_TIMEOUT_MS = 1200;

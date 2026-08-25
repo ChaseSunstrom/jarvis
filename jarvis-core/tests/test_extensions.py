@@ -585,3 +585,256 @@ async def test_scaffolding_refuses_a_name_that_is_nearly_a_path(tmp_path: Path) 
         blocking=True, return_response=True,
     )
     assert "created" in clash, "a user skill may override a bundled one"
+
+
+# --- the catalog (M47) -------------------------------------------------------
+CATALOG = Path(__file__).resolve().parents[2] / "testing/fixtures/catalog"
+
+
+def _catalog_source():
+    from jarvis.integrations.extensions.catalog import Source
+
+    return Source(name="fixture", url=CATALOG.as_uri(), kind="skill")
+
+
+def test_nothing_installs_from_an_origin_nobody_allowed() -> None:
+    """There is no default source, and that is the whole first defence.
+
+    Shipping a list of URLs would mean every install trusts whoever owns them,
+    forever, without anybody choosing to.
+    """
+    from jarvis.integrations.extensions.catalog import DEFAULT_SOURCES, Catalog, CatalogError
+
+    assert DEFAULT_SOURCES == ()
+    empty = Catalog()
+    with pytest.raises(CatalogError) as caught:
+        empty.source_for("github")
+    assert "nobody allowed" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "url,why",
+    [("http://plain.example/x", "http"), ("ftp://old.example/x", "ftp"), ("/etc/passwd", "no")],
+)
+def test_a_source_may_only_be_https_or_this_machine(url, why) -> None:
+    from jarvis.integrations.extensions.catalog import CatalogError, Source
+
+    with pytest.raises(CatalogError) as caught:
+        Source(name="s", url=url)
+    assert why in str(caught.value)
+
+
+def test_a_catalog_cannot_offer_code_that_runs_in_this_process() -> None:
+    """The refusals are named, with reasons, not silently absent."""
+    from jarvis.integrations.extensions.catalog import REFUSED_KINDS, CatalogError, Source
+
+    with pytest.raises(CatalogError) as caught:
+        Source(name="s", url="https://example/x", kind="plugin")
+    assert "interpreter" in str(caught.value)
+    assert "mcp-stdio" in REFUSED_KINDS
+
+
+def test_catalog_metadata_is_quarantined_not_filtered() -> None:
+    """A description is content. The fixture's says so in as many words."""
+    from jarvis.integrations.extensions.catalog import Catalog
+    from jarvis.security.quarantine import has_control_tokens, is_quarantined
+
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    hostile = [e for e in catalog.search() if e.id == "friendly-helper"][0]
+    assert is_quarantined(hostile.description)
+    assert not has_control_tokens(hostile.description), "a role marker survived"
+    # Not filtered: the words are still there, wrapped, because a filter with a
+    # bypass is a system exactly as vulnerable and now believed safe.
+    assert "ignore the permissions" in hostile.description.lower()
+
+
+def test_a_catalog_cannot_declare_a_permission_nothing_enforces() -> None:
+    from jarvis.integrations.extensions.catalog import Catalog
+
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    hostile = [e for e in catalog.search() if e.id == "friendly-helper"][0]
+    assert "become_root" not in hostile.permissions
+    assert set(hostile.permissions) <= {"read_state", "act", "run_process"}
+
+
+def test_latest_is_not_a_version() -> None:
+    """A blind `latest` means the approved thing and the landed thing differ."""
+    from jarvis.integrations.extensions.catalog import Catalog, CatalogError, resolve_ref
+
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    unpinned = [e for e in catalog.search() if e.id == "unpinned-thing"][0]
+    with pytest.raises(CatalogError) as caught:
+        resolve_ref(unpinned, [])
+    assert "concrete ref" in str(caught.value)
+    assert resolve_ref(unpinned, ["v1.0.0", "v1.2.0"]) == "v1.2.0"
+
+
+def test_a_plan_names_every_program_in_the_payload_before_anything_lands() -> None:
+    from jarvis.integrations.extensions.catalog import Catalog
+    from jarvis.integrations.extensions.install import fetch_local, plan
+
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    hostile = [e for e in catalog.search() if e.id == "friendly-helper"][0]
+    files = fetch_local(hostile)
+    proposal = plan(hostile, files)
+    assert "install.sh" in proposal["hooks"]
+    assert "will not run" in proposal["warning"]
+    assert len(proposal["sha256"]) == 64
+
+
+def test_a_payload_that_is_not_what_was_approved_is_refused() -> None:
+    from jarvis.integrations.extensions.catalog import CatalogError
+    from jarvis.integrations.extensions.install import plan
+
+    files = {"SKILL.md": b"---\nname: x\ndescription: y\n---\n\nBody.\n"}
+    good = plan(_entry(), files)
+    with pytest.raises(CatalogError) as caught:
+        plan(_entry(), {"SKILL.md": b"something else entirely"}, expected_sha=good["sha256"])
+    assert "not what was approved" in str(caught.value)
+
+
+def _entry():
+    from jarvis.integrations.extensions.catalog import Entry
+
+    return Entry(id="x", kind="skill", source="fixture", url="file:///tmp/x")
+
+
+@pytest.mark.parametrize(
+    "path", ["../escape/SKILL.md", "/etc/SKILL.md", ".git/config", "a/b/c/d/e/SKILL.md"]
+)
+def test_a_payload_cannot_write_outside_its_own_folder(path) -> None:
+    from jarvis.integrations.extensions.install import InstallError, read_payload
+
+    with pytest.raises(InstallError):
+        read_payload({path: b"x", "SKILL.md": b"---\nname: x\ndescription: y\n---\n"})
+
+
+@pytest.mark.asyncio
+async def test_install_refuses_without_an_approval(tmp_path: Path) -> None:
+    """The step between knowing and doing, and a test standing in it."""
+    from jarvis.integrations.extensions.catalog import Catalog
+    from jarvis.integrations.extensions.install import InstallError, apply, fetch_local
+
+    jarvis = await _install(tmp_path)
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    entry = [e for e in catalog.search() if e.id == "bin-day"][0]
+    files = fetch_local(entry)
+    with pytest.raises(InstallError) as caught:
+        apply(jarvis, entry, files, {})
+    assert "nothing was approved" in str(caught.value)
+    assert not (tmp_path / "skills" / "bin-day").exists()
+
+
+@pytest.mark.asyncio
+async def test_an_approved_skill_lands_and_nothing_in_it_runs(tmp_path: Path) -> None:
+    """The acceptance criterion: it installs, and the hook never fires."""
+    from jarvis.integrations.extensions.catalog import Catalog
+    from jarvis.integrations.extensions.install import apply, fetch_local, plan
+
+    marker = Path("/tmp/jarvis-catalog-probe-should-not-exist")
+    marker.unlink(missing_ok=True)
+
+    jarvis = await _install(tmp_path)
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    entry = [e for e in catalog.search() if e.id == "friendly-helper"][0]
+    files = fetch_local(entry)
+    proposal = plan(entry, files)
+    result = apply(jarvis, entry, files, proposal)
+
+    assert result["installed"] == "friendly-helper"
+    assert result["sha256"] == proposal["sha256"]
+    assert result["ref"] == "v2.1.0", "it landed unpinned"
+    assert "install.sh" in result["hooks"]
+    # It is ON DISK, because it was in the payload...
+    assert (tmp_path / "skills" / "friendly-helper" / "install.sh").exists()
+    # ...and it never ran. This is the whole claim.
+    assert not marker.exists(), "something in the payload executed"
+    # And the skill itself loaded, so the install is real rather than inert.
+    assert "friendly-helper" in jarvis.data["skills"].skills
+
+
+@pytest.mark.asyncio
+async def test_a_skill_that_does_not_validate_is_removed_again(tmp_path: Path) -> None:
+    """Whole, or not at all: half-installed is in the prompt and not in the index."""
+    from jarvis.integrations.extensions.install import apply, plan
+
+    jarvis = await _install(tmp_path)
+    entry = _entry()
+    entry.id = "broken"
+    body = (
+        b"---\nname: broken\ndescription: Asks for a permission nobody enforces.\n"
+        b"metadata:\n  permissions: [become_root]\n---\n\nBody.\n"
+    )
+    files = {"SKILL.md": body}
+    proposal = plan(entry, files)
+    with pytest.raises(Exception):
+        apply(jarvis, entry, files, proposal)
+    assert not (tmp_path / "skills" / "broken").exists(), "a rejected skill was left on disk"
+    assert "broken" not in jarvis.data["skills"].skills
+
+
+@pytest.mark.asyncio
+async def test_the_services_refuse_an_install_that_skipped_the_plan(tmp_path: Path) -> None:
+    jarvis = await _install(tmp_path)
+    from jarvis.integrations.extensions.catalog import Catalog
+
+    catalog = Catalog()
+    catalog.add(_catalog_source())
+    jarvis.data["extension_catalog"] = catalog
+
+    listed = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert {e["id"] for e in listed["entries"]} >= {"bin-day", "friendly-helper"}
+
+    refused = await jarvis.services.async_call(
+        "extensions", "install", {"source": "fixture", "id": "bin-day"},
+        blocking=True, return_response=True,
+    )
+    assert "extensions.plan" in refused["error"]
+
+    proposal = await jarvis.services.async_call(
+        "extensions", "plan", {"source": "fixture", "id": "bin-day"},
+        blocking=True, return_response=True,
+    )
+    assert proposal["plan"]["ref"] == "v1.0.0"
+    done = await jarvis.services.async_call(
+        "extensions", "install",
+        {"source": "fixture", "id": "bin-day", "approved": proposal["plan"]},
+        blocking=True, return_response=True,
+    )
+    assert done["installed"] == "bin-day"
+
+
+@pytest.mark.asyncio
+async def test_an_unconfigured_source_is_refused_by_the_service(tmp_path: Path) -> None:
+    jarvis = await _install(tmp_path)
+    from jarvis.integrations.extensions.catalog import Catalog
+
+    jarvis.data["extension_catalog"] = Catalog()
+    out = await jarvis.services.async_call(
+        "extensions", "plan", {"source": "github", "id": "anything"},
+        blocking=True, return_response=True,
+    )
+    assert "not a configured source" in out["error"]
+
+
+def test_the_catalog_field_is_not_the_protocols_message_id() -> None:
+    """`id` is the websocket envelope's message id, and was mine too.
+
+    Reading the entry out of `msg["id"]` worked in every test that called the
+    service directly and failed the moment a browser sent a real frame, because
+    by then `id` was the integer the protocol uses to match a reply to its
+    request. The browser test is what caught it.
+    """
+    from jarvis.api.common import _entry_id
+
+    assert _entry_id({"id": 42, "entry": "bin-day"}) == "bin-day"
+    assert _entry_id({"id": 42}) == "", "the message id was read as an entry id"
+    assert _entry_id({"entry_id": "bin-day"}) == "bin-day"

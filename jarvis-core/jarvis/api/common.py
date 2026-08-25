@@ -1818,6 +1818,59 @@ async def async_scaffold_skill(jarvis: "Jarvis", data: dict[str, Any]) -> dict[s
     return result or {}
 
 
+async def extensions_browse_payload(jarvis: "Jarvis", msg: dict[str, Any]) -> dict[str, Any]:
+    return await jarvis.services.async_call(
+        "extensions",
+        "browse",
+        {"query": msg.get("query") or "", "kind": msg.get("kind") or ""},
+        blocking=True,
+        return_response=True,
+    ) or {}
+
+
+def _entry_id(msg: dict[str, Any]) -> str:
+    """The catalog entry's id, from `entry` and never from `id`.
+
+    `id` is the WEBSOCKET ENVELOPE's message id. Reading the entry out of it
+    worked in every test that called the service directly and failed the moment
+    a browser sent a real frame, because by then `id` was the integer the
+    protocol uses to match a reply to a request.
+    """
+    return str(msg.get("entry") or msg.get("entry_id") or "")
+
+
+async def extensions_plan_payload(jarvis: "Jarvis", msg: dict[str, Any]) -> dict[str, Any]:
+    return await jarvis.services.async_call(
+        "extensions",
+        "plan",
+        {
+            "source": msg.get("source") or "",
+            "id": _entry_id(msg),
+            "sha256": msg.get("sha256") or "",
+            "refs": msg.get("refs") or [],
+        },
+        blocking=True,
+        return_response=True,
+    ) or {}
+
+
+async def async_install_extension(jarvis: "Jarvis", msg: dict[str, Any]) -> dict[str, Any]:
+    result = await jarvis.services.async_call(
+        "extensions",
+        "install",
+        {
+            "source": msg.get("source") or "",
+            "id": _entry_id(msg),
+            "approved": msg.get("approved"),
+        },
+        blocking=True,
+        return_response=True,
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise ApiError("invalid", str(result["error"]), 400)
+    return result or {}
+
+
 def mcp_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
     manager = _mcp(jarvis)
     return {
