@@ -115,7 +115,7 @@ files both would touch, which the integrating session merges.
 
 ## Desktop
 
-- [ ] **M07 — Desktop app** · size XL · deps M03, M04 · parallel-ok M08
+- [x] **M07 — Desktop app** · size XL · deps M03, M04 · parallel-ok M08
   - Scope: `jarvis-desktop-app/` — an Electron shell (TypeScript) that loads the jarvis-web build
     (parity by construction), draws the tray (status, mute, push-to-talk, quit), posts native
     notifications for approvals / tasks / companion messages, registers a `globalShortcut`

@@ -36,6 +36,7 @@
 		{ href: '/code', label: 'CODE', chord: 'g c' },
 		{ href: '/notes', label: 'NOTES', chord: 'g n' },
 		{ href: '/memory', label: 'MEMORY', chord: 'g m' },
+		{ href: '/desktop', label: 'DESKTOP', chord: 'g e' },
 		{ href: '/settings', label: 'SETTINGS', chord: 'g s' }
 	];
 

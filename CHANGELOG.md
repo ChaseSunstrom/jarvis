@@ -26,6 +26,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M07 (the desktop app): `jarvis-desktop-app/` — an Electron window that loads **the console**,
+  the same SvelteKit build a browser loads, so parity is by construction rather than by a second
+  implementation. It adds the three things a browser tab cannot do: a tray icon that says what
+  the assistant is doing, native notifications when an approval is waiting, and `Super+Space`
+  from anywhere. The one screen it draws itself is the consent prompt, because an approval has
+  to be answerable when the console cannot load, and it draws it from the same generated tokens.
+  The agent grew a loopback socket for that (`jarvis_desktop/ipc.py` + `ShellConsentGateway`,
+  token-authenticated, single-use answers, and every failure — wrong token, shell gone, silence
+  — falling closed, with "no shell" reported as *unattended* rather than as a denial the user
+  never made). A DESKTOP tab in the console says which of the two is running and what the
+  computer will allow. Verified headless on a host with no display and no root: `tools/xvfb.sh`
+  starts Xvfb itself (`xvfb-run` needs `xauth`) and `tools/electron-runtime.sh` unpacks
+  Electron's GTK/NSS closure under `$HOME`.
 - M22 (phone automation: scaffolded, flagged off): the interface for driving the phone's own
   apps exists (`automation/phone/PhoneAutomation.kt`) and nothing behind it runs.
   `BuildConfig.PHONE_AUTOMATION` is false in every build; the accessibility service calls

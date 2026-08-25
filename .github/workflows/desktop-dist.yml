@@ -125,3 +125,49 @@ jobs:
 
           # And importable under its distribution name, not just runnable.
           "$VENV_BIN/python" -c "import jarvis_desktop; print(jarvis_desktop.__name__, 'ok')"
+
+  # --- the shell -------------------------------------------------------------
+  #
+  # The Electron app that shows the console (M07). Built and driven for real on
+  # a runner with no display: `tools/xvfb.sh` starts Xvfb itself rather than
+  # using `xvfb-run`, and `tools/electron-runtime.sh` unpacks Electron's
+  # library closure under $HOME — both needed on a machine where nothing may be
+  # installed system-wide, which is the constraint this project develops under.
+  shell:
+    name: desktop shell (Electron)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        working-directory: jarvis-desktop-app
+        run: npm ci || npm install --no-audit --no-fund
+
+      - name: Build
+        working-directory: jarvis-desktop-app
+        run: npm run build
+
+      - name: Unit tests (Electron mocked out entirely)
+        working-directory: jarvis-desktop-app
+        run: npx vitest run
+
+      - name: Electron under Xvfb
+        working-directory: jarvis-desktop-app
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgtk-3-0 libnotify4 libnss3 libxss1 \
+            libxtst6 libatk-bridge2.0-0 libgbm1 libasound2t64 || true
+          bash tools/xvfb.sh npx playwright test
+
+      - name: Unpacked distribution
+        working-directory: jarvis-desktop-app
+        run: npm run dist:dir
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-desktop-app-linux
+          path: jarvis-desktop-app/dist-app/linux-unpacked
+          if-no-files-found: error

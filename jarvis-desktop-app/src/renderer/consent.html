@@ -1,0 +1,111 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Jarvis — approval</title>
+<link rel="stylesheet" href="./tokens.css" />
+<!--
+  The one screen the shell draws itself.
+
+  Everything else in this app is the console, loaded from the server, because
+  parity by construction beats a second implementation. This is the exception
+  and it earns it: an approval has to be answerable when the console is not
+  loaded — the server is down, the window has never been opened, the machine
+  has just woken up — and "the thing that asks permission" is the last surface
+  that may depend on a network.
+
+  It draws from the same tokens as everything else (`tokens.css` is generated
+  from `design/tokens.json` by `design/build.py`), so it is the same product
+  rather than a look-alike.
+-->
+<style>
+  body {
+    margin: 0;
+    padding: var(--jv-space-5);
+    background: var(--jv-bg);
+    color: var(--jv-text);
+    font-family: var(--jv-font-ui);
+    font-size: var(--jv-fs-sm);
+  }
+  h1 {
+    margin: 0 0 var(--jv-space-3);
+    font-family: var(--jv-font-chrome);
+    font-size: var(--jv-fs-xs);
+    letter-spacing: var(--jv-track-chrome);
+    text-transform: uppercase;
+    color: var(--jv-text-dim);
+  }
+  .action {
+    font-size: var(--jv-fs-md);
+    color: var(--jv-text-bright);
+  }
+  .why {
+    margin: var(--jv-space-2) 0 var(--jv-space-4);
+    color: var(--jv-text-dim);
+  }
+  pre {
+    margin: 0 0 var(--jv-space-4);
+    padding: var(--jv-space-3);
+    background: var(--jv-surface-2);
+    border: 1px solid var(--jv-line);
+    border-radius: var(--jv-radius-md);
+    font-family: var(--jv-font-chrome);
+    font-size: var(--jv-fs-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .row {
+    display: flex;
+    gap: var(--jv-space-3);
+  }
+  button {
+    flex: 1;
+    padding: var(--jv-space-3);
+    background: transparent;
+    color: var(--jv-text);
+    border: 1px solid var(--jv-line);
+    border-radius: var(--jv-radius-md);
+    font-family: var(--jv-font-chrome);
+    font-size: var(--jv-fs-xs);
+    letter-spacing: var(--jv-track-chrome);
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  button.approve {
+    border-color: var(--jv-accent);
+    color: var(--jv-accent);
+  }
+  button.deny {
+    border-color: var(--jv-danger);
+    color: var(--jv-danger-text);
+  }
+</style>
+<h1 id="tier">Approval required</h1>
+<p class="action" id="action">…</p>
+<p class="why" id="why"></p>
+<pre id="params"></pre>
+<div class="row">
+  <button class="deny" id="deny" data-testid="deny">Deny</button>
+  <button class="approve" id="approve" data-testid="approve">Approve</button>
+</div>
+<script>
+  // Deliberately tiny and dependency-free: this page has to work when nothing
+  // else does.
+  const shell = window.jarvisDesktop;
+  let current = null;
+  function show(request) {
+    current = request;
+    document.getElementById("tier").textContent =
+      request.tier >= 3 ? "Approval required — Tier 3" : "Approval required";
+    document.getElementById("action").textContent = request.description || request.action_id;
+    document.getElementById("why").textContent = request.reason || "";
+    document.getElementById("params").textContent = JSON.stringify(request.params ?? {}, null, 2);
+  }
+  document.getElementById("approve").addEventListener("click", () => {
+    if (current) shell?.answer(current.id, "approved");
+    window.close();
+  });
+  document.getElementById("deny").addEventListener("click", () => {
+    if (current) shell?.answer(current.id, "denied");
+    window.close();
+  });
+  shell?.onAsk(show);
+</script>

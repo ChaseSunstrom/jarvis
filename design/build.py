@@ -37,7 +37,17 @@ SOURCE = ROOT / "design" / "tokens.json"
 MARK = "@generated from design/tokens.json"
 
 WEB_CSS = ROOT / "jarvis-web/src/lib/styles/tokens.css"
+#: The Electron shell's own stylesheet. The window loads the console, which
+#: brings its own tokens — this is for the two surfaces the shell draws itself:
+#: the consent prompt, which must be answerable when the window is closed, and
+#: the "cannot reach the console" page, which by definition cannot load them
+#: from the console.
+SHELL_CSS = ROOT / "jarvis-desktop-app/src/renderer/tokens.css"
 WEB_TS = ROOT / "jarvis-web/src/lib/tokens.ts"
+#: The Electron main process needs two or three of these — the window's
+#: background colour, so the first frame is not white, and the tray icon's
+#: accent — and it cannot import from `jarvis-web`.
+SHELL_TS = ROOT / "jarvis-desktop-app/src/main/tokens.ts"
 DESKTOP_PY = ROOT / "jarvis-desktop/jarvis_desktop/tokens.py"
 KT_DIR = ROOT / "android-app/app/src/main/kotlin/ai/jarvis/app/ui/theme"
 KT_TOKENS = KT_DIR / "JarvisTokens.kt"
@@ -570,6 +580,8 @@ def check_orb_shader(tokens: dict) -> list[str]:
 def outputs(tokens: dict) -> dict[Path, str]:
     return {
         WEB_CSS: gen_css(tokens),
+        SHELL_CSS: gen_css(tokens),
+        SHELL_TS: gen_ts(tokens),
         WEB_TS: gen_ts(tokens),
         DESKTOP_PY: gen_py(tokens),
         KT_TOKENS: gen_kotlin_tokens(tokens),

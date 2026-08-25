@@ -96,22 +96,41 @@ def walk(root: Path, suffixes: tuple[str, ...]):
 
 
 def strip_comments_css(text: str) -> str:
-    return re.sub(r"/\*.*?\*/", lambda m: " " * len(m.group(0)), text, flags=re.S)
+    """Blank out `/* … */`, keeping every newline so line numbers survive.
+
+    Applied to the WHOLE text rather than line by line: a JSDoc block that
+    explains why a colour is written the way it is spans lines, and a per-line
+    version could not see that it was inside one. Reported as a hit, that comment
+    was a linter arguing with its own documentation.
+    """
+    return re.sub(
+        r"/\*.*?\*/",
+        lambda m: "".join(c if c == "\n" else " " for c in m.group(0)),
+        text,
+        flags=re.S,
+    )
 
 
 def scan_web(path: Path, text: str) -> list[str]:
     hits = []
-    lines = text.split("\n")
+    # Block comments first, across the whole file: see `strip_comments_css`.
+    lines = strip_comments_css(text).split("\n")
+    raw_lines = text.split("\n")
     # Colour anywhere; raw units only where CSS is (a .css file, or <style> blocks).
     in_style = path.suffix == ".css"
-    for n, raw in enumerate(lines, 1):
-        line = re.sub(r"//.*$", "", raw) if path.suffix in (".ts", ".svelte") and not in_style else raw
+    for n, blanked in enumerate(lines, 1):
+        raw = raw_lines[n - 1] if n - 1 < len(raw_lines) else blanked
+        line = (
+            re.sub(r"//.*$", "", blanked)
+            if path.suffix in (".ts", ".svelte") and not in_style
+            else blanked
+        )
         if path.suffix == ".svelte":
             if "<style" in raw:
                 in_style = True
             if "</style>" in raw:
                 in_style = False
-        stripped = strip_comments_css(line)
+        stripped = line
         if HEX.search(stripped):
             hits.append(f"{n}: colour literal: {raw.strip()[:110]}")
         m = COLOUR_FN.search(stripped)

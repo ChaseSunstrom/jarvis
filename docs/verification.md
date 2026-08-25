@@ -461,6 +461,20 @@ they are the only places that particular bug can come back.
 | Un-pairing: a device can be cut off, including its live connection | Automated | `test_pairing.py::test_revoking_hangs_up_the_live_socket`. Revoking used to mean "revoked at the next reconnect" — a phone holds its command socket for days, so a device you had just cut off kept reading every state change until something unrelated dropped the connection. The console panel is covered by a Playwright case. |
 | Pairing a phone by scanning a QR | Automated | `jarvis-core/tests/test_pairing.py` (23) for the code/token split, single use, expiry, per-caller rate limiting and the authenticated/unauthenticated split; `android-app/tools/pairing_payload_test.py` and `pairing_claim_test.py` for the parse and the exchange; a Playwright case for the console's half. The camera itself is **Unproven** — it hands off to whatever scanner the user installed. |
 
+### The desktop shell (M07)
+
+| Claim | Level | Proof |
+|---|---|---|
+| There is a native app, and it is the console rather than a copy of it | Automated | `jarvis-desktop-app` loads `JARVIS_CONSOLE_URL`; the only screen it draws itself is the consent prompt, which must work when the console cannot load |
+| It starts, under a display nobody is looking at | Automated | `bash tools/xvfb.sh npx playwright test` — the real app: main process, preload, tray, global shortcut. Electron's libraries are unpacked under `$HOME` by `tools/electron-runtime.sh`, with no root |
+| The page gets seven functions and no Node | Automated | the e2e asserts the preload surface exactly, and that `require` and `process` are undefined |
+| It will not load a console off this machine | Automated | `isAllowedConsole` — loopback, `*.ts.net`, the tailnet's CGNAT range and private LAN only; anything else falls back to loopback. `tests/config.test.ts` |
+| Push-to-talk works while another window has focus | Automated *as a registration* | `globalShortcut.isRegistered("Super+Space")` in the e2e. That the key reaches a microphone is a device claim and is not made here |
+| Closing the window leaves the assistant running | Automated | the e2e closes it and asserts the window count |
+| A consent prompt reaches the person at the machine | Automated | `ShellConsentGateway` + `jarvis_desktop/ipc.py`; `jarvis-desktop/tests/test_ipc.py` pins that a wrong token, a shell that disappears, a duplicate answer and silence all fail closed, and that "no shell" is reported as unattended rather than denied |
+| An unpacked distribution builds | Automated | `npm run dist:dir` → `dist-app/linux-unpacked` |
+| It looks right on a real desktop | **Unproven** | Xvfb renders; nobody has looked at it on a monitor. Tray behaviour in particular differs per desktop environment |
+
 ### jarvis-desktop / jarvis-browser / jarvis-orchestrator
 
 | Capability | Level | Proof / command |

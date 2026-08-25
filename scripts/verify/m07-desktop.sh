@@ -23,11 +23,19 @@ check_sh "agent ipc tests" 'cd jarvis-desktop && python3 -m pytest tests/test_ip
 require_dir "$APP/node_modules"
 check_sh "shell builds" 'cd jarvis-desktop-app && npm run build 2>&1 | tail -5'
 check_sh "shell unit tests (vitest, electron mocked)" 'cd jarvis-desktop-app && npx vitest run 2>&1 | tail -4'
-require_cmd xvfb-run
-check_sh "shell e2e under Xvfb (window loads the console; tray + hotkey registered)" \
-    'cd jarvis-desktop-app && xvfb-run -a npx playwright test 2>&1 | tail -15'
+# `Xvfb`, not `xvfb-run`: the wrapper shells out to `xauth`, which is a
+# separate package this host does not have and cannot install (no root).
+# `jarvis-desktop-app/tools/xvfb.sh` starts Xvfb itself and puts Electron's
+# libraries — unpacked under $HOME by `tools/electron-runtime.sh` — on the
+# library path, which is the same "nothing system-wide" constraint the JDK and
+# the Android SDK are installed under.
+require_cmd Xvfb
+require_exec jarvis-desktop-app/tools/xvfb.sh
+require_exec jarvis-desktop-app/tools/electron-runtime.sh
+check_sh "shell e2e under Xvfb (window loads the console; preload surface; hotkey registered)" \
+    'cd jarvis-desktop-app && bash tools/xvfb.sh npx playwright test 2>&1 | tail -15'
 check_sh "unpacked distribution builds (npm run dist:dir)" \
-    'cd jarvis-desktop-app && npm run dist:dir 2>&1 | tail -3 && ls -d dist/*unpacked* >/dev/null'
+    'cd jarvis-desktop-app && npm run dist:dir 2>&1 | tail -3 && ls -d dist-app/*unpacked* >/dev/null'
 require_file "$APP/README.md"
 check "verification claim" grep -qi jarvis-desktop-app docs/verification.md
 # No live scenarios of its own — this milestone does not add a capability

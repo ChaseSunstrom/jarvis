@@ -41,6 +41,7 @@ from .channel import DeviceChannel
 from .companion import CompanionHandler, build_asker
 from .config import Config, load_config, normalize_server_url
 from .consent import build_gateway
+from .ipc import IpcServer, write_token
 from .policy import ActionTier, PolicyStore, UserPolicy
 from .presence import PresenceReporter
 from .status import StatusSnapshot, StatusWriter
@@ -451,9 +452,18 @@ async def cmd_run(config: Config, once: bool = False) -> int:
     # or the policy store, so a proactive message has no path to running
     # anything — that is wiring, not a rule someone has to remember.
     presence = PresenceReporter(emit)
+
+    # The socket the Electron shell answers prompts over (M07). Started here,
+    # before the gateway that uses it, and torn down with everything else. Its
+    # port is written into the status file so the shell can find it without
+    # being configured — the token is beside it, readable only by this user.
+    shell = IpcServer(token=write_token(config.state_dir))
+    shell_port = await shell.start()
+
     consent = build_gateway(
         headless_deny=config.headless_deny,
         on_interaction=presence.note_interaction,
+        shell=shell,
     )
     registry = build_registry(config, policy, audit, consent=consent)
     channel = DeviceChannel(config, registry)
@@ -470,6 +480,10 @@ async def cmd_run(config: Config, once: bool = False) -> int:
             consent_backend=consent.describe(),
             action_count=len(registry),
             connected=channel.registered,
+            # How the shell finds the socket. In the status file rather than an
+            # environment variable, because the shell is started by a person
+            # (or by their session), not by this process.
+            shell_port=shell_port,
         ),
     )
 

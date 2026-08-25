@@ -616,6 +616,68 @@ class _StdinReader:
                 return
 
 
+class ShellConsentGateway(ConsentGateway):
+    """Ask the Electron shell, over the loopback socket in `ipc.py`.
+
+    Preferred over the Tk dialog when a shell is connected, for the obvious
+    reason: the person is looking at the app, and a second window drawn by a
+    different toolkit appearing behind it is not a prompt anybody answers.
+
+    It fails closed in every direction a socket can fail. No shell connected is
+    `unattended` — which is a different sentence from "denied", and the server
+    is told the true one. A shell that goes away mid-question, a frame that
+    never arrives, an answer this code does not recognise: all denied.
+    """
+
+    name = "shell"
+
+    def __init__(self, server: Any, timeout: float = 45.0) -> None:
+        self.server = server
+        self.timeout = float(timeout)
+
+    def usable(self) -> bool:
+        """True while a shell is actually connected.
+
+        Asked on every dispatch rather than once at start-up: the shell is a
+        separate process that a person can quit, and a gateway that claimed to
+        be usable after that would hold every approval until it timed out.
+        """
+        return bool(getattr(self.server, "connected", False))
+
+    @property
+    def unattended(self) -> bool:
+        return not self.usable()
+
+    async def request(self, request: ApprovalRequest) -> ApprovalVerdict:
+        payload = {
+            "action_id": request.action_id,
+            "description": request.description,
+            # Verbatim, like every other gateway here: the prompt shows what
+            # will run, not a paraphrase of it.
+            "params": dict(request.params),
+            "tier": int(getattr(request.tier, "value", request.tier)),
+            "reason": request.reason,
+            "command_id": request.command_id,
+            "allow_always": bool(getattr(request, "allow_always", False)),
+        }
+        try:
+            answer = await self.server.ask(payload, timeout=self.timeout)
+        except Exception:  # noqa: BLE001 - a broken shell must not approve
+            _LOGGER.exception("the shell gateway failed; denying")
+            return ApprovalVerdict.DENIED
+        if answer == "timeout":
+            return ApprovalVerdict.TIMEOUT
+        if answer == "unattended":
+            # Nobody was there. `DENIED` is the right OUTCOME, and the log line
+            # above says which of the two it was.
+            _LOGGER.info("no shell was connected to ask about %s", request.action_id)
+            return ApprovalVerdict.DENIED
+        verdict = ApprovalVerdict.from_answer(answer)
+        if verdict.allows_execution:
+            self.note_interaction()
+        return verdict
+
+
 class TerminalConsentGateway(ConsentGateway):
     """Terminal prompt, used when there is a TTY but no display.
 
@@ -711,6 +773,7 @@ class TerminalConsentGateway(ConsentGateway):
 def build_gateway(
     headless_deny: bool = False,
     on_interaction: Callable[[], None] | None = None,
+    shell: Any = None,
 ) -> ConsentGateway:
     """Pick a consent backend: tkinter, then a TTY, then refuse out loud.
 
@@ -722,14 +785,26 @@ def build_gateway(
     :class:`NotifyingDenyGateway`, because *that* case is a machine where the
     user has not said any such thing and simply cannot be reached.
 
-    ``on_interaction`` is the presence hook. It is given only to the two
-    backends that can tell a human answered.
+    ``on_interaction`` is the presence hook. It is given only to the backends
+    that can tell a human answered.
+
+    ``shell`` is an :class:`~jarvis_desktop.ipc.IpcServer`. When one is running
+    it goes FIRST: the person is looking at the Electron window, and a Tk
+    dialog appearing behind it is not a prompt anybody answers. `usable()` is
+    re-checked per dispatch, so quitting the shell falls through to Tk on the
+    next one rather than holding every approval until it times out.
     """
     if headless_deny:
         return DenyAllGateway()
-    return ChainGateway(
+    chain: list[ConsentGateway] = []
+    if shell is not None:
+        gateway = ShellConsentGateway(shell)
+        gateway.on_interaction = on_interaction
+        chain.append(gateway)
+    chain += [
         TkConsentGateway(on_interaction=on_interaction),
         TerminalConsentGateway(on_interaction=on_interaction),
         NotifyingDenyGateway(),
-    )
+    ]
+    return ChainGateway(*chain)
 
