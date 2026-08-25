@@ -282,6 +282,7 @@ services:
       --language ${VOICE_LANGUAGE:-en}
       --data-dir /data
       --download-dir /data
+      --vad-filter
     volumes:
       - ./wyoming/whisper:/data
     environment:
@@ -511,6 +512,41 @@ services:
           target: /srv/jarvis_browser
         - action: rebuild
           path: ../jarvis-browser/requirements.txt
+  # --- an alternative voice, off by default -------------------------------
+  #
+  # Piper is the default and the measurement says it should be. Both engines
+  # came back through Whisper word-perfect on five real replies, and both
+  # synthesise faster than real time:
+  #
+  #     piper    median 1.76 s   0.40x real time   WER 0.000    33 MB of model
+  #     kokoro   median 1.48 s   0.47x real time   WER 0.000    3.2 GB image, 1 GB resident
+  #
+  # So latency and intelligibility do not decide it — the voice does, and that
+  # is the operator's ear. `docs/tts-review/` holds the same five sentences in
+  # both. To switch:
+  #
+  #     docker compose --profile kokoro up -d jarvis-tts
+  #     # configuration.yaml, under voice:
+  #     #   tts: {engine: openai, url: http://127.0.0.1:8880/v1, voice: bm_george}
+  jarvis-tts:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: jarvis-tts
+    restart: unless-stopped
+    profiles: [kokoro]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8880/v1/audio/voices', timeout=4)\""]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 120s
+    mem_limit: 2g
+    cpus: 2.0
+
   # --- retrieval: embeddings and reranking ---------------------------------
   #
   # Two containers of one image, because that is what the measurement said.

@@ -14,14 +14,13 @@ turns:
   - say: "Turn on the ceiling lights."
     audio: {wake: "Hey Jarvis."}
     expect:
-      # Relaxed, and not quietly: through the wake→stt handover one utterance
-      # in several comes back doubled ("Turn on the ceiling lights.  Turn on
-      # the ceiling lights."). It is an open defect — ISSUES.md, "A transcript
-      # is occasionally doubled on the wake-word path" — with what has been
-      # ruled out written down. The measured WER is still reported; what this
-      # scenario asserts is that the wake word fired and the right thing
-      # happened, which the doubling does not affect.
-      transcript_wer: 1.0
+      # Was relaxed to 1.0 for two milestones: through the wake→stt handover
+      # every utterance came back doubled ("Turn on the ceiling lights.  Turn
+      # on the ceiling lights."), and the two spaces were the fingerprint —
+      # faster-whisper returning the same sentence as two segments, which is
+      # the repeat hallucination long silences provoke. M35 fixed it with
+      # `--vad-filter` on the recogniser, and this is the default ceiling
+      # again: three runs, WER 0.00.
       wake_word: hey_jarvis
       service: {domain: light, service: turn_on, entity_id: light.ceiling_lights}
       state: {light.ceiling_lights: "on"}

@@ -1372,6 +1372,8 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         # said so — see `docs/TOOLING_DECISIONS.md` §3.
         "jarvis-embeddings",
         "jarvis-reranker",
+        # The alternative voice (M35), behind `--profile kokoro`.
+        "jarvis-tts",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1465,7 +1467,13 @@ def test_only_optional_extras_are_profile_gated(compose: dict[str, Any]) -> None
     # `restart: unless-stopped` turns that into a loop. On this host it had run
     # 2,699 times over two days. A geocoder that needs a deliberate choice of
     # region is not something `up -d` should start.
-    assert gated == {"searxng", "mosquitto", "photon"}
+    # jarvis-tts is the fourth, and its reason is a measurement rather than a
+    # disaster: Kokoro and Piper both came back word-perfect through Whisper
+    # and both synthesise faster than real time, so the 3.2 GB image and 1 GB
+    # of resident memory buy a different VOICE and nothing else. That is the
+    # operator's ear to decide (`docs/tts-review/`), not something `up -d`
+    # should spend their disk on.
+    assert gated == {"searxng", "mosquitto", "photon", "jarvis-tts"}
 
 
 def test_compose_ships_no_secrets(compose: dict[str, Any]) -> None:

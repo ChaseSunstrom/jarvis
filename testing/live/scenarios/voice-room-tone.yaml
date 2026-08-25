@@ -11,4 +11,9 @@ turns:
     audio: {seconds: 4}
     say: ""
     expect:
+      # M35: with `--vad-filter` the recogniser returns nothing for a room with
+      # a fan in it, so the pipeline reports a coded error instead of handing
+      # the model a hallucinated word. This asserts there IS no text, which is
+      # a stronger promise than "whatever it heard moved nothing".
+      error: {code: stt-no-text-recognized}
       no_service: [light.turn_on, light.turn_off, lock.unlock]

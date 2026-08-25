@@ -358,7 +358,20 @@ def _build_clients(jarvis: "Jarvis", config: dict[str, Any]) -> tuple[Any, Any, 
     tts = jarvis.data.get(DATA_TTS_CLIENT)
     if tts is None:
         section = _section(config, "tts")
-        if section is not None:
+        if section is not None and str(section.get("engine") or "").lower() == "openai":
+            # An OpenAI-compatible speech service (Kokoro-FastAPI and friends).
+            # Opt-in, because Piper is 33 MB and already here; see
+            # `voice/openai_tts.py` for the A/B that decided the default.
+            from ...voice.openai_tts import OpenAiTtsClient
+
+            tts = OpenAiTtsClient(
+                url=str(section.get("url") or ""),
+                voice=section.get("voice"),
+                model=str(section.get("model") or "kokoro"),
+                timeout=float(section.get("timeout") or 60.0),
+                speed=float(section.get("speed") or 1.0),
+            )
+        elif section is not None:
             tts = WyomingTtsClient(
                 str(section.get("host") or host),
                 int(section.get("port") or DEFAULT_TTS_PORT),

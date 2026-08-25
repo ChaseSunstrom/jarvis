@@ -102,7 +102,11 @@ env:
     searxng
     jarvis-embeddings
     jarvis-reranker
-  SKIPPED_SERVICES: photon
+  # jarvis-tts is Kokoro, behind `--profile kokoro`: a 3.2 GB image for a voice
+  # the measurement could not separate from Piper's (docs/tts-review/). Starting
+  # it here would spend six minutes of every CI run on a service the stack does
+  # not start either.
+  SKIPPED_SERVICES: photon jarvis-tts
 
   # How long to sit still before asking whether anything restarted. A crash
   # loop shows up in seconds — docker's backoff starts at 100 ms — so this is

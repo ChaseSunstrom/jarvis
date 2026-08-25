@@ -1,0 +1,87 @@
+[
+  {
+    "text": "The ceiling lights are on, Sir.",
+    "piper": {
+      "synth_s": 1.18,
+      "audio_s": 2.23,
+      "rtf": 0.53,
+      "wer": 0.0,
+      "heard": "The ceiling lights are on, sir."
+    },
+    "kokoro": {
+      "synth_s": 0.98,
+      "audio_s": 2.46,
+      "rtf": 0.4,
+      "wer": 0.0,
+      "heard": "The ceiling lights are on, sir."
+    }
+  },
+  {
+    "text": "I'm afraid there's no boiler pressure sensor in the house, so I can't tell you the reading.",
+    "piper": {
+      "synth_s": 2.35,
+      "audio_s": 5.22,
+      "rtf": 0.45,
+      "wer": 0.0,
+      "heard": "I'm afraid there's no boiler pressure sensor in the house, so I can't tell you the reading."
+    },
+    "kokoro": {
+      "synth_s": 2.18,
+      "audio_s": 5.39,
+      "rtf": 0.4,
+      "wer": 0.0,
+      "heard": "I'm afraid there's no boiler pressure sensor in the house, so I can't tell you the reading."
+    }
+  },
+  {
+    "text": "It's sixteen degrees outside, and the kitchen window is still open.",
+    "piper": {
+      "synth_s": 1.85,
+      "audio_s": 4.86,
+      "rtf": 0.38,
+      "wer": 0.0,
+      "heard": "It's 16 degrees outside and the kitchen window is still open."
+    },
+    "kokoro": {
+      "synth_s": 1.64,
+      "audio_s": 4.57,
+      "rtf": 0.36,
+      "wer": 0.0,
+      "heard": "It's 16 degrees outside and the kitchen window is still open."
+    }
+  },
+  {
+    "text": "I've queued that research and I'll tell you when it's done.",
+    "piper": {
+      "synth_s": 1.72,
+      "audio_s": 3.26,
+      "rtf": 0.53,
+      "wer": 0.0,
+      "heard": "I've queued that research and I'll tell you when it's done."
+    },
+    "kokoro": {
+      "synth_s": 1.42,
+      "audio_s": 3.44,
+      "rtf": 0.41,
+      "wer": 0.0,
+      "heard": "I've queued that research and I'll tell you when it's done."
+    }
+  },
+  {
+    "text": "Front door or garage door?",
+    "piper": {
+      "synth_s": 1.07,
+      "audio_s": 1.53,
+      "rtf": 0.7,
+      "wer": 0.2,
+      "heard": "front door, garage door."
+    },
+    "kokoro": {
+      "synth_s": 0.91,
+      "audio_s": 2.39,
+      "rtf": 0.38,
+      "wer": 0.0,
+      "heard": "Front door or garage door."
+    }
+  }
+]

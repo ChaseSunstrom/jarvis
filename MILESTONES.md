@@ -487,7 +487,7 @@ after number must be better than the before or the service comes out**. Choices 
     query latency, recall). Either answer is acceptable; an unexamined one is not.
   - Verify: `bash scripts/verify/m34-vector-store.sh`
 
-- [ ] **M35 — Speech as services, and a TTS A/B** · size L · deps M28, M30
+- [x] **M35 — Speech as services, and a TTS A/B** · size L · deps M28, M30
   - Scope: STT behind an OpenAI-compatible container (speaches / faster-whisper-server class)
     instead of the in-process Wyoming client; TTS stays Piper and gains a Kokoro-FastAPI
     container beside it, A/B'd through the live suite — judge scores and the operator's ears

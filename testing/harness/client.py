@@ -800,13 +800,13 @@ class JarvisClient:
         for chunk in pcm_chunks(audio, chunk_ms, rate):
             await self.send_binary(prefix + chunk)
             if listening_over is not None:
-                # Paced at half real time on a wake-stage run. Flooding the
-                # queue at full speed made faster-whisper decode the same
+                # REAL time on a wake-stage run, which is what a microphone
+                # does. Flooding the queue made faster-whisper decode the same
                 # sentence twice ("turn on the ceiling lights. turn on the
-                # ceiling lights."), which is a decoder artifact of being
-                # handed a short utterance all at once — and a WER of 1.0 for
-                # an utterance it actually got right.
-                await asyncio.sleep(chunk_ms / 2000)
+                # ceiling lights."); half real time made it rarer and did not
+                # stop it — three runs out of three still doubled. A satellite
+                # streams at 1x and this is a test of a satellite.
+                await asyncio.sleep(chunk_ms / 1000)
         if listening_over is not None:
             # A microphone does not stop existing when the sentence ends, and
             # against a REAL wake detector that matters: the wake stage holds

@@ -69,6 +69,27 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M35 (speech, measured): **the doubled transcript is fixed.** It was never "occasional" —
+  re-tested it was three runs out of three, every utterance, and the two spaces in
+  `"…lights.  Turn on the ceiling lights."` were the tell: faster-whisper returning one
+  sentence as two segments, the repeat hallucination that long silences provoke. The container
+  does not expose `condition_on_previous_text`, which was the standing hypothesis, but it does
+  expose `--vad-filter`. WER 1.00 → 0.00.
+
+  That also made two negative scenarios stronger rather than weaker: with the filter on, silence
+  and an empty room produce **no text at all** instead of Whisper's famous "You", so
+  `voice-silence` and `voice-room-tone` now assert a coded `stt-no-text-recognized`.
+
+  So the STT service swap this milestone proposed is **not adopted** — the defect that justified
+  it was closed by a flag the container already had.
+
+  **The TTS A/B refuses to pick a winner, and that is the result.** Piper and Kokoro both
+  synthesise faster than real time (0.40–0.57x against 0.39–0.47x) and both come back through
+  Whisper word-perfect; the gap is inside the run-to-run variance. So Piper stays the default
+  because it is 33 MB against 3.2 GB, not because it won, and `docs/tts-review/` has the same
+  five sentences in both voices for the ear that can actually judge. Switching is a config key
+  now (`voice: tts: engine: openai`), with `jarvis-tts` in the stack behind `--profile kokoro`.
+
 - M34 (the vector store, decided): the JSON sidecar stays, and now there is a number saying
   why. `scripts/verify/vector_store_bench.py` measures the real thing at three sizes: **6.3 ms**
   per search at the configured 500-note cap, 25 ms at 2 000, 127 ms at 10 000 — against a spoken

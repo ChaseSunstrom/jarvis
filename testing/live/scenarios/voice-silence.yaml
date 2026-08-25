@@ -11,4 +11,10 @@ turns:
     audio: {seconds: 3}
     say: ""
     expect:
+      # M35: the recogniser runs with `--vad-filter` now, so it returns nothing
+      # at all rather than a hallucinated word, and the pipeline says so in the
+      # only place that can be acted on — a visible, coded error. Before the
+      # filter this scenario passed on the weaker promise that the hallucinated
+      # text moved nothing; it now asserts that there IS no text.
+      error: {code: stt-no-text-recognized}
       no_service: [light.turn_on, light.turn_off, lock.unlock, media_player.play_media]

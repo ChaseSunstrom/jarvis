@@ -214,19 +214,53 @@ recorded and which no benchmark changes: its stock container POSTs to
 `telemetry.qdrant.io` hourly, and "nothing goes to the cloud at runtime" is the
 first sentence of this project's README.
 
-### 5. Speech — *services yes, replacement no, A/B the voice* (M35)
+### 5. Speech — *both stay where they are, and one open defect closed* (M35)
 
-**STT:** the Wyoming faster-whisper container works. An OpenAI-compatible
-front (speaches, which serves faster-whisper and Kokoro) buys one thing this
-system actually needs: `condition_on_previous_text`, which is the suspected
-cause of the doubled-transcript issue in `ISSUES.md` and is not exposed by the
-current container. That is the measurement that decides it, not the API shape.
+**STT: Wyoming faster-whisper stays. speaches is not adopted.** The case for
+swapping was one specific defect — `ISSUES.md`, "a transcript is occasionally
+doubled on the wake-word path" — on the theory that it was a
+`condition_on_previous_text` setting the current container does not expose.
 
-**TTS:** Piper stays. Kokoro-FastAPI (`ghcr.io/remsky/kokoro-fastapi-cpu`) is
-A/B'd beside it — its own README reports ~3.5 s to first audio on an older i7
-CPU, against Piper's near-instant, so on this box the likely verdict is "better
-voice, too slow to talk to". The live suite's judge scores and the WER and
-latency numbers are the tie-break, and the operator's ears are the appeal.
+Re-tested, the doubling was not occasional at all: **three runs out of three**,
+every utterance, `"Turn on the ceiling lights.  Turn on the ceiling lights."`
+The two spaces were the clue — faster-whisper returning one sentence as two
+segments, which is the repeat hallucination long silences provoke. The
+container does not expose `condition_on_previous_text`, but it does expose
+`--vad-filter`, which trims the silence that provokes it:
+
+    before   WER 1.00, three runs of three doubled
+    after    WER 0.00, three runs of three clean
+
+So the defect that justified a new service was closed by a flag the service we
+already run has had all along. That also made two negative scenarios stronger:
+silence and room tone now produce **no text at all** rather than Whisper's
+famous "You" hallucination, so `voice-silence` and `voice-room-tone` assert a
+coded `stt-no-text-recognized` instead of the weaker "whatever it heard moved
+nothing".
+
+What would reverse this: a need for per-request decoding parameters (an
+OpenAI-compatible server takes them per call; Wyoming takes them at startup),
+or a second recogniser for a second language.
+
+**TTS: Piper stays the default, and Kokoro is one flag away.** Both engines
+were measured on five real replies, twice (`scripts/verify/tts_ab.py`):
+
+| | median synth | real-time factor | round-trip WER | cost |
+|---|---|---|---|---|
+| Piper `en_GB-alan-medium` | 1.7 s | 0.40–0.52x | 0.000–0.040 | 33 MB of model, already running |
+| Kokoro `bm_george` | 1.4 s | 0.39–0.47x | 0.000 | 3.2 GB image, 1 GB resident |
+
+The gap is inside the run-to-run variance. Neither is slower than real time,
+neither is hard to understand, and the numbers refuse to pick. **So the numbers
+do not get to pick** — `docs/tts-review/` holds the same five sentences in both
+voices, and Piper stays the default only because a tie is not a reason to spend
+3.2 GB of somebody's disk.
+
+`jarvis/voice/openai_tts.py` makes the switch a config key rather than a code
+change, and `jarvis-tts` is in the stack behind `--profile kokoro`. One trap
+worth recording: Kokoro streams its WAV, so the header's frame count is a
+placeholder — it claims 89 478 seconds — and reading by it returns nothing.
+The length comes from the bytes.
 
 ### 6. Observability — *wanted, and it does not fit* (M36)
 

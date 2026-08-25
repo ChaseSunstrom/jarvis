@@ -462,8 +462,25 @@ longer spoken, archived, or returned.
 ## A transcript is occasionally doubled on the wake-word path
 
 severity: minor
-status: **open**
-Regression: `voice-wake-word`
+status: **fixed** (M35 — `--vad-filter` on `wyoming-whisper`)
+Regression: `voice-wake-word`, whose WER ceiling is back to the default 0.25
+
+**The fix.** It was never occasional: re-tested under M35 it was three runs out
+of three, every time. The two spaces in `"…lights.  Turn on…"` were the tell —
+faster-whisper returning one utterance as two segments, which is the repeat
+hallucination that long silences provoke. The container does not expose
+`condition_on_previous_text`, which was the hypothesis below, but it does
+expose `--vad-filter`, which removes the silence that causes it. WER 1.00 → 0.00,
+three runs of three.
+
+Two negative scenarios got stronger as a side effect: with the filter on,
+silence and room tone produce NO text rather than Whisper's "You"
+hallucination, so `voice-silence` and `voice-room-tone` now assert a coded
+`stt-no-text-recognized` instead of the weaker "whatever it heard moved
+nothing".
+
+What was originally written here, kept because the ruling-out was right and
+only the conclusion was wrong:
 
 Through the wake stage, one utterance in several comes back from the recogniser
 twice: `"Turn on the ceiling lights.  Turn on the ceiling lights."` The action
