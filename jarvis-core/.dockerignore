@@ -18,6 +18,9 @@ wyoming/
 # The embedding and reranker weights TEI downloads (M33), same reasoning
 # as wyoming/: fetched once, hundreds of megabytes, never in an image.
 models/
+# The gateway's config and its guard are bind-mounted into the LiteLLM
+# container, not built into any image here.
+gateway/
 ollama/
 searxng/
 mosquitto/

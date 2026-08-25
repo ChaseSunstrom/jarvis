@@ -69,6 +69,29 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M40 (one gateway, and a privacy guard): a self-hosted LiteLLM is now the single internal model
+  endpoint — jarvis-core dials it, it dials llama-swap — with routing, fallbacks and per-model
+  rate limits as config and **no database**. Local-only stays a complete configuration: two
+  local models ship and every cloud provider is commented out.
+
+  The hard rule is the guard. A request whose prompt carries the memory block, quarantined
+  content, or the results of a private tool is tagged `local-only`, and the proxy **refuses** to
+  route it at a cloud provider — 403, not a silent downgrade to a local model, because a turn
+  that quietly got worse is indistinguishable from one that quietly leaked.
+
+  **It took three attempts and the first two failed silently.** A `litellm_settings: callbacks:`
+  entry loaded cleanly and never fired; a `guardrails:` block is gated behind an enterprise
+  licence and never ran. Both looked right. What caught them was the probe asserting the mock
+  cloud provider had **heard nothing** rather than that a log line appeared — a guard verified
+  by its own logging is verified by the wrong thing. The working mechanism is `custom_auth`,
+  which runs on every request and may raise; taking that over means implementing key checking
+  too, which it now does.
+
+  `testing/fixtures/gateway_probe.py` proves all four behaviours the brief names against a real
+  proxy and a mock provider that records what it was asked: default local, override reaches the
+  cloud, a 500 falls back, and a tagged request is refused with that provider sitting there
+  ready to answer.
+
 - M38 (channels): Jarvis is reachable from a phone — Telegram and Signal ship, and a new channel
   is four methods. Both shipped adapters **poll**: Telegram's bot API outbound over HTTPS,
   Signal through a container on the tailnet. No webhook, no inbound port, no URL carrying a

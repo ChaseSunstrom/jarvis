@@ -256,6 +256,7 @@ def build_config(
     tts_port: int,
     wake_port: int,
     model: str = DEFAULT_MODEL,
+    llm_api_key: str = "",
     wyoming_host: str = "127.0.0.1",
     search_url: str = "",
     browser_url: str = "",
@@ -457,6 +458,9 @@ voice:
 llm:
   url: {ollama_url}
   model: {model}
+  # Present so the harness can talk to a gateway that wants one (M40). Empty
+  # when there is none, which is what a bare llama-swap or Ollama expects.
+  api_key: "{llm_api_key}"
   # An inline persona: no prompts/ directory needed, and the system prompt is
   # the same on every run, so the fake model's rules match deterministically.
   persona: "You are Jarvis, a composed British butler. Answer in one sentence."
@@ -600,6 +604,7 @@ class Harness:
         boot_timeout: float = BOOT_TIMEOUT,
         save_audio: bool = True,
         ollama_url: str | None = None,
+        llm_api_key: str | None = None,
         wyoming: dict[str, Any] | None = None,
         search_url: str | None = None,
         browser_url: str | None = None,
@@ -671,6 +676,11 @@ class Harness:
         self.port = int(port) if port else free_port(host)
         self.ports: dict[str, int] = {"core": self.port}
         self.ollama_url = ""
+        # The gateway's key, when one is in front (M40). From the environment
+        # by default, so every caller does not have to know about it.
+        self.llm_api_key = str(
+            llm_api_key if llm_api_key is not None else os.environ.get("LLM_API_KEY", "")
+        )
         self._children: list[_Child] = []
         self._started = False
         self._atexit_registered = False
@@ -905,6 +915,7 @@ class Harness:
                 port=self.port,
                 host=self.host,
                 ollama_url=self.ollama_url,
+                llm_api_key=self.llm_api_key,
                 stt_port=self.ports["stt"],
                 tts_port=self.ports["tts"],
                 wake_port=self.ports["wake"],

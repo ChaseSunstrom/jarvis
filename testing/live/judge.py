@@ -35,6 +35,10 @@ from . import LiveError
 #: system has.
 LLM_URL = (os.environ.get("LLM_URL") or os.environ.get("OLLAMA_URL") or "").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_JUDGE_MODEL") or os.environ.get("LLM_MODEL") or ""
+#: The key, when there is a gateway in front (M40). Empty for a bare
+#: llama-swap or Ollama, which is what this had assumed — and what made the
+#: judge the last thing in the rig to notice a proxy had appeared.
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 
 PROMPT = """You are grading one reply from a voice assistant.
 
@@ -86,9 +90,11 @@ def _parse(raw: str) -> tuple[bool | None, str]:
 class Judge:
     """A local model, asked one small question at a time."""
 
-    def __init__(self, url: str = "", model: str = "", timeout: float = 120.0) -> None:
+    def __init__(self, url: str = "", model: str = "", timeout: float = 120.0,
+                 api_key: str = "") -> None:
         self.url = (url or LLM_URL).rstrip("/")
         self.model = model or LLM_MODEL
+        self.api_key = api_key or LLM_API_KEY
         self.timeout = timeout
         self.verdicts: list[Verdict] = []
 
@@ -110,8 +116,13 @@ class Judge:
             "stream": False,
         }
         try:
+            headers = (
+                {"authorization": f"Bearer {self.api_key}"} if self.api_key else None
+            )
             async with httpx.AsyncClient(timeout=self.timeout) as http:
-                answer = await http.post(f"{self.url}/chat/completions", json=payload)
+                answer = await http.post(
+                    f"{self.url}/chat/completions", json=payload, headers=headers
+                )
                 answer.raise_for_status()
                 body = answer.json()
         except Exception as err:  # noqa: BLE001 - the rig must name its own failures

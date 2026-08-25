@@ -429,6 +429,7 @@ class OpenAICompatClient:
             payload.update(extra)
             if body:
                 payload.setdefault("extra_body", {}).update(body)
+        _tag_privacy(payload)
         return OpenAICompatStream(self, payload)
 
     # --- the tool loop's wire shape ---------------------------------------
@@ -552,6 +553,36 @@ class OpenAICompatClient:
             key=lambda r: int(r.get("index", 0)),
         )
         return [[float(x) for x in (r.get("embedding") or [])] for r in ordered]
+
+
+def _tag_privacy(payload: dict[str, Any]) -> None:
+    """Mark a request whose prompt carries private content (M40).
+
+    The tag travels in `metadata` and is enforced by the gateway, which refuses
+    to route a `local-only` request at a cloud provider. Both halves exist on
+    purpose: this one knows WHAT is in the prompt, and the proxy is where the
+    refusal binds anything that can reach the endpoint rather than only a
+    well-behaved client.
+
+    A prompt with nothing private in it is not tagged at all, so an install
+    with no gateway sends exactly what it sent before.
+    """
+    try:
+        from ..security.privacy import HEADER, classify
+
+        tag, _why = classify(payload.get("messages"))
+        if not tag:
+            return
+        metadata = payload.setdefault("metadata", {})
+        if isinstance(metadata, dict):
+            metadata["privacy"] = tag
+        # And as a header, because a proxy that drops unknown body keys still
+        # sees headers — and `drop_params: true` is a normal thing to configure.
+        headers = payload.setdefault("extra_headers", {})
+        if isinstance(headers, dict):
+            headers[HEADER] = tag
+    except Exception:  # pragma: no cover - tagging must never fail a turn
+        pass
 
 
 def _translate_format(format: str | dict[str, Any]) -> dict[str, Any]:

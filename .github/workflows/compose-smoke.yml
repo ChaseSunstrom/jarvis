@@ -39,7 +39,9 @@ name: Compose smoke
 # cap_add fix and is the only other place it can regress), and the two
 # retrieval services — they download ~220 MB of model on first start, which is
 # well inside this job's budget and is exactly the step that can fail on a
-# runner with no cache.
+# runner with no cache — and the model gateway, which is the single internal
+# endpoint every turn goes through and therefore the last thing that should be
+# untested in a bring-up job.
 #
 # Skipped: photon, and only photon. It is an offline geocoder whose first start
 # downloads a planet index — tens of GB with `PHOTON_REGION` unset, which is
@@ -102,6 +104,7 @@ env:
     searxng
     jarvis-embeddings
     jarvis-reranker
+    jarvis-gateway
   # jarvis-tts is Kokoro, behind `--profile kokoro`: a 3.2 GB image for a voice
   # the measurement could not separate from Piper's (docs/tts-review/). Starting
   # it here would spend six minutes of every CI run on a service the stack does

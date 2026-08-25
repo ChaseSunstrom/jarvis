@@ -429,6 +429,20 @@ house's summary is a fraction of a real one's.
 | Proactive moments go out on channels | Automated *as wiring* | the hub subscribes to `jarvis_notification`; `notifications` stays the one notion of "tell them" |
 | Telegram and Signal against real accounts | **Unproven, by design** | no test touches an account. `MemoryChannel` ships in the product and the live probes drive the real hub through it — only the wire is a fake. `BLOCKERS.md` §4 has the accounts |
 
+### The model gateway, and what may leave the network (M40)
+
+| Claim | Level | Proof |
+|---|---|---|
+| One endpoint, and the house still answers through it | Automated | `scripts/verify/m40-model-gateway.sh` runs live scenarios with `jarvis-core` dialling `jarvis-gateway`, which dials llama-swap |
+| A request with no override goes local | Automated | `testing/fixtures/gateway_probe.py` — and the mock cloud provider recorded nothing |
+| An override reaches a cloud provider | Automated | the same probe, against a mock that records what it was asked |
+| A failing provider falls back instead of failing the turn | Automated | the same probe, with the mock told to return 500 |
+| **A request carrying private content cannot leave** | Automated | the same probe: tagged `local-only`, aimed at the cloud mock, refused with 403 — **and the mock heard nothing**. That is the assertion; a log line saying "refused" would be the guard grading its own homework |
+| …and an untagged request still reaches it | Automated | the control, in the same probe: the guard refuses a tag, not everything |
+| Jarvis and the proxy agree about what "cloud" means | Automated | `test_the_two_halves_of_the_guard_agree` reads both files — they cannot import each other, one runs inside the LiteLLM container |
+| Prompts are not logged by the proxy | Automated | `turn_off_message_logging: true`, asserted |
+| Per-provider cost caps | **Not built** | LiteLLM's spend tracking needs its database. Rate limits (rpm) are config and are set; a budget is not, and `docs/TOOLING_DECISIONS.md` §8 says so |
+
 ### Hardening: what holds when the content is hostile (M43)
 
 `docs/THREAT_MODEL.md` is the argument; this is what is asserted.

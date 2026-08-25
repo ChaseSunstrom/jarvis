@@ -550,6 +550,62 @@ services:
     mem_limit: 2g
     cpus: 2.0
 
+  # --- the model gateway ---------------------------------------------------
+  #
+  # One endpoint everything in Jarvis talks to, so a model can be swapped
+  # without touching Jarvis, a failing provider falls back instead of failing a
+  # turn, and there is ONE place the privacy guard can refuse.
+  #
+  # No database, no virtual keys, no spend tracking: LiteLLM's full control
+  # plane is Postgres and Redis to bill one household. The config file does
+  # routing, fallbacks and rate limits, which is what M40 actually needs.
+  #
+  # The guard is mounted in and runs in-process (`gateway/privacy_guard.py`):
+  # a request tagged `local-only` — because its prompt carries memory, notes or
+  # anything read from a private integration — is refused if it has been routed
+  # at a cloud model. In the proxy rather than only in Jarvis, so anything that
+  # can reach this endpoint is bound by it.
+  jarvis-gateway:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: jarvis-gateway
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/app/config.yaml", "--port", "${GATEWAY_PORT:-4000}"]
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Where the local model actually lives. The gateway is a router, not a
+      # server: this is still llama-swap.
+      #
+      # A SEPARATE name from `LLM_URL`, which is what Jarvis dials — once that
+      # points at this container, reusing it here would point the gateway at
+      # itself. Unset, it falls back, so an install that has not switched over
+      # keeps working.
+      - LLM_URL=${GATEWAY_UPSTREAM_URL:-${LLM_URL:-http://127.0.0.1:11434/v1}}
+      # With the wire prefix baked in: see gateway/config.yaml on why.
+      - GATEWAY_LOCAL_MODEL=openai/${GATEWAY_UPSTREAM_MODEL:-${LLM_MODEL:-qwen3:8b}}
+      - GATEWAY_FAST_MODEL=openai/${GATEWAY_FAST_UPSTREAM_MODEL:-${GATEWAY_UPSTREAM_MODEL:-${LLM_MODEL:-qwen3:8b}}}
+      - LLM_API_KEY=${LLM_API_KEY:-none}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-jarvis-local}
+      # Cloud keys are absent on purpose. Uncomment a provider in
+      # gateway/config.yaml and put its key in .env to turn one on; the guard
+      # still refuses to send it anything private.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PYTHONPATH=/app
+    volumes:
+      - ./gateway/config.yaml:/app/config.yaml:ro
+      - ./gateway/privacy_guard.py:/app/privacy_guard.py:ro
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:${GATEWAY_PORT:-4000}/health/liveliness', timeout=4)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
+    mem_limit: 1g
+    cpus: 1.0
+
   # --- retrieval: embeddings and reranking ---------------------------------
   #
   # Two containers of one image, because that is what the measurement said.

@@ -542,7 +542,7 @@ and every milestone here ends with its own live scenarios.
     inbox, an unapproved state-changing call is refused.
   - Verify: `bash scripts/verify/m39-integrations.sh`
 
-- [ ] **M40 — One gateway, many providers, and a privacy guard** · size L · deps M28, M36
+- [x] **M40 — One gateway, many providers, and a privacy guard** · size L · deps M28, M36
   - Scope: a self-hosted LiteLLM container as the single internal model endpoint; llama-swap is
     the local default and OpenAI/Anthropic/Google/OpenRouter are configured but **off until the
     operator supplies keys** — local-only stays a complete configuration. Routing is policy:

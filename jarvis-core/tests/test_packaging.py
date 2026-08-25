@@ -1374,6 +1374,8 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "jarvis-reranker",
         # The alternative voice (M35), behind `--profile kokoro`.
         "jarvis-tts",
+        # The single internal model endpoint (M40).
+        "jarvis-gateway",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 

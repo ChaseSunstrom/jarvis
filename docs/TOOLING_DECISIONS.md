@@ -337,15 +337,46 @@ public API cannot start an arbitrary workflow. One configured without a
 failure than a 404 from a URL nobody meant to call. The API key travels as a
 header and never in a URL, where it would land in n8n's access log.
 
-### 8. LLM gateway — *LiteLLM, self-hosted* (M40, listed here for the budget)
+### 8. LLM gateway — *LiteLLM, no database, and the guard is not where you expect* (M40)
 
-`ghcr.io/berriai/litellm` is the routing layer for M40, and its production
-shape wants Postgres and Redis. What M40 needs from it — policy routing,
-fallbacks, per-provider caps, and a guard that refuses to send a local-only
-request to a cloud provider — is available from the config file and callbacks
-without the full control plane. The database is not adopted; if the guard
-cannot be expressed without it, the guard is written in Jarvis instead, because
-the guard is the requirement and LiteLLM is the convenience.
+**Chosen:** `ghcr.io/berriai/litellm:main-stable` as the single internal
+endpoint, with a config file and **no database**. LiteLLM's full control plane
+is Postgres and Redis to bill one household; routing, fallbacks and per-model
+rate limits are config, which is what M40 actually needs.
+
+**Local-only stays a complete configuration.** Two models ship, both local, and
+every cloud provider is commented out — they need keys the operator has not
+supplied. An install that never touches this file has a working gateway with
+nowhere off-network to send anything.
+
+**The guard took three attempts, and the first two failed silently.** This is
+worth recording because both looked correct and neither did anything:
+
+| attempt | why it failed |
+|---|---|
+| `litellm_settings: callbacks: privacy_guard.guard_instance` | a callback WATCHES a request. The proxy dispatches `async_pre_call_hook` to one only under conditions this did not meet: it loaded cleanly, logged nothing, and let a tagged request through to the cloud mock |
+| `guardrails: [{guardrail: privacy_guard.PrivacyGuard, mode: pre_call}]` | the mechanism meant for refusing — and custom guardrails route through `initialize_callbacks_on_proxy(premium_user=…)`, so on the free image the block is accepted and the guardrail never runs |
+| `general_settings: custom_auth: privacy_guard.privacy_auth` | **works.** Runs on every request, receives the whole `Request`, may raise, and is not a licensed feature |
+
+What caught both failures was `testing/fixtures/gateway_probe.py` asserting the
+mock cloud provider had **heard nothing** — not that a log line appeared. A
+guard verified by its own logging is a guard verified by the thing that was
+absent.
+
+Taking over authentication means implementing it, so the master key is checked
+in the same hook. That is a real cost of this approach and it is written down
+rather than discovered later.
+
+**What the guard does:** a request tagged `local-only` — because its prompt
+carries the memory block, quarantined content, or the results of a private tool
+— is refused with a 403 if it was routed at a cloud model. Not downgraded to a
+local one: a silent downgrade is a decision nobody made, and a turn that
+quietly got worse is indistinguishable from a turn that quietly leaked.
+
+Both halves exist on purpose. Jarvis tags (it knows what is in the prompt); the
+proxy refuses (it binds anything that can reach the endpoint, not just a
+well-behaved client). A test reads both files and fails if their idea of
+"cloud" diverges.
 
 ## How a decision here gets overturned
 
