@@ -694,15 +694,44 @@ install code is the marketplace attack surface that class of tool actually got b
       at three breakpoints, all four states are reachable, and a headless screenshot lands in
       `docs/ui-review/<page>/<breakpoint>.png`. A visual-consistency check flags a page whose
       rendered palette or spacing deviates from the tokens.
-  - Carried in from M44: the console header is TWO rows at 1280px. Eleven top-level
-    sections plus the brand and the status readout no longer fit on one, and the two ways
-    out are both worse than the wrap — a horizontally scrolling nav hides SETTINGS behind
-    a scrollbar nobody can see (`e2e.spec.ts:712` catches it by hit-testing), and shrinking
-    the items is a fight the twelfth section wins anyway. The nav needs a real answer here:
-    grouping, an overflow menu, or fewer top-level destinations.
-  - Verify: `bash scripts/verify/m48-webui-c2.sh` — it **fails** if any inventory row is
-    unchecked, if token-lint finds a hardcoded style value anywhere in the console's source, if
-    a page is missing a required state, or if an old-design component is still referenced. The
+  - **First, consolidate the navigation — then migrate** (mid-run addition). The console has
+    eleven top-level sections. This is not a restyle: the structure is reduced BEFORE any page
+    moves, so pages are migrated into their new homes rather than old messy pages being
+    restyled in place.
+    * **Fewest primary destinations that still make sense — target 4–5, and no more.** Related
+      pages merge into ONE surface with sections or panels rather than separate tabs; anything
+      rarely used moves into settings or a contextual entry, not the top bar. Reducing the tab
+      count is an explicit goal of this milestone, not a side effect, and the verify script
+      fails if the top-level nav has more than five destinations.
+    * **The navigation-architecture section of `docs/UI_MIGRATION.md`** comes first and is
+      written before the inventory rows: the proposed tab structure, and for EVERY current
+      page, where it lives after consolidation. The inventory is then written against the
+      consolidated structure, so a row names its new home and not its old one.
+    * **Clean and self-evident.** One clear primary action per surface and an obvious visual
+      hierarchy; generous spacing over density everywhere; progressive disclosure — advanced
+      and rare controls behind expanders rather than crowding the main view. The bar is that a
+      first-time user understands each screen without explanation.
+    * **Motion that serves usability.** The M44 tokens applied so navigation and state changes
+      guide attention and show the relationship between views — consolidated sections animate
+      between each other fluidly, and it stays subtle, fast and consistent. Never decoration at
+      the cost of speed or clarity; the M44 frame budget and reduced-motion paths still hold.
+    * **Non-negotiable: this refines structure and polish, it does not restyle.** Everything
+      stays inside the C2 look and its tokens.
+    * Carried in from M44, and evidence for the above: the console header is TWO rows at
+      1280px. Eleven top-level sections plus the brand and the status readout no longer fit on
+      one, and both ways out are worse than the wrap — a horizontally scrolling nav hides
+      SETTINGS behind a scrollbar nobody can see (`e2e.spec.ts:712` catches it by hit-testing),
+      and shrinking the items is a fight the twelfth section wins anyway. Consolidation is the
+      answer the header has been asking for.
+    * The phone and the desktop mirror the console's sections
+      (`android-app/tools/console_parity_test.py`, `ConsoleTab.kt`). They move in the SAME
+      change or that mirror goes red — full parity across surfaces carries later, but the
+      contract cannot be left broken in between.
+  - Verify: `bash scripts/verify/m48-webui-c2.sh` — it **fails** if the top-level nav has more
+    than five destinations, if a current page is not accounted for in the
+    navigation-architecture section, if any inventory row is unchecked, if token-lint finds a
+    hardcoded style value anywhere in the console's source, if a page is missing a required
+    state, or if an old-design component is still referenced. The
     live suite navigates to every inventoried route and asserts it loads with no console error
     and matches the C2 token expectations; `docs/LIVE_TEST_REPORT.md` gains a migration section
     (pages migrated / total, per-breakpoint screenshots, remaining offenders — which must be
