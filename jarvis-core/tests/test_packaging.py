@@ -1376,6 +1376,12 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "jarvis-tts",
         # The single internal model endpoint (M40).
         "jarvis-gateway",
+        # Fixtures for the calendar and mail integrations (M39), behind
+        # `--profile fixtures` — a real CalDAV server and a real mailbox, so
+        # those clients are tested against something other than a mock of
+        # themselves.
+        "jarvis-radicale",
+        "jarvis-mailsink",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1475,7 +1481,12 @@ def test_only_optional_extras_are_profile_gated(compose: dict[str, Any]) -> None
     # of resident memory buy a different VOICE and nothing else. That is the
     # operator's ear to decide (`docs/tts-review/`), not something `up -d`
     # should spend their disk on.
-    assert gated == {"searxng", "mosquitto", "photon", "jarvis-tts"}
+    # And the two M39 fixtures, which exist for the tests rather than for the
+    # house: a CalDAV server and a mailbox with nothing real in either.
+    assert gated == {
+        "searxng", "mosquitto", "photon", "jarvis-tts",
+        "jarvis-radicale", "jarvis-mailsink",
+    }
 
 
 def test_compose_ships_no_secrets(compose: dict[str, Any]) -> None:

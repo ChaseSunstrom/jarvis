@@ -531,7 +531,7 @@ and every milestone here ends with its own live scenarios.
     external account is touched by any test.
   - Verify: `bash scripts/verify/m38-channels.sh`
 
-- [ ] **M39 — Calendar, mail, and a tool-plugin interface** · size L · deps M11, M43
+- [x] **M39 — Calendar, mail, and a tool-plugin interface** · size L · deps M11, M43
   - Scope: CalDAV (read, create, modify, availability) and IMAP/SMTP (read, send) as
     integrations, plus the drop-in self-describing tool-plugin interface they are the first two
     users of. Read-only is allowed by default; anything that mutates external state or reads

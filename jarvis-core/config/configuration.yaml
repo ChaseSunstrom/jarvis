@@ -473,6 +473,38 @@ memory:
   # `research:` below DOES use it, on the same host, for the same money.
 
 # ---------------------------------------------------------------------------
+# Calendar and mail — the two things a diary assistant is actually for. OFF.
+# ---------------------------------------------------------------------------
+# Both are plugins on the drop-in tool interface (`integrations/plugins/`), and
+# both are off until you point them somewhere.
+#
+# Reading is Tier 1: it is your diary and your mailbox, and "what's on
+# tomorrow" is the question they exist for. Everything that changes something
+# outside this house — an event other people can see, an email — is Tier 3 and
+# asks you first.
+#
+# An email body arrives QUARANTINED. It is text a stranger wrote, so M43's
+# rules apply exactly as they do to a web page: the turn that read it cannot
+# then take a state-changing action without you.
+#
+# calendar:
+#   url: https://dav.example/user/calendar/
+#   username: !secret caldav_user
+#   password: !secret caldav_password
+#
+# mail:
+#   imap: {host: mail.example, port: 993, ssl: true}
+#   smtp: {host: mail.example, port: 587, starttls: true}
+#   username: !secret mail_user
+#   password: !secret mail_password
+#   from: "jarvis@example"
+#   # Who Jarvis may write to. An address NOT on this list is refused rather
+#   # than asked about: "send this to attacker@example?" is a prompt somebody
+#   # clicks yes on. Empty means nobody, which is the default.
+#   allow_to:
+#     - you@example
+
+# ---------------------------------------------------------------------------
 # Channels — Jarvis on your phone, and only for you. OFF.
 # ---------------------------------------------------------------------------
 # Telegram and Signal ship; Discord, Matrix or an SMS gateway drop in as four

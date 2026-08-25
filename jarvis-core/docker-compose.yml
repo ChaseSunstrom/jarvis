@@ -550,6 +550,67 @@ services:
     mem_limit: 2g
     cpus: 2.0
 
+  # --- fixtures for the calendar and mail integrations ---------------------
+  #
+  # Behind `--profile fixtures` and off by default: these exist so M39's tests
+  # can prove that a created event appears on a real CalDAV server and a sent
+  # mail lands in a real inbox, without anybody's account being involved.
+  #
+  #     docker compose --profile fixtures up -d
+  #     python3 testing/fixtures/integrations_probe.py
+  jarvis-radicale:
+    image: tomsquest/docker-radicale:latest
+    container_name: jarvis-radicale
+    restart: unless-stopped
+    profiles: [fixtures]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # No authentication: it is a fixture on loopback with nothing real in it,
+      # and a password here would be a password in the repository.
+      - RADICALE_CONFIG=/config/config
+    volumes:
+      - ./fixtures/radicale:/config:ro
+      - radicale-data:/data
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5232/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.5
+
+  # smtp4dev rather than MailDev, and the reason is IMAP: `mail_read` speaks
+  # IMAP, so a sink that only accepts SMTP would leave half the integration
+  # untested. This one accepts mail on 1025 and serves the same mailbox over
+  # IMAP on 1043, so both directions are exercised against a real server.
+  jarvis-mailsink:
+    image: rnwood/smtp4dev:v3
+    container_name: jarvis-mailsink
+    restart: unless-stopped
+    profiles: [fixtures]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      - ServerOptions__Port=1025
+      - ServerOptions__ImapPort=1043
+      - ServerOptions__HostName=localhost
+      # No TLS and no auth: a fixture on loopback with nothing real in it.
+      - ServerOptions__TlsMode=None
+      - ServerOptions__AuthenticationRequired=false
+      - ServerOptions__Urls=http://127.0.0.1:1080
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 3 http://127.0.0.1:1080/api/Messages > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 30s
+    mem_limit: 512m
+    cpus: 1.0
+
   # --- the model gateway ---------------------------------------------------
   #
   # One endpoint everything in Jarvis talks to, so a model can be swapped
@@ -855,4 +916,5 @@ services:
 # `mosquitto-data` IS a named volume because nobody edits a broker's
 # persistence file by hand, and losing it costs a retained topic.
 volumes:
+  radicale-data:
   mosquitto-data:

@@ -417,6 +417,20 @@ house's summary is a fraction of a real one's.
 | A person can see it from the task that ran | Automated *in a real browser* | `jarvis-web/e2e/task-live.spec.ts` — the Trace panel shows what it cost, where the time went, and each span with its duration; a failed span reads as failed without opening anything |
 | Traces from more than one Jarvis, or analytical queries over them | **Not built** | that is what a Langfuse would be for; `docs/TOOLING_DECISIONS.md` §6 records the measurement and says the JSONL is deliberately the shape you can ship elsewhere |
 
+### Calendar, mail, and the plugin interface (M39)
+
+| Claim | Level | Proof |
+|---|---|---|
+| An event created by Jarvis appears on a real calendar | Automated *against Radicale* | `testing/fixtures/integrations_probe.py` — created over CalDAV, then read back out of a `REPORT`, then deleted |
+| A sent message lands in a real inbox | Automated *against smtp4dev* | the same probe, reading the sink's API. smtp4dev rather than MailDev because it also serves IMAP, so the READ path is tested against a real server too |
+| An address nobody allow-listed is refused | Automated | the same probe, and `test_an_address_nobody_allow_listed_is_refused` — refused rather than asked about, because "send this to attacker@example?" is a prompt somebody clicks yes on |
+| Reading is free; changing the outside world is not | Automated | the probe asserts the split by tier, and `PluginTool` defaults an unclassified tool to Tier 3 |
+| An email body cannot instruct the model | Automated | bodies are quarantined and reading mail taints the turn, so M43's escalation applies — asserted in the gate |
+| Credentials are read when a tool runs | Automated | `ToolPlugin.secret()`; nothing holds a credential in an attribute for the process's life |
+| Every external call is in the trace with its duration | Automated | `EVENT_PLUGIN_CALL`, fired around every plugin tool call |
+| No new dependency for either protocol | Automated | CalDAV is `httpx` + `xml.etree`; mail is `imaplib` + `smtplib`. The gate greps for `caldav`, `lxml`, `icalendar` |
+| Recurrence, timezones beyond UTC, attachments | **Not built** | the iCal reader handles five fields and says so; an event it cannot fully parse still appears, without its recurrence |
+
 ### Channels: reachable, and only by you (M38)
 
 | Claim | Level | Proof |

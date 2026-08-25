@@ -19,8 +19,10 @@ wyoming/
 # as wyoming/: fetched once, hundreds of megabytes, never in an image.
 models/
 # The gateway's config and its guard are bind-mounted into the LiteLLM
-# container, not built into any image here.
+# container, not built into any image here. Same for the M39 fixtures'
+# configuration, which is mounted into Radicale.
 gateway/
+fixtures/
 ollama/
 searxng/
 mosquitto/

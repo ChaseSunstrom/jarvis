@@ -109,7 +109,12 @@ env:
   # the measurement could not separate from Piper's (docs/tts-review/). Starting
   # it here would spend six minutes of every CI run on a service the stack does
   # not start either.
-  SKIPPED_SERVICES: photon jarvis-tts
+  # jarvis-radicale and jarvis-mailsink are M39's fixtures: a CalDAV server
+  # and a mailbox that exist for the tests rather than for the house. They are
+  # started by `scripts/verify/m39-integrations.sh`, which is where they are
+  # actually exercised; starting them here would prove only that two
+  # containers can boot.
+  SKIPPED_SERVICES: photon jarvis-tts jarvis-radicale jarvis-mailsink
 
   # How long to sit still before asking whether anything restarted. A crash
   # loop shows up in seconds — docker's backoff starts at 100 ms — so this is

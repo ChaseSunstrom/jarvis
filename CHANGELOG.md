@@ -69,6 +69,29 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M39 (calendar, mail, and a tool-plugin interface): Jarvis can read the diary, say when you are
+  free, put something in it, read the mailbox and send a message — and the last two ask you
+  first. Both are the first users of a drop-in plugin interface that exists because they would
+  otherwise have written the same forty lines twice: read-only declared per tool (M43's
+  escalation asks), Tier 3 by default for anything that changes the world outside this house,
+  credentials fetched when the tool RUNS, and every external call in the trace with its duration.
+
+  Neither protocol added a dependency. CalDAV is `httpx` and `xml.etree`; mail is `imaplib` and
+  `smtplib`, which have been in Python since before this project's dependency list existed.
+  Availability is arithmetic here rather than a question for the model — "am I free Tuesday
+  afternoon" is a fold over busy periods, and a model doing that over timestamps gets it wrong
+  occasionally and confidently.
+
+  An email body arrives **quarantined** and reading mail taints the turn: it is text a stranger
+  wrote, and M43's rules apply exactly as they do to a web page. An address that is not on
+  `allow_to` is **refused rather than asked about** — "send this to attacker@example?" is a
+  prompt somebody clicks yes on.
+
+  Both are proved against real servers behind `--profile fixtures`: an event created over CalDAV
+  and read back out of Radicale, a message landing in smtp4dev's mailbox. smtp4dev rather than
+  MailDev because it also serves IMAP, so the read path is tested against a real server instead
+  of a mock of itself.
+
 - M42 (delegation across backends): a plan's pieces can now go to different kinds of worker. An
   entry naming `research` runs the research engine; `code` (or `code:claude-code`) starts a
   coding job; anything else is one of the specialists M20 built. They run at the same time,
