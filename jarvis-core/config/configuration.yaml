@@ -1232,6 +1232,11 @@ rest:
   - resource: !env_url LLM_URL http://127.0.0.1:11434 /v1/models
     scan_interval: 30
     method: GET
+    # The same key the `llm:` block uses. Empty for a bare llama-swap or
+    # Ollama, which ignore it; required by a LiteLLM gateway, which does not —
+    # and without it this readout said the model server was DOWN, every thirty
+    # seconds, while the assistant was talking to it through the same URL.
+    bearer: !env_var LLM_API_KEY ''
     sensor:
       - name: Model Server Models
         value_template: >-

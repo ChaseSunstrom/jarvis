@@ -29,8 +29,23 @@ check "the voice is fetched (60 MB, gitignored like the other models)" \
 check_not "the voice is not committed" git ls-files --error-unmatch testing/live/voices/en_US-amy-low.onnx
 check "the browser path uses a real microphone, not a stub" \
     grep -q 'use-file-for-fake-audio-capture' "$LIVE/browser_turn.cjs"
-check_not "the browser path does not use the mock backend's ?e2e=1 shortcut" \
-    grep -n "e2e=1" "$LIVE/browser_turn.cjs"
+# The comment that explains why the shortcut is not used is not a use of it.
+# This grepped the whole file and matched line 12, which says in as many
+# words that nothing is stubbed — a check failing on its own documentation.
+check "the browser path does not use the mock backend's ?e2e=1 shortcut" python3 -c '
+import re
+from pathlib import Path
+src = Path("testing/live/browser_turn.cjs").read_text()
+code = []
+for line in src.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
+        continue
+    code.append(line)
+used = [line.strip()[:90] for line in code if "e2e=1" in line]
+assert not used, "the browser path takes the shortcut: " + "; ".join(used)
+print("no ?e2e=1 outside the comment that explains why there is none")
+'
 check "the API path streams audio on the run's own binary channel" \
     grep -q 'run_pipeline' "$LIVE/transport.py"
 check "replies are transcribed back, not read off the screen" \
