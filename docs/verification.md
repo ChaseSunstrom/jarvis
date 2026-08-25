@@ -461,6 +461,19 @@ they are the only places that particular bug can come back.
 | Un-pairing: a device can be cut off, including its live connection | Automated | `test_pairing.py::test_revoking_hangs_up_the_live_socket`. Revoking used to mean "revoked at the next reconnect" — a phone holds its command socket for days, so a device you had just cut off kept reading every state change until something unrelated dropped the connection. The console panel is covered by a Playwright case. |
 | Pairing a phone by scanning a QR | Automated | `jarvis-core/tests/test_pairing.py` (23) for the code/token split, single use, expiry, per-caller rate limiting and the authenticated/unauthenticated split; `android-app/tools/pairing_payload_test.py` and `pairing_claim_test.py` for the parse and the exchange; a Playwright case for the console's half. The camera itself is **Unproven** — it hands off to whatever scanner the user installed. |
 
+### Agentic automation on the desktop (M21)
+
+| Claim | Level | Proof |
+|---|---|---|
+| A plan of several device actions runs in order, carrying state | Automated | `device_control.run_sequence` — `save:` names a step's result, `{name.field}` uses it in a later step. `test_device_control_sequence.py` |
+| A placeholder nothing saved is an error, not a literal | Automated | otherwise `{window.id}` reaches a device as eight characters of nonsense; and substitution is whole-value only, so `"rm -rf {dir}"` is not constructible |
+| A failed or refused step stops the rest, and says which | Automated *and end to end* | `test_agentic_automation.py` — the refused step's file is still there and the step after it never wrote anything, checked against the filesystem |
+| A sequence cannot smuggle a Tier-3 action past a prompt | Automated | each step keeps its own tier on the device; a held step ends the sequence with `approval_required` and the rest do not run |
+| `verify` is checked before the next step, not after everything | Automated | `test_verify_runs_before_the_next_step` |
+| The console can watch it happen | Automated | the tool creates a task with one step per plan step and advances it as each finishes; the e2e asserts the task events a client sees |
+| The model plans one and it reaches the machine | Automated *end to end* | `test_the_model_plans_a_sequence_and_the_task_events_show_it` — scripted model, real agent, real file on disk afterwards |
+| A plan on a screen somebody is looking at | **Unproven** | there is no screen here; `ui_*` actions are the phone's and are flagged off (M22) |
+
 ### The desktop shell (M07)
 
 | Claim | Level | Proof |

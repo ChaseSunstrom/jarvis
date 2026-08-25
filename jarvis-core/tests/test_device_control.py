@@ -432,7 +432,11 @@ async def test_the_control_device_schema_follows_the_live_devices(jarvis, phone,
 
     get_devices(jarvis).disconnect(DESK)
     assert "enum" not in tool.parameters["properties"]["device"]
-    assert "No device is connected" in tool.description
+    # The wording is shorter than it was — the prompt budget is a ratchet and
+    # every word here is paid for on every round of every turn — but the claim
+    # is the same one: with nothing connected the model is told to say so
+    # rather than to invent a device.
+    assert "Nothing is connected" in tool.description
 
 
 async def test_the_model_dispatches_through_the_tool(jarvis, phone):

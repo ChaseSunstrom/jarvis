@@ -272,7 +272,20 @@ llm:
   approval_ttl: 300
   options:
     temperature: 0.6
-    num_ctx: 8192
+    # The context window asked of the model server.
+    #
+    # 12288, raised from 8192 when the toolbox reached 28 tools (M20's
+    # subagents and M21's device sequences were the two that tipped it):
+    # `tests/test_prompt_budget.py` measures system prompt + schema against
+    # this and fails at 72% of it, and at 8192 there was no longer room for the
+    # house summary, twenty turns of history and an answer.
+    #
+    # It is not free. The window is KV cache on the model server, per
+    # concurrent request — with `max_concurrent: 2` that is two of these — and
+    # on a box where the GPUs are shared with everything else, doubling it
+    # again would be a decision about somebody's memory rather than about
+    # Jarvis's prompt.
+    num_ctx: 12288
 
   # What the model can see and touch. Everything not exposed is invisible to
   # every tool, read-only ones included — this is the blast radius, so keep it

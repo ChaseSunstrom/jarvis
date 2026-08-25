@@ -44,7 +44,13 @@ from jarvis.integrations import CORE_INTEGRATIONS  # noqa: E402
 CHARS_PER_TOKEN = 3.5
 
 #: The window the shipped `configuration.yaml` asks for.
-NUM_CTX = 8192
+#:
+#: Raised to 12288 with the config when the toolbox reached 28 tools. The
+#: RATIO below is what this file actually defends — a bigger window that is
+#: still 72% full of schema before the conversation starts is the same problem
+#: with more tokens — so moving this number never relaxes the ratchet, it only
+#: records what the deployment asks for.
+NUM_CTX = 12288
 
 #: ## The measured position, and it is not a good one
 #:

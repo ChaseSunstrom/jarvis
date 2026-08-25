@@ -16,7 +16,16 @@ check_sh "sequence tests" \
 check_sh "desktop agent exposes >= 21 actions" \
     'cd jarvis-desktop && python3 -c "from jarvis_desktop.actions.builtins import all_actions as a; import sys; n=len(a()); print(n); sys.exit(0 if n >= 21 else 1)"'
 require_file jarvis-desktop/tests_e2e/test_agentic_automation.py
-check "the e2e exercises a Tier-3 approval" grep -qiE 'approval|CONFIRM' jarvis-desktop/tests_e2e/test_agentic_automation.py
+# What "exercises a Tier-3 approval" means, asked as behaviour rather than as a
+# word: the suite sets a verdict, and asserts against the prompts the agent
+# actually raised. A grep for "approval" passed on a comment for a while.
+check "the e2e exercises a Tier-3 approval" python3 -c '
+from pathlib import Path
+text = Path("jarvis-desktop/tests_e2e/test_agentic_automation.py").read_text()
+assert "set_consent(\"denied\")" in text, "no refused step"
+assert "set_consent(\"approved\")" in text, "no approved step"
+assert "control.prompts()" in text, "nothing asserts a human was asked"
+'
 check "the e2e watches the task events the UI shows" grep -qE 'jarvis_task_updated|jarvis_task_tool_started' jarvis-desktop/tests_e2e/test_agentic_automation.py
 check_sh "desktop agentic-automation e2e (harness + scripted model + real agent)" \
     'cd jarvis-desktop && timeout 900 python3 -m pytest tests_e2e/test_agentic_automation.py -q --timeout=600 --timeout-method=signal 2>&1 | tail -3'

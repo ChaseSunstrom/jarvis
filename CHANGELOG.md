@@ -26,6 +26,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M21 (agentic automation on the desktop): `device_control.run_sequence` — a plan of device
+  actions in order, where `save:` names a step's result and `{name.field}` uses it in a later
+  step, `verify:` checks a step before the next one runs, and the first failure stops the rest
+  and reports which. Substitution is whole-value only, so `"rm -rf {dir}"` is not a thing a plan
+  can build, and a placeholder nothing saved is an error rather than eight characters of
+  nonsense reaching a device. Each step keeps its own tier on the device that runs it, so a
+  sequence cannot smuggle a Tier-3 action past a prompt — a held step ends the sequence. The
+  tool creates a task with one step per plan step and advances it as each finishes, so the
+  console can watch. `jarvis-desktop/tests_e2e/test_agentic_automation.py` proves it against the
+  real agent: a three-step plan that writes, reads and verifies; a refused delete whose file is
+  still there and whose next step never ran; and a scripted model planning one from a spoken
+  request.
 - M07 (the desktop app): `jarvis-desktop-app/` — an Electron window that loads **the console**,
   the same SvelteKit build a browser loads, so parity is by construction rather than by a second
   implementation. It adds the three things a browser tab cannot do: a tray icon that says what
@@ -106,6 +118,12 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   and per-volume backup/restore, and what upgrading a pinned image costs.
 
 ### Changed
+- `llm.num_ctx` 8192 → 12288, and the prompt-budget ratchet with it. The toolbox reached 28
+  tools (M20's `delegate_to_agents` and M21's `run_device_sequence` were the two that tipped
+  it) and at 8192 the system prompt plus the schema left no room for the house summary, twenty
+  turns of history and an answer. The RATIO the test defends is unchanged at 72%, so this
+  records what the deployment asks for rather than relaxing anything — and the config says what
+  it costs, which is KV cache on the model server, per concurrent request.
 - Planning (fourth mid-run addition): M48 — every page in the web console on the chosen C2
   direction. `docs/UI_MIGRATION.md` is a walked inventory with one row per page, and
   `scripts/verify/m48-webui-c2.sh` fails while any row is unchecked, any hardcoded style value

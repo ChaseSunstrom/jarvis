@@ -312,7 +312,7 @@ files both would touch, which the integrating session merges.
 
 ## Automation
 
-- [ ] **M21 — Agentic automation on the desktop** · size L · deps M07, M11, M20 · parallel-ok M22
+- [x] **M21 — Agentic automation on the desktop** · size L · deps M07, M11, M20 · parallel-ok M22
   - Scope: `device_control.run_sequence` (variables carried between steps, per-step tier,
     stop-on-failure, a verification step) with `tests/test_device_control_sequence.py`;
     `jarvis-desktop/tests_e2e/test_agentic_automation.py` — the harness, a scripted model
