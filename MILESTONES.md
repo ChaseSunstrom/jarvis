@@ -555,7 +555,7 @@ and every milestone here ends with its own live scenarios.
     a tagged request is refused even with a provider available.
   - Verify: `bash scripts/verify/m40-model-gateway.sh`
 
-- [ ] **M41 — Claude Code as an execution backend** · size L · deps M19, M40, M43
+- [x] **M41 — Claude Code as an execution backend** · size L · deps M19, M40, M43
   - Scope: heavy coding work can be delegated to Claude Code headlessly (`--print`, structured
     output) as an alternative to the local coding agent, selectable per task. It runs in the
     same disposable sandbox under the same containment assertions and the same approval gates

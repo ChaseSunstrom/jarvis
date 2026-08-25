@@ -69,6 +69,24 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M41 (Claude Code as an execution backend): heavy coding work can be delegated to Claude Code
+  headlessly, selectable per task — and it is **off**, because it is the one deliberate exception
+  to "nothing goes to the cloud" in this project: the repository's contents are sent to
+  Anthropic. `BLOCKERS.md` §4 carries the row, the setting fails safe (a typo picks `local`), and
+  a repository can pin `backend: local` to mean "not this one, ever". Asking for the *safer*
+  backend is always honoured.
+
+  What does not change when you switch: the run happens inside the same sandbox through the same
+  `Workspace`, so the same approval gate stands in front of the same files, and the repository's
+  own checks still decide whether the job is green. Claude Code's opinion of its work is not the
+  criterion.
+
+  CI proves the plumbing, the containment and the gate against
+  `testing/fixtures/fake_claude_code.py`, which speaks the same `--print --output-format json`
+  protocol — there is no key on a runner and there should not be one. The probe shows a delegated
+  run's edits landing inside the container, a failing run reported as failed, unreadable output
+  named rather than believed, and a repository without a sandbox refused before anything starts.
+
 - M40 (one gateway, and a privacy guard): a self-hosted LiteLLM is now the single internal model
   endpoint — jarvis-core dials it, it dials llama-swap — with routing, fallbacks and per-model
   rate limits as config and **no database**. Local-only stays a complete configuration: two

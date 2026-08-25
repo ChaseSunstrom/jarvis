@@ -181,6 +181,11 @@ class Repo:
     #: "" means the global one. A scratch project can run `full-auto` while the
     #: repository somebody's job depends on asks about every edit.
     permission_mode: str = ""
+    #: Which agent may work on this repository: "" (whatever the job asks for),
+    #: `local`, or `claude-code`. A PIN, and it wins over a task's request —
+    #: delegating sends this repository's code off the network, so "not this
+    #: one" has to mean it even when the model asks nicely.
+    backend: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +197,7 @@ class Repo:
             "environment": self.environment,
             "managed": self.managed,
             "permission_mode": self.permission_mode,
+            "backend": self.backend,
             "origin": self.origin,
         }
 
@@ -211,6 +217,7 @@ def repo_from_dict(raw: Any) -> Repo | None:
         writable=bool(raw.get("writable")),
         environment=str(raw.get("environment") or "").strip(),
         permission_mode=str(raw.get("permission_mode") or "").strip(),
+        backend=str(raw.get("backend") or "").strip().lower().replace("_", "-"),
     )
 
 

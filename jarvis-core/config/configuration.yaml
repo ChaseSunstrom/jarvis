@@ -878,6 +878,25 @@ research:
 # for the same reason the console may schedule a service call and the assistant
 # may not — that request carried a bearer token.
 code:
+  # WHO DOES THE WORK.
+  #
+  # `local` is this repository's own coding agent, and the default. The
+  # alternative is `claude-code`, run headlessly INSIDE the same sandbox, under
+  # the same approval gate, verified by the same checks — the only thing that
+  # changes is who writes the code.
+  #
+  # It is the one deliberate exception to "nothing goes to the cloud": the
+  # repository's contents are sent to Anthropic. So it is off, it needs a key
+  # you supply, and `BLOCKERS.md` §4 carries the row. A repository may pin
+  # `backend: local` to say "not this one, ever" — a pin beats a task's
+  # request, and asking for the safer backend is always honoured.
+  backend: local
+  # claude_code:
+  #   enabled: true
+  #   api_key: !secret anthropic_api_key
+  #   model: sonnet                # optional; the CLI's default otherwise
+  #   command: claude              # the binary inside the environment container
+
   # WHERE JARVIS MAY CREATE REPOSITORIES.
   #
   # `~/jarvis/workspaces` unless you name somewhere else. It is created on

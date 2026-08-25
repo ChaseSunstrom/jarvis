@@ -429,6 +429,18 @@ house's summary is a fraction of a real one's.
 | Proactive moments go out on channels | Automated *as wiring* | the hub subscribes to `jarvis_notification`; `notifications` stays the one notion of "tell them" |
 | Telegram and Signal against real accounts | **Unproven, by design** | no test touches an account. `MemoryChannel` ships in the product and the live probes drive the real hub through it — only the wire is a fake. `BLOCKERS.md` §4 has the accounts |
 
+### The delegated coding backend (M41)
+
+| Claim | Level | Proof |
+|---|---|---|
+| It is off, and needs a key supplied deliberately | Automated | `test_the_default_is_off`, `test_it_will_not_run_without_a_key`; the shipped config is asserted to say `backend: local` |
+| A typo cannot select the cloud backend | Automated | `test_the_backend_choice_falls_back_to_local_on_a_typo` — the setting that decides whether code leaves the network fails safe |
+| A repository can refuse to be delegated | Automated | `Repo.backend` is a pin and beats a task's request; asking for the *safer* backend is always honoured |
+| A delegated run happens inside the sandbox | Automated *against a real container* | `testing/fixtures/claude_backend_probe.py` — the run's edits appear in the repository inside the container, and a repository with no sandbox is refused before anything starts |
+| Failure and unreadable output are reported, not believed | Automated | the same probe: an agent that fails is a failed job; output that is not a result is named as such; a non-zero exit beats a cheerful payload |
+| The same approval gate applies | **By construction** | the gate is in front of the `Workspace`, and the delegated driver uses the same `Workspace`. There is no second path to the files |
+| What a real Claude Code produces | **Unproven, and no key exists** | CI runs `fake_claude_code.py`, which speaks the same `--print --output-format json` protocol. `BLOCKERS.md` §4 has the row |
+
 ### The model gateway, and what may leave the network (M40)
 
 | Claim | Level | Proof |

@@ -89,3 +89,31 @@ Two of these are deliberate exceptions to "everything local", authorised by the
 brief that asked for them: cloud model providers and the Claude Code backend.
 Both are off until you supply a key, both are logged when used, and neither can
 receive a request tagged `local-only`.
+
+### An Anthropic API key, if you want the delegated coding backend (M41)
+
+**Needed by:** `code: backend: claude-code`, and nothing else.
+
+This is the single deliberate exception to "nothing goes to the cloud" in the
+whole project: a delegated coding job sends the repository's contents to
+Anthropic. Everything else about the job is unchanged — same sandbox, same
+approval gate, same checks deciding whether it is green — but the code leaves
+the network, and that is your decision rather than a default.
+
+It ships **off**. With no key it refuses to start and says why. CI proves the
+plumbing, the containment and the gate against
+`testing/fixtures/fake_claude_code.py`, which speaks the same `--print
+--output-format json` protocol; what a key would add is the model's actual
+output, and no test here pretends to have it.
+
+To turn it on:
+
+    # secrets.yaml
+    anthropic_api_key: sk-ant-…
+
+    # configuration.yaml, under code:
+    backend: claude-code          # or leave it `local` and ask per task
+    claude_code:
+      enabled: true
+      api_key: !secret anthropic_api_key
+

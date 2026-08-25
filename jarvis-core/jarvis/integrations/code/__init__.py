@@ -86,6 +86,7 @@ either.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import shlex
 from dataclasses import dataclass, field
@@ -97,6 +98,7 @@ from ...services import ServiceCall
 from ...tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
 from .agent import DEFAULT_MODE, MAX_ROUNDS, CodeAgent, CodeRun, Stopped, normalise_mode
 from .approvals import CodeApprovals
+from .claude_backend import build as claude_build
 from ...store import Store
 from .repos import RepoStore, check_name
 from .forges import Forge, forge_from_dict, permits, split_project
@@ -147,6 +149,21 @@ WORKSPACE_OFF = frozenset({"off", "no", "none", "false", "disabled"})
 
 
 
+#: The two backends. Anything else is a typo, and a typo in the setting that
+#: decides whether code leaves the network must not silently pick the one that
+#: does — so an unknown value is `local`.
+BACKENDS = ("local", "claude-code")
+
+
+def _backend(value: Any) -> str:
+    name = str(value or "").strip().lower().replace("_", "-")
+    if name in BACKENDS:
+        return name
+    if name:
+        _LOGGER.warning("code: unknown backend %r; using 'local'", value)
+    return "local"
+
+
 @dataclass
 class CodeConfig:
     repositories: dict[str, Repo] = field(default_factory=dict)
@@ -173,10 +190,29 @@ class CodeConfig:
     #: Empty, and it should stay empty for almost everybody: the point of the
     #: destructive list is that somebody is asked.
     allow_commands: list[str] = field(default_factory=list)
+    #: Which agent does the work: `local` (this repository's own, the default)
+    #: or `claude-code`. A task may ask for the other one; a repository may pin
+    #: it. See `claude_backend.py` — delegating sends the code off the network,
+    #: which is the one deliberate exception to "no cloud" in this project.
+    backend: str = "local"
+    #: The delegated backend, off until an operator supplies a key.
+    claude_code: Any = None
 
     def mode_for(self, repo: Repo) -> str:
         """The mode this repository runs under."""
         return normalise_mode(repo.permission_mode or self.permission_mode)
+
+    def backend_for(self, repo: Repo, asked: str = "") -> str:
+        """Which agent does this job: the task's choice, the repo's, or ours.
+
+        A repository may PIN a backend, and a pin wins over a task's request —
+        the operator saying "this repository is not delegated" has to mean it,
+        including when the model asks nicely.
+        """
+        pinned = str(getattr(repo, "backend", "") or "")
+        if pinned:
+            return _backend(pinned)
+        return _backend(asked or self.backend)
 
     @classmethod
     def from_config(cls, config: Any) -> "CodeConfig":
@@ -296,6 +332,8 @@ class CodeConfig:
             sandbox=sandbox,
             permission_mode=normalise_mode(data.get("permission_mode")),
             allow_commands=allow_commands,
+            backend=_backend(data.get("backend")),
+            claude_code=claude_build(data.get("claude_code")),
         )
 
     def listing(self) -> list[dict[str, Any]]:
@@ -920,6 +958,7 @@ async def async_start(
     *,
     source: str = "",
     mode: str = "",
+    backend: str = "",
 ) -> "Task | str":
     """Record the task, start the worker, return at once.
 
@@ -963,7 +1002,11 @@ async def async_start(
     )
     runs = _store(jarvis).setdefault(DATA_RUNS, {})
     run = asyncio.ensure_future(
-        _drive(jarvis, cfg, repo, task.id, instruction, normalise_mode(mode) if mode else "")
+        _drive(
+            jarvis, cfg, repo, task.id, instruction,
+            normalise_mode(mode) if mode else "",
+            backend=backend,
+        )
     )
     runs[task.id] = run
     run.add_done_callback(lambda _f, tid=task.id: runs.pop(tid, None))
@@ -973,6 +1016,63 @@ async def async_start(
 # ---------------------------------------------------------------------------
 # the worker
 # ---------------------------------------------------------------------------
+async def _drive_delegated(
+    jarvis: "Jarvis",
+    cfg: CodeConfig,
+    repo: Repo,
+    task_id: str,
+    instruction: str,
+) -> None:
+    """The same job, done by Claude Code, in the same sandbox.
+
+    Everything that makes a coding job safe is upstream of the backend: the
+    workspace is the same object, so the sandbox and its network policy are the
+    same, and a repository on `ask` still holds edits for a human because the
+    gate is in front of the workspace rather than inside the agent.
+
+    What differs is who writes the code, and that is recorded — on the task and
+    on the bus — because "which agent did this" is the first question about any
+    delegated change.
+    """
+    from .claude_backend import ClaudeBackendError
+
+    registry = jarvis.tasks
+    backend = cfg.claude_code
+    workspace = Workspace(repo, sandbox=cfg.sandbox, environment=cfg.environment_for(repo))
+    jarvis.bus.fire(
+        "jarvis_code_backend",
+        {"task_id": task_id, "backend": "claude-code", "repo": repo.name},
+    )
+    try:
+        await registry.async_update(task_id, status=STATUS_RUNNING, detail="claude-code")
+        result = await backend.run(workspace, instruction)
+    except ClaudeBackendError as err:
+        await registry.async_update(task_id, status=STATUS_ERROR, error=str(err))
+        return
+    except Exception as err:  # noqa: BLE001 - a delegated failure is a task failure
+        _LOGGER.exception("The delegated coding job failed")
+        await registry.async_update(
+            task_id, status=STATUS_ERROR, error=f"{type(err).__name__}: {err}"
+        )
+        return
+    finally:
+        with contextlib.suppress(Exception):
+            await workspace.close_session()
+
+    summary = result.text.strip() or ("done" if result.ok else "failed")
+    await registry.async_update(
+        task_id,
+        status=STATUS_DONE if result.ok else STATUS_ERROR,
+        detail="claude-code",
+        result=summary[:400],
+        error=None if result.ok else (result.error or "the delegated run failed"),
+    )
+    _LOGGER.info(
+        "claude-code finished %s: ok=%s turns=%d cost=%.4f",
+        task_id, result.ok, result.turns, result.cost_usd,
+    )
+
+
 async def _drive(
     jarvis: "Jarvis",
     cfg: CodeConfig,
@@ -980,8 +1080,13 @@ async def _drive(
     task_id: str,
     instruction: str,
     mode: str = "",
+    backend: str = "",
 ) -> None:
     registry = jarvis.tasks
+    chosen = cfg.backend_for(repo, backend)
+    if chosen == "claude-code":
+        await _drive_delegated(jarvis, cfg, repo, task_id, instruction)
+        return
     agent = CodeAgent(
         jarvis,
         repo,
