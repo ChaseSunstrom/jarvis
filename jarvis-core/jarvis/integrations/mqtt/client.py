@@ -20,18 +20,36 @@ publish and lets a test feed messages in without a broker.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import socket
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
+#: Named so a test can drive the clock without patching `time` globally.
+_now = time.monotonic
+
+#: The client id used when the operator has not chosen one. See
+#: `default_client_id` — the literal string this used to be is why two Jarvises
+#: on one broker took each other down.
+CLIENT_ID_PREFIX = "jarvis"
+
 DEFAULT_BROKER = "127.0.0.1"
 DEFAULT_PORT = 1883
 DEFAULT_KEEPALIVE = 60
 DEFAULT_QOS = 0
+
+#: A session shorter than this did not "fail to connect" — it connected and was
+#: thrown off, which is a different problem with a different fix.
+SHORT_SESSION = 10.0
+
+#: How many of those in a row before saying the thing the tracebacks never do.
+COLLISION_SESSIONS = 3
 
 #: How long `async_connect` waits for the first successful connection before
 #: returning and letting the background runner keep retrying.
@@ -113,6 +131,31 @@ def normalize_payload(payload: Any) -> str:
     return str(payload)
 
 
+def default_client_id(seed: str = "") -> str:
+    """A client id stable for one installation and different between two.
+
+    MQTT allows one live session per client id: connect a second client with
+    the same one and the broker disconnects the first, which reconnects, which
+    disconnects the second — a loop that logs a traceback per cycle, moves no
+    messages, and is invisible from inside either process because both of them
+    believe they are simply reconnecting.
+
+    The literal default (`jarvis`) guaranteed that collision the moment
+    anything else ran beside the house's own core: a second box, a dev instance
+    next to `docker compose up`, or this repository's test harness — which is
+    how it was found, 68 disconnects in three minutes on the live stack while
+    every suite in the repository was green.
+
+    Stable rather than random, because a fresh id per start leaves the broker
+    holding an abandoned session per restart. Derived from the config directory
+    as well as the hostname, because two Jarvises on one host differ by where
+    their house lives — and with `network_mode: host` a container's hostname
+    *is* the host's, so the hostname alone distinguishes nothing.
+    """
+    material = f"{socket.gethostname()}:{seed}".encode("utf-8", "replace")
+    return f"{CLIENT_ID_PREFIX}-{hashlib.sha1(material).hexdigest()[:8]}"
+
+
 class MqttClientBase:
     """Backend-agnostic client: bookkeeping, matching and dispatch."""
 
@@ -134,7 +177,7 @@ class MqttClientBase:
         self.port = int(port)
         self.username = username
         self.password = password
-        self.client_id = client_id or "jarvis"
+        self.client_id = client_id or default_client_id()
         self.keepalive = int(keepalive)
         self.will = will
         self.tls = bool(tls)
@@ -470,7 +513,10 @@ class AiomqttClient(MqttClientBase):
 
     async def _runner(self) -> None:  # pragma: no cover - needs a broker
         delay = 1.0
+        failures = 0
+        short_sessions = 0
         while not self._closing:
+            started = _now()
             try:
                 async with self._build_client() as client:
                     self._client = client
@@ -478,7 +524,6 @@ class AiomqttClient(MqttClientBase):
                     for topic in list(self._broker_subs):
                         await client.subscribe(topic)
                     self._ready.set()
-                    delay = 1.0
                     messages = client.messages
                     if callable(messages):  # aiomqtt 1.x exposes a method
                         messages = messages()
@@ -496,10 +541,45 @@ class AiomqttClient(MqttClientBase):
             except Exception:
                 if self._closing:
                     return
-                _LOGGER.warning(
-                    "MQTT connection lost (%s:%s); retrying in %.0fs",
-                    self.broker, self.port, delay, exc_info=True,
-                )
+                lived = _now() - started
+                if lived >= SHORT_SESSION:
+                    # A session that ran for a while and then ended is a fresh
+                    # failure, not a continuing one: the backoff starts over
+                    # and it earns its traceback. The reset lives HERE rather
+                    # than beside `self._ready.set()`, which is where it was:
+                    # there, every cycle of a two-second connect-drop loop
+                    # counted as a first failure and printed twenty frames.
+                    failures, short_sessions, delay = 0, 0, 1.0
+                failures += 1
+                short_sessions = short_sessions + 1 if lived < SHORT_SESSION else 0
+                if failures == 1:
+                    # The first one gets the traceback. The hundredth does not:
+                    # a broker that goes away for an hour produced a
+                    # twenty-frame trace every second, which is how a log stops
+                    # being somewhere anyone looks.
+                    _LOGGER.warning(
+                        "MQTT connection lost (%s:%s); retrying in %.0fs",
+                        self.broker, self.port, delay, exc_info=True,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "MQTT still down (%s:%s), attempt %d; retrying in %.0fs",
+                        self.broker, self.port, failures, delay,
+                    )
+                if short_sessions == COLLISION_SESSIONS:
+                    # The signature of two clients sharing one id: the
+                    # connection succeeds and dies seconds later, forever,
+                    # because the other one is reconnecting and evicting this
+                    # session exactly as this one evicts theirs. Said plainly,
+                    # once, because no amount of reading the tracebacks reveals
+                    # it — they only ever say "disconnected".
+                    _LOGGER.error(
+                        "MQTT connected and dropped %d times in a row within %.0fs each. "
+                        "Client id %r is almost certainly in use by another Jarvis on "
+                        "this broker — they are evicting each other. Set a different "
+                        "`mqtt: client_id:` on one of them.",
+                        short_sessions, SHORT_SESSION, self.client_id,
+                    )
             finally:
                 self._client = None
                 self.connected = False
@@ -649,7 +729,7 @@ def create_client(config: dict[str, Any]) -> MqttClientBase:
         "port": config.get("port", DEFAULT_PORT),
         "username": config.get("username"),
         "password": config.get("password"),
-        "client_id": config.get("client_id") or "jarvis",
+        "client_id": config.get("client_id") or default_client_id(),
         "keepalive": config.get("keepalive", DEFAULT_KEEPALIVE),
         "will": will,
         "tls": config.get("tls", False),

@@ -94,8 +94,26 @@ def _env_var(loader: JarvisSafeLoader, node: yaml.Node) -> Any:
 
 
 def _join_url(base: str, path: str) -> str:
-    """Join a base URL and a path without doubling or dropping the slash."""
-    return base.rstrip("/") + "/" + path.lstrip("/") if path else base.rstrip("/")
+    """Join a base URL and a path without doubling or dropping the slash.
+
+    And without doubling the segment where they meet. `!env_url` replaced a
+    bug where the path was lost with one where it was applied twice: the
+    `llm:` block requires LLM_URL to be a base URL, an OpenAI-compatible base
+    URL ends in `/v1`, and `/v1` + `/v1/models` is
+    `https://host/v1/v1/models` — a 404 every thirty seconds for two days on
+    this host, with the dashboard reporting the model server as offline while
+    Jarvis was talking to it.
+
+    So when the base's last segment is the path's first, they are the same
+    segment written twice. `/api` + `/api/ps` collapses for the same reason.
+    """
+    base = base.rstrip("/")
+    if not path:
+        return base
+    parts = [part for part in path.split("/") if part]
+    if parts and base.rsplit("/", 1)[-1].lower() == parts[0].lower():
+        parts = parts[1:]
+    return "/".join([base, *parts]) if parts else base
 
 
 def _env_url(loader: JarvisSafeLoader, node: yaml.Node) -> Any:

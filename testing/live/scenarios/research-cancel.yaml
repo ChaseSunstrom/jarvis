@@ -1,5 +1,7 @@
 name: research-cancel
 capability: research
+# Not the stack: its sources must be pages this repository owns.
+ground: fixture
 gated-on: M18
 intent: >
   Stopping a long job mid-flight, by voice. "Actually, stop that" is the second

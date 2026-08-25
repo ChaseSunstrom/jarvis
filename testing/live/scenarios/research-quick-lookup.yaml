@@ -1,5 +1,7 @@
 name: research-quick-lookup
 capability: research
+# Not the stack: its sources must be pages this repository owns.
+ground: fixture
 gated-on: M18
 intent: >
   A quick look-up against a fixture website whose content this repository owns,

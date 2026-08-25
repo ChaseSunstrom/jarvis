@@ -1,5 +1,7 @@
 name: skills-loaded
 capability: skills
+# Not the stack: the skill it reads is one the rig drops in, not the operator's.
+ground: fixture
 gated-on: M13
 intent: >
   A skill is a folder with a SKILL.md in it, and the promise is that dropping

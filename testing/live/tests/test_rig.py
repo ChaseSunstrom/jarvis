@@ -198,3 +198,156 @@ def test_every_tool_in_the_routing_table_exists():
         )
     missing = sorted(name for name in TOOL_CAPABILITY if name not in registered)
     assert not missing, f"the routing table names tools that do not exist: {missing}"
+
+
+# --- the ground a scenario runs on --------------------------------------------
+#
+# M29: the suite talks to the containers the operator runs, not to a copy of
+# them. What follows pins the parts of that which can be checked without a
+# Docker daemon; the rest is checked by running it.
+
+
+def test_scenarios_default_to_the_running_stack():
+    from testing.live.scenario import load_all
+
+    on_stack = [s.name for s in load_all() if s.ground == "stack"]
+    assert len(on_stack) > 10, on_stack
+
+
+def test_only_scenarios_that_need_our_own_web_leave_the_stack():
+    """A scenario asks for the fixture ground for one reason, and says so."""
+    from testing.live.scenario import load_all
+
+    allowed = {"research", "coding", "subagents", "skills"}
+    off_stack = {s.name: s.capability for s in load_all() if s.ground == "fixture"}
+    strays = {name: cap for name, cap in off_stack.items() if cap not in allowed}
+    assert not strays, f"these do not need the fixture web: {strays}"
+
+
+def test_an_unknown_ground_is_a_loud_failure(tmp_path):
+    from testing.live.scenario import load_scenario
+
+    path = tmp_path / "x.yaml"
+    path.write_text(
+        "name: x\ncapability: house\nground: production\n"
+        "turns:\n  - say: hello\n    expect: {}\n"
+    )
+    with __import__("pytest").raises(ValueError, match="unknown ground"):
+        load_scenario(path)
+
+
+def test_the_resilience_scenarios_exist_and_act_on_containers():
+    """Both halves of what M29 asks for, asserted as fixtures rather than prose."""
+    from testing.live.scenario import load_all
+
+    by_name = {s.name: s for s in load_all()}
+    restart = by_name["resilience-core-restart"]
+    assert any(turn.restart for turn in restart.turns)
+    # And it is a mid-conversation restart, not a restart before anything was
+    # said — the promise is that the thread survives, which needs a thread.
+    assert not restart.turns[0].restart
+
+    stt = by_name["resilience-stt-down"]
+    killed = [turn.kill for turn in stt.turns if turn.kill]
+    assert killed == ["wyoming-whisper"], killed
+    # The failure must be asserted as visible. A scenario that killed a service
+    # and expected nothing would pass against a Jarvis that silently hung.
+    assert "error" in stt.turns[0].expect
+    # And a turn afterwards, or nothing proves the service came back.
+    assert len(stt.turns) > 1
+
+
+def test_error_records_are_grouped_before_the_allowlist_sees_them():
+    """A traceback is one event spread over twenty lines.
+
+    Line-at-a-time matching forced the allowlist to name
+    `Task exception was never retrieved` — the useless line that introduces a
+    reset connection — which would have hidden every async crash there is.
+    """
+    from testing.live.stack import _records
+
+    lines = [
+        "wyoming-piper  | ERROR:asyncio:Task exception was never retrieved",
+        "wyoming-piper  | Traceback (most recent call last):",
+        'wyoming-piper  |   File "/usr/src/handler.py", line 63, in handle_event',
+        "wyoming-piper  |     await self.write_event(info)",
+        "wyoming-piper  | ConnectionResetError: Connection lost",
+        "jarvis-core  | ERROR:jarvis:the roof is on fire",
+    ]
+    found = _records(lines)
+    assert len(found) == 1, found
+    assert "roof is on fire" in found[0]
+    assert "jarvis-core" in found[0]
+
+
+def test_a_plain_error_line_is_not_swallowed():
+    from testing.live.stack import _records
+
+    assert _records(["jarvis-core  | ERROR:jarvis:cannot reach the model server"])
+
+
+def test_the_snapshot_covers_the_directories_the_database_lives_in():
+    """A snapshot with a hole in it restores a house missing its state."""
+    from testing.live.ground import STACK_PATHS
+
+    assert "jarvis-core/config" in STACK_PATHS  # jarvis.db, notes, memory
+    assert ".storage" in STACK_PATHS  # the console's password hash
+
+
+def test_threads_the_suite_opens_are_namespaced():
+    from testing.live.ground import TEST_NAMESPACE
+
+    # `test:` and not a bare prefix: an operator scrolling their own thread
+    # list has to be able to tell at a glance which conversations were a test
+    # run, and the sweep has to know what it may delete.
+    assert TEST_NAMESPACE.endswith(":")
+
+
+def test_records_survive_containers_interleaving_their_output():
+    """`docker compose logs` threads every container's output together.
+
+    A grouper that treated any following line as the end of the record cut
+    every traceback off before the line that names its exception, so the
+    allowlist could only ever match `Task exception was never retrieved` —
+    which is true of every async failure there is. Two runs of the live suite
+    failed on exactly this before it was fixed.
+    """
+    from testing.live.stack import _records
+
+    lines = [
+        "wyoming-piper  | ERROR:asyncio:Task exception was never retrieved",
+        "jarvis-core  | 2026-08-25 INFO an ordinary line arriving in between",
+        "wyoming-piper  | Traceback (most recent call last):",
+        "jarvis-core  | 2026-08-25 INFO and another",
+        'wyoming-piper  |   File "/usr/src/handler.py", line 63, in handle_event',
+        "wyoming-piper  | ConnectionResetError: Connection lost",
+        "jarvis-core  | ERROR:jarvis:the roof is on fire",
+    ]
+    found = _records(lines)
+    assert len(found) == 1, found
+    assert "roof is on fire" in found[0]
+
+
+def test_the_stack_ground_refuses_a_house_with_nothing_in_it():
+    """A fresh Jarvis controls nothing, and that is correct.
+
+    Running the suite against one made every house scenario fail on a missing
+    entity, which reads like a broken assistant rather than an empty house. The
+    rig says which file to drop in instead.
+    """
+    import asyncio
+
+    from testing.live import LiveError
+    from testing.live.runner import Runner
+
+    class _Bare:
+        async def command(self, name, **kwargs):
+            return [{"entity_id": "sun.sun", "state": "above_horizon"}]
+
+    runner = Runner([])
+    try:
+        asyncio.run(runner._house_exists(_Bare()))
+    except LiveError as err:
+        assert "packages-demo-house.yaml" in str(err)
+    else:  # pragma: no cover - the point of the test
+        raise AssertionError("an empty house was accepted")

@@ -45,6 +45,7 @@ from .client import (
     MqttMessage,
     NullClient,
     create_client,
+    default_client_id,
     topic_matches,
 )
 from .discovery import DEFAULT_DISCOVERY_PREFIX, MqttDiscovery, normalize_discovery_payload
@@ -164,6 +165,12 @@ def _resolve_client(jarvis: "Jarvis", config: dict[str, Any]) -> MqttClientBase:
         if isinstance(client, MqttClientBase):
             return client
         _LOGGER.warning("mqtt_client_factory returned %r; ignoring", type(client))
+    # Seeded with this installation's config directory: `default_client_id`
+    # explains why two Jarvises sharing a broker must not share an id, and the
+    # config directory is the one thing that differs between the container, a
+    # dev run and the test harness on this very host.
+    if not config.get("client_id"):
+        config = {**config, "client_id": default_client_id(str(jarvis.config_dir))}
     return create_client(config)
 
 

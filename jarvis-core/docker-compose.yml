@@ -90,13 +90,26 @@ services:
     container_name: jarvis-config-init
     user: "0:0"
     command: >
-      sh -c "mkdir -p /config/.storage && chown -R 10003:10003 /config &&
-             echo 'config dir ready for uid 10003'"
+      sh -c "mkdir -p /config/.storage &&
+             chown -R ${JARVIS_UID:-10003}:${JARVIS_GID:-10003} /config &&
+             echo 'config dir ready for uid ${JARVIS_UID:-10003}'"
     volumes:
       - ./config:/config
     restart: "no"
 
   jarvis-core:
+    # Who Jarvis is on the host's filesystem.
+    #
+    # The image bakes uid 10003, and `./config` is a bind mount of a directory
+    # that is also in this repository — `configuration.yaml`, `automations.yaml`
+    # and `scenes.yaml` are tracked files. With the baked uid, the init
+    # container below chowned all of them to 10003 and the person who edits
+    # this checkout could no longer write their own config: `git checkout` on
+    # those paths failed, and so did opening one in an editor.
+    #
+    # So it is a variable, and `.env.example` says to set it to your own uid.
+    # The default keeps the documented behaviour for anyone who does not.
+    user: "${JARVIS_UID:-10003}:${JARVIS_GID:-10003}"
     # Built here, never published: without this compose tries a registry
     # pull first and prints a scary "access denied" warning before falling
     # back to building anyway.
@@ -208,7 +221,7 @@ services:
       watch:
         - action: sync+restart
           path: ./jarvis
-          target: /app/jarvis
+          target: /srv/jarvis
         - action: rebuild
           path: ./requirements.txt
   wyoming-openwakeword:
@@ -470,7 +483,7 @@ services:
       watch:
         - action: sync+restart
           path: ../jarvis-browser/jarvis_browser
-          target: /app/jarvis_browser
+          target: /srv/jarvis_browser
         - action: rebuild
           path: ../jarvis-browser/requirements.txt
   mosquitto:

@@ -1,5 +1,7 @@
 name: subagents-parallel-work
 capability: subagents
+# Not the stack: it researches, so it needs the fixture web too.
+ground: fixture
 gated-on: M20
 intent: >
   A request that genuinely needs two different kinds of work at once. What is

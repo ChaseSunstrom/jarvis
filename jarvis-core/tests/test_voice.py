@@ -1422,7 +1422,11 @@ async def test_a_real_reply_still_reaches_the_tts_service(tmp_path):
     tts = FakeTts()
     run = PipelineRun(Jarvis(tmp_path), stt=FakeStt("hi"), tts=tts, converse=converse)
     await run.execute(await queue_of(sine_pcm(20)))
-    assert [call[0] for call in tts.calls] == ["  Kitchen light on.  "]
+    # Trimmed, not verbatim: `speakable()` collapses whitespace on the way to
+    # the synthesiser, because a leading blank line is the normal shape of a
+    # streamed reply and means nothing out loud. The reply itself — what the
+    # console shows and the archive keeps — is untouched.
+    assert [call[0] for call in tts.calls] == ["Kitchen light on."]
 
 
 async def test_the_spoken_answer_is_the_answer_not_the_working(tmp_path):
@@ -1487,3 +1491,63 @@ async def test_an_agent_with_no_last_result_is_left_alone(tmp_path):
     )
     await run.execute(None, None, text="hello")
     assert run.response_text == "Very good, Sir."
+
+
+# --- what is actually sent to the synthesiser --------------------------------
+#
+# Found live, against `wyoming-piper:2.3.1`: a reply that opens with an ellipsis
+# produced NO AUDIO AT ALL and failed the turn with `wave.Error: # channels not
+# specified`. Piper splits its input into sentences and synthesises each; a
+# leading "...?" phonemises to nothing, its wav writer closes having written no
+# frames, and the whole request dies — including the perfectly speakable
+# sentence after it. Measured: the same sentence without the ellipsis gave
+# 183 KB of audio.
+#
+# A model reacting to a sound it could not make out opens with an ellipsis
+# often, so this is what Jarvis says when the room is quiet and something
+# rustles — the `voice-room-tone` scenario, exactly.
+
+def test_a_leading_ellipsis_is_not_sent_to_the_synthesiser():
+    from jarvis.voice.pipeline import speakable
+
+    said = "\n\n...? Shall I fetch something, Sir, or were you merely testing the silence?"
+    assert speakable(said) == (
+        "Shall I fetch something, Sir, or were you merely testing the silence?"
+    )
+
+
+def test_text_with_nothing_pronounceable_becomes_empty_not_an_error():
+    from jarvis.voice.pipeline import speakable
+
+    for nothing in ("...?", "— !! ...", "   ", "\n\n", ""):
+        assert speakable(nothing) == ""
+
+
+def test_ordinary_replies_are_untouched_except_for_whitespace():
+    from jarvis.voice.pipeline import speakable
+
+    assert speakable("Done, Sir.") == "Done, Sir."
+    # Newlines mean nothing out loud, and a reply that begins with one is the
+    # normal shape of a streamed answer.
+    assert speakable("Done, Sir.\n\nThe hall light is on.") == "Done, Sir. The hall light is on."
+    # A number-only sentence is speakable; the filter is about punctuation.
+    assert speakable("21.") == "21."
+
+
+async def test_a_reply_that_cannot_be_spoken_skips_tts_rather_than_failing(monkeypatch):
+    """The turn still ends cleanly — the text answer is the answer."""
+    from jarvis.voice import pipeline as pipeline_module
+
+    calls: list[str] = []
+
+    class _Tts:
+        def synthesize(self, text, voice=None):  # pragma: no cover - must not run
+            calls.append(text)
+            raise AssertionError("TTS was asked to say nothing")
+
+    run = object.__new__(pipeline_module.PipelineRun)
+    run.tts = _Tts()
+    run.run_id = "test"
+    url = await pipeline_module.PipelineRun._run_tts(run, "...?")
+    assert url == ""
+    assert not calls

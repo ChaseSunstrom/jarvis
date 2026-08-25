@@ -8,6 +8,15 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Fixed
+- M29 found four failures that had been live for days with every suite green, because no suite
+  had ever looked at the deployment: the model-server sensor was polling `/v1/v1/models` and
+  404ing every thirty seconds (an `!env_url` that applied a path the base URL already carried);
+  two Jarvises on one MQTT broker were evicting each other 22 times a minute, each eviction a
+  twenty-frame traceback, because the default client id was the literal string `jarvis`; every
+  `docker compose watch` rule synced code into `/app/…` when all three Python images run from
+  `/srv`; and `jarvis-config-init` had chowned tracked files in this repository to a uid that
+  does not exist on the host, so the person working on the checkout could not edit their own
+  `configuration.yaml`. All four are fixed, and each has a test that fails without the fix.
 - M28: `photon` had restarted **2,699 times over two days** — with no `REGION` it downloads a
   58 GB planet index needing 152 GB of temp space, checks the disk, refuses, and
   `restart: unless-stopped` does it again. It is behind `--profile geocode` now and takes a
@@ -17,6 +26,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M29 (the suite runs against the real stack): `scripts/verify/live_interaction.sh` starts with
+  `docker compose up -d --wait`, 22 of 29 scenarios now address the running jarvis-core and the
+  console container rather than a copy of them, and the run fails if any container is unhealthy
+  at the start or logged an ERROR-level record by the end. Two resilience scenarios that only
+  mean anything against containers: `docker restart jarvis-core` between two turns of one
+  conversation (the thread survives), and `docker stop wyoming-whisper` mid-utterance (the turn
+  ends with `stt-stream-failed` instead of hanging, and works again once it is back). Safe to
+  point at a house somebody lives in: config, `.storage` and the mosquitto volume are tarred
+  before the first word and restored after the last, every thread it opens is named
+  `test:<scenario>:<variant>`, and anything a scenario created is deleted with its absence
+  asserted before the next one starts. The seven research/coding/skills scenarios keep their
+  own jarvis-core (`ground: fixture`), because "did it cite three independent sources" is a
+  question about a web this repository owns.
 - M28 (the compose stack is the runtime): every image pinned — the three Wyoming services to
   the exact versions this repository's WER and latency numbers were measured against — a
   healthcheck on every long-running service including the three voice ones that had none,
@@ -25,6 +47,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   and per-volume backup/restore, and what upgrading a pinned image costs.
 
 ### Changed
+- Planning (third mid-run addition): reach, routing, delegation, motion and an ecosystem —
+  M38 channels (Telegram/Signal behind an identity allowlist, tailnet-only, mock server in CI),
+  M39 CalDAV + IMAP/SMTP behind the approval model with fixture containers, M40 a self-hosted
+  LiteLLM gateway with policy routing, fallback, caps and a privacy guard that refuses cloud
+  routing for anything carrying memory or notes, M41 Claude Code as an optional sandboxed
+  coding backend (off until a key is supplied), M42 delegation across backends, M43 hardening
+  (injection quarantine, control-token stripping, least privilege, a call-time secrets store,
+  `docs/THREAT_MODEL.md` and a red-team scenario file the suite fails on), M44 the motion
+  system and its signature moments with a headless perf-trace gate and a reduced-motion path,
+  and M45–M47 the skills/plugins ecosystem: one registry over SKILL.md skills, MCP servers and
+  plugins, a real management surface, and a catalog whose installs are allowlisted, pinned,
+  checksummed, permission-prompted and sandboxed. `docs/AUDIT.md` carries the delta and
+  `PROCESS.md` §2d the five rules those milestones are written against.
 - Planning (mid-run addition): the compose stack becomes the runtime under test — M28 (pinned
   images, healthchecks on every service including the three Wyoming ones, resource limits,
   named volumes, `docs/RUNBOOK.md`) and M29 (`docker compose up -d --wait` as the live suite's

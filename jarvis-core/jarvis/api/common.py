@@ -897,6 +897,11 @@ def _tool_spec(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- settings ---------------------------------------------------------------
+#: How long the voice catalogue (Piper's voices, openWakeWord's models) is
+#: reused before the services are asked again. See `async_refresh_choices`.
+CATALOGUE_TTL = 60.0
+_CATALOGUE_STAMP = "voice_catalogue_refreshed_at"
+
 async def async_refresh_choices(jarvis: "Jarvis") -> None:
     """Re-ask the services what they offer, before the settings page is built.
 
@@ -914,6 +919,21 @@ async def async_refresh_choices(jarvis: "Jarvis") -> None:
     refresh = getattr(voice, "async_refresh_catalogue", None)
     if refresh is None:
         return
+    # At most once a minute. Piper answers `describe` with every voice it can
+    # serve — 83 KB on this install — and a settings page that polls asked for
+    # all of it on every render. Worse, a probe abandoned mid-read (the box is
+    # busy recognising speech; the read times out) makes Piper log a
+    # twenty-frame ConnectionResetError, so a settings screen left open turned
+    # into a stream of ERROR lines from a service that was perfectly fine.
+    #
+    # A minute is chosen against what the answer is FOR: the voice list changes
+    # when someone restarts a container with different models, and being a
+    # minute out of date about that has never mattered to anyone.
+    now = time.monotonic()
+    last = float(jarvis.data.get(_CATALOGUE_STAMP) or 0.0)
+    if last and now - last < CATALOGUE_TTL:
+        return
+    jarvis.data[_CATALOGUE_STAMP] = now
     try:
         await refresh()
     except Exception:  # pragma: no cover - the page must still render

@@ -195,7 +195,7 @@ services:
       watch:
         - action: sync+restart
           path: ./jarvis-orchestrator/app
-          target: /app/app
+          target: /srv/app
         - action: rebuild
           path: ./jarvis-orchestrator/requirements.txt
   jarvis-sandbox:

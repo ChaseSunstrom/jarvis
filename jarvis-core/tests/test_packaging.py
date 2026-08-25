@@ -174,6 +174,27 @@ def _quiet_expected_failures() -> Iterator[None]:
             logger.setLevel(level)
 
 
+#: What a copy of `config/` must leave behind to still mean "a fresh install".
+#:
+#: `.storage/` and the recorder database are RUNTIME state, gitignored and not
+#: shipped: on a developer's machine they hold that person's own rooms,
+#: entities and tokens, and on a box where the stack is running they belong to
+#: the container's uid at mode 600, so copying them is a permission error.
+#: Copying them made "what does a fresh install look like" mean "what does this
+#: machine look like", and the test failed on the box that actually runs
+#: Jarvis while passing everywhere else.
+#:
+#: `packages/` is the same argument one level up: it is where a person adds
+#: their own features — a laundry cycle, a demo house — and the shipped
+#: directory is empty. Asserting "the default invents no devices" against a
+#: directory somebody has since added devices to tests their choices, not the
+#: default. It also collided outright: the worked example ships a `demo:` block
+#: and an operator's own demo package redefines it.
+SHIPPED_ONLY = shutil.ignore_patterns(
+    ".storage", "*.db", "*.db-wal", "*.db-shm", "*.db-*", "packages",
+)
+
+
 @pytest.fixture
 def config_copy(tmp_path: Path) -> Path:
     """The shipped config, copied so a boot cannot dirty the repo.
@@ -182,16 +203,7 @@ def config_copy(tmp_path: Path) -> Path:
     would leave those behind for the next developer to wonder about.
     """
     target = tmp_path / "config"
-    # `.storage/` and the recorder database are RUNTIME state, gitignored and
-    # not shipped: on a developer's machine they hold that person's own rooms,
-    # entities and tokens. Copying them made "what does a fresh install look
-    # like" mean "what does this machine look like", and the test failed on the
-    # box that actually runs Jarvis while passing everywhere else.
-    shutil.copytree(
-        CONFIG,
-        target,
-        ignore=shutil.ignore_patterns(".storage", "*.db", "*.db-wal", "*.db-shm"),
-    )
+    shutil.copytree(CONFIG, target, ignore=SHIPPED_ONLY)
     return target
 
 
@@ -210,6 +222,9 @@ def _overlay_example(target: Path) -> Path:
     for name in ("configuration.yaml", "automations.yaml", "scripts.yaml", "scenes.yaml"):
         shutil.copy(EXAMPLE_HOUSE / name, target / name)
     shutil.copy(EXAMPLE_HOUSE / "example.tool.yaml", target / "tools" / "example.tool.yaml")
+    # `packages/` is not copied from the shipped config (see SHIPPED_ONLY), so
+    # the example's own package needs the directory created here.
+    (target / "packages").mkdir(exist_ok=True)
     shutil.copy(EXAMPLE_HOUSE / "packages-laundry.yaml", target / "packages" / "laundry.yaml")
     return target
 
@@ -223,9 +238,7 @@ def _example_config() -> dict[str, Any]:
         # container's uid and are mode 600, so copying them is a permission
         # error — and this test is about the YAML, not about the house's live
         # registries.
-        shutil.copytree(
-            CONFIG, target, ignore=shutil.ignore_patterns(".storage", "*.db", "*.db-*")
-        )
+        shutil.copytree(CONFIG, target, ignore=SHIPPED_ONLY)
         return load_config(_overlay_example(target))
 
 
@@ -2168,3 +2181,58 @@ def test_the_companion_env_example_documents_what_the_console_reads() -> None:
     declared = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", text, re.M))
     missing = sorted(_console_env_vars() - declared)
     assert not missing, f".env.example does not mention: {missing}"
+
+
+# --- `docker compose watch` has to sync into the directory the code runs from --
+#
+# It did not. Every `develop: watch:` target said `/app/...` while all three
+# Python images have `WORKDIR /srv` — so an edit synced into a directory that
+# does not exist in the container, the service restarted, and it restarted with
+# the old code. A dev loop that silently does nothing is worse than none: you
+# conclude the change had no effect.
+
+def _watch_targets() -> list[tuple[str, str, str]]:
+    """(service, host path, container target) for every watch rule that syncs."""
+    out: list[tuple[str, str, str]] = []
+    for path in (COMPOSE, PARENT_COMPOSE):
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, service in (parsed.get("services") or {}).items():
+            for rule in ((service.get("develop") or {}).get("watch") or []):
+                if str(rule.get("action", "")).startswith("sync") and rule.get("target"):
+                    out.append((name, str(rule["path"]), str(rule["target"])))
+    return out
+
+
+def test_every_watch_rule_syncs_into_that_image_workdir() -> None:
+    services = {
+        "jarvis-core": (ROOT / "Dockerfile", "/srv"),
+        "jarvis-browser": (ROOT.parent / "jarvis-browser" / "Dockerfile", "/srv"),
+        "jarvis-orchestrator": (ROOT.parent / "jarvis-orchestrator" / "Dockerfile", "/srv"),
+        "jarvis-web": (ROOT.parent / "jarvis-web" / "Dockerfile", "/app"),
+    }
+    for name, dockerfile_and_workdir in services.items():
+        dockerfile, expected = dockerfile_and_workdir
+        text = dockerfile.read_text(encoding="utf-8")
+        workdirs = [
+            line.split(None, 1)[1].strip()
+            for line in text.splitlines()
+            if line.startswith("WORKDIR ")
+        ]
+        assert workdirs and workdirs[-1] == expected, (name, workdirs)
+
+    for service, _host, target in _watch_targets():
+        _dockerfile, workdir = services[service]
+        assert target.startswith(f"{workdir}/"), (
+            f"{service} syncs into {target}, but its image runs from {workdir} — "
+            "the sync would land in a directory nothing imports"
+        )
+
+
+def test_every_watch_rule_watches_a_path_that_exists() -> None:
+    """A typo in the host path is the same silent no-op from the other end."""
+    for service, host, _target in _watch_targets():
+        base = ROOT if service in ("jarvis-core",) else ROOT.parent
+        # Paths in jarvis-core's compose are relative to jarvis-core/; the root
+        # compose file's are relative to the repository root.
+        candidates = [ROOT / host, ROOT.parent / host, base / host]
+        assert any(candidate.exists() for candidate in candidates), (service, host)

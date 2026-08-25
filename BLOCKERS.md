@@ -63,3 +63,29 @@ hardware.
 The same applies to a real microphone in a real room: the live rig synthesises
 the user's speech and delivers it through the real audio paths, which proves
 the pipeline but not the acoustics of your kitchen.
+
+## 4. Accounts and keys for the things that reach the outside world
+
+**Needed by:** M38 (channels), M39 (calendar and mail), M40 (cloud providers,
+optional), M41 (Claude Code as a coding backend), M47 (catalog sources).
+
+None of these block the work — every one is built and verified against a local
+fixture (a mock channel server, a Radicale container, a mail sink, a mock cloud
+provider, a scripted stand-in that speaks Claude Code's protocol, a fixture
+catalog). What they block is *your* Jarvis actually using them, and each needs
+something only you can hand over:
+
+| Item | What it needs | Default until then |
+|---|---|---|
+| Telegram | a bot token, and your own user id for the allowlist | the adapter loads, the allowlist is empty, and every sender is refused |
+| Signal | a `signal-cli` registration (a phone number) | as above |
+| Calendar | a CalDAV URL and credentials | the integration is inert |
+| Mail | IMAP/SMTP host and credentials | the integration is inert |
+| Cloud model providers | an OpenAI / Anthropic / Google / OpenRouter key | **off** — local-only is a complete configuration, and a request carrying memory or notes is refused cloud routing even after you add one |
+| Claude Code backend | an Anthropic API key | **off** — coding tasks use the local agent |
+| Catalog sources | the list of origins you are willing to install from | empty, and nothing installs from an unconfigured origin |
+
+Two of these are deliberate exceptions to "everything local", authorised by the
+brief that asked for them: cloud model providers and the Claude Code backend.
+Both are off until you supply a key, both are logged when used, and neither can
+receive a request tagged `local-only`.

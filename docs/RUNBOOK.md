@@ -128,6 +128,75 @@ inside, one per job, created and destroyed by `jarvis-core` — there is no
 long-running process to sync into. The pulled images have none either, and
 cannot.
 
+`watch` syncs into the directory each image actually runs from — `/srv` for
+the three Python services, `/app` for the console. That is pinned by
+`test_every_watch_rule_syncs_into_that_image_workdir`, because the first
+version of these blocks synced into `/app` for all four: the file landed in a
+directory that does not exist in the image, the service restarted, and it
+restarted with the old code. A dev loop that silently does nothing is worse
+than none.
+
+## Who owns the config directory
+
+`./config` is a bind mount, so its ownership is the host's. The container
+writes `.storage/` (registries, tokens) and the recorder database into it, so
+the uid inside has to match the uid outside:
+
+```bash
+grep JARVIS_UID .env      # JARVIS_UID=1000 — this checkout's own user
+```
+
+Set it to your own `id -u` / `id -g` when the config directory is one you also
+edit. The image's own uid (10003) remains the default for anyone who does not
+set it, and `jarvis-config-init` chowns the directory to whichever it is on
+every `up`. Without this, `configuration.yaml` — a *tracked file in this
+repository* — came back owned by uid 10003 and could not be edited or checked
+out by the person working on it.
+
+## Run the live suite against this stack
+
+```bash
+bash scripts/verify/live_interaction.sh --implemented-only
+```
+
+It brings the stack up with `--wait`, refuses to start if any container is
+unhealthy, talks to the running jarvis-core and the console on :8199, and fails
+at the end if any container logged an ERROR-level record while it ran.
+
+It needs a house to talk about. A fresh Jarvis controls nothing — a default
+configuration that invents devices nobody owns would be worse — so on a box
+with no hardware attached, drop in the demo house:
+
+```bash
+cp jarvis-core/config/examples/house/packages-demo-house.yaml \
+   jarvis-core/config/packages/demo-house.yaml
+docker compose -f jarvis-core/docker-compose.yml restart jarvis-core
+```
+
+Three lights, two switches, a lock, a thermostat and the rest, each going
+through the same service calls and tier checks as real hardware. The rig
+refuses to run and prints those two lines if it finds nothing controllable,
+rather than failing every house scenario on a missing entity.
+
+It is safe to run against a house you use, and deliberately:
+
+* `jarvis-core/config`, `.storage` and the `mosquitto-data` volume are tarred
+  into `.verify/live/snapshots/` before the first word and restored after the
+  last — the same `docker run … busybox tar` recipe as **Back it up** above.
+  Restore means *as it was*: a file that appeared during the run is removed as
+  well as a changed one being put back.
+* Every thread it opens is named `test:<scenario>:<variant>`, so what the suite
+  did is identifiable in your own thread list.
+* Anything a scenario creates — notes, memory entries, threads — is deleted at
+  the end of that scenario, and its absence is asserted before the next one
+  starts. A leftover is a failure, not a warning.
+* Two scenarios stop containers on purpose (`resilience-core-restart`,
+  `resilience-stt-down`). Both put them back, and the run fails if one does not
+  come home.
+
+`--target harness` opts out of all of that and runs against a throwaway
+jarvis-core instead, for a machine with no stack up.
+
 ## Versions, and changing one
 
 Every image is pinned. The three Wyoming services are pinned to the exact

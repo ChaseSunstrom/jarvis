@@ -477,6 +477,66 @@ Explicitly out, by instruction: a second inference runtime (no Ollama), agent fr
 would replace the agent loop, anything cloud, and GPU residency for any new service without a
 written VRAM justification.
 
+## Delta — reach, routing, delegation and an ecosystem (added 2026-08-25, mid-run)
+
+The third and largest addition, in three parts: Jarvis becomes **reachable** (messaging
+channels, calendar, mail), its model traffic goes through **one gateway with a routing
+policy**, heavy coding work can be **delegated** to a second backend, the console gets a
+**motion layer**, and skills/MCP/plugins become a **curated, sandboxed ecosystem** rather than
+a loader and a config key.
+
+The brief names the failure modes to avoid by name: the OpenClaw-class assistants this is
+modelled on shipped 140k+ internet-exposed instances, a marketplace supply-chain attack, and
+one-click RCE. So every item below is paired with the thing that makes it not that, and those
+pairings are milestones in their own right rather than acceptance criteria buried in a scope
+line.
+
+### What already exists here and is reused, not rebuilt
+
+| The addition asks for | What this repository already has |
+|---|---|
+| Proactive delivery to a channel | `integrations/notifications/` — every proactive moment is already an event and a record; a channel is a new *sink*, not a new source |
+| Inbound message → a conversation with the full capability set | `conversation.process` + the thread archive; a channel adapter is a transport, exactly as `ApiVoice`/`Text` are in the live rig |
+| Approval before a state-changing call | the tier model (`tests/contracts/tool_tiers.json`, read by three suites) and the approval UI from M11 |
+| A tool plugin interface | `llm/tools.py` registration + `authored_tools.py` + the MCP client |
+| Skills with a manifest | the `SKILL.md` loader (M13) — the format is already the open Agent Skills one |
+| A sandbox for downloaded code | `jarvis-sandbox` (`network_mode: none`, mount allowlist, per-task policy) and the Jarvis Code invariants |
+| A secrets store | `!secret` + `secrets.yaml` — real, but read at config load; the addition needs call-time injection and trace redaction |
+| Per-request model choice | `llm/openai_compat.py` already speaks the OpenAI shape, and `configuration.yaml` already documents LiteLLM as a supported backend |
+| Tracing | M36 (Langfuse) — the new work says "logged to the trace", so M36 moves ahead of the items that depend on it |
+
+### What is genuinely new, and what it costs
+
+| Item | New surface | Cost / risk on this host |
+|---|---|---|
+| Channel adapters (Telegram, Signal) | `integrations/channels/` with an adapter interface, an identity allowlist, per-channel and global rate limits | Signal needs `signal-cli` as a container; both are tailnet-only, never public. Verified against a mock channel server — no accounts in CI |
+| Calendar (CalDAV), mail (IMAP/SMTP) | two integrations + fixture containers (Radicale, a mail sink) | small; the fixtures are the work |
+| LiteLLM gateway | one container, all model traffic through it, policy routing + fallback + caps | ~300 MB; the privacy guard is the hard part — a request tagged local-only must be *refused* cloud routing, not merely defaulted away from it |
+| Claude Code backend | an alternative execution backend for coding tasks, in the same sandbox, same approval gates | needs an API key the operator supplies — **off by default**, and a `BLOCKERS.md` user-input row until then. The first deliberate exception to "no cloud", authorised by the brief |
+| Delegation across backends | extends M20's subagents with backend selection and roll-up | concurrency already bounded by `llm.max_concurrent` |
+| Prompt-injection quarantine | wrap/quarantine every external text before it reaches the model; strip ChatML/Llama/Gemma/Mistral control literals | cheap, and the highest-value item in the addition: it is what stops a fetched page forging a role boundary |
+| Motion system | motion tokens in `design/tokens.json`, primitives, signature moments, a perf-trace gate | the tokens and the reduced-motion path are mechanical; "cool" is not machine-checkable, hence the recorded-video checkpoint |
+| Capability registry + management UI + catalog | manifests with declared permissions, a registry, a real management surface, pinned installation from an allowlist of sources | the catalog is the marketplace attack surface: pinned refs, checksums, nothing auto-runs, static review before first run, sandboxed execution, quarantined metadata |
+
+### The rules these milestones are written against
+
+1. **Nothing is exposed to the public internet.** Tailnet or loopback, no static tokens in URLs.
+2. **Unknown senders are ignored, not served** — and the fact that they were ignored is logged.
+3. **External content is data, never instruction.** Quarantined, control-token-stripped, and
+   incapable of triggering a state-changing tool without the approval gate — whatever it asks.
+4. **Least privilege by default.** Each subagent, integration and downloaded skill gets the
+   narrowest tool allowlist and credential scope that works. No ambient god-tool.
+5. **Secrets are injected at call time** and never persisted into memory, notes, logs or traces.
+6. **Local remains a complete configuration.** Cloud providers are off until the operator
+   supplies keys, and a request carrying memory, notes or private-integration data is refused
+   cloud routing even when one is configured.
+7. **Nothing installs, or runs, without being seen.** Allowlisted source, pinned ref, recorded
+   hash, permissions shown, approval given.
+
+The live suite is where these stop being prose: a red-team scenario file probes injection via a
+fetched page and via an inbound message, a cross-conversation leak, a non-allowlisted sender and
+a malicious skill install. **The suite fails if any probe succeeds.**
+
 ## Hard constraints
 
 | Constraint | Status | Evidence |

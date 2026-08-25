@@ -13,9 +13,15 @@
 #                        routing ≥ 90 %, median round trip ≤ 2 s). Required at
 #                        final integration (M23) and nowhere else.
 #
-# What it boots: a real jarvis-core against the REAL Whisper, Piper and model
-# this host runs. Nothing is faked, which is why this is slow (minutes, not
-# seconds) and why it proves something the rest of the suite cannot.
+# What it talks to: the containers this host actually runs. `docker compose
+# up -d --wait` is the first step, every container must be healthy before a
+# word is spoken, and the run fails at the end if any of them logged an
+# ERROR-level record while it was going on — the two failures that survived two
+# days on this host were both of that shape and no assertion in this repository
+# could see them. `--target harness` opts out, for a machine with no stack.
+#
+# Nothing is faked, which is why this is slow (minutes, not seconds) and why it
+# proves something the rest of the suite cannot.
 #
 #   bash scripts/verify/live_interaction.sh --implemented-only
 #   bash scripts/verify/live_interaction.sh --full --report
@@ -48,6 +54,19 @@ else
     _v_fail ".env is missing — the live rig needs LLM_URL and LLM_MODEL" ""
 fi
 
+# The stack, first, and healthy — `up -d --wait` returns non-zero if any
+# service's healthcheck never passes, so this single line is also the
+# "no container is unhealthy at the start" gate.
+LIVE_TARGET="${LIVE_TARGET:-stack}"
+if [ "$LIVE_TARGET" = "stack" ]; then
+    check_sh "the stack is up and every container is healthy" '
+docker compose -f jarvis-core/docker-compose.yml up -d --wait >/dev/null 2>&1 || {
+    docker compose -f jarvis-core/docker-compose.yml ps; exit 1; }
+docker compose -f docker-compose.yml up -d --wait >/dev/null 2>&1 || {
+    docker compose -f docker-compose.yml ps; exit 1; }
+docker ps --format "{{.Names}} {{.Status}}" | sed "s/^/  /"'
+fi
+
 check "the synthetic user has a voice" python3 testing/live/fetch_voice.py --check
 check "piper-tts is installed" python3 -c 'import piper'
 check "the scenario suite parses" python3 -c '
@@ -71,14 +90,15 @@ check "every capability has a scenario" python3 -c '
 import sys; sys.path.insert(0, ".")
 from testing.live.scenario import load_all
 want = {"house", "answer", "voice", "conversation", "task", "memory", "notes",
-        "research", "coding", "subagents", "interactions", "safety", "skills"}
+        "research", "coding", "subagents", "interactions", "safety", "skills",
+        "resilience"}
 have = {s.capability for s in load_all()}
 missing = sorted(want - have)
 assert not missing, f"no live scenario covers: {missing}"
 print(f"{len(have)} capabilities covered")
 '
 
-ARGS=("$MODE")
+ARGS=("$MODE" "--target" "$LIVE_TARGET")
 [ -n "${LIVE_ONLY:-}" ] && ARGS+=("--only" "$LIVE_ONLY")
 # One capability's scenarios. A milestone that builds a capability runs exactly
 # the scenarios written for it — including the ones gated on that milestone,

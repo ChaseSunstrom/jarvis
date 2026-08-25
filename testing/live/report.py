@@ -115,6 +115,11 @@ class TurnResult:
     #: it actually do" is the first question about any failure, and because
     #: routing accuracy is derived from exactly this.
     tools: list[str] = field(default_factory=list)
+    #: What the server said went wrong, when something did. Recorded even for
+    #: a turn that PASSED, because a scenario can require a failure — killing
+    #: the STT container is a promise about the error message, and a report
+    #: that dropped it would say the turn simply worked.
+    error: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -134,6 +139,7 @@ class TurnResult:
             "routed": self.routed,
             "routed_expected": self.routed_expected,
             "tools": list(self.tools),
+            "error": self.error,
         }
 
 

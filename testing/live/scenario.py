@@ -58,11 +58,15 @@ EXPECT_KEYS = {
     "approval",          # {tool, decision: approve|deny}
     "ui",                # {testid, contains?, visible?} — asserted in the browser
     "file",              # {path, exists: bool} — containment checks
+    "error",             # the turn failed, visibly: {contains?, code?}
     "within_seconds",    # the whole turn must finish inside this
     "capability",        # which capability the router should have chosen
 }
 
 VARIANTS = ("voice", "text")
+
+#: Where a scenario can run. See `Scenario.ground`.
+GROUNDS = ("stack", "fixture")
 
 
 @dataclass
@@ -96,8 +100,13 @@ class Turn:
     wait: float = 0.0
     #: Send raw audio instead of speech: "silence" | "room_tone".
     sound: str = ""
-    #: Restart jarvis-core before this turn (memory must survive it).
+    #: Restart jarvis-core before this turn (memory must survive it). On the
+    #: stack ground that is `docker restart jarvis-core`; on the harness it is
+    #: the process. Both answer the same question: what survived?
     restart: bool = False
+    #: Stop a container before this turn and bring it back at the end of the
+    #: scenario. Stack ground only — there is nothing to kill on a harness.
+    kill: str = ""
 
 
 @dataclass
@@ -113,6 +122,12 @@ class Scenario:
     #: Why this scenario exists — printed with a failure, so a red line in CI
     #: says what a person lost rather than only which assert tripped.
     intent: str = ""
+    #: Where it runs: `stack` (the operator's containers, the default) or
+    #: `fixture` (a jarvis-core of our own, behind this repository's fixture
+    #: web). Only a scenario whose assertions are about page content this
+    #: repository owns needs the second — everything else is more honest run
+    #: against the deployment.
+    ground: str = "stack"
 
     @property
     def gated(self) -> bool:
@@ -136,6 +151,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         wait=float(raw.get("wait") or 0.0),
         sound=sound,
         restart=bool(raw.get("restart")),
+        kill=str(raw.get("kill") or ""),
     )
 
 
@@ -152,6 +168,9 @@ def load_scenario(path: str | Path) -> Scenario:
     unknown = set(variants) - set(VARIANTS)
     if unknown:
         raise ValueError(f"{name}: unknown variant(s) {sorted(unknown)}")
+    ground = str(raw.get("ground") or "stack")
+    if ground not in GROUNDS:
+        raise ValueError(f"{name}: unknown ground {ground!r} (known: {', '.join(GROUNDS)})")
     return Scenario(
         name=name,
         capability=str(raw.get("capability") or "unknown"),
@@ -160,6 +179,7 @@ def load_scenario(path: str | Path) -> Scenario:
         setup=dict(raw.get("setup") or {}),
         tags=tuple(str(t) for t in (raw.get("tags") or ())),
         intent=str(raw.get("intent") or "").strip(),
+        ground=str(raw.get("ground") or "stack"),
         turns=[_turn(turn, i, name) for i, turn in enumerate(turns)],
         path=path,
     )

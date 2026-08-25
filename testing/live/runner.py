@@ -3,10 +3,22 @@
     python3 -m testing.live.runner --implemented-only
     python3 -m testing.live.runner --full --report docs/LIVE_TEST_REPORT.md
 
-What it boots: a real jarvis-core (the harness, with a throwaway house), pointed
-at the **real** Whisper, the **real** Piper and the **real** model on this box.
-No fake model, no fake voice services — a scenario that passed against a fake
-recogniser would prove nothing about talking to Jarvis.
+What it talks to: the containers this host actually runs — jarvis-core, the
+console on :8199, the real Whisper, the real Piper, the real model. Not a copy
+of them. A suite that only ever spoke to a jarvis-core it started itself is how
+this host ran a console that had reported *unhealthy* for two days with every
+test in the repository green.
+
+The exception is a scenario whose assertions are about page content this
+repository owns — every research one — which says `ground: fixture` and gets a
+throwaway jarvis-core behind the fixture web. `--target harness` puts
+everything there, for a machine with no stack up.
+
+Running against somebody's real house is only reasonable because of what
+surrounds it: the named volumes and config directory are snapshotted before the
+first word and restored after the last, every thread the suite opens is named
+`test:…`, and anything a scenario creates is deleted and its absence asserted
+before the next one starts.
 
 What it refuses to do: skip. A scenario whose capability does not exist yet is
 marked `gated-on: <milestone>` in its own fixture and is not selected by
@@ -20,6 +32,7 @@ import argparse
 import asyncio
 import contextlib
 import fcntl
+import json
 import os
 import re
 import sys
@@ -45,13 +58,18 @@ from testing.live.report import (  # noqa: E402
 )
 from testing.live.scenario import Scenario, load_all  # noqa: E402
 from testing.live.fixture_browser import Browser as FixtureBrowser  # noqa: E402
+from testing.live.ground import (  # noqa: E402
+    TEST_NAMESPACE,
+    Ground,
+    HarnessGround,
+    StackGround,
+)
 from testing.live.fixture_search import Search as FixtureSearch  # noqa: E402
 from testing.live.fixture_site import SITES, Site as FixtureSite, pages_for  # noqa: E402
 from testing.live.transport import (  # noqa: E402
     TURN_TIMEOUT,
     ApiVoice,
     Browser,
-    Console,
     Link,
     Text,
 )
@@ -197,12 +215,25 @@ class Runner:
         browser: bool = True,
         keep: bool = False,
         verbose: bool = False,
+        target: str = "stack",
+        protect: bool = True,
     ) -> None:
         self.scenarios = scenarios
         self.variants = variants
         self.want_browser = browser
         self.keep = keep
         self.verbose = verbose
+        #: Which ground scenarios prefer: the running containers, or a
+        #: jarvis-core of our own. `stack` is the default because a suite that
+        #: only ever talks to a core it started proves nothing about the one
+        #: the operator runs — which is how a console sat unhealthy for two
+        #: days with every test green.
+        self.target = target
+        #: Snapshot the real house before touching it, and put it back after.
+        self.protect = protect
+        #: Set once a stack ground has been used, so the end-of-run log gate
+        #: knows both that there is a stack and when the run began.
+        self.stack_ground: StackGround | None = None
         self.results: list[ScenarioResult] = []
         #: Rebuilt whenever a scenario restarts the server.
         self.link: Link | None = None
@@ -255,26 +286,25 @@ class Runner:
                 closing.stop()
         self._sites, self._search, self._browser = [], None, None
 
-    def _harness(self):
-        from testing.harness import Harness
+    def _ground_for(self, scenario: Scenario) -> str:
+        """Which ground this scenario belongs on.
 
-        web = self._fixture_web()
-        work_dir = os.environ.get("LIVE_WORK_DIR") or str(OUT_DIR / "harness")
-        return Harness(
-            work_dir=work_dir,
-            keep=True,
-            verbose=self.verbose,
-            model=os.environ.get("LLM_MODEL", ""),
-            ollama_url=os.environ.get("LLM_URL", ""),
-            wyoming={
-                "host": os.environ.get("LIVE_STT_HOST", "127.0.0.1"),
-                "stt": int(os.environ.get("LIVE_STT_PORT", "10300")),
-                "tts": int(os.environ.get("LIVE_TTS_PORT", "10200")),
-                "wake": int(os.environ.get("LIVE_WAKE_PORT", "10400")),
-            },
-            search_url=web["search"],
-            browser_url=web["browser"],
-        )
+        A scenario says `ground: fixture` when its answers have to come from
+        pages this repository owns — every research scenario does, because
+        "did it cite three independent sources" is a question about a web we
+        control, not about today's internet. Everything else runs against the
+        containers the operator actually runs.
+        """
+        if self.target == "harness":
+            return "harness"
+        return "harness" if scenario.ground == "fixture" else "stack"
+
+    def _make_ground(self, name: str) -> Ground:
+        if name == "stack":
+            ground = StackGround(protect=self.protect)
+            self.stack_ground = ground
+            return ground
+        return HarnessGround(verbose=self.verbose, keep=self.keep, web=self._fixture_web())
 
     async def run(self) -> list[ScenarioResult]:
         await self._preflight()
@@ -282,37 +312,84 @@ class Runner:
             return await self._run_everything()
 
     async def _run_everything(self) -> list[ScenarioResult]:
+        # Grouped by ground and run a group at a time: each ground costs a
+        # jarvis-core start or a compose bring-up, and interleaving them would
+        # pay that per scenario.
+        groups: dict[str, list[Scenario]] = {}
+        for scenario in self.scenarios:
+            groups.setdefault(self._ground_for(scenario), []).append(scenario)
+        started = time.time()
+        for name in ("stack", "harness"):
+            if not groups.get(name):
+                continue
+            ground = self._make_ground(name)
+            try:
+                ground.start()
+                await self._run_group(ground, groups[name])
+            finally:
+                ground.stop()
+                if name == "harness":
+                    self._stop_fixture_web()
+        self.results.extend(self._stack_logs_are_clean(started))
+        return self.results
+
+    def _stack_logs_are_clean(self, since: float) -> list[ScenarioResult]:
+        """The assertion no scenario can make: did anything shout in the logs?
+
+        A container that is up and erroring is invisible to every expectation
+        in this suite — the turn passes, the house changes, and MQTT has been
+        reconnecting in a loop for two days. So the run ends by reading what
+        the services said about themselves, and a failure here fails the run
+        exactly like a failed scenario.
+        """
+        ground = self.stack_ground
+        if ground is None or ground.stack is None:
+            return []
+        result = ScenarioResult(
+            name="stack-logs-clean", capability="stack", variant="containers"
+        )
+        errors = ground.stack.errors_since(since)
+        if errors:
+            result.ok = False
+            result.error = (
+                f"{len(errors)} ERROR-level record(s) in container logs during the run:\n"
+                + "\n".join(f"  · {line}" for line in errors[:8])
+            )
+        self._say_result(result)
+        return [result]
+
+    async def _run_group(self, ground: Ground, scenarios: list[Scenario]) -> None:
         from testing.harness import JarvisClient
 
-        harness = self._harness()
-        harness.start()
-        console: Console | None = None
+        console = None
         try:
             if self.want_browser:
-                console = Console(harness.base_url, harness.token).start()
+                console = ground.console()
             # The client's own timeout has to be at least a turn: the text
             # transport is one REST call that waits for the whole answer, and
             # a 30 s default cut a 27-second turn off as a `ReadTimeout` that
             # read like a server failure.
-            client = JarvisClient(harness.base_url, harness.token, timeout=TURN_TIMEOUT)
+            client = JarvisClient(ground.base_url, ground.token, timeout=TURN_TIMEOUT)
             await client.connect()
             self.link = Link(client)
             observer = await Observer(client).start()
             self.observer = observer
+            if ground.name == "stack":
+                await self._house_exists(client)
             transports = {
-                "voice": ApiVoice(self.link, harness, self.mouth, self.ears),
+                "voice": ApiVoice(self.link, ground, self.mouth, self.ears),
                 "text": Text(self.link),
             }
             if console is not None:
                 transports["voice-ui"] = Browser(console, self.mouth, self.ears)
                 transports["text-ui"] = Browser(console, self.mouth, self.ears)
             try:
-                for scenario in self.scenarios:
+                for scenario in scenarios:
                     for variant in scenario.variants:
                         if variant not in self.variants:
                             continue
                         result = await self._run_scenario(
-                            scenario, variant, transports, harness
+                            scenario, variant, transports, ground
                         )
                         self.results.append(result)
                         self._say_result(result)
@@ -322,9 +399,6 @@ class Runner:
         finally:
             if console is not None:
                 console.stop()
-            harness.stop(cleanup=not self.keep)
-            self._stop_fixture_web()
-        return self.results
 
     def _say_result(self, result: ScenarioResult) -> None:
         flag = "ok  " if result.ok else "FAIL"
@@ -339,7 +413,7 @@ class Runner:
 
     # --- one scenario ------------------------------------------------------
     async def _run_scenario(
-        self, scenario: Scenario, variant: str, transports: dict[str, Any], harness
+        self, scenario: Scenario, variant: str, transports: dict[str, Any], ground: Ground
     ) -> ScenarioResult:
         # Read through the link every time: a `restart: true` turn replaces
         # both, and a captured client is a closed one from the turn after.
@@ -351,6 +425,7 @@ class Runner:
             variant=variant,
             gated_on=scenario.gated_on,
         )
+        killed: list[str] = []
         transport = transports.get(variant)
         if transport is None:
             result.ok = False
@@ -359,11 +434,25 @@ class Runner:
             return result
 
         try:
+            baseline = await self._baseline(observer, ground)
             await self._setup(scenario, self.link.client, observer)
-            conversation_id: str | None = None
+            # Every thread this suite opens on a real house is named, so a
+            # person looking at their own console can tell which conversations
+            # were the tests and the sweep below knows what it may delete.
+            conversation_id: str | None = (
+                f"{TEST_NAMESPACE}{scenario.name}:{variant}"
+                if ground.name == "stack"
+                else None
+            )
             for index, turn in enumerate(scenario.turns):
                 if turn.wait:
                     await asyncio.sleep(turn.wait)
+                if turn.kill:
+                    # Pull a service out from under a turn in flight. The
+                    # `finally` below puts it back whatever happens, because
+                    # the next scenario needs speech to work.
+                    killed.append(turn.kill)
+                    ground.stack.stop(turn.kill)  # type: ignore[union-attr]
                 if turn.restart:
                     # The whole point of the turn: kill the process and see
                     # what survived. The socket does not, so the client and
@@ -374,10 +463,10 @@ class Runner:
                     # been closed").
                     await observer.stop()
                     await self.link.client.aclose()
-                    harness.restart_core()
+                    ground.restart_core()
                     from testing.harness import JarvisClient as _Client
 
-                    fresh = _Client(harness.base_url, harness.token, timeout=TURN_TIMEOUT)
+                    fresh = _Client(ground.base_url, ground.token, timeout=TURN_TIMEOUT)
                     await fresh.connect()
                     self.link.client = fresh
                     observer = await Observer(fresh).start()
@@ -390,6 +479,12 @@ class Runner:
                     scenario, variant, index, turn, spoken, observer, mark,
                     event_mark, tool_mark,
                 )
+                if turn.kill:
+                    # Back immediately, not at the end of the scenario: the
+                    # next turn is the one that proves the failure was
+                    # transient, and it needs the service it was denied.
+                    ground.stack.start(turn.kill)  # type: ignore[union-attr]
+                    killed.remove(turn.kill)
                 result.turns.append(turn_result)
                 if not turn_result.ok:
                     result.ok = False
@@ -400,8 +495,124 @@ class Runner:
         except Exception as err:  # noqa: BLE001 - a crash is a failed scenario
             result.ok = False
             result.error = f"{type(err).__name__}: {err}"
+        finally:
+            for container in killed:
+                try:
+                    ground.stack.start(container)  # type: ignore[union-attr]
+                except Exception as err:  # noqa: BLE001 - say it, do not hide it
+                    result.ok = False
+                    result.error = f"{result.error} (and {container} did not come back: {err})"
+            swept = await self._sweep(observer, ground, baseline)
+            if swept and result.ok:
+                result.ok = False
+                result.error = swept
         result.seconds = time.monotonic() - started
         return result
+
+    async def _house_exists(self, client) -> None:
+        """Refuse to run house scenarios against an installation with no house.
+
+        A fresh Jarvis controls nothing — deliberately, because a default
+        configuration that invents devices nobody owns is worse than an empty
+        one (`test_the_default_boots_into_an_empty_house_that_is_still_alive`).
+        Run the suite against that and every house scenario fails on a missing
+        entity, which reads like a broken assistant rather than an empty house.
+        """
+        try:
+            states = await client.command("get_states")
+        except Exception as err:  # noqa: BLE001 - no house is the answer here
+            raise LiveError(f"could not read the running Jarvis's states: {err}") from err
+        controllable = [
+            row["entity_id"]
+            for row in states or []
+            if isinstance(row, dict)
+            and str(row.get("entity_id", "")).split(".", 1)[0] in HOUSE_DOMAINS
+        ]
+        if not controllable:
+            raise LiveError(
+                "the running Jarvis controls nothing, so the house scenarios cannot mean "
+                "anything. Give it a house of software:\n"
+                "  cp jarvis-core/config/examples/house/packages-demo-house.yaml \\\n"
+                "     jarvis-core/config/packages/demo-house.yaml\n"
+                "  docker compose -f jarvis-core/docker-compose.yml restart jarvis-core"
+            )
+
+    # --- leaving the house as it was ---------------------------------------
+    async def _baseline(self, observer: Observer, ground: Ground) -> dict[str, set[str]]:
+        """What the house held before the scenario touched it.
+
+        Only on the stack ground: the harness's house is a temporary directory
+        that is deleted at the end of the run, and diffing it would be work in
+        service of nothing.
+        """
+        if ground.name != "stack":
+            return {}
+        return {
+            "notes": {str(row.get("id")) for row in await observer.notes()},
+            "memory": {str(row.get("id")) for row in await observer.memories()},
+            "conversations": await self._conversation_ids(),
+        }
+
+    async def _conversation_ids(self) -> set[str]:
+        try:
+            answer = await self.link.client.command("jarvis/conversation/list")
+        except Exception:  # noqa: BLE001 - an absent capability is not a leak
+            return set()
+        rows = answer.get("conversations") or answer.get("result") or []
+        return {str(row.get("id")) for row in rows if isinstance(row, dict)}
+
+    async def _sweep(
+        self, observer: Observer, ground: Ground, baseline: dict[str, set[str]]
+    ) -> str:
+        """Delete what this scenario created, and say so if anything survives.
+
+        The scenario's own cleanup, asserted rather than hoped for. The whole
+        run is wrapped in a volume snapshot as well, but a snapshot is a
+        recovery; this is the difference between a suite that can be run
+        against somebody's house and one that merely can be undone afterwards.
+        """
+        if not baseline or ground.name != "stack":
+            return ""
+        problems: list[str] = []
+        for row in await observer.notes():
+            note_id = str(row.get("id"))
+            if note_id in baseline.get("notes", set()):
+                continue
+            try:
+                await self.link.client.command("jarvis/notes/delete", note_id=note_id)
+            except Exception as err:  # noqa: BLE001
+                problems.append(f"note {note_id} could not be removed: {err}")
+        for row in await observer.memories():
+            entry_id = str(row.get("id"))
+            if entry_id in baseline.get("memory", set()):
+                continue
+            try:
+                await self.link.client.command("jarvis/memory/forget", memory_id=entry_id)
+            except Exception as err:  # noqa: BLE001
+                problems.append(f"memory {entry_id} could not be removed: {err}")
+        for conversation_id in await self._conversation_ids():
+            if conversation_id in baseline.get("conversations", set()):
+                continue
+            if not conversation_id.startswith(TEST_NAMESPACE):
+                # Not ours to delete. A thread that appeared during the run
+                # without our prefix belongs to whoever else is using this
+                # house, and this suite does not touch it.
+                continue
+            try:
+                await self.link.client.command(
+                    "jarvis/conversation/delete", conversation_id=conversation_id
+                )
+            except Exception as err:  # noqa: BLE001
+                problems.append(f"thread {conversation_id} could not be removed: {err}")
+
+        left = {
+            note_id
+            for note_id in {str(r.get("id")) for r in await observer.notes()}
+            if note_id not in baseline.get("notes", set())
+        }
+        if left:
+            problems.append(f"{len(left)} note(s) left behind on a real house: {sorted(left)}")
+        return "; ".join(problems)
 
     async def _setup(self, scenario: Scenario, client, observer: Observer) -> None:
         # `clear: [memory, notes]` — a scenario that asserts "it remembered"
@@ -483,6 +694,7 @@ class Runner:
             reply=spoken.reply_text,
             reply_heard=spoken.reply_heard,
             latency=dict(spoken.latency),
+            error=spoken.error,
         )
         fail = out.failures.append
 
@@ -520,6 +732,30 @@ class Runner:
             domain, _, service = str(forbidden).partition(".")
             if observer.called(mark, domain, service):
                 fail(f"{forbidden} was called and must not have been")
+
+        # --- did it fail, and did it say so
+        #
+        # A turn that must fail is as much a promise as one that must work:
+        # `resilience-stt-down` is about the difference between "I can't hear
+        # you at the moment" and a HUD that listens forever.
+        if "error" in expect:
+            want = expect.get("error") or {}
+            got = spoken.error or {}
+            if not got:
+                fail(
+                    "the turn was expected to fail visibly and did not — "
+                    f"it answered {spoken.reply_text[:80]!r}"
+                )
+            else:
+                text = json.dumps(got).lower()
+                needle = str(want.get("contains") or "").lower()
+                if needle and needle not in text:
+                    fail(f"the failure was {got!r}, which does not mention {needle!r}")
+                code = str(want.get("code") or "")
+                if code and str(got.get("code") or "") != code:
+                    fail(f"error code {got.get('code')!r}, expected {code!r}")
+        elif spoken.error and not expect.get("no_reply"):
+            fail(f"the turn failed: {spoken.error}")
 
         for entity_id, want_state in (expect.get("state") or {}).items():
             if not await observer.wait_for_state(entity_id, str(want_state)):
@@ -728,6 +964,8 @@ async def _main(args: argparse.Namespace) -> int:
         browser=not args.no_browser,
         keep=args.keep,
         verbose=args.verbose,
+        target=args.target,
+        protect=not args.no_protect,
     )
     started = time.monotonic()
     results = await runner.run()
@@ -736,6 +974,7 @@ async def _main(args: argparse.Namespace) -> int:
 
     payload = {
         "mode": "implemented-only" if args.implemented_only else "full",
+        "target": args.target,
         "seconds": round(time.monotonic() - started, 1),
         "totals": totals,
         "latency": latencies,
@@ -799,6 +1038,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip the browser transports (no console build needed)")
     parser.add_argument("--write-report", action="store_true",
                         help="write docs/LIVE_TEST_REPORT.md from this run")
+    parser.add_argument("--target", default=os.environ.get("LIVE_TARGET", "stack"),
+                        choices=("stack", "harness"),
+                        help="run against the running containers (default) or a "
+                             "jarvis-core of our own")
+    parser.add_argument("--no-protect", action="store_true",
+                        help="do not snapshot/restore the real house first "
+                             "(faster, and you had better mean it)")
     parser.add_argument("--keep", action="store_true", help="keep the harness work dir")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)

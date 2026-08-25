@@ -39,6 +39,7 @@ import inspect
 import itertools
 import logging
 import math
+import re
 import secrets
 import time
 import uuid
@@ -221,6 +222,38 @@ def _sane_timeout(timeout: Any) -> float:
     if not math.isfinite(value) or value <= 0:
         return DEFAULT_TIMEOUT
     return min(value, MAX_TIMEOUT)
+
+
+#: A chunk with nothing in it a synthesiser can pronounce.
+#:
+#: Piper splits its input into sentences and synthesises each one. A leading
+#: fragment with no letters or digits in it — "...?", "—", "!!" — phonemises to
+#: nothing, its wav writer closes having written no frames, and **the whole
+#: request fails**: `wave.Error: # channels not specified`, no audio for any of
+#: the text. Measured against `wyoming-piper:2.3.1` on this host: the reply
+#: "...? Shall I fetch something, Sir?" produced silence and an error, while the
+#: same sentence without the ellipsis produced 183 KB.
+#:
+#: A model reacting to a noise it could not make out opens with an ellipsis
+#: often, so this is not an edge case — it is what Jarvis says when the room is
+#: quiet and something rustles.
+_SPEAKABLE = re.compile(r"[0-9A-Za-z\u00c0-\u024f]")
+
+
+def speakable(text: str) -> str:
+    """`text` with the fragments no synthesiser can say removed.
+
+    Whitespace collapsed (a reply that begins with a blank line is common and
+    means nothing out loud) and any leading or trailing chunk that contains no
+    letter or digit dropped. Returns "" when nothing is left to say, which the
+    caller treats as "do not speak", never as an error.
+    """
+    collapsed = " ".join(str(text or "").split())
+    if not collapsed:
+        return ""
+    parts = [part for part in re.split(r"(?<=[.!?])\s+", collapsed) if part]
+    kept = [part for part in parts if _SPEAKABLE.search(part)]
+    return " ".join(kept)
 
 
 def store_tts_audio(
@@ -800,6 +833,15 @@ class PipelineRun:
     async def _run_tts(self, text: str) -> str:
         if self.tts is None:
             raise PipelineError("tts-provider-missing", "no text-to-speech service configured")
+        # What is actually sent to the synthesiser. `self.response_text` keeps
+        # the reply as written — the transcript, the console and the archive all
+        # show what was said, not what was pronounceable.
+        text = speakable(text)
+        if not text:
+            _LOGGER.debug(
+                "Pipeline %s: nothing pronounceable in the reply, skipping TTS", self.run_id
+            )
+            return ""
         await self._emit(
             EVENT_TTS_START,
             {

@@ -1,5 +1,7 @@
 name: coding-fix-failing-tests
 capability: coding
+# Not the stack: it works on a fixture repository the rig creates.
+ground: fixture
 gated-on: M19
 intent: >
   The whole coding agent, asked for by voice, and the containment claim that

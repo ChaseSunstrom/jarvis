@@ -346,9 +346,23 @@ they are the only places that particular bug can come back.
 | Recognition survives a room with a fan in it | Automated *at a measured SNR* | `house-light-off-noisy` (10 dB, measured, deterministic) |
 | Word error rate, routing accuracy and per-stage latency | Automated *and reported* | `.verify/live/results.json`, `docs/LIVE_TEST_REPORT.md` |
 | Every capability, including the ones not built yet | Automated | `bash scripts/verify/live_interaction.sh --full` — scenarios for unfinished capabilities carry `gated-on:` and fail until their milestone lands |
-| A real SearXNG | **Blocked** | `jarvisdev` cannot reach the Docker socket; the research scenarios use `testing/live/fixture_search.py`, which serves SearXNG's `/search?format=json` shape over a fixture site — Jarvis's real search client, fetcher and reader run unchanged, SearXNG itself does not. See `BLOCKERS.md` |
+| A real SearXNG | **Deliberately not, and it is not blocked any more** | Docker works for `jarvisdev` now (M28). The research scenarios still run against `testing/live/fixture_search.py` on purpose: "did it cite three independent sources" is a question about a web this repository owns, and today's internet is not a fixture. They are the seven scenarios that carry `ground: fixture`; everything else talks to the running containers |
 | A 2-second median round trip | **Missed, and reported** | measured 15–20 s per spoken turn on this host (27 B model, no GPU, four shared vCPUs). `ISSUES.md` and `BLOCKERS.md` say what it would take |
 | A real microphone in a real room | **Unproven** | the rig synthesises speech; acoustics are not simulated |
+
+### The stack, as the thing under test (M28, M29)
+
+| Claim | Level | Proof |
+|---|---|---|
+| The suite talks to the containers the operator actually runs | Automated | `bash scripts/verify/live_interaction.sh` starts with `docker compose up -d --wait` and the scenarios address the running jarvis-core and the console on `:8199`; 22 of 29 scenarios carry the default `ground: stack` |
+| A container that is unhealthy at the start fails the run before a word is spoken | Automated | `up -d --wait` exits non-zero, and `Stack.up()` re-checks; an init container that ran and exited 0 is not counted as sick |
+| A container that logged an ERROR-level record during the run fails the run | Automated | `stack-logs-clean` in `.verify/live/results.json` — `docker compose logs --since`, grouped into records so the allowlist can name an exception (`ConnectionResetError` from a probe that hung up) rather than the useless line that introduces it |
+| A restart underneath a live conversation does not lose the thread | Automated | `resilience-core-restart` — `docker restart jarvis-core` between two turns, and "now do the same in the bedroom" still resolves |
+| Speech recognition disappearing mid-utterance surfaces as a visible failure | Automated | `resilience-stt-down` — the container is stopped, the turn ends with `stt-stream-failed` rather than hanging, no service call happens, and the next turn works once it is back |
+| The suite is safe to point at a house somebody lives in | Automated | `jarvis-core/config`, `.storage` and `mosquitto-data` are tarred before the run and restored after (`StateGuard`, through a container because the services own their own files); every thread it opens is `test:<scenario>:<variant>`; anything a scenario creates is deleted and its absence asserted before the next one |
+| A code change reaches a running container | Automated | `develop: watch:` on the four services built here, with `test_every_watch_rule_syncs_into_that_image_workdir` pinning the target against each image's `WORKDIR` |
+| Bring-up, teardown and per-volume backup/restore are written down | Scripted | `docs/RUNBOOK.md` — and the restore path is exercised, not just documented (`scripts/verify/m29-compose-testing.sh`) |
+| The stack survives a host reboot | **Unproven** | `restart: unless-stopped` is set on every long-running service; nothing here reboots the host to find out |
 
 ### The research engine
 

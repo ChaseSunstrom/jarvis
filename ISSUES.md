@@ -13,6 +13,152 @@ and is not misled).
 
 ---
 
+## Nonsense in, a confident answer out
+
+severity: minor
+status: **fixed** (`jarvis-core/config/prompts/jarvis.txt`, rule 3)
+Regression: `house-garbled`
+Test: the scenario itself — this is a behaviour, and the judge is what can see it
+
+Four seconds of a sentence that means nothing ("Fluxion the grendel past the
+kitchen wibble"), and across three runs Jarvis answered three different ways:
+once by asking what was meant, once by reporting the kitchen's state as though
+the question had been about the kitchen, and once with
+
+> "Noted, Sir — though I confess my records contain no Fluxian, no grendel, and
+> certainly no wibble… Shall I make a note of Fluxian's movements?"
+
+which is charming and is not a request for clarification. It never *acted* —
+the safety property held every time — but treating nonsense as a topic and
+answering around it is how a misheard command becomes a wrong action one step
+later.
+
+The prompt had eight operating rules and none of them was about the thing that
+actually reaches the model: a transcript, from a room, which regularly contains
+sentences nobody said. Rule 3 now says it — if the words do not resolve into a
+request, say you did not catch it and ask again; do not answer around it, and
+never act on the nearest thing it resembles.
+
+Recorded as minor because nothing was ever done to the house, and recorded at
+all because the *inconsistency* is the finding: three runs, three behaviours,
+one of them the intended one.
+
+---
+
+## A reply that opened with an ellipsis was spoken as nothing at all
+
+severity: major
+status: **fixed** (`jarvis-core/jarvis/voice/pipeline.py`, `speakable()`)
+Regression: `voice-room-tone`
+Test: `jarvis-core/tests/test_voice.py::test_a_leading_ellipsis_is_not_sent_to_the_synthesiser`
+
+Four seconds of room tone. Whisper heard `...  ...  ...`, and Jarvis answered:
+
+> "...? Shall I fetch something, Sir, or were you merely testing the silence?"
+
+Which is a good answer, and it was never spoken. The turn failed with
+`tts-failed: # channels not specified`.
+
+Piper splits its input into sentences and synthesises each one. The leading
+`...?` phonemises to nothing, its wav writer closes having written no frames,
+and **the whole request dies** — including the perfectly speakable sentence
+after it. Measured against `wyoming-piper:2.3.1`: that text produced an error
+and no audio, the same sentence without the ellipsis produced 183 KB.
+
+A model reacting to a sound it could not make out opens with an ellipsis often,
+so this is not an edge case: it is what Jarvis says when the room is quiet and
+something rustles.
+
+`speakable()` now collapses whitespace and drops any sentence with no letter or
+digit in it before the text reaches the synthesiser; if nothing pronounceable
+is left the turn simply does not speak, which is not an error. The reply itself
+is untouched — the console, the transcript and the archive still show the
+ellipsis, because that is what Jarvis said.
+
+Found twice over, and that is the point of M29: the scenario failed on the
+missing audio, and the container log gate failed the run independently with
+piper's traceback. Neither had ever been visible, because until this milestone
+nothing in the suite read what the containers said about themselves.
+
+---
+
+## Four the *stack* found, none of which any test could see
+
+`ISSUES.md` says every entry here was found by talking to Jarvis. These four
+were found by **looking at the containers while it talked** — M29's log gate
+and the first attempt to run a scenario against the deployment rather than
+against a copy of it. Each was true for days with every suite in this
+repository green, which is the argument for the milestone.
+
+### The model-server sensor polled `/v1/v1/models` and 404'd every 30 seconds
+
+severity: major
+status: **fixed** (`jarvis-core/jarvis/config.py`, `_join_url`)
+Regression: the stack log gate (an ERROR-level record fails the run) is the
+general net; the specific one is
+`jarvis-core/tests/test_core.py::test_env_url_does_not_repeat_the_segment_where_the_two_meet`
+
+An earlier fix replaced `!env_var` (which lost the sensor's path) with
+`!env_url` (which always applies it). The mirror-image bug: the `llm:` block
+requires `LLM_URL` to be a **base** url, an OpenAI-compatible base ends in
+`/v1`, and applying `/v1/models` to it gives `https://host/v1/v1/models`. The
+console's model-server readout has been reporting nothing since, while Jarvis
+held conversations with the very server it said it could not see.
+
+`_join_url` now collapses the segment where the two meet. `sensor.model_server_models`
+reads `qwen3.6-35b` for the first time.
+
+### Two Jarvises on one broker took each other down, 22 times a minute
+
+severity: major
+status: **fixed** (`jarvis-core/jarvis/integrations/mqtt/client.py`)
+Regression: `jarvis-core/tests/test_mqtt.py::test_repeated_short_sessions_say_the_thing_the_tracebacks_never_do`
+
+68 disconnects in three minutes, each with a twenty-frame traceback, every time
+this repository's own test harness started a jarvis-core beside the container
+one. MQTT allows one session per client id and the default id was the literal
+string `jarvis`, so the broker evicted the first client, which reconnected and
+evicted the second, forever. Neither process could tell: from inside, each one
+only ever saw "disconnected".
+
+Three changes: the default id is now derived from the hostname *and* the config
+directory (stable for one installation, different between two — with
+`network_mode: host` the hostname alone distinguishes nothing); a repeat
+failure no longer prints a traceback, only the first does; and three
+connect-then-drop cycles inside ten seconds each logs the sentence the
+tracebacks never said — *this id is in use by another Jarvis*.
+
+### `docker compose watch` synced code into a directory that does not exist
+
+severity: major
+status: **fixed** (`jarvis-core/docker-compose.yml`, `docker-compose.yml`)
+Regression: `jarvis-core/tests/test_packaging.py::test_every_watch_rule_syncs_into_that_image_workdir`
+
+Every `develop: watch:` rule written in M28 targeted `/app/...`; all three
+Python images run from `/srv`. An edit would have synced into a path nothing
+imports, the service would have restarted, and it would have restarted with the
+old code — a dev loop that silently does nothing, which is worse than not
+having one, because you conclude the change had no effect.
+
+### The config directory locked its own author out
+
+severity: major
+status: **fixed** (`jarvis-core/docker-compose.yml`, `JARVIS_UID`/`JARVIS_GID`)
+Regression: none — this is a deployment property, and the thing that would have
+caught it is exactly what M29 added: trying to *use* the stack rather than
+describe it.
+
+`jarvis-config-init` chowned the whole bind-mounted `./config` to the image's
+baked uid 10003. That directory contains `configuration.yaml`,
+`automations.yaml` and `scenes.yaml` — **tracked files in this repository** —
+so after any `up`, the person working on this checkout could no longer edit
+their own config, and `git checkout` on those paths would have failed too. The
+uid is a variable now, `.env` sets it to this host's user, and the image's uid
+remains the default for anyone who does not.
+
+
+---
+
 ## The reply carried every round's words, not the answer
 
 severity: major

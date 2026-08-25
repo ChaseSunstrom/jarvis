@@ -721,6 +721,22 @@ def test_env_url_does_not_double_a_slash(tmp_path, monkeypatch):
     assert loaded["resource"] == "http://host:11434/api/ps"
 
 
+def test_env_url_does_not_repeat_the_segment_where_the_two_meet(tmp_path, monkeypatch):
+    """The mirror-image bug of the one above, and it shipped for two days.
+
+    An OpenAI-compatible base URL ends in `/v1` — the `llm:` block requires a
+    base, and that is what one looks like. The sensor's path is `/v1/models`.
+    Applying it unconditionally gave `https://host/v1/v1/models`: a 404 every
+    thirty seconds, and a dashboard reporting the model server as offline while
+    Jarvis was holding a conversation with it.
+    """
+    monkeypatch.setenv("JARVIS_TEST_BASE", "https://ai.example.ts.net/v1")
+    loaded = _load(
+        tmp_path, "resource: !env_url JARVIS_TEST_BASE http://127.0.0.1:11434 /v1/models\n"
+    )
+    assert loaded["resource"] == "https://ai.example.ts.net/v1/models"
+
+
 def test_env_url_refuses_a_form_that_would_silently_drop_the_path(tmp_path):
     with pytest.raises(ConfigError, match="NAME DEFAULT_BASE PATH"):
         _load(tmp_path, "resource: !env_url JARVIS_TEST_BASE http://127.0.0.1:11434\n")
@@ -741,6 +757,14 @@ def test_the_shipped_model_sensor_keeps_its_path_when_the_url_is_overridden(monk
     assert "http://192.168.1.174:9000/v1/models" in resources, resources
     # The bare base is exactly what it used to poll, and what returned the 404.
     assert "http://192.168.1.174:9000" not in resources
+
+    # And the shape this host actually has in `.env`: a base that already ends
+    # in `/v1`, which is what every OpenAI-compatible server's base looks like.
+    monkeypatch.setenv("LLM_URL", "https://ai.example.ts.net/v1")
+    loaded = config_module.load_yaml(config_dir / "configuration.yaml", config_dir, {})
+    resources = [entry["resource"] for entry in loaded["rest"] if "resource" in entry]
+    assert "https://ai.example.ts.net/v1/models" in resources, resources
+    assert not any("/v1/v1" in resource for resource in resources), resources
 
 
 # A REACHABLE server answering the wrong thing is the same kind of news as an

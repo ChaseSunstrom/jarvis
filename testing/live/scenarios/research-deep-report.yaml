@@ -1,5 +1,7 @@
 name: research-deep-report
 capability: research
+# Not the stack: its sources must be pages this repository owns.
+ground: fixture
 gated-on: M18
 intent: >
   Deep research, end to end: several sources actually fetched, a report whose

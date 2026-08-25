@@ -1,5 +1,7 @@
 name: coding-denied-approval
 capability: coding
+# Not the stack: it works on a fixture repository the rig creates.
+ground: fixture
 gated-on: M19
 intent: >
   The other half of an approval gate, and the half that is never tested: saying

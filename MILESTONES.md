@@ -424,7 +424,7 @@ unblocks M19's containment check and the live research backend at the same time.
     limits, volumes) and then brings the stack up and asserts every container is healthy.
   - Verify: `bash scripts/verify/m28-compose.sh`
 
-- [ ] **M29 — The suite runs against the real containers** · size L · deps M28, M25
+- [x] **M29 — The suite runs against the real containers** · size L · deps M28, M25
   - Scope: `scripts/verify/live_interaction.sh` starts with `docker compose up -d --wait`; the
     scenarios talk to the real service endpoints rather than to a harness-owned copy; the run
     fails if any container is unhealthy at the start or has ERROR-level log lines at the end
@@ -510,9 +510,164 @@ after number must be better than the before or the service comes out**. Choices 
     off, the allow-list refusing an un-listed workflow, and one worked example with the flag on.
   - Verify: `bash scripts/verify/m37-n8n-bridge.sh`
 
+## Reach, routing and delegation (added mid-run)
+
+Modelled on what the OpenClaw-class assistants do, and deliberately not on how they did it: the
+security items below are milestones, not acceptance criteria buried in a scope line, because
+that class of tool shipped 140k internet-exposed instances, a marketplace supply-chain attack
+and one-click RCE. M43 is built **before** anything that consumes untrusted content in anger,
+and every milestone here ends with its own live scenarios.
+
+- [ ] **M38 — Channels: Jarvis is reachable, and reaches back** · size L · deps M17, M43
+  - Scope: `integrations/channels/` — an adapter interface (`receive`, `send`, `identify`,
+    `health`) with Telegram and Signal shipped and Discord/Matrix/SMS-gateway droppable in
+    without touching core. Inbound messages become ordinary conversations with the full tool
+    set; outbound is where proactive moments (briefing, task-done, approval requests) go, so
+    `notifications/` gains channel sinks rather than growing a second notion of "tell them".
+    **Security, not polish**: every sender is authenticated against an allowlist of the
+    operator's own identities — an unknown sender is ignored, never served, and the fact is
+    logged; per-channel and global rate limits; tailnet or loopback only, no public exposure,
+    no static token in a URL. `testing/fixtures/channel_server.py` is a mock channel — no
+    external account is touched by any test.
+  - Verify: `bash scripts/verify/m38-channels.sh`
+
+- [ ] **M39 — Calendar, mail, and a tool-plugin interface** · size L · deps M11, M43
+  - Scope: CalDAV (read, create, modify, availability) and IMAP/SMTP (read, send) as
+    integrations, plus the drop-in self-describing tool-plugin interface they are the first two
+    users of. Read-only is allowed by default; anything that mutates external state or reads
+    private data goes through the tier/approval model; credentials come from the secrets store
+    at call time (M43) and never from the environment or a note; every external call lands in
+    the trace (M36). Fixtures: a Radicale container and a mail sink container, both in compose
+    behind a profile — create-event appears on the calendar, send-mail lands in the fixture
+    inbox, an unapproved state-changing call is refused.
+  - Verify: `bash scripts/verify/m39-integrations.sh`
+
+- [ ] **M40 — One gateway, many providers, and a privacy guard** · size L · deps M28, M36
+  - Scope: a self-hosted LiteLLM container as the single internal model endpoint; llama-swap is
+    the local default and OpenAI/Anthropic/Google/OpenRouter are configured but **off until the
+    operator supplies keys** — local-only stays a complete configuration. Routing is policy:
+    a default local model, per-capability overrides, automatic fallback on error or timeout,
+    per-provider cost and rate caps. The hard rule is the privacy guard: a request carrying
+    memory, notes or private-integration content is tagged `local-only` and the proxy
+    **refuses** to route it to any cloud provider; leaving the LAN with personal data takes an
+    explicit per-request opt-in, and that decision is logged. Verified with a mock cloud
+    provider: default goes local, an override reaches the mock, a forced error falls back, and
+    a tagged request is refused even with a provider available.
+  - Verify: `bash scripts/verify/m40-model-gateway.sh`
+
+- [ ] **M41 — Claude Code as an execution backend** · size L · deps M19, M40, M43
+  - Scope: heavy coding work can be delegated to Claude Code headlessly (`--print`, structured
+    output) as an alternative to the local coding agent, selectable per task. It runs in the
+    same disposable sandbox under the same containment assertions and the same approval gates
+    in the task UI — there is no path by which a delegated run writes outside the sandbox or
+    acts outside the task's approval policy. Backend selection is recorded in the trace. Off
+    until the operator supplies a key (a `BLOCKERS.md` user-input row, and the first deliberate
+    exception to "no cloud" — authorised, flagged, and off by default); CI proves it against a
+    scripted stand-in that speaks the same protocol.
+  - Verify: `bash scripts/verify/m41-claude-code-backend.sh`
+
+- [ ] **M42 — Delegation across backends** · size L · deps M20, M41
+  - Scope: one spoken request fans out into a plan of subtasks across the specialised subagents
+    and the backends (local agent, Claude Code, research, integrations), independent ones in
+    parallel, rolling up to a lead that reports progress in the task UI and stops at approval
+    gates. Concurrency stays bounded by `llm.max_concurrent` against the model endpoint.
+    Verified by a multi-part request that produces a plan, executes across at least two
+    backends, and rolls up a coherent result with trace evidence.
+  - Verify: `bash scripts/verify/m42-delegation.sh`
+
+- [ ] **M43 — Hardening: injection, least privilege, secrets, red team** · size XL · deps M11, M13
+  - Scope: **prompt injection is unsolved, so it is assumed.** Every piece of external content
+    — email bodies, fetched pages, channel messages, file contents, catalog metadata — is
+    wrapped and quarantined before it reaches the model and stripped of chat-template control
+    literals (ChatML, Llama, Gemma, Mistral) so fetched text cannot forge a role boundary
+    against a local model. Content from an external source can never silently trigger a
+    state-changing tool: those hit the approval gate regardless of what the content asks.
+    Least privilege everywhere — each subagent, integration and skill gets the narrowest tool
+    allowlist and credential scope that works, and there is no ambient god-tool. A real secrets
+    store: injected at call time, never persisted into memory, notes, logs or traces, with
+    trace redaction. `docs/THREAT_MODEL.md` (short, and about this system). A red-team scenario
+    file in the live suite: injection via a fetched page, injection via an inbound channel
+    message attempting an unapproved action, a cross-conversation data-leak probe, and a
+    non-allowlisted sender — **the suite fails if any probe succeeds.**
+  - Verify: `bash scripts/verify/m43-hardening.sh`
+
+## Motion (added mid-run)
+
+- [ ] **M44 — The motion system, and the moments built on it** · size L · deps M02, M05, M29
+  - Scope: motion joins the design tokens — durations, easings (standard/decelerate/accelerate/
+    spring), stagger intervals — in `design/tokens.json`, generated into web, Android (Compose
+    animation specs) and desktop exactly as colour and type already are, with reusable
+    primitives (fade/slide/scale, shimmer, glow-pulse, shared-element) that every animation in
+    the app draws from. `scripts/verify/token_lint.py` grows a rule for raw `transition:` /
+    `animation:` values, and the style-guide page documents each token with a live example.
+    Then the moments, on the existing aesthetic and its accent, never a restyle: a staged boot
+    sequence as subsystems come online (≤ ~1.5 s, skippable, reduced on repeat launches); a
+    living idle presence with clearly distinct listening / thinking / speaking states driven by
+    real audio amplitude; in-task motion (streaming cursor, tool-call and subagent-tree nodes
+    animating in, progress tweens, completion and error resolutions); shared-element page
+    transitions and dashboard graphs that tween on data updates instead of snapping.
+    **Verifiable constraints**: a Chrome DevTools performance trace captured headlessly over
+    the boot sequence and a busy task view, asserting no frame over ~16 ms and no forced
+    reflow in the animated paths; `prefers-reduced-motion` honoured as a full, tested path,
+    asserted by the live suite; input stays responsive during every animation and nothing gates
+    an action behind a decorative sequence. `docs/LIVE_TEST_REPORT.md` gains the trace results
+    and the reduced-motion verdict.
+  - Taste checkpoint: the harness can prove smooth, token-compliant and accessible; it cannot
+    prove *cool*. On completion, record boot, idle → listening → thinking → speaking, and a
+    live task view to `docs/motion-review/*.webm` (headless Chromium video capture — no GUI,
+    no device) for the operator to watch. **The milestone is not done until they have signed
+    off**, and their notes are worked through as a second pass.
+  - Verify: `bash scripts/verify/m44-motion.sh`
+
+## The skills and plugins ecosystem (added mid-run)
+
+Built on the existing SKILL.md loader and MCP client — organised, curated and sandboxed, not
+duplicated. It comes after the platform capabilities and after M43, because a catalog that can
+install code is the marketplace attack surface that class of tool actually got burned by.
+
+- [ ] **M45 — One registry over skills, MCP servers and plugins** · size L · deps M13, M14, M43
+  - Scope: a single model over everything extensible — `SKILL.md` skills (the open Agent Skills
+    format, so they move to and from Claude Code unchanged), MCP servers, and integration/tool
+    plugins — each with a manifest: id, version, description, author, declared permissions and
+    tool allowlist, declared network and filesystem needs, source URL. One registry indexes
+    what is installed, what is enabled, its permission scope and its health. A JSON schema the
+    manifests validate against, and a malformed manifest is rejected rather than half-loaded.
+    First-party skills that exercise the system: a research-report skill, a note-taking skill,
+    a homelab-status skill reading the existing InfluxDB, and a calendar skill.
+  - Verify: `bash scripts/verify/m45-registry.sh`
+
+- [ ] **M46 — The management surface** · size L · deps M45, M05
+  - Scope: a Skills & Plugins section in the console on the design system with real loading,
+    empty, error and offline states: browse installed items by category, enable and disable
+    per item, view and edit each item's permission scope, see health, last-used and error
+    state, read its description and its source. Creating a skill is guided — scaffold a
+    `SKILL.md` from a template — because a management surface people edit JSON behind is not
+    one. Asserted through the live suite against the real containers: toggling a skill enables
+    and disables its tool, a disabled skill is not offered to the model at all, and an edited
+    permission scope is enforced on the very next call.
+  - Verify: `bash scripts/verify/m46-plugins-ui.sh`
+
+- [ ] **M47 — The catalog, and installing from it safely** · size XL · deps M45, M43, M19
+  - Scope: discovery and installation from configured catalog sources — Anthropic's own
+    skills and plugins, the curated community lists (`awesome-claude-*`), MCP directories, and
+    a named GitHub repository the operator points at — with a browser in the console: search,
+    read the description and the *declared permissions*, install behind a visible permission
+    prompt. Treated as hostile by default: sources are an explicit operator-controlled
+    allowlist and nothing installs from an unconfigured origin; installation is pinned to a git
+    ref or version **and a checksum**, never a blind `latest`, with the source and hash
+    recorded; **nothing auto-runs on install** — the declared permissions are shown and
+    approved first, anything carrying an executable hook or script is flagged and its code
+    surfaced for review before it can run; installed third-party capabilities execute under the
+    same sandbox and approval system as everything else, with the narrowest scope they declare
+    and no ambient host access, credentials or network path; and the injection quarantine
+    (M43) covers catalog metadata, so a description field cannot smuggle an instruction.
+    `docs/THREAT_MODEL.md` gains the supply-chain surface. The red-team file gains a
+    malicious-skill-install probe, and the suite fails if anything unapproved executes.
+  - Verify: `bash scripts/verify/m47-catalog.sh`
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M37
+- [ ] **M23 — Final integration** · size M · deps M00–M47
   - Scope: `make verify-all` green; **the stack comes up healthy and the whole suite runs
     against it** (M28/M29); **`bash scripts/verify/live_interaction.sh` in full mode exits 0** — every scenario, including the ones that were gated, inside the thresholds
     (intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median round trip ≤ 2 s, zero critical issues) —

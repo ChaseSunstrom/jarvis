@@ -70,6 +70,31 @@ the change, then the same numbers. If they did not improve, the service comes ou
 and the rejections — with the sources — go in `docs/TOOLING_DECISIONS.md`, and nothing takes GPU
 residency without a written VRAM justification.
 
+### 2d. And it has to be safe to point at the internet
+
+From M38 on, Jarvis grows reach: messaging channels, a calendar, a mailbox, downloadable
+skills, an optional cloud provider. Every one of those is an inbound path, and the assistants
+this capability set is modelled on shipped 140k internet-exposed instances and a marketplace
+supply-chain attack. So five rules bind every milestone in that block, and each is asserted
+rather than asserted-to:
+
+1. **Nothing is exposed to the public internet** — tailnet or loopback, no static tokens in
+   URLs. An unknown sender is ignored and the fact is logged; it is never served.
+2. **External content is data, never instruction.** Everything fetched, received or installed
+   is quarantined and stripped of chat-template control literals before a model sees it, and
+   it can never silently trigger a state-changing tool — those hit the approval gate whatever
+   the content asks for.
+3. **Least privilege.** Narrowest tool allowlist and credential scope that works, per
+   subagent, per integration, per skill. No ambient god-tool.
+4. **Secrets are injected at call time** and never persisted into memory, notes, logs or
+   traces.
+5. **Nothing installs or runs unseen**: allowlisted source, pinned ref, recorded hash,
+   declared permissions shown and approved, execution sandboxed.
+
+The red-team scenario file in the live suite is where this is decided — injection through a
+fetched page and through an inbound message, a cross-conversation leak probe, a
+non-allowlisted sender, a malicious skill install. **The suite fails if any probe succeeds.**
+
 ### 2a. And it has to work when somebody talks to it
 
 From M24 on, a capability is not done until its **live scenarios** pass:
