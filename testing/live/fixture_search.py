@@ -19,9 +19,11 @@ from __future__ import annotations
 import argparse
 import functools
 import http.server
+import io
 import json
 import re
 import threading
+from pathlib import Path
 import urllib.parse
 import urllib.request
 
@@ -43,6 +45,37 @@ def _text(html: str) -> str:
     return " ".join(_TAG.sub(" ", _DEAD.sub(" ", html)).split())
 
 
+def _document_text(path: Path) -> str:
+    """A .pdf or .docx fixture, as text this index can search.
+
+    Real search engines index documents, so a fixture web whose PDFs are
+    invisible to search is a fixture web that cannot pose the question "the
+    answer is in the manual". Read with the same two cheap paths
+    `jarvis-browser` uses — pypdf for a text layer, the standard library for a
+    .docx — so this file adds no dependency the repository does not already
+    have for the same job.
+    """
+    data = path.read_bytes()
+    if path.suffix == ".docx":
+        import xml.etree.ElementTree as ET
+        import zipfile
+
+        w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        try:
+            root = ET.fromstring(zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml"))
+        except Exception:  # noqa: BLE001 - an unreadable fixture is empty, not fatal
+            return ""
+        return " ".join(part.text or "" for part in root.iter(f"{w}t"))
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    try:
+        return " ".join((page.extract_text() or "") for page in PdfReader(io.BytesIO(data)).pages)
+    except Exception:  # noqa: BLE001 - same
+        return ""
+
+
 def _pages(sites: dict[str, str]) -> list[dict[str, str]]:
     """Every page of every fixture site, with the base URL it is served from.
 
@@ -52,15 +85,27 @@ def _pages(sites: dict[str, str]) -> list[dict[str, str]]:
     """
     out: list[dict[str, str]] = []
     for name, base in sites.items():
-        for path in sorted(pages_for(name).glob("*.html")):
-            html = path.read_text(encoding="utf-8")
-            title = re.search(r"<title>(.*?)</title>", html, re.DOTALL)
+        for path in sorted(pages_for(name).iterdir()):
+            if path.suffix == ".html":
+                html = path.read_text(encoding="utf-8")
+                title = re.search(r"<title>(.*?)</title>", html, re.DOTALL)
+                text = _text(html)
+                heading = (title.group(1) if title else path.stem).strip()
+            elif path.suffix in (".pdf", ".docx"):
+                text = " ".join(_document_text(path).split())
+                if not text:
+                    continue
+                # A document has no <title>; its first line is what a search
+                # engine shows, and its filename is what a person recognises.
+                heading = f"{text[:60].strip()} ({path.name})"
+            else:
+                continue
             out.append(
                 {
                     "file": path.name,
                     "base": base.rstrip("/"),
-                    "title": (title.group(1) if title else path.stem).strip(),
-                    "text": _text(html),
+                    "title": heading,
+                    "text": text,
                 }
             )
     return out

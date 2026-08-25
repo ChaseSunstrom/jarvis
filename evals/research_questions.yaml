@@ -40,3 +40,20 @@ questions:
     min_sources: 1
     must_contain: ["3.1 bar"]
     expect_source: water.html
+
+  # Two questions M32 added, because they are the two shapes the old fetcher
+  # could not answer at all: a figure that only means anything in its row, and
+  # an answer that is in a PDF one link away from the page search finds.
+  - question: >
+      What does the fixture handbook charge per kWh on the night rate, and
+      between which hours does that rate run?
+    mode: quick
+    min_sources: 1
+    must_contain: ["7.9", "00:30"]
+    expect_source: tariff.html
+
+  - question: How long is the boiler warranty in the fixture handbook, and what voids it?
+    mode: deep
+    min_sources: 1
+    must_contain: ["seven"]
+    expect_source: warranty.pdf

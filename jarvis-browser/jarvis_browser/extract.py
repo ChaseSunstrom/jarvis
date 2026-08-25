@@ -94,6 +94,16 @@ class _Extractor(HTMLParser):
         self._link_href: str | None = None
         self._link_text: list[str] = []
         self._pending_heading: int | None = None
+        # Tables, buffered a row at a time. A cell's text has to be held until
+        # the row ends, because a table's meaning is which cell sits under
+        # which heading — and this extractor used to emit one cell per line,
+        # which turns a tariff into a column of numbers with nothing to attach
+        # them to. Measured on the fixture handbook's rate table: every figure
+        # survived and no row did.
+        self._table_depth = 0
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
+        self._rows_in_table = 0
 
     # -- helpers -----------------------------------------------------------
     @property
@@ -101,8 +111,28 @@ class _Extractor(HTMLParser):
         return bool(self._skip_stack)
 
     def _emit(self, text: str) -> None:
-        if text:
-            self.chunks.append(text)
+        if not text:
+            return
+        if self._cell is not None:
+            self._cell.append(text)
+            return
+        self.chunks.append(text)
+
+    def _end_row(self) -> None:
+        """One buffered row, as a line somebody (or a model) can read."""
+        cells = self._row or []
+        self._row = None
+        if not cells:
+            return
+        # `|` inside a cell would end it early in markdown, and a stray one in
+        # plain text reads as a column that is not there.
+        clean = [cell.replace("|", "\\|") for cell in cells]
+        self._rows_in_table += 1
+        self.chunks.append("\n| " + " | ".join(clean) + " |")
+        if self.markdown and self._rows_in_table == 1:
+            # Markdown needs the rule under the first row or the whole thing
+            # renders as one paragraph.
+            self.chunks.append("\n| " + " | ".join("---" for _ in clean) + " |")
 
     def _should_skip(self, tag: str) -> bool:
         if tag in _SKIP_CONTENT_TAGS:
@@ -163,6 +193,26 @@ class _Extractor(HTMLParser):
                 self._emit("- ")
             return
 
+        if tag == "table":
+            self._table_depth += 1
+            self._rows_in_table = 0
+            self.chunks.append("\n")
+            return
+
+        if tag == "tr" and self._table_depth:
+            self._row = []
+            return
+
+        if tag in ("thead", "tbody", "tfoot") and self._table_depth:
+            # Grouping elements, not content. Letting them fall through to the
+            # block-tag newline put a blank line between the header row and the
+            # rule under it, which is a markdown table that renders as prose.
+            return
+
+        if tag in ("td", "th") and self._table_depth:
+            self._cell = []
+            return
+
         if tag in _BLOCK_TAGS:
             self._emit("\n")
 
@@ -203,6 +253,30 @@ class _Extractor(HTMLParser):
                 self.raw_links.append((href, text))
             return
 
+        if tag in ("td", "th") and self._cell is not None:
+            cell = " ".join("".join(self._cell).split())
+            self._cell = None
+            if self._row is None:
+                self._row = []
+            self._row.append(cell)
+            return
+
+        if tag == "tr" and self._table_depth:
+            self._end_row()
+            return
+
+        if tag in ("thead", "tbody", "tfoot") and self._table_depth:
+            return
+
+        if tag == "table" and self._table_depth:
+            # A `</table>` with a row still open: malformed markup, and the row
+            # is still worth having.
+            self._end_row()
+            self._table_depth = max(0, self._table_depth - 1)
+            self._rows_in_table = 0
+            self.chunks.append("\n")
+            return
+
         if tag in _HEADINGS:
             self._pending_heading = None
             self._emit("\n\n")
@@ -213,6 +287,10 @@ class _Extractor(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._skipping or not data:
+            return
+        if self._table_depth and self._cell is None and not data.strip():
+            # The newlines and indentation BETWEEN a table's cells are markup,
+            # not content: emitted, they became a blank line between every row.
             return
         if self._in_title:
             self.title_parts.append(data)

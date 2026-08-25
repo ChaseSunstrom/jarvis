@@ -1,0 +1,25 @@
+name: research-reads-a-document
+capability: research
+# Not the stack: the document is one this repository wrote, so what it says is
+# checkable rather than plausible.
+ground: fixture
+gated-on: M32
+intent: >
+  The answer is in a PDF, and the PDF is one link away from the page search
+  finds. Two things have to work at once: the research engine has to follow the
+  lead, and `jarvis-browser` has to turn a PDF into text — which it could not do
+  at all until M32, because chromium downloads a PDF rather than reading it.
+
+  The figures are deliberately in the document and nowhere else on the fixture
+  web, so an answer that names them came from the PDF.
+variants: [text]
+turns:
+  - say: >
+      Look up what the fixture handbook says about the boiler warranty — how
+      long it lasts and what voids it.
+    expect:
+      capability: research
+      reply_contains: ["seven"]
+      reply_means: >
+        says the warranty is seven years (parts and labour) and that missing the
+        annual service voids it

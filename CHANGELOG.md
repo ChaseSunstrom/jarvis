@@ -69,6 +69,27 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M32 (crawling and document extraction): **Jarvis can read a PDF.** A `.pdf` or `.docx` URL
+  now comes back through `/fetch` as text — headings, paragraphs and tables — fenced as
+  untrusted exactly like a page, because a document somebody sent you is a stranger's text
+  arriving in a model's context. A scanned PDF is *named* as having no text layer rather than
+  returned as an empty string, which in front of a model is an invitation to invent the
+  contents. `research-reads-a-document` asks how long the boiler warranty is; the answer is in
+  the PDF and nowhere else on the fixture web.
+
+  And **a table keeps its rows**. The extractor emitted one cell per line, so a tariff arrived
+  as every figure and not one row — a model cannot tell which price belongs to which rate. It
+  is markdown now, with the rule under the header. A new eval question asks for the night rate
+  and its hours, which the old form could not answer.
+
+  Both were measured before they were built. Crawl4AI was pulled and run here: 4.23 GB image,
+  411 MB resident idle, its own Chromium, and an SSRF guard that refuses loopback exactly like
+  ours — so it would have moved the problem M31 solved rather than removed it. Docling resolves
+  to 101 packages including torch and the entire CUDA stack, on a box with no GPU and 350 MB
+  free. What replaced them is `pypdf` (one pure-Python wheel), the standard library for .docx,
+  and forty lines of table handling. `docs/TOOLING_DECISIONS.md` has the numbers and says what
+  this does *not* buy: no OCR, and no page-to-page link following.
+
 - M31 (one headless browser, shared): the live rig now borrows the **running** `jarvis-browser`
   instead of talking to a stand-in that cannot run JavaScript. Borrowing means recreating the
   container with the fixture web's two loopback addresses in the operator's own LAN exemption

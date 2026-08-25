@@ -50,24 +50,61 @@ page, and they would idle in parallel.
 stand-in for a host with no stack, which proves nothing about the browser and
 says so.
 
-### 2. Crawling and extraction — *measure first, adopt only on a gain* (M32)
+### 2. Crawling and extraction — *measured, and both rejected* (M32)
 
-**Candidate:** Crawl4AI 0.9.x. Real: an official image
-(`unclecode/crawl4ai:latest`), a REST API on 11235, browser pooling, and it
-wants `--shm-size=1g`. It also ships its own Chromium — which collides head-on
-with slot 1, so adopting it means `jarvis-browser` or Crawl4AI, not both.
+**Crawl4AI 0.9.2 — rejected.** Pulled and run on this host, not read about:
 
-**Candidate:** Docling, for documents rather than pages (PDF/DOCX/PPTX/XLSX →
-markdown, with `docling-serve` as an API). The cost is the model stack it pulls
-in: layout and table models on CPU, and that is a torch install measured in
-gigabytes.
+| | |
+|---|---|
+| image | **4.23 GB** |
+| resident, idle, one browser pool | **411 MB** |
+| free RAM on this host with the stack up | ~350 MB |
+| its browser | its own Chromium — the second one in the system |
+| loopback | refused, like ours: `URL blocked (SSRF protection)` |
 
-**Decision, provisional:** neither is adopted until the research eval's pass
-rate and cited-source count improve **on the same questions**, and the memory
-cost is measured with the stack up. On 2 GB free, the honest prior is that
-Docling does not fit and Crawl4AI only replaces `jarvis-browser` rather than
-joining it. Recorded as a milestone rather than a foregone conclusion because
-the measurement is cheap and the guess is not evidence.
+The last row is worth the space it takes: its SSRF guard blocks the fixture web
+exactly as `jarvis-browser`'s does, so adopting it would not even have removed
+the problem M31 solved — it would have moved it. What it would genuinely have
+bought is better markdown, and the gap that mattered there was tables.
+
+So the gap was closed instead, in `jarvis-browser/jarvis_browser/extract.py`,
+in about forty lines. Measured on the fixture handbook's rate table:
+
+    before   Rate / Hours / Unit price / Day / 07:30–00:30 / 28.4 p/kWh / …
+             every figure preserved and not one row — a model cannot tell
+             which price belongs to which rate
+
+    after    | Rate  | Hours       | Unit price | Standing charge |
+             | ---   | ---         | ---        | ---             |
+             | Day   | 07:30–00:30 | 28.4 p/kWh | 53.1 p/day      |
+
+A new eval question asks for the night rate and its hours; it passes on the
+second form and cannot be answered from the first.
+
+**Docling — rejected, and not close.** `pip install docling` resolves to **101
+packages**, among them torch, torchvision, transformers, opencv **and the whole
+CUDA stack** (cublas, cudnn, nccl, cusolver, cusparse, nvshmem, nvjitlink). On
+a box with no GPU and ~350 MB free, that is gigabytes of GPU libraries to read
+a text-layer PDF.
+
+What was built instead, in `jarvis-browser/jarvis_browser/documents.py`:
+
+* **PDF** — `pypdf`, one pure-Python wheel, reading the text layer. It does not
+  OCR, and a scanned PDF is *named as such* rather than returned as an empty
+  string, because an empty string in a model's context is an invitation to
+  invent the contents.
+* **DOCX** — the standard library. A .docx is a zip of XML; paragraphs are
+  `w:p`, headings are a style name, tables are `w:tbl`. No dependency at all.
+
+Both come back through `/fetch`, fenced as untrusted exactly like a page,
+because a PDF somebody sent you is a stranger's text arriving in a model's
+context.
+
+**What this does NOT buy**, and the honest place to say so: no OCR, no
+JavaScript-heavy *crawling* at depth, and no page-to-page link following —
+`lead_depth` follows new SEARCH QUERIES, not URLs, so Jarvis reaches a document
+when a search surfaces it. The fixture search now indexes PDFs and .docx files
+for that reason, which is what a real search engine does.
 
 ### 3. Embeddings and reranking — *yes, on CPU, and off llama-swap* (M33)
 
@@ -165,8 +202,8 @@ against what was current when this model was trained:
 
 * Text Embeddings Inference — <https://github.com/huggingface/text-embeddings-inference> (v1.9, CPU images, cross-encoder rerankers, one model per instance)
 * Infinity — <https://github.com/michaelfeil/infinity> (`latest-cpu`, multiple models in one process, ONNX/Optimum on CPU)
-* Crawl4AI — <https://github.com/unclecode/crawl4ai> (0.9.2, `unclecode/crawl4ai:latest`, REST on 11235, `--shm-size=1g`, its own Playwright Chromium)
-* Docling — <https://github.com/docling-project/docling> (`docling-serve`, PDF/DOCX/PPTX/XLSX/HTML → markdown)
+* Crawl4AI — <https://github.com/unclecode/crawl4ai> (0.9.2, `unclecode/crawl4ai:latest`, REST on 11235, `--shm-size=1g`, its own Playwright Chromium). Also **pulled and run here**: 4.23 GB image, 411 MB resident idle, and its SSRF guard refuses loopback exactly as ours does
+* Docling — <https://github.com/docling-project/docling> (`docling-serve`, PDF/DOCX/PPTX/XLSX/HTML → markdown). Also **resolved here**: `pip install --dry-run docling` → 101 packages including torch, transformers, opencv and the CUDA stack
 * Langfuse self-hosting — <https://langfuse.com/self-hosting/docker-compose> (v4; 4 cores / 16 GiB recommended, ClickHouse + Postgres + Redis + MinIO)
 * speaches — <https://github.com/speaches-ai/speaches> (OpenAI-compatible STT/TTS, faster-whisper, Piper and Kokoro, `compose.cpu.yaml`)
 * Kokoro-FastAPI — <https://github.com/remsky/Kokoro-FastAPI> (`ghcr.io/remsky/kokoro-fastapi-cpu`, `/v1/audio/speech`, ~3.5 s first token on an older i7)

@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .browser import BrowserError, PlaywrightBackend
+from .documents import DocumentError, kind_of, to_text
 from .config import Settings, load_settings
 from .crawl import CrawlConfigError, CrawlLimits, crawl
 from .extract import extract
@@ -406,6 +407,60 @@ def _host_of(url: str) -> str:
         return ""
 
 
+async def _document_payload(url: str, s: Settings) -> dict | None:
+    """A PDF or Word file, read as text — or None if it is neither.
+
+    Documents do not go through the browser: chromium cannot hand back a PDF's
+    text, it downloads one. So this fetches the bytes directly, and only for a
+    URL that already looks like a document — a page pays nothing for this.
+
+    The result is fenced exactly like a page's, because it is exactly as
+    untrusted: a PDF somebody emailed is a stranger's text arriving inside a
+    model's context.
+    """
+    kind = kind_of(url)
+    if not kind:
+        return None
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=s.nav_timeout_ms / 1000, follow_redirects=False
+        ) as http:
+            answer = await http.get(url, headers={"user-agent": s.user_agent})
+            answer.raise_for_status()
+            data = answer.content
+    except Exception as err:  # noqa: BLE001 - the fetch failed, say which way
+        raise HTTPException(502, f"could not fetch the document: {type(err).__name__}")
+    # The server's own content type wins over the extension. A `.pdf` that
+    # answers with HTML is an error page or a login wall: hand it back to the
+    # browser, which knows what to do with HTML, rather than reporting a
+    # malformed document.
+    kind = kind_of(url, answer.headers.get("content-type", ""))
+    if not kind:
+        return None
+    if len(data) > s.max_page_bytes:
+        data = data[: s.max_page_bytes]
+    try:
+        text = to_text(data, kind)
+    except DocumentError as err:
+        raise HTTPException(422, str(err))
+    text = text[: s.max_text_chars]
+    return {
+        "final_url": url,
+        "requested_url": url,
+        "title": url.rsplit("/", 1)[-1],
+        "kind": kind,
+        "content_is_untrusted": True,
+        "text": fence(text, source=url),
+        "links": [],
+        "meta": {},
+        "truncated": len(text) >= s.max_text_chars,
+        "char_count": len(text),
+        "status": answer.status_code,
+    }
+
+
 def _page_payload(page_html: str, final_url: str, s: Settings) -> dict:
     """Extract + fence. The single place read content becomes a response."""
     parsed = extract(
@@ -477,6 +532,10 @@ def _register_routes(app: FastAPI) -> None:
     async def fetch(body: FetchBody):
         s: Settings = app.state.settings
         url = _guard_read(app, body.url)
+        document = await _document_payload(url, s)
+        if document is not None:
+            audit.info("fetch document url=%s kind=%s", url, document["kind"])
+            return document
         result = await app.state.backend.fetch(
             url, render=body.render, javascript=s.javascript_enabled
         )

@@ -10,5 +10,11 @@ pydantic>=2.9,<3
 # test suite still work if it is absent.
 playwright==1.49.1
 
+# Documents. `pypdf` is pure Python and reads a PDF's text layer; .docx needs
+# nothing at all (it is a zip of XML). Deliberately NOT docling, which resolves
+# to 101 packages including torch and the CUDA stack — see
+# `jarvis_browser/documents.py` and `docs/TOOLING_DECISIONS.md`.
+pypdf==5.1.0
+
 # Tests only (no network, no playwright needed):
 #   pytest>=8  anyio>=4

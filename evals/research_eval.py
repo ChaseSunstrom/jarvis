@@ -47,6 +47,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from testing.harness import Harness, JarvisClient  # noqa: E402
+from testing.live.browser_service import SharedBrowser  # noqa: E402
 from testing.live.fixture_browser import Browser  # noqa: E402
 from testing.live.fixture_search import Search  # noqa: E402
 from testing.live.fixture_site import SITES, Site, pages_for  # noqa: E402
@@ -247,17 +248,30 @@ def main(argv: list[str] | None = None) -> int:
         ]
         by_name = dict(zip(SITES, (site.url for site in sites)))
         search = Search(by_name).start()
-        browser = Browser([site.url for site in sites]).start()
         searxng = search.url
-        fetcher = browser.url
+        # The REAL browser if one is running, exactly as the live rig does
+        # (M31): two of the questions below are answered by a PDF and by a
+        # table, and the stand-in can read neither. It says which it got, so a
+        # number from this eval always names the thing that produced it.
+        shared = SharedBrowser()
+        fetcher = shared.start()
+        browser_token = shared.token
+        if fetcher:
+            fetch_kind = "the running jarvis-browser"
+        else:
+            browser = Browser([site.url for site in sites]).start()
+            fetcher = browser.url
+            browser_token = ""
+            fetch_kind = f"the fixture stand-in ({shared.why})"
         print(
             "research eval: fixture web at "
             + ", ".join(f"{name} {url}" for name, url in by_name.items())
-            + f", search at {searxng}, fetch at {fetcher}"
+            + f", search at {searxng}, fetch through {fetch_kind} at {fetcher}"
         )
     else:
         searxng = os.environ.get("SEARXNG_URL", "").strip()
         fetcher = os.environ.get("BROWSER_URL", "http://127.0.0.1:8210").strip()
+        browser_token = os.environ.get("JARVIS_BROWSER_TOKEN", "").strip()
         if not searxng:
             print(
                 "research eval (live): SEARXNG_URL is not set, so there is no search "
@@ -280,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         ollama_url=os.environ.get("LLM_URL", ""),
         search_url=searxng,
         browser_url=fetcher,
+        browser_token=browser_token,
     )
     try:
         harness.start()
@@ -293,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         harness.stop(cleanup=not args.keep)
+        # Give the operator's browser back the way it was found: borrowing it
+        # put the fixture web's addresses in their LAN exemption.
+        if args.backend == "fixture":
+            shared.stop()
         if browser is not None:
             browser.stop()
         if search is not None:

@@ -465,7 +465,7 @@ after number must be better than the before or the service comes out**. Choices 
     fetch cannot read.
   - Verify: `bash scripts/verify/m31-browser-service.sh`
 
-- [ ] **M32 — Crawling and document extraction** · size L · deps M31, M30
+- [x] **M32 — Crawling and document extraction** · size L · deps M31, M30
   - Scope: Crawl4AI (or whatever the research in M30 lands on) as a compose service for pages
     plain fetch handles badly, and Docling for documents (PDF/DOCX → clean markdown) so
     research and notes can ingest a real file. Baseline first: the research eval's pass rate
