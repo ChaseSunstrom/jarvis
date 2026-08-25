@@ -399,6 +399,8 @@ house's summary is a fraction of a real one's.
 | A rerank service being down cannot make a search worse | Automated | `tests/test_rerank.py` — an unreachable, slow, or nonsense-answering reranker all return "no opinion" and the caller keeps its order; it stops asking after the first failure |
 | The similarity floor is a property of the model, not a constant | Automated | `test_the_similarity_floor_belongs_to_the_model` — 0.62 was tuned for nomic and discarded five of six bge paraphrases that had ranked correctly |
 | Both services are up and can do the job, not merely running | Automated | the script asks the embedder for a paraphrase pair and the reranker for an ordering; a container that answers `/health` and nothing else fails |
+| The note store's search is fast enough to keep in a file | Automated *and measured* | `python3 scripts/verify/vector_store_bench.py` — 6.3 ms per search at the configured 500-entry cap, 127 ms at 10 000, against a spoken turn of 7–10 s. `scripts/verify/m34-vector-store.sh` re-runs it and fails over 50 ms |
+| No vector database is in the stack, and none is imported | Automated | the same script. `docs/TOOLING_DECISIONS.md` §4 names the three conditions that would reverse that — 25 000 entries, a second writer, or filtered search becoming common |
 | That these are the best models available | **Judgement** | four were measured (bge-small, ms-marco-MiniLM, mxbai-rerank-xsmall, bge-reranker-base) and the numbers are in `docs/TOOLING_DECISIONS.md` §3. Nothing here says a fifth would not be better |
 
 ### The stack, as the thing under test (M28, M29)

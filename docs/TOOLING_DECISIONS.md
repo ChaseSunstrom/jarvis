@@ -172,19 +172,47 @@ nothing here.
 turned into an empty search by a number from a different one. Floors and task
 prefixes now live in one table per family (`vectors.py`).
 
-### 4. The vector store — *decide, do not drift* (M34)
+### 4. The vector store — *the sidecar stays, and here is the number* (M34)
 
-**Current:** a JSON sidecar next to the notes, cosine in pure Python, ~500
-entries. `vectors.py` already argues the case and measured the alternative:
-Qdrant's stock container POSTs to `telemetry.qdrant.io` hourly, which breaks
-this project's first sentence, and 500 × 768 floats is single-digit
-milliseconds beside a multi-second generation.
+**Kept:** `<config>/.storage/memory-vectors.json` — id → unit vector, base64
+packed, with a cosine scan in pure Python. **Rejected:** Qdrant, pgvector,
+sqlite-vec, and every other index, for now.
 
-**Decision, provisional:** keep the sidecar; M34 is discharged by the paragraph
-and the numbers (entries, query latency, recall on the memory eval), not by a
-container. It is re-opened by one number: if the store passes a few thousand
-entries and query latency becomes visible next to a turn, a real index earns
-its place — `sqlite-vec` first, because it is a file and not a service.
+Measured with `scripts/verify/vector_store_bench.py` against the real embedder,
+on this host:
+
+| entries | one-off embed | index | **query scan** | vectors in RAM | sidecar on disk |
+|---|---|---|---|---|---|
+| 500 (the configured cap) | 2.2 s | 0.02 s | **6.3 ms** | 750 KB | 1.0 MB |
+| 2 000 | 9.1 s | 0.10 s | 25.3 ms | 3.0 MB | 4.0 MB |
+| 10 000 | 47.7 s | 0.48 s | 127 ms | 15 MB | 20 MB |
+
+A spoken turn on this host takes 7–10 seconds. At the configured cap the search
+is **6 ms** — 0.08% of it. At twenty times the cap it is 127 ms, still under
+2%. The scan is linear and predictable at about **1 ms per 80 notes**, so the
+crossover where a real index would be felt is somewhere north of 50 000
+entries: half a second of scan is the first number a person would notice next
+to a two-second answer.
+
+Nothing about that argues for a container today. What it does do is name the
+condition for changing the answer, which is the part that was missing:
+
+* **more than ~25 000 entries**, where the scan passes 300 ms and starts
+  competing with the model for the user's patience; or
+* **more than one process** needing the same vectors, since a JSON file that
+  two writers own is a corruption waiting to happen; or
+* **filtered search** (by tag, by date, by pin) becoming a common operation
+  rather than a rare one — that is where an index earns its keep and a scan
+  does not.
+
+The first index to try when one of those becomes true is `sqlite-vec`: it is a
+file and not a service, so it costs a dependency rather than a container, a
+port, a volume and a backup story.
+
+Qdrant specifically stays rejected for the reason `vectors.py` already
+recorded and which no benchmark changes: its stock container POSTs to
+`telemetry.qdrant.io` hourly, and "nothing goes to the cloud at runtime" is the
+first sentence of this project's README.
 
 ### 5. Speech — *services yes, replacement no, A/B the voice* (M35)
 

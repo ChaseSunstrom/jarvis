@@ -481,7 +481,7 @@ after number must be better than the before or the service comes out**. Choices 
     targeted queries and the research eval's source quality.
   - Verify: `bash scripts/verify/m33-embeddings.sh`
 
-- [ ] **M34 — The vector store, decided** · size S · deps M33
+- [x] **M34 — The vector store, decided** · size S · deps M33
   - Scope: either promote memory/notes retrieval to Qdrant as a compose service, or write the
     paragraph justifying the embedded store — with the numbers that justify it (entries,
     query latency, recall). Either answer is acceptable; an unexamined one is not.

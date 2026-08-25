@@ -69,6 +69,17 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M34 (the vector store, decided): the JSON sidecar stays, and now there is a number saying
+  why. `scripts/verify/vector_store_bench.py` measures the real thing at three sizes: **6.3 ms**
+  per search at the configured 500-note cap, 25 ms at 2 000, 127 ms at 10 000 — against a spoken
+  turn that takes 7–10 seconds. The scan is linear at about 1 ms per 80 notes.
+
+  What was missing before was not the answer but the condition for changing it, so that is
+  written down too: past ~25 000 entries, or a second process wanting the same vectors, or
+  filtered search becoming common rather than rare. The first thing to try then is `sqlite-vec`,
+  because it is a file and not a service. Qdrant stays rejected on the grounds `vectors.py`
+  already recorded — its stock container phones `telemetry.qdrant.io` hourly.
+
 - M33 (embeddings and reranking as services): **semantic recall works for the first time.**
   It was configured, and it degraded silently to keyword search exactly as designed, because
   this deployment's llama-swap answers `/embeddings` with `no router for requested model`.
