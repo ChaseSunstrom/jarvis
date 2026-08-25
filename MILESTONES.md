@@ -496,7 +496,7 @@ after number must be better than the before or the service comes out**. Choices 
     current container does not expose.
   - Verify: `bash scripts/verify/m35-speech-services.sh`
 
-- [ ] **M36 — Agent observability** · size L · deps M28, M30
+- [x] **M36 — Agent observability** · size L · deps M28, M30
   - Scope: self-hosted Langfuse (or an equivalent that fits 8 GB) tracing every agent step,
     subagent, tool call, token count, latency and judge verdict; wired into the research,
     coding and subagent loops; a "view trace" link from the task-execution UI. The memory cost

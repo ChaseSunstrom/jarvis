@@ -30,6 +30,15 @@
 	import TaskTimeline from '$lib/components/TaskTimeline.svelte';
 	import CodeDiff from '$lib/components/CodeDiff.svelte';
 	import type { CodeResult } from '$lib/code';
+	import {
+		describeTrace,
+		duration,
+		spanTone,
+		spansOf,
+		timeSplit,
+		tokens,
+		type Trace
+	} from '$lib/trace';
 
 	const taskId = $derived(page.params.id ?? '');
 
@@ -45,6 +54,9 @@
 	/** A coding job's branch, commits and diff. Null for every other kind. */
 	let code = $state<CodeResult | null>(null);
 	let answering = $state('');
+	/** Every step this task took and what each cost. Null when tracing is off. */
+	let trace = $state<Trace | null>(null);
+	let traceOpen = $state(false);
 
 	let screen = $derived<'ready' | 'error' | 'offline' | 'loading' | 'empty'>(
 		status === 'closed' || status === 'error'
@@ -88,6 +100,7 @@
 			activity = { ...activity, log: await link.client.taskLog(taskId) };
 			await loadCode();
 			await loadChildren();
+			await loadTrace();
 			err = '';
 		} catch (error) {
 			err = error instanceof Error ? error.message : String(error);
@@ -120,6 +133,23 @@
 			}
 		} catch {
 			/* the tree is an extra; the page is still the page without it */
+		}
+	}
+
+	/**
+	 * The trace for this task: what ran, in order, and what it cost.
+	 *
+	 * Asked for by task id — a task knows its own id and nothing about the
+	 * context tree traces are keyed on, so the lookup is the server's. An
+	 * install with `observability:` unset answers null, and the panel says so
+	 * rather than showing an error: not recording is a choice.
+	 */
+	async function loadTrace() {
+		if (!conn) return;
+		try {
+			trace = await conn.client.getTrace(taskId);
+		} catch {
+			trace = null;
 		}
 	}
 
@@ -236,6 +266,56 @@
 					{:else}
 						<Row label="No plan" value="this task reports progress without steps" />
 					{/each}
+				{/snippet}
+			</Panel>
+
+			<Panel
+				title="Trace"
+				meta={trace ? duration(trace.ms) : 'not recorded'}
+			>
+				{#snippet children()}
+					{#if trace}
+						<Row label="What it cost" value={describeTrace(trace)} testid="trace-summary" />
+						<Row
+							label="Where the time went"
+							value={`model ${timeSplit(trace).model}% · tools ${timeSplit(trace).tools}% · waiting ${timeSplit(trace).other}%`}
+							testid="trace-split"
+						/>
+						<Row
+							label="Tokens"
+							value={`${tokens(trace.prompt_tokens)} in · ${tokens(trace.completion_tokens)} out`}
+							testid="trace-tokens"
+						/>
+						<button
+							type="button"
+							class="disclose"
+							data-testid="trace-toggle"
+							aria-expanded={traceOpen}
+							onclick={() => (traceOpen = !traceOpen)}
+						>
+							{traceOpen ? '▾' : '▸'} {spansOf(trace).length} step{spansOf(trace).length === 1
+								? ''
+								: 's'}
+						</button>
+						{#if traceOpen}
+							{#each spansOf(trace) as span, i (i)}
+								<Row label={`${span.kind} · ${span.name}`} testid="trace-span-{i}">
+									{#snippet children()}
+										<span class="call">
+											<Pill tone={spanTone(span)}>{duration(span.ms)}</Pill>
+											{#if span.error}<span class="args">{span.error}</span>{/if}
+										</span>
+									{/snippet}
+								</Row>
+							{/each}
+						{/if}
+					{:else}
+						<Row
+							label="Not recorded"
+							value="set `observability:` in configuration.yaml to trace what the agent does"
+							testid="trace-off"
+						/>
+					{/if}
 				{/snippet}
 			</Panel>
 
@@ -397,6 +477,24 @@
 		display: flex;
 		align-items: center;
 		gap: var(--jv-space-2);
+	}
+	/* The trace's own disclosure, styled like the plan's. Every value here is a
+	   token: `scripts/verify/token_lint.py` fails the build otherwise. */
+	.disclose {
+		display: block;
+		width: 100%;
+		text-align: left;
+		background: none;
+		border: 0;
+		padding: var(--jv-space-2) 0;
+		color: var(--jv-text-dim);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-tracking-wide);
+		cursor: pointer;
+	}
+	.disclose:hover {
+		color: var(--jv-text);
 	}
 	.args {
 		font-family: var(--jv-font-chrome);

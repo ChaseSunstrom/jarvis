@@ -98,3 +98,26 @@ test('a task the list links to is the task the page shows', async ({ page }) => 
 	await expect(page).toHaveURL(new RegExp(`/tasks/${taskId}$`));
 	await expect(page.getByTestId('task-detail')).toBeVisible({ timeout: 15_000 });
 });
+
+test('a task shows the trace behind it — what ran, and what it cost', async ({ page }) => {
+	/**
+	 * M36's "view trace" link. The panel is on the task itself rather than on a
+	 * page of its own, because the question it answers — why did this take
+	 * eleven seconds — is asked while looking at the task.
+	 */
+	await openDetail(page);
+
+	await expect(page.getByTestId('trace-summary')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('trace-summary')).toContainText('model call');
+	await expect(page.getByTestId('trace-tokens')).toContainText('in');
+	// Where the time actually went is the number people come for.
+	await expect(page.getByTestId('trace-split')).toContainText('model');
+
+	// The steps are collapsed: twelve spans of a research run should not be
+	// the first thing on the page.
+	await expect(page.getByTestId('trace-span-0')).toHaveCount(0);
+	await page.getByTestId('trace-toggle').click();
+	await expect(page.getByTestId('trace-span-0')).toBeVisible();
+	// A failed span is visible AS failed, without opening anything else.
+	await expect(page.getByTestId('trace-span-2')).toContainText('refused');
+});

@@ -10,6 +10,7 @@
 // The transport is injected as a `send` function and incoming frames are fed to
 // `handleMessage()`, so the whole class is unit-testable in plain Node.
 
+import type { Trace } from './trace';
 import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import { type LogEntry, toLog } from './taskEvents';
@@ -930,6 +931,23 @@ export class JarvisClient {
 			if (err instanceof JarvisCommandError && err.code === 'not_found') return null;
 			throw err;
 		}
+	}
+
+	/**
+	 * The trace covering a task: every tool call, model call and approval under
+	 * it, with what each one cost.
+	 *
+	 * Asked for by TASK id rather than trace id, because a task knows its own
+	 * id and nothing about the context tree the trace is keyed on. Returns null
+	 * when tracing is off (`observability:` unset), which is a configuration
+	 * choice and not an error to shout about.
+	 */
+	async getTrace(taskId: string): Promise<Trace | null> {
+		const answer = await this.command<{ trace: Trace | null; recording: boolean }>({
+			type: 'jarvis/traces/get',
+			task_id: taskId
+		});
+		return answer?.trace ?? null;
 	}
 
 	// --- tasks ---------------------------------------------------------------

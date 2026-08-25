@@ -2502,6 +2502,56 @@ index 1234567..89abcde 100644
 					break;
 				}
 
+				// The trace behind a task: what ran, in order, and what it cost.
+				// A task the mock has no trace for answers `{trace: null}` —
+				// which is what an install with `observability:` unset answers,
+				// and the panel has to render that as "not recorded" rather
+				// than as a failure.
+				case 'jarvis/traces/get': {
+					const taskId = String(msg.task_id ?? '');
+					ok(msg.id, {
+						recording: true,
+						trace: taskId === 'task-untraced' ? null : {
+							id: 'ctx-1',
+							origin: 'llm',
+							label: 'research the boiler',
+							task_id: taskId,
+							started: Date.now() / 1000 - 12,
+							ms: 12_000,
+							truncated: 0,
+							spans: 4,
+							tools: 2,
+							model_calls: 2,
+							prompt_tokens: 4210,
+							completion_tokens: 180,
+							model_ms: 7200,
+							tool_ms: 1800,
+							errors: 1,
+							spans_detail: undefined,
+							// The wire spells this `spans`; the summary count of
+							// the same name is what a listing shows.
+							...{
+								spans: [
+									{ kind: 'model', name: 'qwen3.8-27b', started: 0, ms: 3600, ok: true,
+									  error: null, data: { prompt_tokens: 2100, completion_tokens: 90 } },
+									{ kind: 'tool', name: 'web_search', started: 0, ms: 900, ok: true,
+									  error: null, data: {} },
+									{ kind: 'tool', name: 'web_fetch', started: 0, ms: 900, ok: false,
+									  error: 'refused: loopback', data: {} },
+									{ kind: 'model', name: 'qwen3.8-27b', started: 0, ms: 3600, ok: true,
+									  error: null, data: { prompt_tokens: 2110, completion_tokens: 90 } }
+								]
+							}
+						}
+					});
+					break;
+				}
+
+				case 'jarvis/traces/list': {
+					ok(msg.id, { recording: true, traces: [] });
+					break;
+				}
+
 				case 'jarvis/code/result': {
 					const found = codeResults.get(String(msg.task_id ?? ''));
 					if (!found) {

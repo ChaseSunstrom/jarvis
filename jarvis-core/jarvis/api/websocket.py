@@ -887,6 +887,20 @@ class WebSocketHandler:
     async def _cmd_memory_export(self, msg: dict[str, Any]) -> Any:
         return common.memory_export_payload(self.jarvis, str(msg.get("format") or "json"))
 
+    async def _cmd_traces_list(self, msg: dict[str, Any]) -> Any:
+        return common.traces_payload(
+            self.jarvis,
+            limit=int(msg.get("limit") or 50),
+            kind=str(msg.get("kind") or ""),
+        )
+
+    async def _cmd_traces_get(self, msg: dict[str, Any]) -> Any:
+        return common.trace_payload(
+            self.jarvis,
+            trace_id=str(msg.get("trace_id") or ""),
+            task_id=str(msg.get("task_id") or ""),
+        )
+
     async def _cmd_skills_list(self, msg: dict[str, Any]) -> Any:
         return common.skills_list_payload(self.jarvis)
 
@@ -1322,6 +1336,8 @@ WebSocketHandler._HANDLERS = {
     "jarvis/memory/forget": WebSocketHandler._cmd_memory_forget,
     "jarvis/memory/pin": WebSocketHandler._cmd_memory_pin,
     "jarvis/memory/export": WebSocketHandler._cmd_memory_export,
+    "jarvis/traces/list": WebSocketHandler._cmd_traces_list,
+    "jarvis/traces/get": WebSocketHandler._cmd_traces_get,
     "jarvis/skills/list": WebSocketHandler._cmd_skills_list,
     "jarvis/skills/get": WebSocketHandler._cmd_skills_get,
     "jarvis/skills/reload": WebSocketHandler._cmd_skills_reload,

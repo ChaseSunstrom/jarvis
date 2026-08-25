@@ -69,6 +69,24 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M36 (agent observability): every tool call, model call, approval and subagent in a turn is now
+  a **trace** you can read — with what each step took and what the turn cost in tokens — and the
+  task page links to it. The correlation needed no new plumbing at all: every bus event already
+  carried a `Context` with an id and a parent, which is a trace and a span with different names.
+
+  One seam was added anywhere else. `jarvis_model_call` fires after each exchange with the model,
+  because the token counts and the time-to-answer live in the raw payload and were discarded the
+  moment the stream closed — they are the only measure of what a turn actually cost.
+
+  **Langfuse is still out, but for a better reason than last time.** That rejection was written
+  when this box had 8 GB and it said "it does not fit"; the operator doubled the RAM mid-run, so
+  it was re-argued rather than inherited. Measured: ClickHouse is a 942 MB image and 169 MB at
+  idle — cheap. What is not cheap is six containers holding a second copy of the user's prompts
+  (which contain their memory, their notes and their house) to put a UI over data this process
+  already produces. The recorder is ~300 lines, bounded on both axes, and writes one line of
+  JSON per finished trace — deliberately the shape you can ship to a Langfuse elsewhere if you
+  run one.
+
 - M35 (speech, measured): **the doubled transcript is fixed.** It was never "occasional" —
   re-tested it was three runs out of three, every utterance, and the two spaces in
   `"…lights.  Turn on the ceiling lights."` were the tell: faster-whisper returning one

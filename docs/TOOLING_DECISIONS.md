@@ -262,20 +262,54 @@ worth recording: Kokoro streams its WAV, so the header's frame count is a
 placeholder — it claims 89 478 seconds — and reading by it returns nothing.
 The length comes from the bytes.
 
-### 6. Observability — *wanted, and it does not fit* (M36)
+### 6. Observability — *the data stops being thrown away; Langfuse still does not come in* (M36)
 
-**Candidate:** Langfuse v4. Self-hosting it is Postgres **and** ClickHouse
-**and** Redis **and** MinIO, and its own documentation asks for 4 cores and
-16 GiB. This box has 4 cores and 8 GB, two of them free.
+**Rejected: Langfuse v4.** Not on the grounds this file first gave. When that
+paragraph was written the box had 8 GB and the answer was "it does not fit";
+the operator doubled it to 16 GB mid-run, so the honest thing is to re-argue it
+rather than keep a rejection whose reason expired.
 
-**Decision, provisional:** not Langfuse on this host. What M36 must still
-deliver is the *capability* — every agent step, subagent, tool call, token
-count, latency and judge verdict, and a "view trace" link from the task UI —
-so the fallback is the trace integration this repository already has
-(`jarvis/integrations/trace/`) extended to cover the agent loops, written to
-disk, with the UI reading it. If the operator later runs Langfuse elsewhere on
-the tailnet, the same events can be shipped to it: the decision is about where
-it runs, not about whether traces exist.
+Measured here rather than assumed: ClickHouse — the component this file called
+the expensive one — is a **942 MB image and 169 MB resident at idle**. Cheap at
+rest. Langfuse's own self-hosting guide still asks for **4 cores and 16 GiB**,
+and that ask is about load rather than idle; this host has four cores, of which
+`wyoming-whisper` may take three during a spoken turn.
+
+But the reason it stays out is no longer arithmetic:
+
+* **It is six containers** — langfuse-web, langfuse-worker, Postgres,
+  ClickHouse, Redis and MinIO — to put a user interface over data **this
+  process already produces**. Every tool call, model call, approval and
+  subagent already fires an event, and every event already carries a `Context`
+  with an id and a parent. That is a trace and a span; nothing was missing
+  except somebody keeping them.
+* **It would hold a second copy of the user's private data.** Traces contain
+  the prompts, which contain the memory block, the notes and the house. A
+  second datastore of that is a second thing to secure, back up and delete
+  from, for a UI.
+* **The capability was the requirement, not the product.** M36 asks for every
+  agent step, subagent, tool call, token count, latency and judge verdict, plus
+  a "view trace" link in the task UI. That is what
+  `jarvis/integrations/observability/` delivers, in ~300 lines, at the cost of a
+  dict append per span and one line of JSON per finished trace.
+
+**What was built.** A recorder that subscribes to the lifecycle events that
+already existed, groups them by context id, nests them by parent id, and pairs
+each `*_started` with its `*_finished`. Bounded on both axes — `max_traces`,
+`max_spans`, and a truncation count so a trace never lies about what it dropped.
+Finished traces append to `<config>/traces/<date>.jsonl`, so "why did it do
+that" survives a restart.
+
+One seam was added anywhere else: `jarvis_model_call`, fired after each
+exchange with the model, because token counts and time-to-answer live in the
+raw payload and are gone the moment the stream closes. They are the only
+measure of what a turn actually cost.
+
+**What would reverse this:** more than one Jarvis to compare (traces from
+several hosts want a server), or a need to query traces analytically rather
+than read them. The JSONL on disk is deliberately the shape you can ship
+somewhere else — if the operator runs Langfuse elsewhere on the tailnet, these
+events go to it without changing what produces them.
 
 ### 7. n8n — *a bridge, off by default* (M37)
 

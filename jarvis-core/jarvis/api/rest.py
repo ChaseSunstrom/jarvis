@@ -777,6 +777,20 @@ async def notes_delete(request: Request, note_id: str) -> dict[str, Any]:
 #
 # The export route is the one that matters: "it is your data" is a claim, and a
 # claim about data is only true if you can leave with it.
+@api_router.get("/traces")
+async def traces_list(request: Request) -> dict[str, Any]:
+    return common.traces_payload(
+        get_jarvis(request),
+        limit=int(request.query_params.get("limit") or 50),
+        kind=str(request.query_params.get("kind") or ""),
+    )
+
+
+@api_router.get("/traces/{trace_id}")
+async def trace_get(request: Request, trace_id: str) -> dict[str, Any]:
+    return common.trace_payload(get_jarvis(request), trace_id=trace_id)
+
+
 @api_router.get("/memory")
 async def memory_list(request: Request) -> dict[str, Any]:
     try:

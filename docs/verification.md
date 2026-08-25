@@ -406,6 +406,17 @@ house's summary is a fraction of a real one's.
 | No vector database is in the stack, and none is imported | Automated | the same script. `docs/TOOLING_DECISIONS.md` §4 names the three conditions that would reverse that — 25 000 entries, a second writer, or filtered search becoming common |
 | That these are the best models available | **Judgement** | four were measured (bge-small, ms-marco-MiniLM, mxbai-rerank-xsmall, bge-reranker-base) and the numbers are in `docs/TOOLING_DECISIONS.md` §3. Nothing here says a fifth would not be better |
 
+### Observability: what the agent did, and what it cost (M36)
+
+| Claim | Level | Proof |
+|---|---|---|
+| Every tool call, model call, approval and subagent in a turn is recorded | Automated | `jarvis-core/tests/test_observability.py` — 17 tests over grouping, nesting, bounds and failure. The correlation needed no new plumbing: every bus event already carried a `Context` with an id and a parent |
+| What a turn cost in tokens and time | Automated | `jarvis_model_call` is fired after each exchange; `Trace.totals()` sums prompt and completion tokens, model time and tool time. Token counts live in the raw payload and were discarded when the stream closed |
+| A trace cannot eat the heap or slow a turn | Automated | `test_spans_are_bounded_and_the_truncation_is_counted`, `test_traces_are_bounded_and_the_oldest_goes_first`, `test_a_broken_event_cannot_break_a_turn` — and the truncation is *counted*, so a trace never lies about what it dropped |
+| "Why did it do that" survives a restart | Automated | finished traces append to `<config>/traces/<date>.jsonl`; `test_a_finished_task_closes_its_trace_and_writes_it_down` reads the line back |
+| A person can see it from the task that ran | Automated *in a real browser* | `jarvis-web/e2e/task-live.spec.ts` — the Trace panel shows what it cost, where the time went, and each span with its duration; a failed span reads as failed without opening anything |
+| Traces from more than one Jarvis, or analytical queries over them | **Not built** | that is what a Langfuse would be for; `docs/TOOLING_DECISIONS.md` §6 records the measurement and says the JSONL is deliberately the shape you can ship elsewhere |
+
 ### The stack, as the thing under test (M28, M29)
 
 | Claim | Level | Proof |

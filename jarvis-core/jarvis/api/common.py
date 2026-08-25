@@ -1658,6 +1658,38 @@ async def async_memory_list_payload(
     }
 
 
+def _recorder(jarvis: "Jarvis") -> Any:
+    return jarvis.data.get("observability")
+
+
+def traces_payload(jarvis: "Jarvis", limit: int = 50, kind: str = "") -> dict[str, Any]:
+    """Recent traces, newest first. An install with no recorder answers `[]`.
+
+    Not an error: `observability:` is optional configuration, and a console
+    that showed a red banner because tracing is off would be describing a
+    choice as a fault.
+    """
+    recorder = _recorder(jarvis)
+    if recorder is None:
+        return {"traces": [], "recording": False}
+    return {"traces": recorder.listing(limit=limit, kind=kind), "recording": True}
+
+
+def trace_payload(jarvis: "Jarvis", trace_id: str = "", task_id: str = "") -> dict[str, Any]:
+    """One trace, by its id or by the task it covers.
+
+    `task_id` is what the UI's "view trace" link has: a task knows its own id
+    and nothing about contexts, so the lookup belongs here rather than in the
+    console.
+    """
+    recorder = _recorder(jarvis)
+    if recorder is None:
+        return {"trace": None, "recording": False}
+    if not trace_id and task_id:
+        trace_id = recorder.for_task(task_id)
+    return {"trace": recorder.get(trace_id) if trace_id else None, "recording": True}
+
+
 def memory_export_payload(jarvis: "Jarvis", fmt: str = "json") -> dict[str, Any]:
     return _memory(jarvis).export(fmt)
 

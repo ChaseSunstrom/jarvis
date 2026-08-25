@@ -742,6 +742,38 @@ class ConversationAgent:
             answer = str(getattr(result, "content", "") or "")
         return answer
 
+    def _report_model_call(self, result: Any, context: Any, seconds: float) -> None:
+        """Announce one exchange with the model: cost and latency.
+
+        Token counts live in the raw payload (`usage` on the OpenAI wire,
+        `prompt_eval_count`/`eval_count` on Ollama's) and are discarded the
+        moment the stream closes. They are the only measure of what a turn
+        actually cost, so they are worth one dict and one `bus.fire`.
+
+        Exception-safe and best-effort by construction: a turn must not fail
+        because nobody could count it.
+        """
+        try:
+            raw = getattr(result, "raw", None) or {}
+            usage = raw.get("usage") if isinstance(raw, dict) else None
+            usage = usage if isinstance(usage, dict) else {}
+            prompt = usage.get("prompt_tokens", raw.get("prompt_eval_count"))
+            completion = usage.get("completion_tokens", raw.get("eval_count"))
+            self.jarvis.bus.fire(
+                "jarvis_model_call",
+                {
+                    "model": str(getattr(result, "model", "") or self.model),
+                    "ms": round(seconds * 1000, 1),
+                    "prompt_tokens": int(prompt or 0),
+                    "completion_tokens": int(completion or 0),
+                    "done_reason": str(getattr(result, "done_reason", "") or ""),
+                    "tool_calls": len(getattr(result, "tool_calls", []) or []),
+                },
+                context if isinstance(context, Context) else None,
+            )
+        except Exception:  # pragma: no cover - counting is never fatal
+            _LOGGER.debug("Could not report a model call", exc_info=True)
+
     async def make_plan(self, request: str) -> plan_module.Plan:
         """One call: what are the steps? Never more than one."""
         tools = list(self.tools.names()) if self.tools is not None else []
@@ -1426,6 +1458,7 @@ class _Round:
             # vLLM and Ollama's native API put it in a field of its own, which
             # the client pushes. Both land on `_on_thinking`, so a surface sees
             # one kind of event whatever the deployment is running.
+            round_started = time.monotonic()
             stripper = ThinkStripper(self._on_thinking)
             # `<tool_call>` markup is machinery, not an answer. A server with
             # no tool-call parser streams it as ordinary content, and without
@@ -1470,6 +1503,14 @@ class _Round:
                     yield tail
 
                 chat_result = stream.result
+                # What the stream knew and nobody else can reconstruct: which
+                # model answered, how long it took, and the tokens each way.
+                # Fired rather than returned because the only consumer is
+                # `integrations/observability`, and the agent loop should not
+                # grow a dependency on whether anybody is watching.
+                agent._report_model_call(
+                    chat_result, self._context, time.monotonic() - round_started
+                )
                 # A tool call the SERVER did not parse into the structured
                 # field, but the model did emit. Qwen3, Hermes, Mistral and
                 # Llama 3 all express a call as text in a known format, and

@@ -473,6 +473,26 @@ memory:
   # `research:` below DOES use it, on the same host, for the same money.
 
 # ---------------------------------------------------------------------------
+# Observability — what the agent did, step by step, and what each step cost.
+# ---------------------------------------------------------------------------
+# Every tool call, model call, approval and subagent, grouped into a trace per
+# turn, with token counts and latency. The console links to one from any task.
+#
+# This is deliberately NOT Langfuse. Its own self-hosting guide asks for four
+# cores and 16 GiB — Postgres and ClickHouse and Redis and MinIO and two
+# Langfuse containers — to put a UI over data this process already generates
+# and used to throw away. `docs/TOOLING_DECISIONS.md` §6 has the numbers.
+#
+# The cost here is bounded on both axes and never on the hot path: a span is a
+# dict append, and a finished trace is one line of JSON.
+observability:
+  max_traces: 200          # kept in memory, oldest dropped first
+  max_spans: 400           # per trace, before it truncates (and says so)
+  # Finished traces append to <config>/traces/<date>.jsonl, so "why did it do
+  # that" survives a restart. Set false to keep everything in memory.
+  to_disk: true
+
+# ---------------------------------------------------------------------------
 # Undo and trace — what it did, and taking it back.
 # ---------------------------------------------------------------------------
 # Both were written, documented, tested, and left out of this file.
