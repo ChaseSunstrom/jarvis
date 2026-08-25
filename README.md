@@ -120,9 +120,26 @@ Every suite runs offline: no network, no hardware, no camera, no model.
 make test                  # lint + every python suite + both evals
 make test-core             # just jarvis-core (the big one)
 make test-web              # HUD build + unit + smoke + Playwright
+make test-android          # the JVM mirrors of the Kotlin
 make lint                  # ruff, defect-only ruleset (see ruff.toml)
 make help                  # everything else
 ```
+
+`make test` is the fast gate. **`make verify-all`** is the whole target state:
+one script per milestone under `scripts/verify/`, each asserting what that
+milestone actually claims rather than that its files exist, with the logs kept
+under `.verify/`. It takes the best part of an hour and needs Docker for the
+milestones whose claims are about the running stack — which is the point, since
+those claims are about the running stack.
+
+```bash
+make verify-all            # every milestone's own checks; fails on any
+ONLY=m44 make verify-all   # one of them
+```
+
+There is no "skip" state anywhere in it. A check that cannot run is a check
+that fails, because a suite that reports green while proving nothing is worse
+than one that reports red.
 
 Against real hardware, once it exists:
 

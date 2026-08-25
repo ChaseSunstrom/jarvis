@@ -21,9 +21,36 @@ for word in styleguide dashboards Robolectric jarvis-desktop-app; do
     check "docs/verification.md covers: $word" grep -qi "$word" docs/verification.md
 done
 check_sh "a CI workflow runs make verify-all" 'grep -lE "make verify-all" .github/workflows/*.yml >/dev/null'
-check_not "no placeholder markers in any surface's sources" grep -rniE 'TODO|FIXME|coming soon|not implemented' \
-    jarvis-web/src jarvis-core/jarvis jarvis-desktop/jarvis_desktop android-app/app/src/main \
-    --include='*.svelte' --include='*.ts' --include='*.css' --include='*.py' --include='*.kt'
+# Case-SENSITIVE and word-bounded, and it took three false alarms to get
+# there. `-i` on `todo` matched `toDouble` and `states("todo")` — `todo` is
+# a real Home Assistant entity domain — and `not implemented` matched
+# `ActionResult.unsupported("$actionId is not implemented")`, which is a
+# service reporting honestly rather than a stub. A check that cries wolf is
+# one somebody learns to skip, which is worse than not having it.
+check "no placeholder markers in any surface's sources" python3 -c '
+import re, sys
+from pathlib import Path
+
+ROOTS = (
+    "jarvis-web/src", "jarvis-core/jarvis", "jarvis-desktop/jarvis_desktop",
+    "android-app/app/src/main",
+)
+SUFFIXES = (".svelte", ".ts", ".css", ".py", ".kt")
+#: Uppercase because that is the convention for a marker a person left for
+#: themselves; lowercase `todo` is a word this codebase uses about laundry.
+MARKERS = re.compile(r"\bTODO\b|\bFIXME\b|\bXXX\b|\bHACK\b|coming soon", re.I if False else 0)
+SOON = re.compile(r"coming soon|placeholder implementation", re.I)
+found = []
+for root in ROOTS:
+    for path in sorted(Path(root).rglob("*")):
+        if not path.is_file() or path.suffix not in SUFFIXES:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if MARKERS.search(line) or SOON.search(line):
+                found.append(f"{path}:{n}: {line.strip()[:90]}")
+assert not found, "placeholder markers:\n  " + "\n  ".join(found[:10])
+print("no TODO/FIXME/XXX/HACK/coming-soon in any shipping source")
+'
 check_not "no mutation-stub markers anywhere (CI's static job, mirrored)" \
     grep -rnIiE '\bM[U]TANT\b|\bDELIBERATELY BR[O]KEN\b' --include='*.py' --include='*.kt' --include='*.kts' \
     --include='*.ts' --include='*.js' --include='*.svelte' --include='*.sh' --include='*.yml' --include='*.yaml' \

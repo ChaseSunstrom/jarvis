@@ -1,0 +1,86 @@
+# The whole target state, on a schedule.
+#
+# `make verify-all` runs one script per milestone from `scripts/verify/`. It is
+# not on `push`, and that is deliberate: it takes the best part of an hour, it
+# starts the real compose stack for the milestones whose claims are about the
+# running stack, and it pulls several gigabytes of images. Paying that on every
+# commit would mean somebody turning it off inside a week.
+#
+# So: nightly, and on demand. `ci.yml` remains the thing that gates a change.
+# This is the thing that notices a claim in `docs/verification.md` quietly
+# stopping being true — which is a slower failure and needs a slower check.
+#
+# `ONLY` lets a dispatch run one milestone: the input is passed straight to the
+# Makefile, which passes it to `scripts/verify/all.sh`.
+name: verify-all
+
+on:
+  schedule:
+    # 04:23 UTC, an odd minute so it does not queue behind everyone's midnight.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "One milestone, e.g. m44 (empty runs all of them)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-all-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # An hour of milestones plus image pulls. The default 360 would hide a hang
+    # rather than fail it.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: jarvis-web/package-lock.json
+
+      - name: The repo-local venv, the way every other job builds it
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install pytest pytest-asyncio pytest-timeout "ruff==0.16.3" \
+            -r jarvis-core/requirements.txt -r testing/requirements.txt \
+            -r jarvis-browser/requirements.txt -r jarvis-orchestrator/requirements.txt \
+            -e jarvis-desktop
+
+      - name: The console's dependencies and browsers
+        working-directory: jarvis-web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: make verify-all
+        env:
+          ONLY: ${{ github.event.inputs.only }}
+          # No model server and no microphone on a runner. The live rig's own
+          # scripts refuse clearly rather than pretending when these are unset,
+          # which is what makes the red lines here readable.
+          LIVE_TARGET: harness
+        run: |
+          . .venv/bin/activate
+          make verify-all
+
+      - name: The logs, whatever happened
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs
+          path: .verify/
+          retention-days: 14

@@ -1104,6 +1104,17 @@ checks, which is a starting point and nothing more.
 
 ---
 
+## The harness
+
+`make verify-all` runs one script per milestone from `scripts/verify/`, and
+this document is what those scripts have earned. Each script asserts the
+milestone's own claims — not that its files exist — and writes its log to
+`.verify/`. `ONLY=m44 make verify-all` runs one.
+
+There is deliberately **no skip state**: a check that cannot run fails. A suite
+that reports green while proving nothing is worse than one that reports red,
+because somebody believes it.
+
 ## Maintaining this document
 
 Whenever the answer to "does this work?" changes, this file changes with it.
