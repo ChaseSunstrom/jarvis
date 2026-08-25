@@ -7,6 +7,30 @@ For the per-capability claims register — what is proven, by which command —
 see [`docs/verification.md`](docs/verification.md). This file is for the
 judgement calls behind it.
 
+## Phone automation is scaffolded and off, not built
+
+The plan called for Jarvis to drive the phone's other apps — read their screens
+through an accessibility service, read notifications, tap and type. What ships
+is the *interface* for that (`automation/phone/PhoneAutomation.kt`), behind a
+compile-time flag that is false in every build, with the two Android services
+standing down while it is off, the bridge refusing the actions, and the runtime
+master switch now defaulting off as well.
+
+Four refusals for one feature, because the failure is not recoverable. An
+accessibility service sees banking apps, messages and password autofill, with
+no way to be selective and no way for the user to know afterwards what was
+read; an injected tap is indistinguishable from a finger to the app receiving
+it. What is missing before it could ship is not code — it is a per-app consent
+scope, a record of what was read (the audit log covers actions, and a screen
+read is not one), and a refusal path for sensitive fields that Android does not
+mark. `android-app/docs/phone-automation.md` says all of that, and
+`docs/ANDROID_DEVICE_TESTS.md` carries the four checks that would need a phone.
+
+The master switch changing from ON to OFF is the other half of the judgement:
+it defaulted on with the argument that a fresh install should be useful and the
+per-action tiers keep it safe — and they do. What changed is what the switch
+governs now that the phone interfaces exist beside the house ones.
+
 ## The Gradle wrapper's jar is committed
 
 `android-app/gradle/wrapper/gradle-wrapper.jar` and `gradlew` are in the

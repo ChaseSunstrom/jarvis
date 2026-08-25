@@ -320,7 +320,7 @@ files both would touch, which the integrating session merges.
     task events the UI shows observed; verification row.
   - Verify: `bash scripts/verify/m21-desktop-automation.sh`
 
-- [ ] **M22 — Phone automation: scaffolded, flagged OFF** · size M · deps M08 · parallel-ok M21
+- [x] **M22 — Phone automation: scaffolded, flagged OFF** · size M · deps M08 · parallel-ok M21
   - Scope: `interface PhoneAutomation` + delegate scaffold under `automation/`;
     `buildConfigField("boolean", "PHONE_AUTOMATION", "false")` gating
     `JarvisAccessibilityService`, `JarvisNotificationListener` and `AutomationBridge`;

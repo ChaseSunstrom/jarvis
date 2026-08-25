@@ -60,6 +60,25 @@ android {
         // classes (config/WakeWordGate, config/ServerUrl, ui/ConsentGate, …);
         // these are the ones that need a device to mean anything.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Phone automation — driving THIS phone's other apps: reading their
+        // screens through an accessibility service, reading notifications,
+        // tapping things.
+        //
+        // Off at compile time, and that is the point of the milestone that
+        // added it (M22). The interfaces exist so the shape is designed rather
+        // than improvised later; nothing behind them runs, on any build, until
+        // somebody flips this and reads `docs/phone-automation.md` first. An
+        // assistant that can read every screen on a phone is a different
+        // product from one that turns the lights off, and enabling it is a
+        // decision a person makes with their eyes open.
+        //
+        // `-PphoneAutomation=true` at the command line, deliberately awkward.
+        buildConfigField(
+            "boolean",
+            "PHONE_AUTOMATION",
+            (project.findProperty("phoneAutomation") as String? ?: "false"),
+        )
     }
 
     buildTypes {

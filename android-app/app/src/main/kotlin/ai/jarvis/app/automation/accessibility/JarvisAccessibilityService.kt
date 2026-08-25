@@ -14,6 +14,7 @@ import ai.jarvis.app.automation.AutomationBridge
 import ai.jarvis.app.automation.actions.ActionEnv
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
+import ai.jarvis.app.BuildConfig
 
 /**
  * The most dangerous component in the app.
@@ -64,6 +65,18 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+
+        // Phone automation is off (M22). The service can still be enabled by a
+        // user in Settings — Android offers it because the manifest declares
+        // it — and if it is, it disconnects itself rather than starting to
+        // watch. Checked HERE and again in `onAccessibilityEvent`, because a
+        // service that is already running when the check is added does not get
+        // another `onServiceConnected`.
+        if (!BuildConfig.PHONE_AUTOMATION) {
+            Log.i(TAG, "phone automation is disabled in this build; standing down")
+            disableSelf()
+            return
+        }
 
         // Capabilities (canRetrieveWindowContent, canPerformGestures) come from
         // @xml/jarvis_accessibility_service and are not settable at runtime.
@@ -131,6 +144,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // See `onServiceConnected`: off means off, even for a service that was
+        // already connected when the build changed under it.
+        if (!BuildConfig.PHONE_AUTOMATION) return
         // onInterrupt drops the reference; a live event proves the service is
         // running, so this is how it comes back without the user re-toggling
         // the switch in Settings.

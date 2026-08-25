@@ -26,6 +26,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M22 (phone automation: scaffolded, flagged off): the interface for driving the phone's own
+  apps exists (`automation/phone/PhoneAutomation.kt`) and nothing behind it runs.
+  `BuildConfig.PHONE_AUTOMATION` is false in every build; the accessibility service calls
+  `disableSelf()` and drops every event; the notification listener reports itself disconnected
+  and ignores every notification; `AutomationBridge` refuses any `ui_*`/`phone_*` action before
+  it can reach a dispatcher; and `PolicyStore.automationEnabled` now defaults **off**. Four
+  independent refusals for one feature, because an accessibility service sees banking apps,
+  messages and password autofill with no way to be selective, and an injected tap is
+  indistinguishable from a finger. `android-app/docs/phone-automation.md` says what would have
+  to be designed first — a per-app consent scope, a record of what was read, a refusal path for
+  sensitive fields — and four `PHONE_AUTOMATION` rows in the device backlog say what enabling
+  it would need a phone for.
 - M08 (Android, proven with no device): the app **builds** — `./gradlew assembleDebug`, with a
   JDK and SDK installed under `$HOME` by `android-app/tools/bootstrap-toolchain.sh` and the
   Gradle wrapper committed so a fresh clone needs nothing first. 178 JVM unit tests pass, lint
