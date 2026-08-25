@@ -586,6 +586,28 @@ Listening: jarvis-core :8080 (8 entities), HUD :8199, orchestrator :8188, browse
 mosquitto :1883, Wyoming :10300/:10200/:10400; closed: :11434 (Ollama), :8086 (InfluxDB),
 :8888 (SearXNG), :2322 (photon).
 
+## Delta — what the intelligence scorecard is, and is not (added 2026-08-25, M26)
+
+`evals/intelligence/` measures six things through the real voice pipeline and writes
+`.verify/live/scorecard.json`. Read the numbers with these limits in front of you:
+
+- **It is twenty-seven prompts.** A smoke test for intelligence, not a benchmark. It is
+  sensitive enough to catch a skill being read before every answer and a "don't wait for it"
+  ground through inline; it says nothing about how the assistant handles the ten thousandth
+  conversation.
+- **It runs on the harness house**, which has three lights and three sensors. That makes the
+  latency numbers optimistic against a real house — a smaller summary in the prompt — and the
+  routing prompts easier, because there is less to confuse.
+- **Two sections rest partly on a local judge.** `graceful_failure` and one `reasoning` case
+  cannot be read off the house. Every verdict logs its reason; a suite that passes for silly
+  reasons reads as silly, which is the only defence available.
+- **A floor is not a target.** They sit below the measurement on purpose (a floor at the
+  measurement fails on the next run for nothing), and `PROCESS.md`'s rule applies: re-measure,
+  never edit to taste.
+- **Run-to-run variance is real.** Four runs of the same eight routing prompts scored 6, 7, 7
+  and 8. The floors are set knowing that, and `ISSUES.md` names the case that flickered rather
+  than pretending it did not.
+
 ## Cross-cutting findings
 
 - **Documentation drift.** Every test count in `README.md`, `docs/verification.md` and

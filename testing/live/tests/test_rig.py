@@ -185,7 +185,7 @@ def test_every_tool_in_the_routing_table_exists():
     note-taking turn was scored as "skills" because reading the house style
     guide was the only thing it recognised.
     """
-    from testing.live.runner import TOOL_CAPABILITY
+    from testing.live.capability import TOOL_CAPABILITY
 
     core = REPO_ROOT / "jarvis-core" / "jarvis"
     registered = set()

@@ -350,6 +350,45 @@ they are the only places that particular bug can come back.
 | A 2-second median round trip | **Missed, and reported** | measured 15–20 s per spoken turn on this host (27 B model, no GPU, four shared vCPUs). `ISSUES.md` and `BLOCKERS.md` say what it would take |
 | A real microphone in a real room | **Unproven** | the rig synthesises speech; acoustics are not simulated |
 
+### How good it actually is: the intelligence scorecard (M26)
+
+Six things a person notices in the first week, measured through the full voice
+pipeline rather than against the API: `python3 evals/intelligence/run.py`. The
+prompt set is fixed (`evals/intelligence/prompts.yaml`), the harness is this
+repository's own with the fixture web behind it, and nothing it proposes is
+ever approved — every held action is denied, so a scorecard cannot become a
+run of real jobs.
+
+| Claim | Level | Proof |
+|---|---|---|
+| A later turn knows what an earlier one said | Automated | the `context_retention` section — a fact carried across an intervening turn, "turn it on" resolved against the previous question (asserted on the entity's state, not the sentence), a correction that must stick, and a "one sentence only" that must still hold two turns later |
+| Which capability a request went to | Automated *from what ran* | the `routing` section, scored with `testing/live/capability.py` — the same table the scenario suite uses. A held Tier-3 tool counts as routed: `jarvis_tool_started` fires before the gate blocks, so the coding prompt is scored without a coding job being run |
+| More than one step of reasoning, and a hypothetical that must not move the house | Automated | the `reasoning` section — three cases with a checkable answer, one judged, and `consequence`, whose real assertion is that "if I turned them off" called no service |
+| Format, length and constraint following | Automated *and counted* | the `instructions` section — word counts, sentence counts and regexes, no judge |
+| An impossible, unknowable or garbled request fails visibly | Automated | the `graceful_failure` section — nothing in the house moves, and the judge (with its reason logged) says whether it admitted the failure. The garbled case is spoken over a fan at 5 dB SNR, so what the model sees is a real mis-hearing |
+| Per-stage latency, idle and under load | Automated *twice* | the `latency` section: four probes with the box quiesced, then the same four with a research job running on the same model server. A leftover task counts as neither — the idle pass cancels everything first and the load pass requires a NEW task |
+| A reply nobody can make out | Automated *and separate* | round-trip WER (Piper → Whisper against the words Jarvis wrote) is reported beside the scores and has its own ceiling. Text assertions read what Jarvis WROTE: a regex over a transcription measures the recogniser |
+| The floors and ceilings themselves | Automated | `python3 -m pytest evals/intelligence -q` — twelve tests over the scoring, including "a section that never ran cannot pass" and "an idle pass that was not idle is reported as such" |
+| That the scorecard is any good | **Judgement** | it is 27 prompts. It is a smoke test for intelligence, not a benchmark, and `docs/AUDIT.md` says so |
+
+Measured on this host, 2026-08-25 (harness ground, 12 GB model, no GPU): idle
+median first word 6.2–8.1 s and whole turn 8.0–9.4 s; under load 6.4 s and
+9.3 s. Those are the numbers the ceilings in `run.py` were set from — lower
+than the 15–20 s the scenario suite sees against the stack, because the demo
+house's summary is a fraction of a real one's.
+
+### The toolbelt, before anything is added to it (M30)
+
+| Claim | Level | Proof |
+|---|---|---|
+| Every service M31–M37 proposes has a decision written before it is built | Automated | `bash scripts/verify/m30-toolbelt.sh` — the check fails if a slot named in the milestones has no section in `docs/TOOLING_DECISIONS.md` |
+| The decisions were checked against current sources, not recalled | Automated *that they exist and are dated*; **Judgement** that they are right | the Sources section carries a date and the project's own documentation for each candidate; the check requires both |
+| Nothing takes GPU residency without saying what it evicts | **Convention, written down** | the VRAM justification rule; the check requires it to name the KV cache and the embedding path |
+| Adding a service can be shown to have helped, or not | Automated | `python3 scripts/verify/toolbelt_baseline.py --out before.json`, then `--compare before.json after.json` — non-zero when a metric got worse |
+| A comparison cannot flatter a change by not running an eval | Automated | `test_a_metric_that_stopped_being_measured_is_a_regression`, and the snapshot refuses to write at all when an eval is missing |
+| Latency noise does not fire the check, and a real slowdown does | Automated | `test_latency_noise_does_not_fire_and_a_real_slowdown_does` — +17 % passes, ×2 fails |
+| That these are the right components | **Judgement, and revisable** | the doc says what would overturn each decision, and `--compare` is how |
+
 ### The stack, as the thing under test (M28, M29)
 
 | Claim | Level | Proof |

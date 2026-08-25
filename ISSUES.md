@@ -13,6 +13,98 @@ and is not misled).
 
 ---
 
+## A question asked through the notification channel, and denied, sounds like nonsense
+
+severity: minor
+status: **open** — intermittent, and only visible when the question is refused
+Regression: the `garbled` case in `evals/intelligence/prompts.yaml`
+Found by: the M26 scorecard, which denies every held action by design
+
+Asked something unintelligible ("turn on the frunge in the blorridor", spoken
+over a fan at 5 dB SNR, which Whisper rendered as "turn on the front in the
+floor door"), Jarvis sometimes asks *"Front door or garage door?"* in the reply
+— which is right — and sometimes raises the question as a gated notification
+instead. When the gate is answered no, what the user hears is:
+
+> I have no record of which site you mean, so my question asking for the
+> handbook's address is waiting on your confirmation before it can reach you.
+
+Which is a sentence about the plumbing. A person asked a question and was told
+about an approval queue.
+
+Two things are true and neither is a bug on its own: asking through the
+interactions channel is a real thing to do (it leaves a trail, and it reaches
+somebody who is not in the room), and a Tier-gated action that is refused has
+to say so. What is wrong is the combination — a clarifying question about the
+turn in progress belongs in the answer, where it costs nothing and arrives
+immediately.
+
+Left open rather than fixed because the fix is a judgement about which channel
+a question belongs on, and that is M17's territory rather than a one-line
+change here. The eval names it whenever it happens.
+
+---
+
+## "Don't wait for it" was ground through inline, sometimes
+
+severity: minor
+status: **open** — intermittent, and no instruction is missing
+Regression: `task-background-plan` (live suite) and the `task` prompt in
+`evals/intelligence/prompts.yaml`
+Found by: the M26 scorecard, on the third of four runs
+
+"Go through every sensor in the house one at a time, work out which look wrong,
+and write it up. Don't wait for it — tell me when it's done." was handled by
+six inline tool calls and a note, in the same turn, with the user waiting. Two
+runs earlier and one run later the same sentence created a background task, as
+it should.
+
+`config/prompts/jarvis.txt` rule 6 already says the thing that would fix it, in
+the strongest words available: *"If they SAY not to wait, or to be told when it
+is done, that decision is already made: hand it over before you start. Grinding
+through it inline is the one thing they asked you not to do, however quick each
+step looks."* Adding more words to a rule the model reads and sometimes ignores
+makes the prompt longer and the assistant no better, so nothing was changed.
+
+What it costs when it happens: the user stands there for the length of the job
+instead of being told it started. What it does not cost: correctness — the work
+was done and the note was written.
+
+It is inside the routing floor (0.85) rather than outside it, deliberately: a
+floor of 100% on eight prompts would fail this milestone on a model's bad day,
+and a floor that cannot be met stops being read. The scorecard names the case
+every time it happens, which is the point.
+
+---
+
+## A style guide read before every answer, at a round trip each
+
+severity: minor
+status: **fixed** (`jarvis-core/jarvis/integrations/skills/__init__.py`, `index_block`)
+Regression: `evals/intelligence/run.py` — the routing section, whose two
+`answer` prompts fail if an ordinary question goes through a skill
+Found by: the M26 scorecard, not by anybody reading the prompt
+
+The skill index told the model to "call use_skill with the name to read one
+before doing anything it covers", and `house-style` describes itself as "how
+Jarvis should answer in this house — length, address, and when to say nothing".
+That covers every answer, so the model read it before every answer: "which room
+is the coffee machine in?" cost a tool call and a second round trip through a
+30B model before a single word came back.
+
+It was obeying its instructions exactly. The header now says that reading one
+costs a round trip and to read a skill when the request is ABOUT what it
+covers. Nothing else changed — the skill, its description and `use_skill` are
+untouched.
+
+The number this moved is routing accuracy on the intelligence scorecard, from
+6/8 to 8/8, because two prompts whose right answer needed no tool at all were
+being routed through a document. The latency it saves is on every turn of every
+conversation, and no test was ever going to notice it: each of those turns was
+correct.
+
+---
+
 ## Three calls that would have crashed on Android 10, in shipped code
 
 severity: major

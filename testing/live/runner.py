@@ -30,8 +30,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
-import fcntl
 import json
 import os
 import re
@@ -47,7 +45,12 @@ for extra in (REPO_ROOT, REPO_ROOT / "jarvis-core"):
 
 from testing.live import LiveError  # noqa: E402
 from testing.live import audio as audio_mod  # noqa: E402
+from testing.live.capability import (  # noqa: E402
+    HOUSE_DOMAINS,
+    capability_of as _capability_of,
+)
 from testing.live.judge import Judge  # noqa: E402
+from testing.live.rig import the_rig as _the_rig  # noqa: E402
 from testing.live.report import (  # noqa: E402
     ScenarioResult,
     TurnResult,
@@ -57,15 +60,13 @@ from testing.live.report import (  # noqa: E402
     write_json,
 )
 from testing.live.scenario import Scenario, load_all  # noqa: E402
-from testing.live.fixture_browser import Browser as FixtureBrowser  # noqa: E402
 from testing.live.ground import (  # noqa: E402
     TEST_NAMESPACE,
     Ground,
     HarnessGround,
     StackGround,
 )
-from testing.live.fixture_search import Search as FixtureSearch  # noqa: E402
-from testing.live.fixture_site import SITES, Site as FixtureSite, pages_for  # noqa: E402
+from testing.live.web import FixtureWeb  # noqa: E402
 from testing.live.transport import (  # noqa: E402
     TURN_TIMEOUT,
     ApiVoice,
@@ -89,133 +90,6 @@ THRESHOLDS = {
     "routing_accuracy": 0.90,
     "round_trip_median": 2.0,
 }
-
-
-#: Domains that ARE the house. A call outside them is plumbing.
-HOUSE_DOMAINS = {
-    "light", "switch", "lock", "cover", "climate", "fan", "media_player",
-    "scene", "script", "vacuum", "button", "number", "select", "text",
-    "input_boolean", "input_number", "input_select", "input_text",
-}
-
-#: Which capability a tool belongs to. The tools are the evidence: a request
-#: was "routed to memory" if and only if it called a memory tool.
-TOOL_CAPABILITY = {
-    "use_skill": "skills",
-    "remember": "memory",
-    "recall": "memory",
-    "forget": "memory",
-    "note_create": "notes",
-    "note_append": "notes",
-    "note_search": "notes",
-    "deep_research": "research",
-    # A quick look-up IS research in the sense that matters here: it went to
-    # the web rather than answering from the model. The two modes are one
-    # engine (`MODE_BUDGETS`), and the routing table should not pretend
-    # otherwise.
-    "web_search": "research",
-    "web_fetch": "research",
-    # Two coding paths, and both are "coding": `start_coding_job` is Jarvis's
-    # own agent (M19), `code_task`/`apply_code_task` are the orchestrator's
-    # delegation to a bigger model. A turn routed to either did the same thing
-    # from the user's side of the room.
-    "start_coding_job": "coding",
-    "code_task": "coding",
-    "apply_code_task": "coding",
-    "run_background_task": "task",
-    # A fan-out is its own capability, and it takes precedence below: a lead
-    # that delegated three lookups to researchers did subagent work, and
-    # scoring it as "research" would hide the thing that was under test.
-    "delegate_to_agents": "subagents",
-    # Asking how a job is going is about the job, not about starting one.
-    "task_status": "task",
-    "cancel_task": "task",
-}
-
-
-def _capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
-                   reply: str) -> str:
-    """What Jarvis actually did with the request, in one word.
-
-    Read off the consequences rather than asked of the model: routing accuracy
-    that a model self-reports is a model grading its own homework. Ordered by
-    specificity — a coding job that also called `get_state` is still coding.
-    """
-    if "code" in task_kinds:
-        return "coding"
-    if "research" in task_kinds:
-        return "research"
-    # By PRECEDENCE, not by the order the tools happened to be called. A
-    # look-up that searched the notes first and then went to the web is
-    # research: the notes search was a means, and reading tools in call order
-    # scored it as "notes" because that call came first.
-    chosen = {
-        TOOL_CAPABILITY[tool] for tool in tools if tool in TOOL_CAPABILITY
-    }
-    if any(call.startswith("memory.") for call in calls):
-        chosen.add("memory")
-    if any(call.startswith("notes.") for call in calls):
-        chosen.add("notes")
-    for capability in ("subagents", "coding", "research", "memory", "notes"):
-        if capability in chosen:
-            return capability
-    if task_kinds or "run_background_task" in tools:
-        return "task"
-    # Only calls that moved something in the HOUSE count as house control. Any
-    # service call at all was too crude: a turn that read a skill and answered
-    # was routed to "house" because something incidental had gone through the
-    # service layer.
-    if any(call.split(".", 1)[0] in HOUSE_DOMAINS for call in calls):
-        return "house"
-    if "use_skill" in tools:
-        return "skills"
-    return "answer"
-
-
-@contextlib.contextmanager
-def _the_rig(timeout: float = 3600.0):
-    """Only one live run at a time, on this box.
-
-    Not tidiness: the rig shares the machine's *real* Whisper, Piper and model
-    server with anything else using them, and two harnesses at once means two
-    conversations against one recogniser. The symptom is not an error — it is a
-    scenario failing with an empty transcript, which reads as a defect in
-    Jarvis and is not one. This was observed: a milestone's live check run
-    beside the whole suite failed on a turn that had passed minutes earlier.
-
-    Waits rather than refuses, because `verify-all` runs its scripts in order
-    and the right behaviour for the second one is to take its turn.
-    """
-    lock_path = OUT_DIR / "rig.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(lock_path, "w")  # noqa: SIM115 - held for the block
-    try:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            print(
-                "live: another live run holds the rig (the voice services are "
-                "shared); waiting for it to finish",
-                flush=True,
-            )
-            deadline = time.monotonic() + timeout
-            while True:
-                try:
-                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() > deadline:
-                        raise LiveError(
-                            f"another live run still holds {lock_path} after "
-                            f"{timeout:g}s"
-                        ) from None
-                    time.sleep(2.0)
-        yield
-    finally:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-        finally:
-            handle.close()
 
 
 class Runner:
@@ -251,9 +125,7 @@ class Runner:
         self.link: Link | None = None
         self.observer: Observer | None = None
         #: The fixture web, started with the harness and stopped with it.
-        self._sites: list[FixtureSite] = []
-        self._search: FixtureSearch | None = None
-        self._browser: FixtureBrowser | None = None
+        self.web = FixtureWeb()
         self.judge = Judge()
         #: Background "keep clicking approve" loops, one per scenario that
         #: approved something. Cancelled when the scenario ends, so a later one
@@ -282,30 +154,6 @@ class Runner:
                 "(source .env); the rig runs Jarvis against the real model"
             )
 
-    def _fixture_web(self) -> dict[str, str]:
-        """A small web this repository owns, for the scenarios that research.
-
-        Started for every run rather than only the research ones: it is three
-        threads and no network, and a `web:` block that appears for some
-        scenarios and not others would be a different Jarvis depending on which
-        test you ran. Each site gets its own loopback ADDRESS, because the
-        per-domain cap and the cross-check both key on the host.
-        """
-        self._sites = [
-            FixtureSite(host=f"127.0.0.{index + 2}", pages=pages_for(name)).start()
-            for index, name in enumerate(SITES)
-        ]
-        by_name = dict(zip(SITES, (site.url for site in self._sites)))
-        self._search = FixtureSearch(by_name).start()
-        self._browser = FixtureBrowser([site.url for site in self._sites]).start()
-        return {"search": self._search.url, "browser": self._browser.url}
-
-    def _stop_fixture_web(self) -> None:
-        for closing in (self._browser, self._search, *self._sites):
-            if closing is not None:
-                closing.stop()
-        self._sites, self._search, self._browser = [], None, None
-
     def _ground_for(self, scenario: Scenario) -> str:
         """Which ground this scenario belongs on.
 
@@ -324,7 +172,7 @@ class Runner:
             ground = StackGround(protect=self.protect)
             self.stack_ground = ground
             return ground
-        return HarnessGround(verbose=self.verbose, keep=self.keep, web=self._fixture_web())
+        return HarnessGround(verbose=self.verbose, keep=self.keep, web=self.web.start())
 
     async def run(self) -> list[ScenarioResult]:
         await self._preflight()
@@ -349,7 +197,7 @@ class Runner:
             finally:
                 ground.stop()
                 if name == "harness":
-                    self._stop_fixture_web()
+                    self.web.stop()
         self.results.extend(self._stack_logs_are_clean(started))
         return self.results
 

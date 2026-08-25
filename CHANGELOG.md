@@ -8,6 +8,12 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Fixed
+- A skill was being read before every answer, at a model round trip each. The skill index said
+  to read one "before doing anything it covers", and a skill describing itself as *how Jarvis
+  should answer in this house* covers every answer — so "which room is the coffee machine in?"
+  went through a document first. The index now says that reading one costs a round trip.
+  Found by M26's scorecard, which is the only thing in this repository that could have: every
+  one of those turns was correct.
 - M29 found four failures that had been live for days with every suite green, because no suite
   had ever looked at the deployment: the model-server sensor was polling `/v1/v1/models` and
   404ing every thirty seconds (an `!env_url` that applied a path the base URL already carried);
@@ -26,6 +32,47 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M26 (the intelligence scorecard): `evals/intelligence/` — twenty-seven fixed prompts through
+  the **full voice pipeline**, scoring the six things a person notices in the first week:
+  whether a later turn knows what an earlier one said, which capability a request actually
+  reached, reasoning past one step, following a format or a length or a constraint, admitting
+  an impossible or misheard request instead of inventing an answer, and how long any of it
+  takes. Deterministic wherever the state can be read — entity states, which tools ran, word
+  and sentence counts — and the local judge only for meaning, with its reason logged beside
+  every verdict. It writes `.verify/live/scorecard.json` and a markdown table beside it.
+
+  Three things it refuses to do. It never approves anything: every held action is denied, so a
+  scorecard cannot quietly become a run of real coding jobs, and the coding prompt is scored on
+  reaching the gate. It never scores a section that did not run — "nothing ran" is a failure,
+  not a blank. And it measures latency twice, cancelling everything first so that "idle" means
+  idle, then requiring a NEW background task before it will call the second pass "under load".
+
+  Measured on this host: context retention 4/4, routing 7/8, reasoning 5/5, instruction
+  following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
+  when idle; round-trip word error 0.058.
+
+- M30 (the toolbelt contract): `docs/TOOLING_DECISIONS.md` — one section per service the next
+  seven milestones propose, each naming what was chosen, what was turned down and what it costs
+  **here**, checked on 2026-08-25 against the projects' own documentation rather than against
+  what was current when the model was trained. Two budgets are written at the top and every
+  decision is spent against them: 8 GB of RAM with two free, and the 3090s' KV cache on the
+  model host. The rule that follows from the second is now explicit — nothing takes GPU
+  residency without a paragraph naming what it evicts, and embeddings must come off llama-swap,
+  because a note being indexed should not make the next spoken sentence slower.
+
+  Three of the seven are provisionally *no* on this host, with the number that says why:
+  Langfuse asks for 16 GiB and four cores for ClickHouse, Postgres, Redis and MinIO; Docling
+  brings a torch install to a box with 2 GB free; Crawl4AI ships its own Chromium and would be
+  the second one. Each stays a milestone rather than a foregone conclusion, because the
+  measurement is cheap and a guess is not evidence.
+
+  `scripts/verify/toolbelt_baseline.py` is the tape measure: it snapshots the numbers the evals
+  already produce, and `--compare` exits non-zero when one got worse. Rates carry no tolerance
+  (a drop over eight prompts is a prompt that broke); latencies carry a band, because a shared
+  four-vCPU box moves tens of percent between runs and a check that fires on that is one people
+  stop reading. A metric measured before and *not* after is a regression too — that is how a
+  change usually flatters itself.
+
 - M21 (agentic automation on the desktop): `device_control.run_sequence` — a plan of device
   actions in order, where `save:` names a step's result and `{name.field}` uses it in a later
   step, `verify:` checks a step before the next one runs, and the first failure stops the rest

@@ -274,13 +274,24 @@ class SkillStore:
         """The whole contribution to the system prompt: one line per skill.
 
         Returns "" when there are none, so the caller appends unconditionally.
+
+        The last sentence of the header is there because of a measurement. The
+        intelligence eval (M26) caught the model reading `house-style` — a
+        skill whose description is "how Jarvis should answer in this house" —
+        before answering "which room is the coffee machine in?", which is a
+        model round trip added to every single turn. It was obeying the header
+        it had: a style guide "covers" every answer. Saying that reading costs
+        something is what separates "this is relevant" from "this is worth a
+        turn".
         """
         if not self.skills:
             return ""
         lines = [
             "Skills available (instructions this house has written down). These are "
             "names and summaries only — call use_skill with the name to read one "
-            "before doing anything it covers:",
+            "before doing anything it covers. Reading one costs a round trip, so "
+            "read a skill when the request is ABOUT what it covers, and answer "
+            "directly when it is not:",
         ]
         lines += [skill.index_line for skill in sorted(self.skills.values(), key=lambda s: s.name)]
         return "\n".join(lines)

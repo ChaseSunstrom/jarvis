@@ -34,8 +34,12 @@ test-services: ## orchestrator + sandbox
 test-contract: ## the workflow files, checked against how GitHub runs them
 	python3 -m pytest testing/e2e/test_ci_workflow_contract.py -q --timeout=120
 
+.PHONY: test-tools
+test-tools: ## the repository's own tooling (scorecard arithmetic, the toolbelt tape measure)
+	python3 -m pytest testing/tools evals/intelligence -q --timeout=120
+
 .PHONY: test-python
-test-python: test-core test-desktop test-browser test-services test-contract eval-routing eval-resolution ## every python suite
+test-python: test-core test-desktop test-browser test-services test-contract test-tools eval-routing eval-resolution ## every python suite
 
 .PHONY: lint
 lint: ## ruff, defect-only ruleset (see ruff.toml)

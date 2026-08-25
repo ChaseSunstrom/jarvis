@@ -381,7 +381,7 @@ runs in full mode only. `--implemented-only` runs the ungated ones and must exit
     milestone's verify script.
   - Verify: `bash scripts/verify/m25-live-scenarios.sh`
 
-- [ ] **M26 — Intelligence eval and scorecard** · size L · deps M24, M25
+- [x] **M26 — Intelligence eval and scorecard** · size L · deps M24, M25
   - Scope: `evals/intelligence/` — a fixed eval set run through the **full voice pipeline**,
     producing `.verify/live/scorecard.json` and a markdown table: multi-turn context retention
     (later turns must reference earlier ones); tool-routing accuracy over prompts whose correct
@@ -448,7 +448,7 @@ version, a healthcheck and CPU-only defaults, **it gets live-scenario coverage**
 after number must be better than the before or the service comes out**. Choices and rejections
 — with the web research behind them — go in `docs/TOOLING_DECISIONS.md`.
 
-- [ ] **M30 — The toolbelt contract, and the research behind it** · size M · deps M28, M26
+- [x] **M30 — The toolbelt contract, and the research behind it** · size M · deps M28, M26
   - Scope: `docs/TOOLING_DECISIONS.md` — for every slot below, what was chosen, what was
     rejected and why, checked against current sources rather than against what was
     state-of-the-art when the model was trained; the VRAM justification rule (nothing takes GPU
