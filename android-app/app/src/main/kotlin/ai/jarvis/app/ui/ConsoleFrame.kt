@@ -67,8 +67,8 @@ object ConsoleFrame {
     ): ViewGroup {
         val strip = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            val p = JarvisUi.dp(activity, 12)
-            setPadding(p, 0, p, JarvisUi.dp(activity, 10))
+            val p = JarvisUi.dp(activity, JarvisUi.Space.GAP)
+            setPadding(p, 0, p, JarvisUi.dp(activity, JarvisUi.Space.ROW))
         }
 
         val buttons = mutableListOf<Pair<Button, Boolean>>()
@@ -127,8 +127,8 @@ object ConsoleFrame {
 
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            val pad = JarvisUi.dp(activity, 12)
-            setPadding(0, 0, pad, JarvisUi.dp(activity, 10))
+            val pad = JarvisUi.dp(activity, JarvisUi.Space.GAP)
+            setPadding(0, 0, pad, JarvisUi.dp(activity, JarvisUi.Space.ROW))
             // Weight 0 on the width so the scroller takes what is left rather
             // than pushing PHONE off the edge it was just rescued from.
             addView(
@@ -146,6 +146,6 @@ object ConsoleFrame {
     }
 
     private fun gap(activity: Activity): View = View(activity).apply {
-        layoutParams = LinearLayout.LayoutParams(JarvisUi.dp(activity, 8), 1)
+        layoutParams = LinearLayout.LayoutParams(JarvisUi.dp(activity, JarvisUi.Space.STEP), 1)
     }
 }

@@ -19,7 +19,21 @@ require_exec android-app/gradlew
 require_file android-app/gradle/wrapper/gradle-wrapper.jar
 check "compose enabled" grep -qE 'compose\s*=\s*true' android-app/app/build.gradle.kts
 check "lint is blocking" grep -qE 'abortOnError\s*=\s*true' android-app/app/build.gradle.kts
-check_not "CI no longer tolerates lint failures" grep -nE 'lintDebug.*\|\| true|continue-on-error: true' .github/workflows/android-apk.yml
+# The LINT step, not the whole file: summarising a report and uploading an
+# artifact are allowed to fail without failing the build, and a grep for
+# `continue-on-error` anywhere would forbid that too.
+check "CI runs lint as a blocking step" python3 -c '
+import yaml
+from pathlib import Path
+jobs = yaml.safe_load(Path(".github/workflows/android-apk.yml").read_text())["jobs"]
+steps = [s for job in jobs.values() for s in job.get("steps", [])]
+lint = [s for s in steps if "lintDebug" in str(s.get("run", ""))]
+assert lint, "nothing in the workflow runs lintDebug"
+for step in lint:
+    assert not step.get("continue-on-error"), step.get("name")
+    assert "|| true" not in step["run"], step.get("name")
+print(f"{len(lint)} blocking lint step(s)")
+'
 check "Robolectric in the catalog" grep -qi robolectric android-app/gradle/libs.versions.toml
 check "Roborazzi (JVM screenshots) in the catalog" grep -qi roborazzi android-app/gradle/libs.versions.toml
 check_sh ">= 5 golden screenshots recorded on the JVM" '[ "$(find android-app/app/src/test -name "*.png" | wc -l)" -ge 5 ]'

@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * What Jarvis is doing, while it does it — the visible half, on the phone.
@@ -70,7 +71,7 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
         // real values rather than running on a timer.
         track = FrameLayout(context).apply {
             background = GradientDrawable().apply {
-                cornerRadius = JarvisUi.dp(context, 2).toFloat()
+                cornerRadius = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat()
                 setColor(TRACK_COLOR)
             }
         }
@@ -78,7 +79,7 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
             background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(FILL_START, JarvisUi.ACCENT),
-            ).apply { cornerRadius = JarvisUi.dp(context, 2).toFloat() }
+            ).apply { cornerRadius = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat() }
         }
         track.addView(
             fill,
@@ -201,7 +202,7 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
     private fun chrome(text: String, color: Int): TextView = TextView(context).apply {
         this.text = text
         setTextColor(color)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
         letterSpacing = 0.14f
         typeface = Typeface.MONOSPACE
         shadow(this)
@@ -225,7 +226,7 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
 
-            val side = JarvisUi.dp(context, 6)
+            val side = JarvisUi.dp(context, JarvisUi.Space.SNUG)
             dot.background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(JarvisUi.FAINT)
@@ -233,7 +234,7 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
             addView(
                 dot,
                 LayoutParams(side, side).apply {
-                    rightMargin = JarvisUi.dp(context, 6)
+                    rightMargin = JarvisUi.dp(context, JarvisUi.Space.SNUG)
                 },
             )
 
@@ -249,8 +250,8 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
             addView(
                 args,
                 LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
-                    leftMargin = JarvisUi.dp(context, 6)
-                    rightMargin = JarvisUi.dp(context, 6)
+                    leftMargin = JarvisUi.dp(context, JarvisUi.Space.SNUG)
+                    rightMargin = JarvisUi.dp(context, JarvisUi.Space.SNUG)
                 },
             )
             addView(meta, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
@@ -351,7 +352,7 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
 
         private fun style(view: TextView, color: Int, bold: Boolean = false) {
             view.setTextColor(color)
-            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
             view.typeface =
                 if (bold) Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) else Typeface.MONOSPACE
             view.maxLines = 1
@@ -373,8 +374,8 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
         private const val FILL_MS = 220L
         private const val PULSE_MS = 500L
 
-        private val TRACK_COLOR = 0x33FFFFFF
-        private val FILL_START = 0xFF0E7C99.toInt()
+        private val TRACK_COLOR = JarvisTokens.Color.TRACK
+        private val FILL_START = JarvisTokens.Color.ACCENT_DEEP
 
         /**
          * What replaces a panel: a hard shadow under the glyphs, so text drawn
@@ -384,10 +385,10 @@ class ToolActivityView(context: Context) : LinearLayout(context) {
         fun shadow(view: TextView) {
             val context = view.context
             view.setShadowLayer(
-                JarvisUi.dp(context, 5).toFloat(),
+                JarvisUi.dp(context, JarvisUi.Space.TIGHT).toFloat(),
                 0f,
-                JarvisUi.dp(context, 1).toFloat(),
-                0xF0000308.toInt(),
+                JarvisUi.dp(context, JarvisUi.Space.HAIRLINE).toFloat(),
+                JarvisTokens.Color.SCRIM_HEAVY,
             )
         }
     }

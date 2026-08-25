@@ -62,7 +62,21 @@ PROPS = re.compile(
     r"animation|animation-duration|animation-delay|translate|outline-offset)\s*:\s*([^;{}]*)"
 )
 RAW_UNIT = re.compile(r"(?<![\w.-])\d*\.?\d+(px|rem|em|ms|s)\b")
-KT_COLOUR = re.compile(r"0x[0-9A-Fa-f]{8}\b|Color\.(?:parseColor|rgb|argb)\(")
+#: A colour nobody can find from `design/tokens.json`.
+#:
+#: `Color.argb(a, r, g, b)` counts only when the components are NUMBERS.
+#: `Color.argb(alpha, Color.red(c), Color.green(c), Color.blue(c))` is an
+#: existing colour at a new opacity — there is no literal in it, and flagging
+#: it taught people that this check cries wolf, which is how a real one gets
+#: waved through.
+KT_COLOUR = re.compile(
+    # Not `0x00……`: an RGB mask (`color and 0x00FFFFFF`) has an alpha of zero,
+    # which is to say it is not a colour — nobody can see it, and it is the
+    # idiom for "keep the hue, change the opacity".
+    r"0x(?!00)[0-9A-Fa-f]{8}\b"
+    r"|Color\.parseColor\("
+    r"|Color\.(?:rgb|argb)\(\s*[0-9]"
+)
 KT_SPACE = re.compile(r"\bdp\(\s*\w+\s*,\s*\d+(?:\.\d+)?\s*\)")
 KT_TYPE = re.compile(r"\btextSize\s*=\s*\d+(?:\.\d+)?f?\b|COMPLEX_UNIT_SP\s*,\s*\d+(?:\.\d+)?f?\b")
 

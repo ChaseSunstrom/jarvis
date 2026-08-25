@@ -216,7 +216,7 @@ class VoiceIdentityActivity : Activity() {
             orb,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                JarvisUi.dp(this, 200)
+                JarvisUi.dp(this, JarvisUi.Size.SHEET_MIN)
             )
         )
 

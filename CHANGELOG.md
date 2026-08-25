@@ -26,6 +26,16 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M08 (Android, proven with no device): the app **builds** — `./gradlew assembleDebug`, with a
+  JDK and SDK installed under `$HOME` by `android-app/tools/bootstrap-toolchain.sh` and the
+  Gradle wrapper committed so a fresh clone needs nothing first. 178 JVM unit tests pass, lint
+  is blocking and clean, and six screens are rendered on the JVM by Robolectric and compared
+  against goldens by Roborazzi (the orb listening and thinking, the component sheet, the
+  approval banner, the task overlay, the generated Compose theme). Every hard-coded value in
+  the app's Kotlin is gone — 132 to zero — which needed two new spacing steps, a `Size` scale
+  and thirteen derived alpha constants in `design/tokens.json`, because a colour mixed by hand
+  in a view file is one nobody can find from the token source. `docs/ANDROID_DEVICE_TESTS.md`
+  lists the 26 checks that still need a phone.
 - M20 (subagents): specialists are markdown files under `config/agents/` — frontmatter for the
   tool allow-list, the model, the reply cap and the context budget; the body is the system
   prompt — and four ship (researcher, coder, verifier, summarizer). `delegate_to_agents` runs

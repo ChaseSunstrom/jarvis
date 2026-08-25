@@ -14,6 +14,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 /*
@@ -136,15 +137,49 @@ android {
             // a test that brushes against an Android type fails on its own
             // assertion rather than on "not mocked".
             isReturnDefaultValues = true
+            // Robolectric needs the real resources, and the screenshot tests
+            // need them to LOOK right: without this every colour is a stub and
+            // a golden would record an empty frame.
+            isIncludeAndroidResources = true
+
+            all {
+                it.systemProperty("robolectric.offline", "true")
+                // Robolectric fetches a ~150 MB `android-all` runtime per SDK
+                // from Maven Central, from inside the forked test JVM, at the
+                // moment the first test runs. On this host that JVM cannot
+                // resolve `repo1.maven.org` at all (`UnknownHostException`)
+                // while curl from the same shell gets a 200 — so the download
+                // happens in `tools/bootstrap-toolchain.sh`, where it is
+                // visible, resumable and cached, and the tests are offline.
+                it.systemProperty(
+                    "robolectric.dependency.dir",
+                    System.getenv("ROBOLECTRIC_DEPS")
+                        ?: "${System.getProperty("user.home")}/.cache/robolectric",
+                )
+                // A screenshot test renders a whole frame; the default heap
+                // runs out on the orb.
+                it.maxHeapSize = "2g"
+            }
         }
     }
 
     lint {
-        // AndroidManifest.xml declares the automation module's components
-        // (ai.jarvis.app.automation.**), which are owned by another module and
-        // may not exist yet. Lint's MissingClass must not fail the build.
-        abortOnError = false
+        // Blocking, as of M08. It was `false` because AndroidManifest.xml
+        // declares the automation module's components (ai.jarvis.app.automation.**)
+        // and lint's MissingClass fired on them — so the check that would have
+        // caught three real API-level errors was turned off for one it could
+        // not understand. The narrow rule is disabled instead, and the build
+        // fails on everything else.
+        abortOnError = true
+        disable += "MissingClass"
         checkReleaseBuilds = false
+        // Warnings are not errors: there are 236 of them, most about
+        // `String.format` locales in log lines, and a wall of them promoted to
+        // errors on the day this became blocking would have been reverted by
+        // lunchtime. The ratchet that matters here is `abortOnError` plus a
+        // zero-error build; tightening warnings is its own piece of work.
+        warningsAsErrors = false
+        textReport = true
     }
 
     packaging {
@@ -202,6 +237,17 @@ dependencies {
     implementation(libs.androidx.car.app.projected)
 
     testImplementation(libs.junit)
+    // Robolectric + Roborazzi: Android on the JVM, and a PNG out of it. This is
+    // how a screen is verified on a machine with no device attached, which is
+    // every machine this project is built on.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     // The REAL org.json on the unit-test classpath. `isReturnDefaultValues`
     // makes the stubbed android.jar copy return null instead of throwing, so
     // without this a test of JSON-parsing logic passes while proving nothing.

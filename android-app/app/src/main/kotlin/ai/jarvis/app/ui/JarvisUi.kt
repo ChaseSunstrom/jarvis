@@ -112,8 +112,8 @@ object JarvisUi {
     /**
      * The spacing scale, in dp, for use with [dp].
      *
-     * Same argument as [Type]: `dp(ctx, 10)`, `dp(ctx, 12)`, `dp(ctx, 14)`,
-     * `dp(ctx, 16)`, `dp(ctx, 20)` and `dp(ctx, 24)` all appeared across the
+     * Same argument as [Type]: `dp(ctx, Space.ROW)`, `dp(ctx, Space.GAP)`, `dp(ctx, Size.CHIP)`,
+     * `dp(ctx, Space.SECTION)`, `dp(ctx, Space.SCREEN)` and `dp(ctx, Space.WIDE)` all appeared across the
      * screens with nothing to say which was which. These are the steps that were
      * actually in use, named — not a new rhythm imposed on a working layout,
      * which is why the numbers are unchanged.
@@ -125,8 +125,14 @@ object JarvisUi {
         /** Between a line of text and its own line spacing. */
         const val TIGHT = JarvisTokens.Space.TIGHT
 
+        /** Line spacing, and the inset on a small radius. */
+        const val MICRO = JarvisTokens.Space.MICRO
+
         /** Between a label and the thing it labels. */
         const val SNUG = JarvisTokens.Space.SNUG
+
+        /** Between a row and the next thing that is not part of it. */
+        const val STEP = JarvisTokens.Space.STEP
 
         /** Inside a row: a glyph and its text. */
         const val ROW = JarvisTokens.Space.ROW
@@ -142,6 +148,43 @@ object JarvisUi {
 
         /** A screen's margin where the content is a single centred column. */
         const val WIDE = JarvisTokens.Space.WIDE
+    }
+
+    /**
+     * How big a THING is, as distinct from the gap beside it.
+     *
+     * A size snapped to the spacing scale is how a 34 dp consent button — wide
+     * on purpose, because it is the one nobody may press by accident — quietly
+     * becomes a 32 dp one. Named in `design/tokens.json` like everything else
+     * here, and generated into [JarvisTokens].
+     */
+    object Size {
+        /** A spacer between two buttons, and the smallest tap ornament. */
+        const val CHIP = JarvisTokens.Size.CHIP
+
+        /** A sheet's own padding, inset from the screen's. */
+        const val INSET = JarvisTokens.Size.INSET
+
+        /** A dialog's side gutter. */
+        const val GUTTER = JarvisTokens.Size.GUTTER
+
+        /** The consent button's corner radius. */
+        const val EDGE = JarvisTokens.Size.EDGE
+
+        /** The margin a sheet keeps from the screen edge. */
+        const val SHEET = JarvisTokens.Size.SHEET
+
+        /** The side padding of a consent button. */
+        const val WIDE_BUTTON = JarvisTokens.Size.WIDE_BUTTON
+
+        /** How far below the top edge a floating panel sits. */
+        const val DROP = JarvisTokens.Size.DROP
+
+        /** The widest a floating panel gets, whatever the screen. */
+        const val PANEL_MAX = JarvisTokens.Size.PANEL_MAX
+
+        /** The shortest a sheet gets before it scrolls. */
+        const val SHEET_MIN = JarvisTokens.Size.SHEET_MIN
     }
 
     fun dp(context: Context, v: Int): Int =
@@ -354,7 +397,7 @@ object JarvisUi {
         this.text = text
         setTextColor(FAINT)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.HINT)
-        setLineSpacing(dp(context, 3).toFloat(), 1f)
+        setLineSpacing(dp(context, Space.TIGHT).toFloat(), 1f)
         setPadding(0, dp(context, Space.SNUG), 0, 0)
     }
 
@@ -373,7 +416,7 @@ object JarvisUi {
     // --- containers ---------------------------------------------------------
 
     /** Rounded translucent panel with a hairline accent stroke. */
-    fun panel(context: Context, fill: Int = SURFACE, stroke: Int = 0x553FD8FF): GradientDrawable =
+    fun panel(context: Context, fill: Int = SURFACE, stroke: Int = JarvisTokens.Color.ACCENT_33): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = dp(context, Space.ROW).toFloat()
             setColor(fill)
@@ -409,18 +452,18 @@ object JarvisUi {
     ): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         background = GradientDrawable().apply {
-            cornerRadius = dp(context, 10).toFloat()
-            setColor(0x22FF9E2C)
-            setStroke(dp(context, 1), 0x88FF9E2C.toInt())
+            cornerRadius = dp(context, Space.ROW).toFloat()
+            setColor(JarvisTokens.Color.WARN_13)
+            setStroke(dp(context, Space.HAIRLINE), JarvisTokens.Color.WARN_53)
         }
-        val p = dp(context, 12)
+        val p = dp(context, Space.GAP)
         setPadding(p, p, p, p)
         addView(
             TextView(context).apply {
                 this.text = text
-                setTextColor(0xFFFFC773.toInt())
+                setTextColor(JarvisTokens.Color.GOLD)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.MONO)
-                setLineSpacing(dp(context, 3).toFloat(), 1f)
+                setLineSpacing(dp(context, Space.TIGHT).toFloat(), 1f)
             }
         )
         addView(
@@ -428,7 +471,7 @@ object JarvisUi {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(context, 10) }
+            ).apply { topMargin = dp(context, Space.ROW) }
         )
     }
 
@@ -446,17 +489,17 @@ object JarvisUi {
         onClick: (() -> Unit)?,
     ): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
-        val p = dp(context, 10)
+        val p = dp(context, Space.ROW)
         setPadding(p, p, p, p)
         background = panel(
             context,
             fill = SURFACE,
-            stroke = if (!satisfied && essential) 0x66FF9E2C else 0x333FD8FF
+            stroke = if (!satisfied && essential) JarvisTokens.Color.WARN_40 else JarvisTokens.Color.ACCENT_20
         )
 
         val tone = when {
             satisfied -> APPROVE
-            essential -> 0xFFFF9E2C.toInt()
+            essential -> JarvisTokens.Color.AMBER
             else -> FAINT
         }
         addView(
@@ -487,8 +530,8 @@ object JarvisUi {
                 this.text = why
                 setTextColor(FAINT)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.HINT)
-                setLineSpacing(dp(context, 2).toFloat(), 1f)
-                setPadding(0, dp(context, 3), 0, 0)
+                setLineSpacing(dp(context, Space.MICRO).toFloat(), 1f)
+                setPadding(0, dp(context, Space.TIGHT), 0, 0)
             }
         )
         addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -500,7 +543,7 @@ object JarvisUi {
                     setTextColor(ACCENT)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
                     typeface = Typeface.MONOSPACE
-                    setPadding(dp(context, 8), 0, 0, 0)
+                    setPadding(dp(context, Space.STEP), 0, 0, 0)
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
             )
@@ -529,7 +572,7 @@ object JarvisUi {
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         }
         setSingleLine(!secret)
-        background = panel(context, fill = 0xFF080D13.toInt(), stroke = 0x443FD8FF)
+        background = panel(context, fill = JarvisTokens.Color.PANEL, stroke = JarvisTokens.Color.ACCENT_27)
         val p = dp(context, Space.GAP)
         setPadding(p, p, p, p)
         // An EditText with a hint is announced by the hint, and every field on
@@ -547,14 +590,14 @@ object JarvisUi {
             letterSpacing = 0.15f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             background = GradientDrawable().apply {
-                cornerRadius = dp(context, 26).toFloat()
-                setColor(0x2233D8FF)
-                setStroke(dp(context, 1), ACCENT)
+                cornerRadius = dp(context, Size.EDGE).toFloat()
+                setColor(JarvisTokens.Color.ACCENT_13)
+                setStroke(dp(context, Space.HAIRLINE), ACCENT)
             }
             setPadding(
-                dp(context, 34),
+                dp(context, Size.WIDE_BUTTON),
                 dp(context, Space.SECTION),
-                dp(context, 34),
+                dp(context, Size.WIDE_BUTTON),
                 dp(context, Space.SECTION),
             )
             setOnClickListener { onClick() }
@@ -570,9 +613,9 @@ object JarvisUi {
             letterSpacing = 0.12f
             typeface = Typeface.MONOSPACE
             background = GradientDrawable().apply {
-                cornerRadius = dp(context, 22).toFloat()
+                cornerRadius = dp(context, Size.GUTTER).toFloat()
                 setColor(Color.TRANSPARENT)
-                setStroke(dp(context, 1), 0x5533D8FF)
+                setStroke(dp(context, Space.HAIRLINE), JarvisTokens.Color.ACCENT_33)
             }
             setPadding(
                 dp(context, Space.SCREEN),
@@ -634,11 +677,11 @@ object JarvisUi {
             letterSpacing = 0.2f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             background = GradientDrawable().apply {
-                cornerRadius = dp(context, 12).toFloat()
-                setColor((tone and 0x00FFFFFF) or 0x22000000)
-                setStroke(dp(context, 1), tone)
+                cornerRadius = dp(context, Space.GAP).toFloat()
+                setColor(atAlpha(tone, FILL_ALPHA))
+                setStroke(dp(context, Space.HAIRLINE), tone)
             }
-            setPadding(dp(context, 20), dp(context, 18), dp(context, 20), dp(context, 18))
+            setPadding(dp(context, Space.SCREEN), dp(context, Size.INSET), dp(context, Space.SCREEN), dp(context, Size.INSET))
             // Refuse taps that arrive through another window sitting on top of
             // this one. A consent screen is exactly what a tapjacking overlay
             // wants to sit on.
@@ -658,11 +701,11 @@ object JarvisUi {
 
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = JarvisUi.dp(context, 2).toFloat()
-            color = (tint and 0x00FFFFFF) or 0x66000000
+            strokeWidth = JarvisUi.dp(context, Space.MICRO).toFloat()
+            color = atAlpha(tint, GLOW_ALPHA)
         }
-        private val margin = JarvisUi.dp(context, 14).toFloat()
-        private val len = JarvisUi.dp(context, 24).toFloat()
+        private val margin = JarvisUi.dp(context, Size.CHIP).toFloat()
+        private val len = JarvisUi.dp(context, Space.WIDE).toFloat()
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -679,4 +722,14 @@ object JarvisUi {
             canvas.drawLine(w - m, h - m, w - m, h - m - len, paint)
         }
     }
+
+    /** A colour at an opacity, without writing either of them down twice. */
+    private fun atAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
+
+    /** The fill behind a tinted chip: enough to read the tint, not to compete. */
+    private const val FILL_ALPHA = 0x22
+
+    /** And the glow under one. */
+    private const val GLOW_ALPHA = 0x66
 }

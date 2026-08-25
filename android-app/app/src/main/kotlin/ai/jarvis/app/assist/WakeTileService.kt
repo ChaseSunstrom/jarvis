@@ -75,7 +75,10 @@ class WakeTileService : TileService() {
                     )
                 )
             } else {
-                @Suppress("DEPRECATION")
+                // Deprecated in 34 and the ONLY one that exists below it: the
+                // PendingIntent overload was added in 34. Both suppressions
+                // name the same fact from lint's two directions.
+                @Suppress("DEPRECATION", "StartActivityAndCollapseDeprecated")
                 startActivityAndCollapse(intent)
             }
         } catch (t: Throwable) {

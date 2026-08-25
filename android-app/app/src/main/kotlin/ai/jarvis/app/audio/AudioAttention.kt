@@ -6,6 +6,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
 import java.util.concurrent.Executor
 
 private const val TAG = "JarvisAudioAttention"
@@ -229,6 +230,12 @@ class CallGuard(
     fun stop() {
         val listener = modeListener ?: return
         modeListener = null
+        // The version check is redundant — `modeListener` can only be non-null
+        // on API 31+, because `start()` returns before setting it below that —
+        // and lint cannot prove that, so it reported a call that would crash on
+        // Android 10. A guard costs one comparison; arguing with lint costs a
+        // suppression that hides the next real one.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         val manager = audio ?: return
         try {
             manager.removeOnModeChangedListener(listener as AudioManager.OnModeChangedListener)
@@ -243,6 +250,7 @@ class CallGuard(
      * A lambda here would put the interface in this file's enclosing class
      * instead. See [modeListener].
      */
+    @RequiresApi(Build.VERSION_CODES.S)
     private class ModeListener(
         private val onChanged: () -> Unit,
     ) : AudioManager.OnModeChangedListener {

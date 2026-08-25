@@ -15,6 +15,7 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * Long work, drawn — the same three bar modes as the console's `TaskBar.svelte`.
@@ -140,7 +141,7 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
             top.addView(
                 badge,
                 LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                    leftMargin = JarvisUi.dp(context, 8)
+                    leftMargin = JarvisUi.dp(context, JarvisUi.Space.STEP)
                 },
             )
             addView(top, wide())
@@ -214,7 +215,7 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
 
         init {
             background = GradientDrawable().apply {
-                cornerRadius = JarvisUi.dp(context, 2).toFloat()
+                cornerRadius = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat()
                 setColor(TRACK_COLOR)
             }
             fill = View(context)
@@ -233,7 +234,7 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
             }
             fill.background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT, colours
-            ).apply { cornerRadius = JarvisUi.dp(context, 2).toFloat() }
+            ).apply { cornerRadius = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat() }
 
             mode = row.bar
             percent = row.percent
@@ -308,7 +309,7 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
         private const val SWEEP_MS = 1_400L
         /** How much of the track the sweep occupies. */
         private const val SWEEP_FRACTION = 0.4f
-        private const val TRACK_COLOR = 0x33FFFFFF
-        private val FILL_START = 0xFF0E7C99.toInt()
+        private const val TRACK_COLOR = JarvisTokens.Color.TRACK
+        private val FILL_START = JarvisTokens.Color.ACCENT_DEEP
     }
 }

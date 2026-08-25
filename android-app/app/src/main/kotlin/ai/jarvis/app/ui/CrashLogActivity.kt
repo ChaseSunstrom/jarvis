@@ -82,7 +82,7 @@ class CrashLogActivity : Activity() {
                 TextView(this).apply {
                     text = "No crashes recorded."
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                     gravity = Gravity.CENTER
                     typeface = android.graphics.Typeface.MONOSPACE
                 }
@@ -115,7 +115,7 @@ class CrashLogActivity : Activity() {
             TextView(this@CrashLogActivity).apply {
                 text = record.headline()
                 setTextColor(JarvisUi.DENY)
-                textSize = 13f
+                textSize = JarvisUi.Type.MONO
                 typeface = android.graphics.Typeface.MONOSPACE
             }
         )
@@ -124,7 +124,7 @@ class CrashLogActivity : Activity() {
                 text = "${formatTime(record.timestamp)}  ·  ${record.thread}  ·  " +
                     "v${record.appVersion}  ·  Android ${record.androidVersion}"
                 setTextColor(JarvisUi.FAINT)
-                textSize = 11f
+                textSize = JarvisUi.Type.LABEL
                 typeface = android.graphics.Typeface.MONOSPACE
                 setPadding(0, JarvisUi.dp(this@CrashLogActivity, 4), 0, 0)
             }
@@ -142,7 +142,7 @@ class CrashLogActivity : Activity() {
             TextView(this).apply {
                 text = formatTime(record.timestamp)
                 setTextColor(JarvisUi.DIM)
-                textSize = 12f
+                textSize = JarvisUi.Type.HINT
                 gravity = Gravity.CENTER
                 typeface = android.graphics.Typeface.MONOSPACE
             }

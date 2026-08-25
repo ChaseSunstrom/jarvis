@@ -58,7 +58,37 @@ DESKTOP_COLOURS = {
 }
 #: Android colours that are a token at partial alpha. Kotlin carries alpha in the
 #: int, so these are generated rather than composed at the call site.
-ANDROID_DERIVED = {"TEXT_DIM_80": ("text-dim", 0xCC), "SCRIM": ("bg", 0xE6)}
+#: Android constants derived from a token at an alpha.
+#:
+#: Every one of these was a literal in the Kotlin — `0x553FD8FF`, `0xF0000308`,
+#: `0x22FF9E2C` — which is a colour nobody can find from `design/tokens.json`
+#: and nobody notices when the palette moves. Named here, they move with it.
+#: The alphas are the ones the app actually used; the RGB is the token's, so a
+#: few of these shift by a shade or two from the hand-mixed originals. The
+#: screenshot goldens are what that shift is reviewed in.
+ANDROID_DERIVED = {
+    "TEXT_DIM_80": ("text-dim", 0xCC),
+    "SCRIM": ("bg", 0xE6),
+    #: The overlay behind a sheet, and the one behind an approval — heavier,
+    #: because what is under it must not compete with a decision.
+    "SCRIM_HEAVY": ("bg", 0xF0),
+    "SCRIM_APPROVAL": ("bg", 0xF2),
+    #: The accent, at the four weights the chrome uses it: a hairline stroke, a
+    #: resting border, a lit border, a filled chip.
+    "ACCENT_13": ("accent", 0x22),
+    "ACCENT_20": ("accent", 0x33),
+    "ACCENT_27": ("accent", 0x44),
+    "ACCENT_33": ("accent", 0x55),
+    #: Warn, likewise: the banner's fill, its border, and the text on it.
+    "WARN_13": ("warn", 0x22),
+    "WARN_40": ("warn", 0x66),
+    "WARN_53": ("warn", 0x88),
+    #: A progress track, which is the one thing here that is grey rather than
+    #: coloured: it is the ABSENCE of progress.
+    "TRACK": ("text-faint", 0x33),
+    #: The panel a floating sheet is made of, at the two opacities in use.
+    "PANEL_94": ("panel", 0xF0),
+}
 #: ``colors.xml`` names the platform themes read -> token resource.
 XML_ALIASES = {
     "jarvis_bg": "jv_bg", "jarvis_surface": "jv_panel", "jarvis_accent": "jv_accent",
@@ -331,6 +361,15 @@ def gen_kotlin_tokens(tokens: dict) -> str:
     lines.append("    /** The spacing scale in dp, named for the job. */")
     lines.append("    object Space {")
     for path, _kind, value in leaves(tokens["space"]["android"]):
+        lines.append(f"        const val {const_name(path)} = {value}")
+    lines.append("    }")
+    lines.append("")
+    # Sizes, not spacing. A gap and a thing are different kinds of number, and
+    # snapping the second to the first is how a 34 dp button quietly becomes a
+    # 32 dp one — see the `size` block's description in tokens.json.
+    lines.append("    /** Control and ornament sizes in dp, named for the job. */")
+    lines.append("    object Size {")
+    for path, _kind, value in leaves(tokens["size"]["android"]):
         lines.append(f"        const val {const_name(path)} = {value}")
     lines.append("    }")
     lines.append("")

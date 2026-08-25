@@ -13,6 +13,37 @@ and is not misled).
 
 ---
 
+## Three calls that would have crashed on Android 10, in shipped code
+
+severity: major
+status: **fixed** (`audio/AudioAttention.kt`, `assist/LocalTranscriber.kt`)
+Regression: `./gradlew lintDebug`, which is blocking as of M08
+Test: the lint step itself — this is the class of defect lint exists for, and a
+device test would find it one phone at a time
+
+`minSdk` is 29. Three call sites required API 31:
+
+* `AudioManager.removeOnModeChangedListener` and the `OnModeChangedListener`
+  class it takes — the call-detection path, reached whenever a turn ends;
+* `SpeechRecognizer.createOnDeviceSpeechRecognizer` — every on-device
+  transcription.
+
+Each is an immediate `NoSuchMethodError` on Android 10 and 11, which is a third
+of the phones this app supports.
+
+Two of the three were *already guarded* and lint could not see it: the listener
+is only non-null on API 31+ because `start()` returns early below it, and the
+recogniser is behind an `isAvailable()` that checks the version one stack frame
+away. The third had no guard at all. All three are now explicit — a version
+check where the guard was invisible, `@RequiresApi` on the class, and a
+suppression that names the reason where the guard is real.
+
+They were found the day lint became blocking, having been reported and ignored
+by CI (`continue-on-error: true`, `|| true`) for the life of the file. A check
+that cannot fail a build is a check nobody reads.
+
+---
+
 ## A model server that stalls made Jarvis wait for ever
 
 severity: critical — **fixed**

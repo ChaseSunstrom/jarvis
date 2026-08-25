@@ -240,7 +240,7 @@ class ManagementActivity : Activity() {
             TextView(this).apply {
                 text = serverOrigin?.host ?: ""
                 setTextColor(JarvisUi.ACCENT)
-                textSize = 12f
+                textSize = JarvisUi.Type.HINT
                 letterSpacing = 0.16f
                 typeface = android.graphics.Typeface.MONOSPACE
             },

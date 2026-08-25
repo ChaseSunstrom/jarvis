@@ -354,7 +354,7 @@ class CompanionAskActivity : Activity() {
             TextView(ctx).apply {
                 text = if (mode == CompanionProtocol.MODE_ASK) "JARVIS ASKS" else "JARVIS"
                 setTextColor(JarvisUi.ACCENT)
-                textSize = 12f
+                textSize = JarvisUi.Type.HINT
                 letterSpacing = 0.24f
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 gravity = Gravity.CENTER
@@ -370,7 +370,7 @@ class CompanionAskActivity : Activity() {
             textSize = JarvisUi.Type.RESPONSE
             gravity = Gravity.CENTER
             setLineSpacing(JarvisUi.dp(ctx, JarvisUi.Space.TIGHT).toFloat(), 1f)
-            setPadding(0, JarvisUi.dp(ctx, 18), 0, JarvisUi.dp(ctx, JarvisUi.Space.ROW))
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Size.INSET), 0, JarvisUi.dp(ctx, JarvisUi.Space.ROW))
             // Remote text: rendered as text and nothing else.
             setTextIsSelectable(false)
             // The question changes under the user twice: once when the keyguard
@@ -407,7 +407,7 @@ class CompanionAskActivity : Activity() {
         val dismissRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(ctx, 14), 0, 0)
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Size.CHIP), 0, 0)
             addView(dismissButton)
         }
         column.addView(dismissRow)
@@ -485,7 +485,7 @@ class CompanionAskActivity : Activity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    val m = JarvisUi.dp(ctx, 6)
+                    val m = JarvisUi.dp(ctx, JarvisUi.Space.SNUG)
                     setMargins(m, m, m, m)
                 }
             )

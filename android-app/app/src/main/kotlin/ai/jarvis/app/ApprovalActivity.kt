@@ -21,6 +21,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The Tier-3 consent screen.
@@ -230,14 +231,14 @@ class ApprovalActivity : Activity() {
         tierLabel: String,
     ): ViewGroup {
         val ctx = this
-        val root = FrameLayout(ctx).apply { setBackgroundColor(0xF204070C.toInt()) }
+        val root = FrameLayout(ctx).apply { setBackgroundColor(JarvisTokens.Color.SCRIM_APPROVAL) }
         val column = JarvisUi.column(ctx, padDp = JarvisUi.Space.WIDE)
 
         column.addView(
             TextView(ctx).apply {
                 text = tierLabel
                 setTextColor(JarvisUi.DENY)
-                textSize = 12f
+                textSize = JarvisUi.Type.HINT
                 letterSpacing = 0.24f
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 gravity = Gravity.CENTER
@@ -249,7 +250,7 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 text = "Jarvis wants to do something that cannot be quietly undone."
                 setTextColor(JarvisUi.DIM)
-                textSize = 13f
+                textSize = JarvisUi.Type.MONO
                 gravity = Gravity.CENTER
             }
         )
@@ -259,7 +260,7 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 text = actionId.ifEmpty { "(no action id)" }
                 setTextColor(Color.WHITE)
-                textSize = 19f
+                textSize = JarvisUi.Type.RESPONSE
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 setTextIsSelectable(true)
                 // AN ACTION ID IS NOT A SENTENCE. TalkBack reads
@@ -283,8 +284,8 @@ class ApprovalActivity : Activity() {
                     // From the device-local action table: this text is ours.
                     text = description
                     setTextColor(JarvisUi.DIM)
-                    textSize = 14f
-                    setPadding(0, JarvisUi.dp(ctx, 4), 0, 0)
+                    textSize = JarvisUi.Type.BODY
+                    setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.TIGHT), 0, 0)
                 }
             )
         }
@@ -297,7 +298,7 @@ class ApprovalActivity : Activity() {
                 setTextColor(if (reason.isEmpty()) JarvisUi.DENY else Color.WHITE)
                 textSize = JarvisUi.Type.FIELD
                 setTextIsSelectable(true)
-                setLineSpacing(JarvisUi.dp(ctx, 3).toFloat(), 1f)
+                setLineSpacing(JarvisUi.dp(ctx, JarvisUi.Space.TIGHT).toFloat(), 1f)
             }
         )
 
@@ -321,7 +322,7 @@ class ApprovalActivity : Activity() {
             textSize = JarvisUi.Type.HINT
             typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.SECTION), 0, JarvisUi.dp(ctx, 8))
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.SECTION), 0, JarvisUi.dp(ctx, JarvisUi.Space.STEP))
             // A prompt that auto-denies is one a user has a limited time to
             // answer, and the only thing saying so is this line. Nothing read
             // it out; the countdown ran to zero in silence and the action was
@@ -348,7 +349,7 @@ class ApprovalActivity : Activity() {
             denyButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        buttons.addView(View(ctx), LinearLayout.LayoutParams(JarvisUi.dp(ctx, 14), 1))
+        buttons.addView(View(ctx), LinearLayout.LayoutParams(JarvisUi.dp(ctx, JarvisUi.Size.CHIP), 1))
         buttons.addView(
             approveButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)

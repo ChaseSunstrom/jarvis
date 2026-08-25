@@ -7,6 +7,26 @@ For the per-capability claims register — what is proven, by which command —
 see [`docs/verification.md`](docs/verification.md). This file is for the
 judgement calls behind it.
 
+## The Gradle wrapper's jar is committed
+
+`android-app/gradle/wrapper/gradle-wrapper.jar` and `gradlew` are in the
+repository. They were ignored, with a line in the README telling people to run
+`gradle wrapper` once — which means the build needs a Gradle installation
+before it can have one, and nobody could clone this repository and build the
+app. That is what "the Android build has never run here" was made of.
+
+Upstream Gradle recommends committing the wrapper for exactly this reason. The
+jar is 43 KB, it is not built from this repository, and what it does is
+download the distribution pinned in `gradle-wrapper.properties`
+(`gradle-8.10-bin.zip`) and verify it against `distributionSha256Sum` when one
+is set. `tools/bootstrap-toolchain.sh` installs everything else — JDK 17 and
+the SDK — under `$HOME`, with no root, which is the same constraint every other
+tool in this project is built to.
+
+The alternative — a wrapper that must be generated — costs a working build on a
+fresh clone and buys nothing that reviewing one 43 KB binary once does not.
+
+
 ## 1. Hardware-gated tests were not executed in this environment
 
 This repository was built in a cloud container with **no GPU, no Ollama, no

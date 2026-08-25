@@ -259,7 +259,7 @@ class AutomationsActivity : Activity() {
                 TextView(this).apply {
                     text = "No automations yet."
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                     gravity = Gravity.CENTER
                     typeface = Typeface.MONOSPACE
                 }
@@ -298,7 +298,7 @@ class AutomationsActivity : Activity() {
                 TextView(this@AutomationsActivity).apply {
                     text = task.name + if (isRunning) "  · RUNNING" else ""
                     setTextColor(if (task.enabled) JarvisUi.APPROVE else JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                     typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 }
             )
@@ -307,7 +307,7 @@ class AutomationsActivity : Activity() {
                     TextView(this@AutomationsActivity).apply {
                         this.text = text
                         setTextColor(JarvisUi.DIM)
-                        textSize = 12f
+                        textSize = JarvisUi.Type.HINT
                         setPadding(0, JarvisUi.dp(this@AutomationsActivity, 4), 0, 0)
                     }
                 )
@@ -318,7 +318,7 @@ class AutomationsActivity : Activity() {
                         "on ${task.triggerTypes().joinToString(", ").ifEmpty { "nothing" }} · " +
                         "does ${task.actionIds().joinToString(", ").ifEmpty { "nothing" }}"
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 11f
+                    textSize = JarvisUi.Type.LABEL
                     typeface = Typeface.MONOSPACE
                     setPadding(0, JarvisUi.dp(this@AutomationsActivity, 4), 0, 0)
                 }
@@ -332,7 +332,7 @@ class AutomationsActivity : Activity() {
                     TextView(this@AutomationsActivity).apply {
                         text = heldOff
                         setTextColor(JarvisUi.DENY)
-                        textSize = 11f
+                        textSize = JarvisUi.Type.LABEL
                         setPadding(0, JarvisUi.dp(this@AutomationsActivity, 6), 0, 0)
                     }
                 )
@@ -361,7 +361,7 @@ class AutomationsActivity : Activity() {
             TextView(this).apply {
                 text = task.name
                 setTextColor(JarvisUi.ACCENT)
-                textSize = 15f
+                textSize = JarvisUi.Type.FIELD
                 gravity = Gravity.CENTER
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }

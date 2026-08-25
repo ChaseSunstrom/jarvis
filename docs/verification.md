@@ -388,7 +388,12 @@ they are the only places that particular bug can come back.
 | No new hard-coded colour/spacing/type/motion value in web, Android or desktop app code; legacy counts only fall | Automated | `python3 scripts/verify/token_lint.py` (ratchet: `design/token-lint.baseline.json`, 340 legacy hits in 38 files on 2026-08-24, 4 documented exceptions) |
 | Phone, desktop and console draw one palette, every text colour AA on its ground | Automated | `python3 android-app/tools/design_token_test.py` · `cd jarvis-desktop && python3 -m pytest tests/test_theme.py -q` · `cd jarvis-web && npx vitest run src/lib/tokens.test.ts` — all three read `design/tokens.json` |
 | `/styleguide` renders every token group and the four screen states, headless | Automated | `cd jarvis-web && E2E_PORT=8299 npx playwright test e2e/styleguide.spec.ts` (screenshot under `.verify/styleguide.png`) |
-| The Compose theme (`JarvisTheme.kt`) compiles | **Unproven** | generated and Compose is enabled in the Gradle build, but this host has no JDK; `./gradlew assembleDebug` is milestone M08's proof |
+| **The Kotlin builds** | Automated | `./gradlew assembleDebug` — a JDK 17 and the SDK under `$HOME` (`android-app/tools/bootstrap-toolchain.sh`), the wrapper committed, `app-debug.apk` produced. The first time this repository has built its own Android app |
+| The Compose theme (`JarvisTheme.kt`) compiles | Automated | it is compiled by the build above, and `the generated theme` screenshot renders it |
+| **178 JVM unit tests** | Automated | `./gradlew testDebugUnitTest` |
+| **Lint is blocking, and clean** | Automated | `./gradlew lintDebug` with `abortOnError = true`. It found three real crashes-on-Android-10 while it was "reported, not enforced": two `AudioManager.OnModeChangedListener` calls and a `createOnDeviceSpeechRecognizer`, each requiring API 31 with `minSdk = 29` |
+| **Six screens, rendered and compared** | Automated | Robolectric + Roborazzi on the JVM: the orb listening and thinking, the component sheet, the approval banner, the task overlay, the generated theme. `./gradlew verifyRoborazziDebug` fails on a difference; the goldens are PNGs in the repository |
+| No hard-coded colour, size or type value left in the app's Kotlin | Automated | `python3 scripts/verify/token_lint.py --require-clean android-app/app/src/main/kotlin` — 132 hits to zero, which needed two new spacing steps, a `Size` scale and thirteen derived alpha constants in `design/tokens.json` |
 | The whole design-system gate | Automated | `bash scripts/verify/m01-design-tokens.sh` — 46 checks, measured 2026-08-24 |
 
 ### jarvis-web (HUD + management console)

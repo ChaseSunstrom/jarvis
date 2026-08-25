@@ -64,6 +64,17 @@ object JarvisTokens {
         const val PAPER = 0xFFFFFFFF.toInt() // --jv-paper
         const val TEXT_DIM_80 = 0xCC7C9EA9.toInt() // --jv-text-dim at 80%
         const val SCRIM = 0xE603070B.toInt() // --jv-bg at 90%
+        const val SCRIM_HEAVY = 0xF003070B.toInt() // --jv-bg at 94%
+        const val SCRIM_APPROVAL = 0xF203070B.toInt() // --jv-bg at 95%
+        const val ACCENT_13 = 0x224FE3FF.toInt() // --jv-accent at 13%
+        const val ACCENT_20 = 0x334FE3FF.toInt() // --jv-accent at 20%
+        const val ACCENT_27 = 0x444FE3FF.toInt() // --jv-accent at 27%
+        const val ACCENT_33 = 0x554FE3FF.toInt() // --jv-accent at 33%
+        const val WARN_13 = 0x22F2B84B.toInt() // --jv-warn at 13%
+        const val WARN_40 = 0x66F2B84B.toInt() // --jv-warn at 40%
+        const val WARN_53 = 0x88F2B84B.toInt() // --jv-warn at 53%
+        const val TRACK = 0x336F8D99.toInt() // --jv-text-faint at 20%
+        const val PANEL_94 = 0xF0070F16.toInt() // --jv-panel at 94%
     }
 
     /** The type scale in sp, named for the job. */
@@ -80,13 +91,28 @@ object JarvisTokens {
     /** The spacing scale in dp, named for the job. */
     object Space {
         const val HAIRLINE = 1
+        const val MICRO = 2
         const val TIGHT = 4
         const val SNUG = 6
+        const val STEP = 8
         const val ROW = 10
         const val GAP = 12
         const val SECTION = 16
         const val SCREEN = 20
         const val WIDE = 24
+    }
+
+    /** Control and ornament sizes in dp, named for the job. */
+    object Size {
+        const val CHIP = 14
+        const val INSET = 18
+        const val GUTTER = 22
+        const val EDGE = 26
+        const val SHEET = 32
+        const val WIDE_BUTTON = 34
+        const val DROP = 56
+        const val PANEL_MAX = 340
+        const val SHEET_MIN = 200
     }
 
     /** Corner radii in dp. */

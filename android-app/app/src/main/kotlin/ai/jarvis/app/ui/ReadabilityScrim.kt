@@ -9,6 +9,7 @@ import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * Something to read the orb and its words against, without putting them in a box.
@@ -88,10 +89,13 @@ class ReadabilityScrim(
             centreY,
             radius,
             intArrayOf(
-                Color.argb(core, 2, 5, 10),
-                Color.argb((core * 0.94f).toInt(), 2, 5, 10),
-                Color.argb((core * 0.03f).toInt(), 2, 5, 10),
-                Color.argb(0, 2, 5, 10),
+                // The ground, at four opacities. `JarvisTokens.Color.BG` and
+                // not three numbers: this is the same black the console and
+                // the desktop draw, and it moved once already.
+                withAlpha(core),
+                withAlpha((core * 0.94f).toInt()),
+                withAlpha((core * 0.03f).toInt()),
+                withAlpha(0),
             ),
             // Nearly flat out to 0.72, then off a cliff.
             //
@@ -127,4 +131,8 @@ class ReadabilityScrim(
 
     @Deprecated("Required by Drawable; TRANSLUCENT is correct for a gradient with alpha.")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    /** The background token at `alpha`, 0..255. */
+    private fun withAlpha(alpha: Int): Int =
+        (JarvisTokens.Color.BG and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
 }

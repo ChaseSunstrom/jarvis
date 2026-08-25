@@ -79,10 +79,14 @@ def scrim_numbers() -> dict:
         r"floatArrayOf\(([^)]*)\)", src).group(1))]
     fractions = [float(v) for v in re.findall(
         r"core \* ([\d.]+)f", src)]
-    rgb = tuple(
-        int(v) for v in re.search(
-            r"Color\.argb\(core, (\d+), (\d+), (\d+)\)", src).groups()
-    )
+    # The scrim's colour is the BG token now, not three numbers — M08's token
+    # pass moved every hand-mixed colour in the app into `design/tokens.json`,
+    # and this mirror asserts the DARKNESS of the scrim, which is a property of
+    # that token rather than of a literal. Read from the generated Kotlin, so
+    # the two cannot drift.
+    tokens = source(Path(SCRIM).parent / "theme" / "JarvisTokens.kt")
+    bg = int(re.search(r"const val BG = 0x([0-9A-Fa-f]{8})", tokens).group(1), 16)
+    rgb = ((bg >> 16) & 0xFF, (bg >> 8) & 0xFF, bg & 0xFF)
     return {
         "strength": strength,
         "focus_y": focus_y,

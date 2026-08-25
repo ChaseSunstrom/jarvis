@@ -22,6 +22,7 @@ import android.view.animation.LinearInterpolator
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The Jarvis HUD: the arc reactor, plus everything that frames it on a surface
@@ -594,8 +595,8 @@ class JarvisOrbView @JvmOverloads constructor(
             cx, cy, max(width, height) * 0.7f,
             intArrayOf(
                 withAlpha(currentColor, (26 * a).toInt()),
-                0xE60A0E14.toInt(),
-                0xF204070C.toInt()
+                JarvisTokens.Color.SCRIM,
+                JarvisTokens.Color.SCRIM_APPROVAL
             ),
             floatArrayOf(0f, 0.45f, 1f),
             Shader.TileMode.CLAMP

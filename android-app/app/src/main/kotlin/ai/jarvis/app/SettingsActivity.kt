@@ -101,7 +101,7 @@ class SettingsActivity : Activity() {
             TextView(ctx).apply {
                 text = "SETTINGS"
                 setTextColor(JarvisUi.DIM)
-                textSize = 11f
+                textSize = JarvisUi.Type.LABEL
                 letterSpacing = 0.3f
                 gravity = Gravity.CENTER
             }
@@ -114,7 +114,7 @@ class SettingsActivity : Activity() {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = JarvisUi.dp(ctx, 12) },
+            ).apply { topMargin = JarvisUi.dp(ctx, JarvisUi.Space.GAP) },
         )
 
         // --- server ---------------------------------------------------------
@@ -166,7 +166,7 @@ class SettingsActivity : Activity() {
         // above is only true until the next reboot — and the failure is silent,
         // which is exactly how it was found: by the phone quietly not
         // listening until the app was opened again.
-        listenStatus = TextView(ctx).apply { textSize = 12f }
+        listenStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(listenStatus)
         col.addView(
             row(
@@ -176,7 +176,7 @@ class SettingsActivity : Activity() {
         )
         overlayStatus = TextView(ctx).apply {
             setTextColor(JarvisUi.DIM)
-            textSize = 12f
+            textSize = JarvisUi.Type.HINT
         }
         col.addView(overlayStatus)
 
@@ -196,7 +196,7 @@ class SettingsActivity : Activity() {
             if (::modelStatus.isInitialized) refreshModelStatus()
         }
         col.addView(wakeOnDevice, matchWidth())
-        modelStatus = TextView(ctx).apply { textSize = 12f }
+        modelStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(modelStatus)
         col.addView(
             row(
@@ -220,7 +220,7 @@ class SettingsActivity : Activity() {
             if (::sttStatus.isInitialized) refreshSttStatus()
         }
         col.addView(sttOnDevice, matchWidth())
-        sttStatus = TextView(ctx).apply { textSize = 12f }
+        sttStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(sttStatus)
 
         // --- in the car -------------------------------------------------------
@@ -313,7 +313,7 @@ class SettingsActivity : Activity() {
 
         col.addView(JarvisUi.spacer(ctx, 12))
         col.addView(JarvisUi.label(ctx, "Permissions"))
-        permissionStatus = TextView(ctx).apply { textSize = 12f }
+        permissionStatus = TextView(ctx).apply { textSize = JarvisUi.Type.HINT }
         col.addView(permissionStatus)
         col.addView(
             row(
@@ -381,7 +381,7 @@ class SettingsActivity : Activity() {
         updateStatus = TextView(ctx).apply {
             text = "Version ${appVersionName()} (build ${appVersionCode()})"
             setTextColor(JarvisUi.DIM)
-            textSize = 12f
+            textSize = JarvisUi.Type.HINT
         }
         col.addView(updateStatus)
         prereleaseUpdates = switchRow(ctx, "Include test builds", config.allowPrereleaseUpdates)
@@ -480,7 +480,7 @@ class SettingsActivity : Activity() {
                 TextView(ctx).apply {
                     text = "Waking hours"
                     setTextColor(JarvisUi.DIM)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
@@ -493,7 +493,7 @@ class SettingsActivity : Activity() {
                 TextView(ctx).apply {
                     text = " to "
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                 }
             )
             addView(
@@ -1193,8 +1193,8 @@ class SettingsActivity : Activity() {
             text = label
             isChecked = checked
             setTextColor(JarvisUi.DIM)
-            textSize = 14f
-            setPadding(0, JarvisUi.dp(ctx, 10), 0, JarvisUi.dp(ctx, 2))
+            textSize = JarvisUi.Type.BODY
+            setPadding(0, JarvisUi.dp(ctx, JarvisUi.Space.ROW), 0, JarvisUi.dp(ctx, JarvisUi.Space.MICRO))
         }
 
     private fun toast(message: String) =

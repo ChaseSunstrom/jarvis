@@ -130,7 +130,7 @@ files both would touch, which the integrating session merges.
 
 ## Android
 
-- [ ] **M08 — Android: headless build, tests, blocking lint, JVM screenshots, device backlog** · size XL · deps M01 · parallel-ok M07
+- [x] **M08 — Android: headless build, tests, blocking lint, JVM screenshots, device backlog** · size XL · deps M01 · parallel-ok M07
   - Scope: toolchain under `$HOME` with no root — `android-app/tools/bootstrap-toolchain.sh`
     installs JDK 17 (`~/.local/jdk`), cmdline-tools, `platforms;android-35`, `build-tools`,
     `platform-tools` (`~/Android/Sdk`); the Gradle wrapper (`gradlew`, `gradle-wrapper.jar`) is

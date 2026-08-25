@@ -21,6 +21,7 @@ import android.view.ViewGroup
 import android.view.animation.LinearInterpolator
 import kotlin.math.max
 import kotlin.math.min
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The Jarvis power-on: a black screen, a hairline scan, an arc reactor igniting
@@ -465,7 +466,7 @@ class JarvisBootAnimation @JvmOverloads constructor(
         private const val WORDMARK = "JARVIS"
 
         /** The scan line itself: near-white, faintly cyan. */
-        private const val SCAN_WHITE = 0xFFDFF8FF.toInt()
+        private const val SCAN_WHITE = JarvisTokens.Color.TEXT_BRIGHT
 
         /**
          * The action count the last successful registration recorded, for the

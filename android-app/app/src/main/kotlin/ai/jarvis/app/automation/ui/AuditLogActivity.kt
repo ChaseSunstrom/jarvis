@@ -154,7 +154,7 @@ class AuditLogActivity : Activity() {
                 TextView(this).apply {
                     text = "Nothing has run yet."
                     setTextColor(JarvisUi.FAINT)
-                    textSize = 14f
+                    textSize = JarvisUi.Type.BODY
                     gravity = Gravity.CENTER
                     typeface = Typeface.MONOSPACE
                 }
@@ -201,7 +201,7 @@ class AuditLogActivity : Activity() {
             TextView(this@AuditLogActivity).apply {
                 text = "${entry.actionId}  ·  ${entry.status}"
                 setTextColor(toneFor(entry))
-                textSize = 13f
+                textSize = JarvisUi.Type.MONO
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }
         )
@@ -210,7 +210,7 @@ class AuditLogActivity : Activity() {
                 text = "${formatTime(entry.timestamp)}  ·  ${entry.tier.name}  ·  " +
                     "${entry.decision.name}  ·  ${entry.source}  ·  ${entry.durationMs}ms"
                 setTextColor(JarvisUi.FAINT)
-                textSize = 11f
+                textSize = JarvisUi.Type.LABEL
                 typeface = Typeface.MONOSPACE
                 setPadding(0, JarvisUi.dp(this@AuditLogActivity, 4), 0, 0)
             }
@@ -235,7 +235,7 @@ class AuditLogActivity : Activity() {
             TextView(this).apply {
                 text = formatTime(entry.timestamp)
                 setTextColor(JarvisUi.DIM)
-                textSize = 12f
+                textSize = JarvisUi.Type.HINT
                 gravity = Gravity.CENTER
                 typeface = Typeface.MONOSPACE
             }

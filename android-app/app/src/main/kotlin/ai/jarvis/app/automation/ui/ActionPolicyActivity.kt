@@ -174,7 +174,7 @@ class ActionPolicyActivity : Activity() {
             TextView(this).apply {
                 text = tierBlurb(tier)
                 setTextColor(JarvisUi.DIM)
-                textSize = 11f
+                textSize = JarvisUi.Type.LABEL
             }
         )
 

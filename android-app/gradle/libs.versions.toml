@@ -26,6 +26,17 @@ carApp = "1.4.0"
 # from the same tokens as the console and the desktop. The BOM pins every
 # androidx.compose artifact to one release; the compiler ships with Kotlin 2.x.
 composeBom = "2024.12.01"
+# Robolectric runs Android code on the JVM: real resources, a real layout pass,
+# a real Canvas — everything an emulator does except the emulator. It is what
+# lets a screenshot test exist on a host with no device, which is the whole of
+# M08's argument.
+robolectric = "4.14.1"
+# Roborazzi turns a Robolectric-rendered View or Composable into a PNG and
+# compares it with a golden. `verifyRoborazziDebug` fails on a difference; the
+# goldens live beside the tests and are reviewed like code.
+roborazzi = "1.32.2"
+androidxTest = "1.6.1"
+androidxTestJunit = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -50,7 +61,16 @@ androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
 
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTest" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidxTestJunit" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+
 [plugins]
+roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

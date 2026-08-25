@@ -421,7 +421,7 @@
 		color: var(--jv-text-dim);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		max-height: 12rem;
+		max-height: var(--jv-measure-log);
 		overflow-y: auto;
 	}
 	.tree {

@@ -104,11 +104,31 @@ jobs:
 
       # Wrong Build.VERSION.SDK_INT guards are invisible to the compiler and
       # only bite on a real device (minSdk is 29). Lint is the only thing that
-      # can see them, so run it and surface the report. Non-blocking for now —
-      # it is reported, not enforced, until the existing findings are triaged.
-      - name: Lint (reported, not enforced)
-        continue-on-error: true
-        run: gradle :app:lintDebug --no-daemon || true
+      # can see them — and while it was "reported, not enforced" it was
+      # reporting three of them: two `AudioManager.OnModeChangedListener` calls
+      # and one `createOnDeviceSpeechRecognizer`, each an instant crash on
+      # Android 10 and 11. They are fixed, the count is zero, and the step
+      # blocks now (M08). `abortOnError = true` lives in the build file so a
+      # local run fails the same way.
+      - name: Lint (blocking)
+        run: gradle :app:lintDebug --no-daemon
+
+      # The screens, on a machine with no screen. Robolectric renders them on
+      # the JVM and Roborazzi compares each frame with the golden beside the
+      # test; a difference fails the job and the PNGs are uploaded so the
+      # difference can be looked at rather than guessed at.
+      - name: Screenshot goldens (Robolectric + Roborazzi)
+        run: |
+          bash android-app/tools/bootstrap-toolchain.sh
+          gradle :app:verifyRoborazziDebug --no-daemon
+
+      - name: Upload screenshot diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roborazzi
+          path: android-app/app/build/outputs/roborazzi/
+          if-no-files-found: ignore
 
       - name: Summarise lint findings
         continue-on-error: true

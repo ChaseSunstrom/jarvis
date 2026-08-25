@@ -35,6 +35,7 @@ import android.view.WindowManager
 import android.view.ViewTreeObserver
 import android.widget.LinearLayout
 import android.widget.TextView
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * Siri-like activation surface for ACTION_ASSIST / ACTION_VOICE_COMMAND — the
@@ -127,11 +128,11 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
      */
     private fun sizeAsCard() {
         val screen = resources.displayMetrics.widthPixels
-        val width = minOf(screen - JarvisUi.dp(this, 32), JarvisUi.dp(this, 340))
+        val width = minOf(screen - JarvisUi.dp(this, JarvisUi.Size.SHEET), JarvisUi.dp(this, JarvisUi.Size.PANEL_MAX))
         window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         window.attributes = window.attributes.also {
             it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            it.y = JarvisUi.dp(this, 56)
+            it.y = JarvisUi.dp(this, JarvisUi.Size.DROP)
         }
         blurBehind()
     }
@@ -161,7 +162,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     }
 
     private fun buildUi(): ViewGroup {
-        val pad = JarvisUi.dp(this, 20)
+        val pad = JarvisUi.dp(this, JarvisUi.Space.SCREEN)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -236,10 +237,10 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             // drawn over whatever the dim is over rather than needing a slab
             // behind it.
             view.setShadowLayer(
-                JarvisUi.dp(this, 6).toFloat(),
+                JarvisUi.dp(this, JarvisUi.Space.SNUG).toFloat(),
                 0f,
-                JarvisUi.dp(this, 1).toFloat(),
-                0xF0000308.toInt(),
+                JarvisUi.dp(this, JarvisUi.Space.HAIRLINE).toFloat(),
+                JarvisTokens.Color.SCRIM_HEAVY,
             )
         }
         root.addView(transcriptView, fullWidth())

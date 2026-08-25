@@ -448,7 +448,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         listenButton = JarvisUi.ghost(this, "…") { toggleListening() }
         listenReason = TextView(this).apply {
             setTextColor(JarvisUi.DIM)
-            textSize = 11f
+            textSize = JarvisUi.Type.LABEL
             gravity = Gravity.CENTER
             setPadding(0, JarvisUi.dp(this@MainActivity, 4), 0, 0)
         }

@@ -16,6 +16,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.LinearLayout
 import kotlin.math.min
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * A chip that floats over whatever you are doing while Jarvis is working.
@@ -155,7 +156,7 @@ class TaskOverlay(private val context: Context) {
     }
 
     private fun build(): ViewGroup {
-        val pad = JarvisUi.dp(context, 12)
+        val pad = JarvisUi.dp(context, JarvisUi.Space.GAP)
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
@@ -163,9 +164,9 @@ class TaskOverlay(private val context: Context) {
             // a dark room and wants no edge, whereas this is a strip of small
             // text over an arbitrary app and needs a ground to be read against.
             background = GradientDrawable().apply {
-                cornerRadius = JarvisUi.dp(context, 10).toFloat()
+                cornerRadius = JarvisUi.dp(context, JarvisUi.Space.ROW).toFloat()
                 setColor(PANEL)
-                setStroke(JarvisUi.dp(context, 1), STROKE)
+                setStroke(JarvisUi.dp(context, JarvisUi.Space.HAIRLINE), STROKE)
             }
             setOnClickListener { openTasks() }
         }
@@ -195,7 +196,7 @@ class TaskOverlay(private val context: Context) {
 
     private fun params(): WindowManager.LayoutParams {
         val screen = context.resources.displayMetrics.widthPixels
-        val width = min(screen - JarvisUi.dp(context, 24), JarvisUi.dp(context, MAX_WIDTH_DP))
+        val width = min(screen - JarvisUi.dp(context, JarvisUi.Space.WIDE), JarvisUi.dp(context, MAX_WIDTH_DP))
         return WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -223,8 +224,8 @@ class TaskOverlay(private val context: Context) {
         /** So a redraw lands just after the moment a task ages out, not just before. */
         private const val EXPIRY_SLACK_MS = 50L
 
-        private val PANEL = 0xF00A1620.toInt()
-        private val STROKE = 0x332FC9F0
+        private val PANEL = JarvisTokens.Color.PANEL_94
+        private val STROKE = JarvisTokens.Color.ACCENT_20
 
         fun canShow(context: Context): Boolean =
             android.provider.Settings.canDrawOverlays(context)
