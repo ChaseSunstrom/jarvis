@@ -414,6 +414,69 @@ expected to fail until that milestone lands.
 The honesty rule from `PROCESS.md` applies unchanged: a scenario that cannot run on this host is
 a failure or a `BLOCKERS.md` entry, never a skip.
 
+## Delta — compose-native testing and the local AI toolbelt (added 2026-08-25, mid-run)
+
+A second late addition, and the bigger of the two: **the compose stack is the runtime**, so the
+tests run against the containers that are actually in use, and a short list of local services is
+adopted only where it measurably improves a number the suite already reports.
+
+### The thing that changed underneath: Docker works now
+
+`docs/AUDIT.md` recorded "no Docker socket for `jarvisdev`", and `BLOCKERS.md` asked the
+operator for it. It is there:
+
+```
+$ id -nG | grep docker        → docker
+$ docker run --rm hello-world → Hello from Docker!
+$ docker compose ls           → jarvis running(3), jarvis-core restarting(1), running(6)
+```
+
+Everything that entry blocked is now doable on this host: the coding sandbox's live containment
+check (M19), SearXNG for the live research backend, and this addition in full.
+
+### What the running stack looks like today
+
+| Fact | Measured |
+|---|---|
+| Services | 8 in `jarvis-core/docker-compose.yml` (core, browser, three Wyoming, photon, config-init, plus profiles for searxng/mosquitto), 4 in the root file (web, orchestrator, sandbox, init) |
+| Pinned images | `busybox:1.36` only. **Five are `:latest`** — whisper, piper, openwakeword, photon, searxng — so "the version we tested" is not a thing that exists |
+| Healthchecks | jarvis-core, jarvis-browser, jarvis-web, orchestrator, mosquitto, searxng. **None on the three Wyoming services**, which are exactly the ones the voice path fails on |
+| Resource limits | none anywhere (the commented-out Ollama block has one) |
+| Named volumes | `mosquitto-data` only; everything else is a bind mount into the repo |
+| Health, right now | `photon` has been **restarting (75)** in a loop; `jarvis-web` is **unhealthy** (its healthcheck cannot connect, and its logs show `[404] GET /v1/models`). Both were true before this addition and nothing in the repo said so |
+| Host | 4 vCPU, 8 GB RAM (2 GB used, 5 GB available), 41 GB free on `/`. No GPU |
+
+That last row is the finding: the suite has been green while two containers in the stack it
+claims to describe have been broken for two days. Nothing tested the runtime.
+
+### What the addition asks for, and what it costs here
+
+| Slot | Default named | Feasible on this host | Cost |
+|---|---|---|---|
+| Compose as the test runtime (`up -d --wait`, unhealthy = failure, ERROR logs = failure) | — | yes | seconds per run |
+| Resilience scenarios (restart core mid-conversation, kill STT mid-utterance) | — | yes | needs the volume snapshot below to stay re-runnable |
+| Volume snapshot/restore around destructive scenarios | — | yes (`docker run --rm -v vol:/v -v out:/o busybox tar`) | one tar per affected volume |
+| Shared headless browser service | Playwright/Chromium | yes — jarvis-browser already is one; the rig currently uses the Node Playwright in `jarvis-web/node_modules` | none new if the two are merged |
+| Crawling/extraction | Crawl4AI, Docling | **needs measuring**: both are large images and Docling's models are hundreds of MB on a 41 GB disk with 5 GB RAM free | to be recorded in `docs/TOOLING_DECISIONS.md` |
+| Embeddings + reranking | TEI / Infinity + a cross-encoder | plausible on CPU; `memory/vectors.py` already speaks an embedding endpoint and currently points at the model server | ~1 GB RSS for a small model |
+| Vector store | Qdrant, or a written justification for the embedded one | either; the store today is a JSON sidecar with cosine similarity over ≤ 500 entries | a paragraph, or a service |
+| Speech as services | speaches / faster-whisper-server; Kokoro-FastAPI beside Piper | the Wyoming containers already are services — the change is the OpenAI-compatible shape and the A/B | Kokoro is ~1 GB |
+| Agent observability | Langfuse (self-hosted) | needs Postgres + ClickHouse: on 8 GB RAM that is the largest single ask here | to be measured before adopting |
+| n8n bridge | existing self-hosted n8n over the tailnet | flag-gated, off by default | none until enabled |
+
+### The rule that decides each of them
+
+The addition's own words: **snapshot the scorecard baseline before, and the metric must improve
+after, or the service comes out.** The suite already reports the numbers this needs — research
+eval pass rate and cited sources, routing accuracy, WER, per-stage latency
+(`.verify/live/results.json`, `docs/LIVE_TEST_REPORT.md`) — so "it feels better" is not
+available as an answer. `docs/TOOLING_DECISIONS.md` records each choice, each rejection, and
+the before/after numbers.
+
+Explicitly out, by instruction: a second inference runtime (no Ollama), agent frameworks that
+would replace the agent loop, anything cloud, and GPU residency for any new service without a
+written VRAM justification.
+
 ## Hard constraints
 
 | Constraint | Status | Evidence |

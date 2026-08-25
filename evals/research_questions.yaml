@@ -1,0 +1,42 @@
+# The fixed question set the research engine is measured on.
+#
+# Two backends read this file:
+#
+#   --backend fixture   the questions are answered from `testing/live/fixtures/`
+#                       — a small web this repository owns — through the REAL
+#                       search client, fetcher, reader and writer. Every fact
+#                       below appears in those pages, so "correct" is checkable
+#                       rather than plausible.
+#   --backend live      the same questions against the operator's SearXNG and
+#                       the open web. Facts cannot be pinned there (the web
+#                       changes), so the live run checks the SHAPE: a report per
+#                       question, enough distinct sources, and links that
+#                       resolve.
+#
+# `must_contain` is checked only in fixture mode, for exactly that reason.
+
+questions:
+  - question: What is the maximum boiler pressure in the fixture handbook?
+    mode: quick
+    min_sources: 1
+    must_contain: ["2.5 bar"]
+    # The page that has it, so a failure says which one was missed.
+    expect_source: heating.html
+
+  - question: What flow temperature does the fixture handbook recommend, and why?
+    mode: deep
+    min_sources: 1
+    must_contain: ["55"]
+    expect_source: heating.html
+
+  - question: What does the fixture handbook say about electricity and the cheap rate?
+    mode: deep
+    min_sources: 1
+    must_contain: ["00:30"]
+    expect_source: power.html
+
+  - question: Where is the stopcock and what is the mains pressure in the fixture house?
+    mode: deep
+    min_sources: 1
+    must_contain: ["3.1 bar"]
+    expect_source: water.html

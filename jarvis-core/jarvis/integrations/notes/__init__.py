@@ -524,6 +524,23 @@ def _register_tools(jarvis: "Jarvis", store: NoteStore) -> None:
             str(args.get("tag") or ""),
             int(args.get("limit") or DEFAULT_LIMIT),
         )
+        if not results:
+            # Say so plainly. A bare empty list invited the model to search
+            # again with different words, and again — three rounds of a turn's
+            # budget spent looking for something that was never written down.
+            return {
+                "status": "ok",
+                "count": 0,
+                "results": [],
+                "message": (
+                    "Nothing matched. Do not search the notes again with "
+                    "different words — there is no note about this. If the "
+                    "answer is on the web, look there (web_search, or "
+                    "deep_research for anything needing several pages). "
+                    "Otherwise say you have nothing written down."
+                ),
+                "notes_held": len(store.notes),
+            }
         return {"status": "ok", "count": len(results), "results": results}
 
     registry.register(

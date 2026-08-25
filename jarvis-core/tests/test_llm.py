@@ -1895,3 +1895,27 @@ async def test_an_answer_that_is_not_preceded_by_preamble_is_untouched(tmp_path)
     assert agent.last_result.text == "Good evening, Sir."
     assert agent.last_result.preamble == ""
     await shutdown(jarvis)
+
+
+async def test_a_turn_that_only_spoke_before_its_tool_still_says_that(tmp_path):
+    """"I'll start the research" is a true sentence and the best answer there is.
+
+    The preamble is dropped when something REPLACED it, which is the
+    contradiction case ("already off" … "now off"). When the answering round
+    says nothing at all, dropping it left the canned "I didn't manage to put an
+    answer into words" in front of a user whose job had in fact started.
+    """
+    jarvis, _objects = await build_house(tmp_path)
+    fake = FakeOllama(
+        say("Very good, Sir — I shall look into it.")
+        + call_tool("turn_on", {"entity_id": "light.reading_lamp"}),
+        # The answering round returns nothing at all.
+        say(""),
+    )
+    agent = make_agent(jarvis, fake)
+
+    await collect(agent, "look into the reading lamp")
+
+    assert agent.last_result.text == "Very good, Sir — I shall look into it."
+    assert "didn't manage" not in agent.last_result.text
+    await shutdown(jarvis)

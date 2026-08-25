@@ -452,3 +452,35 @@ async def test_a_tool_this_turn_already_called_is_not_narrated(jarvis):
     # Two rounds, not three: no nudge, and no corrective round.
     assert agent.last_result.rounds == 2
     assert [call["name"] for call in agent.last_result.tool_calls] == ["code_task"]
+
+
+async def test_a_turn_that_already_acted_is_never_nudged(jarvis):
+    """The correction must not be able to cause an action.
+
+    Asked to stop a research run, the model called `cancel_task`, summarised
+    what it had done, and the summary mentioned `deep_research`. The detector
+    matched it, the nudge told the model to "make the call properly", and it
+    STARTED THE RESEARCH AGAIN — an action nobody asked for, caused by a
+    correction. A turn that has already called something is reporting.
+    """
+    client = _Scripted(
+        _Stream("Stopping it.", call=ToolCall(name="code_task", arguments={"repo": "x"})),
+        _Stream("I have called code_task and it is no longer running, Sir."),
+    )
+    agent = _agent(jarvis, client)
+
+    said = await _say(agent, "stop that")
+
+    assert "no longer running" in said
+    assert agent.last_result.rounds == 2, "a corrective round ran"
+
+
+def test_a_report_that_something_is_running_is_not_a_claim_of_calling_it():
+    """"X is running" has no call cue in it at all, which is the point: the
+    detector looks for the words a model uses when it SCRIPTS a call, and
+    "running" is not one of them."""
+    assert narrated_tool_call("code_task is running now, Sir.", NAMES) == ""
+    assert narrated_tool_call("The job under code_task is under way.", NAMES) == ""
+    # A bare participle with no modal in front of it still is one.
+    assert narrated_tool_call("Now calling code_task.", NAMES) == "code_task"
+    assert narrated_tool_call("I called code_task for you.", NAMES) == "code_task"

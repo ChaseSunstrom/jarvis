@@ -350,6 +350,21 @@ they are the only places that particular bug can come back.
 | A 2-second median round trip | **Missed, and reported** | measured 15–20 s per spoken turn on this host (27 B model, no GPU, four shared vCPUs). `ISSUES.md` and `BLOCKERS.md` say what it would take |
 | A real microphone in a real room | **Unproven** | the rig synthesises speech; acoustics are not simulated |
 
+### The research engine
+
+| Claim | Level | Proof |
+|---|---|---|
+| A question becomes several searches, the best pages are read, and the report cites what was read | Automated | `python3 evals/research_eval.py --backend fixture` — four questions against a fixture web this repository owns, through the real search client, ranker, reader and writer |
+| Every fact in a report is in a page that was read | Automated *against the fixture web* | the same command: `must_contain` and `expect_source` per question. The open web cannot be pinned this way, which is why the facts are only checked here |
+| Every citation resolves | Automated | the same command — each link is fetched (HEAD, then GET for a server that refuses HEAD) |
+| A page's leads are followed, once | Automated | `tests/test_research.py::test_a_lead_from_the_pages_is_followed_once` |
+| Quick and deep are one engine with two budgets, and a mode cannot raise a configured limit | Automated | `test_quick_mode_does_not_follow_leads_and_stays_small`, `test_a_mode_cannot_raise_a_configured_limit` |
+| Each key claim says how many of the sources read support it | Automated | `tests/test_research_plan.py` (cross-check), and the `## Confidence` section of every report |
+| No cloud search fallback exists anywhere | Automated | `scripts/verify/m18-research.sh` greps for one; `web.search` fails saying SearXNG is not configured |
+| The report is a markdown file a person can open | Automated | `test_the_report_is_written_to_a_file_somebody_can_open` — `<config>/research/<date>-<slug>.md` |
+| Research against the **real** SearXNG and the open web | **Scripted** | `SEARXNG_URL=… python3 evals/research_eval.py --backend live` — needs the operator's SearXNG, which `jarvisdev` cannot start here (`BLOCKERS.md`). The command refuses clearly rather than pretending when the URL is unset |
+| jarvis-browser's own guards (SSRF, robots, JavaScript rendering) | Automated *in its own suite* | `python3 -m pytest jarvis-browser/tests -q`. The fixture backend uses a stand-in for `/fetch` (`testing/live/fixture_browser.py`) and proves nothing about the browser |
+
 ### The design system
 
 | Claim | Level | Proof |

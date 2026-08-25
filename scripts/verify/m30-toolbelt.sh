@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# M30 — the toolbelt contract and its measurements. Written when the milestone is built; until then it fails,
+# which is what an unbuilt milestone is supposed to do.
+source "$(dirname "$0")/lib.sh"
+verify_begin "M30" "the toolbelt contract and its measurements"
+use_venv
+# Deliberately not a marker file: a check that passes when a file exists is a
+# check anybody can satisfy with `touch`. An unbuilt milestone fails, and the
+# failure names where its scope is written down.
+_v_fail "M30 is not built yet — see its scope in MILESTONES.md" ""
+verify_end

@@ -23,7 +23,8 @@ import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PAGES = HERE / "fixtures" / "handbook"
+FIXTURES = HERE / "fixtures"
+PAGES = FIXTURES / "handbook"
 
 #: The facts the scenarios assert on, and where each one lives. Kept here so a
 #: scenario and the page it checks cannot drift apart silently: the rig's own
@@ -39,17 +40,31 @@ FACTS = {
 }
 
 
+def pages_for(name: str) -> Path:
+    return FIXTURES / name
+
+
 def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
 
 
-class Site:
-    """The handbook, on a port, for as long as the `with` block lasts."""
+#: The fixture web is deliberately more than one site. A research run that can
+#: only read one host cannot exercise the per-domain cap, and a claim cannot be
+#: corroborated by a second source that does not exist — so the same facts
+#: appear in a household handbook and in a manufacturer's manual, in different
+#: words.
+SITES = ("handbook", "manual")
 
-    def __init__(self, port: int | None = None, host: str = "127.0.0.1") -> None:
+
+class Site:
+    """One fixture site, on a port, for as long as the `with` block lasts."""
+
+    def __init__(self, port: int | None = None, host: str = "127.0.0.1",
+                 pages: str | Path = PAGES) -> None:
         self.host = host
+        self.pages = Path(pages) if not isinstance(pages, Path) else pages
         self.port = port or free_port()
         self._server: http.server.ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -60,7 +75,7 @@ class Site:
 
     def start(self) -> "Site":
         handler = functools.partial(
-            http.server.SimpleHTTPRequestHandler, directory=str(PAGES)
+            http.server.SimpleHTTPRequestHandler, directory=str(self.pages)
         )
         # Quieted on the class the partial builds, not on the partial: setting
         # it on `handler` above did nothing (a functools.partial has no

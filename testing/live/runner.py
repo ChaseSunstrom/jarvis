@@ -44,6 +44,9 @@ from testing.live.report import (  # noqa: E402
     write_json,
 )
 from testing.live.scenario import Scenario, load_all  # noqa: E402
+from testing.live.fixture_browser import Browser as FixtureBrowser  # noqa: E402
+from testing.live.fixture_search import Search as FixtureSearch  # noqa: E402
+from testing.live.fixture_site import SITES, Site as FixtureSite, pages_for  # noqa: E402
 from testing.live.transport import (  # noqa: E402
     TURN_TIMEOUT,
     ApiVoice,
@@ -88,6 +91,12 @@ TOOL_CAPABILITY = {
     "note_append": "notes",
     "note_search": "notes",
     "deep_research": "research",
+    # A quick look-up IS research in the sense that matters here: it went to
+    # the web rather than answering from the model. The two modes are one
+    # engine (`MODE_BUDGETS`), and the routing table should not pretend
+    # otherwise.
+    "web_search": "research",
+    "web_fetch": "research",
     "code_task": "coding",
     "apply_code_task": "coding",
     "run_background_task": "task",
@@ -106,19 +115,20 @@ def _capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
         return "coding"
     if "research" in task_kinds:
         return "research"
-    for tool in tools:
-        capability = TOOL_CAPABILITY.get(tool)
-        # `skills` is deliberately not decisive here: reading a skill is a
-        # MEANS, not the capability chosen. A turn that consulted the house
-        # style guide and then turned a light on was routed to "house"; one
-        # that consulted it and handed the job to the background was routed to
-        # "task". It only wins when nothing else happened, below.
-        if capability and capability not in ("task", "skills"):
-            return capability
+    # By PRECEDENCE, not by the order the tools happened to be called. A
+    # look-up that searched the notes first and then went to the web is
+    # research: the notes search was a means, and reading tools in call order
+    # scored it as "notes" because that call came first.
+    chosen = {
+        TOOL_CAPABILITY[tool] for tool in tools if tool in TOOL_CAPABILITY
+    }
     if any(call.startswith("memory.") for call in calls):
-        return "memory"
+        chosen.add("memory")
     if any(call.startswith("notes.") for call in calls):
-        return "notes"
+        chosen.add("notes")
+    for capability in ("coding", "research", "memory", "notes"):
+        if capability in chosen:
+            return capability
     if task_kinds or "run_background_task" in tools:
         return "task"
     # Only calls that moved something in the HOUSE count as house control. Any
@@ -197,6 +207,10 @@ class Runner:
         #: Rebuilt whenever a scenario restarts the server.
         self.link: Link | None = None
         self.observer: Observer | None = None
+        #: The fixture web, started with the harness and stopped with it.
+        self._sites: list[FixtureSite] = []
+        self._search: FixtureSearch | None = None
+        self._browser: FixtureBrowser | None = None
         self.judge = Judge()
         self.mouth = Mouth()
         self.ears = Ears()
@@ -217,9 +231,34 @@ class Runner:
                 "(source .env); the rig runs Jarvis against the real model"
             )
 
+    def _fixture_web(self) -> dict[str, str]:
+        """A small web this repository owns, for the scenarios that research.
+
+        Started for every run rather than only the research ones: it is three
+        threads and no network, and a `web:` block that appears for some
+        scenarios and not others would be a different Jarvis depending on which
+        test you ran. Each site gets its own loopback ADDRESS, because the
+        per-domain cap and the cross-check both key on the host.
+        """
+        self._sites = [
+            FixtureSite(host=f"127.0.0.{index + 2}", pages=pages_for(name)).start()
+            for index, name in enumerate(SITES)
+        ]
+        by_name = dict(zip(SITES, (site.url for site in self._sites)))
+        self._search = FixtureSearch(by_name).start()
+        self._browser = FixtureBrowser([site.url for site in self._sites]).start()
+        return {"search": self._search.url, "browser": self._browser.url}
+
+    def _stop_fixture_web(self) -> None:
+        for closing in (self._browser, self._search, *self._sites):
+            if closing is not None:
+                closing.stop()
+        self._sites, self._search, self._browser = [], None, None
+
     def _harness(self):
         from testing.harness import Harness
 
+        web = self._fixture_web()
         work_dir = os.environ.get("LIVE_WORK_DIR") or str(OUT_DIR / "harness")
         return Harness(
             work_dir=work_dir,
@@ -233,6 +272,8 @@ class Runner:
                 "tts": int(os.environ.get("LIVE_TTS_PORT", "10200")),
                 "wake": int(os.environ.get("LIVE_WAKE_PORT", "10400")),
             },
+            search_url=web["search"],
+            browser_url=web["browser"],
         )
 
     async def run(self) -> list[ScenarioResult]:
@@ -282,6 +323,7 @@ class Runner:
             if console is not None:
                 console.stop()
             harness.stop(cleanup=not self.keep)
+            self._stop_fixture_web()
         return self.results
 
     def _say_result(self, result: ScenarioResult) -> None:

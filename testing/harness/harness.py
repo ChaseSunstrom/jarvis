@@ -257,6 +257,8 @@ def build_config(
     wake_port: int,
     model: str = DEFAULT_MODEL,
     wyoming_host: str = "127.0.0.1",
+    search_url: str = "",
+    browser_url: str = "",
 ) -> str:
     """A complete jarvis-core configuration.yaml, pointed at the fakes.
 
@@ -265,6 +267,26 @@ def build_config(
     deterministic persona, the companion/device channel, sensors, automation,
     and the recorder in the throwaway config directory.
     """
+    # Only when both are given. `web.search` with no SearXNG fails saying so,
+    # which is the shipped behaviour; a harness that half-configured it would
+    # be testing a state nobody runs.
+    web_block = (
+        f"""
+# Private search and page fetching. Pointed at whatever the caller passed —
+# the research eval passes its own fixture web, and nothing here reaches the
+# internet unless an operator points it there.
+web:
+  searxng_url: {search_url}
+  browser_url: {browser_url}
+  # A token, because `browser_configured` is url AND token — a browser_url with
+  # no token leaves every fetch failing with "not configured", which is the
+  # right refusal and a confusing way to discover a harness is half-wired.
+  browser_token: harness-browser-token
+  safe_search: 1
+"""
+        if search_url and browser_url
+        else ""
+    )
     return f"""\
 # Written by testing/harness/harness.py. Throwaway: delete the directory.
 jarvis:
@@ -311,6 +333,13 @@ sun:
 
 demo:
   create_areas: true
+
+{web_block}
+# Researching a question: several searches, read the best pages, write it up
+# with citations. Needs `web:` above, which the caller has to point somewhere.
+research:
+  max_queries: 3
+  max_sources: 4
 
 # The record of everything Jarvis says without being asked. On here because
 # the live rig asserts on it: a notification that exists only as a log line is
@@ -371,7 +400,13 @@ llm:
   # An inline persona: no prompts/ directory needed, and the system prompt is
   # the same on every run, so the fake model's rules match deterministically.
   persona: "You are Jarvis, a composed British butler. Answer in one sentence."
-  max_tool_rounds: 3
+  # Six, not three. Three is enough for a scripted model that answers on cue
+  # and not for a real one: the live rig watched a turn spend all three rounds
+  # searching notes for something that was on the web, and the round budget ran
+  # out before it could answer at all. The shipped default is what
+  # `configuration.yaml` says; this is the harness being generous enough to see
+  # the behaviour rather than the ceiling.
+  max_tool_rounds: 6
   approval_ttl: 60
   options:
     temperature: 0
@@ -503,6 +538,8 @@ class Harness:
         save_audio: bool = True,
         ollama_url: str | None = None,
         wyoming: dict[str, Any] | None = None,
+        search_url: str | None = None,
+        browser_url: str | None = None,
     ) -> None:
         self.host = host
         # The fakes never leave this box: jarvis-core reaches them over
@@ -532,6 +569,12 @@ class Harness:
         #: voice services is a useful third thing.
         self.external_ollama_url = str(ollama_url).rstrip("/") if ollama_url else ""
         self.external_wyoming = dict(wyoming) if wyoming else {}
+        #: The `web` integration's two services. Empty means the block is left
+        #: out of the config, and `web.search` fails saying it is not
+        #: configured — which is the shipped behaviour and the right default
+        #: for a harness that must never reach the internet by accident.
+        self.search_url = str(search_url or "").rstrip("/")
+        self.browser_url = str(browser_url or "").rstrip("/")
         self.ollama_script = Path(ollama_script).resolve() if ollama_script else DEFAULT_OLLAMA_SCRIPT
         self.wyoming_script = Path(wyoming_script).resolve() if wyoming_script else None
 
@@ -789,6 +832,8 @@ class Harness:
                 wake_port=self.ports["wake"],
                 model=self.model,
                 wyoming_host=getattr(self, "wyoming_host", self.fake_host),
+                search_url=self.search_url,
+                browser_url=self.browser_url,
             ),
             encoding="utf-8",
         )

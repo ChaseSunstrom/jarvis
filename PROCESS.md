@@ -51,6 +51,25 @@ for the milestone run.
   tests where the logic is, a Playwright spec where the behaviour is visible,
   a contract table in `tests/contracts/` where two languages must agree.
 
+### 2b. And it has to work in the stack that actually runs
+
+From M28 on, the compose stack is the runtime under test. `docker compose up -d --wait` is the
+first step of the live suite; the scenarios talk to the real services; a container that is
+unhealthy at the start or has ERROR-level log lines at the end fails the run. Destructive
+scenarios snapshot the named volumes they touch and restore them afterwards, so the suite is
+re-runnable against a live stack rather than against a fresh fake.
+
+Two containers were broken for two days while every suite was green (`photon` restarting,
+`jarvis-web` unhealthy). That is what testing against a copy of the runtime buys you.
+
+### 2c. Nothing new ships because it sounds good
+
+Every service in the local AI toolbelt follows one contract: a baseline snapshot of the numbers
+this suite already reports (research pass rate, routing accuracy, WER, per-stage latency), then
+the change, then the same numbers. If they did not improve, the service comes out. The choices
+and the rejections — with the sources — go in `docs/TOOLING_DECISIONS.md`, and nothing takes GPU
+residency without a written VRAM justification.
+
 ### 2a. And it has to work when somebody talks to it
 
 From M24 on, a capability is not done until its **live scenarios** pass:

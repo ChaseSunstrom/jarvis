@@ -59,8 +59,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
-from dataclasses import dataclass
+from pathlib import Path
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from ...services import ServiceCall
@@ -68,14 +70,19 @@ from ...tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
 from .plan import (
     MAX_QUERIES,
     MAX_SOURCES,
+    MODE_BUDGETS,
     PER_DOMAIN,
     Note,
     Source,
     collect_sources,
+    cross_check,
     format_report,
+    lead_prompt,
+    mode_of,
     is_empty_note,
     note_prompt,
     one_line_result,
+    parse_leads,
     parse_queries,
     plan_prompt,
     rank_sources,
@@ -119,6 +126,30 @@ class ResearchConfig:
     model: str = ""
     #: Results per search. More than a handful mostly adds near-duplicates.
     search_limit: int = 8
+    #: How many rounds of lead-following. One level, not a crawl: a page that
+    #: answers half the question usually names the thing that answers the other
+    #: half, and following that once is what separates research from a list of
+    #: links. Two levels is a budget nobody asked for.
+    lead_depth: int = 1
+    #: Match each key claim against the other pages read, and say in the report
+    #: whether anything else said it.
+    cross_check: bool = True
+
+    def for_mode(self, mode: str) -> "ResearchConfig":
+        """This config, narrowed to a mode's budget.
+
+        The budgets are ceilings, not overrides: an operator who configured
+        `max_sources: 4` gets four in deep mode, not eight, and three in quick.
+        A mode that could RAISE a configured limit would be a way around it.
+        """
+        budget = MODE_BUDGETS.get(mode_of(mode), MODE_BUDGETS["deep"])
+        return replace(
+            self,
+            max_queries=min(self.max_queries, int(budget["max_queries"])),
+            max_sources=min(self.max_sources, int(budget["max_sources"])),
+            lead_depth=min(self.lead_depth, int(budget["lead_depth"])),
+            cross_check=self.cross_check and bool(budget["cross_check"]),
+        )
 
     @classmethod
     def from_config(cls, config: Any) -> "ResearchConfig":
@@ -232,6 +263,7 @@ def _register_tools(jarvis: "Jarvis") -> None:
             str(args.get("question") or ""),
             remember=bool(args.get("remember")),
             source="conversation",
+            mode=str(args.get("mode") or "deep"),
         )
         if task is None:
             return {"status": "error", "error": "I need a question to research."}
@@ -254,12 +286,12 @@ def _register_tools(jarvis: "Jarvis") -> None:
     registry.register(
         name="deep_research",
         description=(
-            "Research a question properly: several web searches from different "
-            "angles, then read the best pages and write up what they say with "
-            "citations. Takes a minute or two and runs in the background — it "
-            "returns a task id immediately, NOT an answer. Use it when a "
-            "question needs more than one search; use web_search for a quick "
-            "look-up."
+            "Research a question properly: several searches from different "
+            "angles, the best pages read, written up with citations. Runs in "
+            "the background and returns a task id, NOT an answer. Use it "
+            "whenever the user says research, or the answer needs more than "
+            "one page — do NOT do that by hand with web_search and web_fetch. "
+            "web_search alone is for a single look-up."
         ),
         parameters=schema_object(
             {
@@ -272,6 +304,14 @@ def _register_tools(jarvis: "Jarvis") -> None:
                     "description": (
                         "store the report as a durable note — only when the "
                         "user asked for that"
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "description": (
+                        "quick (three pages, seconds — a look-up that still "
+                        "cites) or deep (several angles, follows leads, checks "
+                        "claims). Default deep."
                     ),
                 },
             },
@@ -291,6 +331,7 @@ async def async_start(
     *,
     remember: bool = False,
     source: str = "",
+    mode: str = "deep",
 ) -> "Task | None":
     """Record the task, start the worker, and return immediately."""
     question = " ".join(str(question or "").split())[:MAX_QUESTION_CHARS]
@@ -312,7 +353,7 @@ async def async_start(
         source=source,
         detail="planning",
     )
-    cfg = _store(jarvis).get(DATA_CONFIG) or ResearchConfig()
+    cfg = (_store(jarvis).get(DATA_CONFIG) or ResearchConfig()).for_mode(mode)
     runs = _store(jarvis).setdefault(DATA_RUNS, {})
     run = asyncio.ensure_future(_drive(jarvis, cfg, task.id, question, remember))
     runs[task.id] = run
@@ -475,6 +516,71 @@ async def _run(
             step_detail=(note.error or "nothing relevant" if not note.text else "")[:200],
         )
 
+    # --- follow the leads -------------------------------------------------
+    #
+    # The one thing a search box cannot do. A page that answers half the
+    # question usually names the thing that answers the other half — a
+    # standard, a manufacturer, a term nobody knew to search for — and
+    # following that once is the difference between research and a list of
+    # links. Once, not a crawl: `lead_depth` is 1 in deep mode and 0 in quick.
+    followed: list[str] = []
+    if cfg.lead_depth > 0 and any(n.ok and n.text for n in notes):
+        _check(jarvis, task_id)
+        raw = await _ask_model(jarvis, cfg, lead_prompt(question, notes, limit=2))
+        leads = [
+            query
+            for query in parse_leads(raw, limit=2)
+            if query.lower() not in {q.lower() for q in queries}
+        ]
+        for query in leads:
+            _check(jarvis, task_id)
+            result = await _call(
+                jarvis, "web", "search", {"query": query, "limit": cfg.search_limit}
+            )
+            if result.get("status") != "ok":
+                continue
+            found_now = [r for r in result.get("results") or [] if isinstance(r, dict)]
+            if not found_now:
+                continue
+            followed.append(query)
+            per_query.append((query, found_now))
+            registry.output(task_id, f"following up: {query}", stream="note")
+
+        # Anything new the leads turned up, read within the same budget.
+        already = {source.url for source in chosen}
+        extra = [
+            source
+            for source in rank_sources(
+                collect_sources(per_query), limit=cfg.max_sources, per_domain=cfg.per_domain
+            )
+            if source.url not in already
+        ][: max(0, cfg.max_sources - len(chosen))]
+        if extra:
+            step_from = read_from + len(chosen)
+            await registry.async_update(
+                task_id,
+                add_steps=read_steps(extra),
+                detail=f"following {len(followed)} lead(s)",
+            )
+            for offset, source in enumerate(extra):
+                _check(jarvis, task_id)
+                index = step_from + offset
+                await registry.async_update(task_id, step=index, step_status=STATUS_RUNNING)
+                note = await _read_one(jarvis, cfg, question, source)
+                notes.append(note)
+                if note.text:
+                    registry.output(
+                        task_id, f"{source.url}\n  {note.text[:400]}", stream="note"
+                    )
+                await registry.async_update(
+                    task_id,
+                    step=index,
+                    step_status=STATUS_DONE if note.ok else STATUS_ERROR,
+                    step_detail=(note.error or "")[:200],
+                )
+            chosen = chosen + extra
+            sources = collect_sources(per_query)
+
     # --- write it up ------------------------------------------------------
     _check(jarvis, task_id)
     write_step = read_from + len(chosen)
@@ -490,7 +596,18 @@ async def _run(
         # answer from an empty list, and would oblige — from its own training,
         # uncited, indistinguishable from a researched one.
         answer = ""
-    report = format_report(question, answer, notes, queries=queries, found=len(sources))
+    claims = cross_check(answer, notes) if cfg.cross_check else []
+    report = format_report(
+        question,
+        answer,
+        notes,
+        queries=queries + followed,
+        found=len(sources),
+        claims=claims,
+    )
+    path = _write_report_file(jarvis, question, report)
+    if path:
+        registry.output(task_id, f"written to {path}", stream="note")
 
     await registry.async_update(
         task_id,
@@ -540,6 +657,29 @@ async def _read_one(
     # "it had something to say". A page that genuinely does not address the
     # question is a real, reportable outcome — not a failure.
     return Note(source=source, ok=True, text="" if is_empty_note(said) else said.strip())
+
+
+def _write_report_file(jarvis: "Jarvis", question: str, report: str) -> str:
+    """Write the report to `<config>/research/<date>-<slug>.md`.
+
+    A file, on purpose, and beside the notes rather than inside them: a report
+    is a document somebody may want to keep, mail, or open in an editor six
+    months from now, and "it is in the task list" is not that. The note (M16)
+    is how Jarvis finds it again; this is how a person does.
+
+    Never raises: a full disk must not turn a finished report into a failed
+    run — the report is already on the task.
+    """
+    try:
+        root = Path(jarvis.config_dir) / "research"
+        root.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60] or "research"
+        path = root / f"{time.strftime('%Y-%m-%d')}-{slug}.md"
+        path.write_text(report, encoding="utf-8")
+        return str(path)
+    except OSError:
+        _LOGGER.warning("research: could not write the report file", exc_info=True)
+        return ""
 
 
 async def _keep_report(jarvis: "Jarvis", question: str, report: str) -> None:

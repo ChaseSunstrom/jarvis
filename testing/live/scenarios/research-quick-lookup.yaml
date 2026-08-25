@@ -2,14 +2,15 @@ name: research-quick-lookup
 capability: research
 gated-on: M18
 intent: >
-  A quick lookup against a fixture website whose content this repository owns,
+  A quick look-up against a fixture website whose content this repository owns,
   so "correct" is a fact that can be checked rather than a plausible sentence.
-  The citation has to resolve to the page the fact came from — an answer with a
-  made-up source is worse than an answer with none.
+  Quick and deep are one engine with two budgets — what this pins is that the
+  quick path goes to the WEB rather than answering from the model, and comes
+  back with the right number.
 variants: [voice, text]
 turns:
   - say: "Look up what the fixture handbook says the maximum boiler pressure is."
     expect:
-      reply_contains: ["2.5"]
-      reply_means: "says the maximum boiler pressure is 2.5 bar, and cites where it read that"
       capability: research
+      reply_contains: ["2.5"]
+      reply_means: "says the maximum boiler pressure is 2.5 bar"

@@ -7,6 +7,43 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+### Changed
+- Planning (mid-run addition): the compose stack becomes the runtime under test — M28 (pinned
+  images, healthchecks on every service including the three Wyoming ones, resource limits,
+  named volumes, `docs/RUNBOOK.md`) and M29 (`docker compose up -d --wait` as the live suite's
+  first step, scenarios against the real endpoints, a run that fails on an unhealthy container
+  or an ERROR log line, resilience scenarios, and volume snapshot/restore around the
+  destructive ones). Plus the local AI toolbelt, M30–M37, each under one contract: baseline the
+  numbers this suite already reports, adopt, re-measure, and remove the service if nothing
+  improved. Docker access arrived on this host while this was written, which is what makes all
+  of it — and M19's containment check, and the live research backend — possible.
+
+### Added
+- M18 (research): the engine follows leads (a page that names the thing it does not explain is
+  searched for, once — `lead_depth`), cross-checks each key claim against the other pages read
+  and says in the report whether anything else said it, and comes in two budgets rather than
+  two implementations (`quick`: three pages, seconds; `deep`: several angles, leads, claims —
+  and a mode can only ever narrow what the operator configured). Reports are written to
+  `<config>/research/<date>-<slug>.md` as well as saved as a note. `evals/research_eval.py`
+  runs a fixed question set against a fixture web this repository owns — two sites on two
+  loopback addresses, so the per-domain cap and corroboration both mean something — and checks
+  that every fact in the report is on a page that was read and that every citation resolves.
+  The `--backend live` run against the operator's SearXNG is the Scripted claim, and refuses
+  clearly rather than pretending when `SEARXNG_URL` is unset.
+- `cancel_task`: "actually, stop that" works by voice. Until now the honest answer was "I have
+  no tool to stop a background task", which the model said, correctly, while the job ran on.
+
+### Fixed
+- The narrated-call nudge could cause an action nobody asked for: asked to STOP a research run,
+  Jarvis cancelled it, summarised what it had done, and the summary mentioned `deep_research`
+  — so the nudge told it to "make the call properly" and it started the research again. A turn
+  that has already called a tool is reporting, not promising, and is never nudged.
+- A turn whose only words came before its tool call is no longer replaced by the canned "I
+  didn't manage to put an answer into words": "I'll start the research" is true, and the
+  preamble is only dropped when something replaced it.
+- An empty note search says so, and says where to look instead. A bare empty list had the model
+  searching its notes three times with different words for something that was on the web.
+
 ### Added
 - M17 (interactions): the things Jarvis says without being asked are now kept. A new
   `notifications` integration records every proactive message — a finished job, a failed one,

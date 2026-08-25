@@ -152,3 +152,31 @@ final round says it, so nothing catches it. It is a persona/prompt problem
 rather than a wiring one — the system prompt already tells the model to report
 outcomes rather than services — and the scenario now judges what matters (it
 must not claim to have acted on the house) rather than the wording.
+
+## The narrated-call nudge could cause an action nobody asked for
+
+severity: critical — **fixed**
+status: **fixed** (`jarvis-core/jarvis/llm/agent.py`)
+Regression: `research-cancel`
+Test: `jarvis-core/tests/test_narrated_tool_calls.py::test_a_turn_that_already_acted_is_never_nudged`
+
+Asked to **stop** a research run, Jarvis called `cancel_task`, summarised what
+it had done, and the summary mentioned `deep_research`. The narrated-call
+detector matched that, the nudge told the model to "make the call properly",
+and the model **started the research again**. The user asked for something to
+stop and got another one started.
+
+That is the worst shape a correction can have: a mechanism that exists to stop
+the assistant claiming work it has not done, causing work nobody asked for.
+
+Fixed by the rule that should always have been there: **a turn that has already
+called a tool is reporting, not promising**, and is never nudged. Narrowing the
+cue words to past tense was tried as well and reverted — "Now calling
+code_task" is exactly the failure the detector is for, and it is a present
+participle; what separates an offer from a claim is the modal in front of it,
+which is a separate check.
+
+Recorded as critical even though it was found and fixed in the same hour,
+because the class matters: anything that can turn a user's "stop" into a
+"start" is the kind of defect this suite exists to catch, and it was caught by
+a scenario rather than by a unit test.

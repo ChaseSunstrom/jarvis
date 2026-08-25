@@ -170,21 +170,32 @@ def test_the_schema_requires_what_the_validator_requires(jarvis):
     )
 
 
-def test_the_example_in_the_description_is_a_valid_manifest(jarvis):
-    """The worked example the model copies must survive the validator.
+def test_the_worked_example_is_a_valid_manifest():
+    """The example the model copies must survive the validator.
 
-    A description that shows a shape the validator refuses teaches the model to
-    fail — which is precisely how this tool spent its whole life.
+    An example the validator refuses teaches the model to fail — which is
+    precisely how this tool spent its first life.
+
+    It moved out of the tool's DESCRIPTION and onto the refusal: a description
+    is posted on every round of every turn (`tests/test_prompt_budget.py`
+    measures what the toolbox costs), and a worked example is useful only to
+    the turn that got the shape wrong. It is still checked here, because moving
+    it somewhere cheaper must not mean moving it somewhere unverified.
     """
-    import json
-    import re
+    from jarvis.llm.tools import CREATE_TOOL_EXAMPLE
 
-    description = jarvis.data["llm_tools"].get("create_tool").description
-    match = re.search(r"Example:\s*(\{.*\})", description, re.S)
-    assert match, "the description no longer carries a worked example"
+    validate(dict(CREATE_TOOL_EXAMPLE))  # raises AuthoredToolError if it is a lie
 
-    example = json.loads(match.group(1))
-    validate(example)  # raises AuthoredToolError if the example is a lie
+
+async def test_a_refused_manifest_comes_back_with_the_example(jarvis):
+    """The moment it is worth spending tokens on."""
+    from jarvis.llm.tools import CREATE_TOOL_EXAMPLE
+
+    handler = jarvis.data["llm_tools"].get("create_tool").handler
+    outcome = await handler({"name": "x", "description": "no service"}, None)
+
+    assert outcome["status"] == "error"
+    assert outcome["example"] == CREATE_TOOL_EXAMPLE
 
 
 def test_create_tool_is_still_tier_three(jarvis):

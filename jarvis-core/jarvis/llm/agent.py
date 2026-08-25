@@ -937,7 +937,15 @@ class ConversationAgent:
                 # said nothing to the user: stripping the preamble correctly
                 # left "", and without this the reply was empty — a blank
                 # bubble on the console and silence on the speaker.
-                if not _without_preamble("".join(pieces), result.preamble).strip():
+                #
+                # But the preamble is only DROPPED when something replaced it.
+                # "I'll start the research" followed by a `deep_research` call
+                # and then silence is a true sentence and the best answer there
+                # is; replacing it with "I didn't manage to put an answer into
+                # words" is worse than the words it already had. The
+                # contradiction case — "already off" … "now off" — still works,
+                # because there the second round HAS text.
+                if not "".join(pieces).strip():
                     _LOGGER.warning(
                         "The model produced no answer text (%d round(s), %d "
                         "characters of reasoning). Falling back to a sentence "
@@ -969,8 +977,10 @@ class ConversationAgent:
             # words written before a tool ran, and the ones a correction
             # replaced. Both were streamed, because a surface may show the
             # working live; neither is spoken, archived or returned as the
-            # answer.
-            result.text = _without_preamble("".join(pieces), result.preamble)
+            # answer — unless nothing else was said, in which case the
+            # preamble is what the user has and the alternative is silence.
+            said = "".join(pieces)
+            result.text = _without_preamble(said, result.preamble) or said.strip()
             self._finish(conversation.id, result, user_text=message)
 
     @staticmethod
@@ -1119,7 +1129,14 @@ class ConversationAgent:
                 # work has started. Nothing had. Give it exactly one chance to
                 # do it properly — noticing and saying nothing would leave the
                 # user with a promise and no job.
-                if not nudged and offered:
+                # A turn that has ALREADY called something is reporting, not
+                # promising. This is not a nicety: asked to stop a research
+                # run, the model called `cancel_task`, summarised what it had
+                # done, and the summary mentioned `deep_research` — so the
+                # nudge told it to "make the call properly" and it started the
+                # research again. A correction that causes an action nobody
+                # asked for is worse than the omission it corrects.
+                if not nudged and offered and not result.tool_calls:
                     # Only tools this turn has NOT already called. A model that
                     # called `run_background_task` in round one and then said
                     # so in round three is reporting, not pretending — and
@@ -1514,6 +1531,11 @@ class _Round:
 #: Deliberately broad: the check below already requires a registered tool name
 #: as a whole token, which ordinary prose does not contain — the persona tells
 #: the model to "report what happened, not which service you called".
+#:
+#: Narrowing this to past forms only was tried and reverted: "Now calling
+#: code_task with the repo name" is exactly the failure this exists for, and it
+#: is a present participle. What separates an offer from a claim is the modal
+#: in front of it (`_INTENT_RE`), not the tense of the verb.
 _CALL_CUE_RE = re.compile(
     r"\b(call(?:s|ed|ing)?|invoke[sd]?|execut(?:e|ed|ing)|dispatch(?:ed|ing)?|"
     r"tool[_ ]?call|function[_ ]?call|parameters?|arguments?)\b",

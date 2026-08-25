@@ -185,6 +185,10 @@ async def test_a_run_searches_reads_and_writes_a_cited_report(jarvis):
             "- a says 3.4",                                  # note on a
             "- b says 40dB",                                 # note on b
             "- c agrees",                                    # note on c
+            # The lead-following call. Answering with no leads is the ordinary
+            # case — the notes already covered it — and the run goes straight
+            # on to the write-up.
+            '{"queries": []}',
             "A heat pump manages 3.4 [1] and about 40dB [2].",  # synthesis
         ]
     )
@@ -639,3 +643,127 @@ def test_config_from_nothing_is_the_shipped_default():
     cfg = ResearchConfig.from_config(None)
     assert cfg.max_queries == 4
     assert cfg.max_sources == 8
+
+
+# --- following leads, checking claims, and the file it leaves behind ---------
+
+
+async def test_a_lead_from_the_pages_is_followed_once(jarvis):
+    """The one thing a search box cannot do.
+
+    A page that answers half the question names the thing that answers the
+    other half — a standard, a manufacturer, a term nobody knew to search for.
+    Following that once is the difference between research and a list of links;
+    following it repeatedly is a crawl nobody asked for, so `lead_depth` is 1.
+    """
+    web = FakeWeb()
+    web.searches["cop of a heat pump"] = web.results("https://a.test/1")
+    web.searches["scop seasonal figure"] = web.results("https://d.test/1")
+    for url in ("https://a.test/1", "https://d.test/1"):
+        web.pages[url] = web.page(f"page text for {url}")
+
+    model = FakeModel(
+        [
+            '["cop of a heat pump"]',                       # plan
+            "- a mentions SCOP but does not explain it",     # note on a
+            '{"queries": ["scop seasonal figure"]}',        # the lead
+            "- d explains SCOP",                             # note on d
+            "SCOP is the seasonal figure [2].",             # synthesis
+        ]
+    )
+    await setup_research(jarvis, web, model)
+
+    task = await research.async_start(jarvis, "how good are heat pumps")
+    await finish(jarvis, task.id)
+
+    assert web.searched == ["cop of a heat pump", "scop seasonal figure"]
+    assert sorted(web.fetched) == ["https://a.test/1", "https://d.test/1"]
+    done = jarvis.tasks.get(task.id)
+    assert done.status == STATUS_DONE
+    assert "d.test" in done.result
+
+
+async def test_quick_mode_does_not_follow_leads_and_stays_small(jarvis):
+    """Two shapes of one engine. A question asked in passing and a question
+    worth an afternoon are the same pipeline with different budgets — and the
+    difference has to BE a budget, or the quick one becomes a worse copy."""
+    web = FakeWeb()
+    web.default_search = web.results(
+        "https://a.test/1", "https://b.test/1", "https://c.test/1", "https://d.test/1"
+    )
+    for url in ("https://a.test/1", "https://b.test/1", "https://c.test/1", "https://d.test/1"):
+        web.pages[url] = web.page("text")
+
+    model = FakeModel(
+        [
+            '["one", "two", "three", "four"]',   # the planner offers four
+            "- a", "- b", "- c",                  # three notes: the quick budget
+            "answer [1]",
+        ]
+    )
+    await setup_research(jarvis, web, model)
+
+    task = await research.async_start(jarvis, "a quick question", mode="quick")
+    await finish(jarvis, task.id)
+
+    assert len(web.searched) == 2, "quick mode searches twice, not four times"
+    assert len(web.fetched) == 3, "quick mode reads three pages"
+    assert jarvis.tasks.get(task.id).status == STATUS_DONE
+
+
+async def test_a_mode_cannot_raise_a_configured_limit(jarvis):
+    """The budgets are ceilings. An operator who configured `max_sources: 2`
+    gets two in deep mode, not eight."""
+    from jarvis.integrations.research import ResearchConfig
+
+    cfg = ResearchConfig(max_queries=1, max_sources=2)
+    assert cfg.for_mode("deep").max_sources == 2
+    assert cfg.for_mode("deep").max_queries == 1
+    assert cfg.for_mode("quick").max_sources == 2
+
+
+async def test_the_report_says_how_many_sources_back_each_claim(jarvis):
+    """A report whose every sentence came from one page reads exactly like one
+    assembled from six independent sources."""
+    web = FakeWeb()
+    web.default_search = web.results("https://a.test/1", "https://b.test/1")
+    web.pages["https://a.test/1"] = web.page("The maximum boiler pressure is 2.5 bar.")
+    web.pages["https://b.test/1"] = web.page("Maximum boiler pressure is 2.5 bar.")
+
+    model = FakeModel(
+        [
+            '["boiler pressure"]',
+            "The maximum boiler pressure is 2.5 bar.",
+            "The maximum boiler pressure is 2.5 bar.",
+            '{"queries": []}',
+            "The maximum boiler pressure is 2.5 bar [1]. Cheese is entirely unrelated to any "
+            "of this and nothing here supports it.",
+        ]
+    )
+    await setup_research(jarvis, web, model)
+
+    task = await research.async_start(jarvis, "what is the maximum boiler pressure")
+    await finish(jarvis, task.id)
+
+    report = jarvis.tasks.get(task.id).result
+    assert "## Confidence" in report
+    assert "**corroborated**" in report
+    assert "**uncorroborated**" in report
+    # And it says what it is: provenance, not fact-checking.
+    assert "not fact-checking" in report
+
+
+async def test_the_report_is_written_to_a_file_somebody_can_open(jarvis, tmp_path):
+    web = FakeWeb()
+    web.default_search = web.results("https://a.test/1")
+    web.pages["https://a.test/1"] = web.page("text")
+    model = FakeModel(['["q"]', "- a", '{"queries": []}', "answer [1]"])
+    await setup_research(jarvis, web, model)
+
+    task = await research.async_start(jarvis, "how good are heat pumps")
+    await finish(jarvis, task.id)
+
+    written = sorted((Path(jarvis.config_dir) / "research").glob("*.md"))
+    assert len(written) == 1
+    assert written[0].name.endswith("-how-good-are-heat-pumps.md")
+    assert "# how good are heat pumps" in written[0].read_text()

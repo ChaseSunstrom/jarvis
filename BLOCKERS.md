@@ -6,32 +6,28 @@ operator can make. Everything else is a milestone, not a blocker.
 
 ---
 
-## 1. Docker access for `jarvisdev`
+## 1. ~~Docker access for `jarvisdev`~~ — **resolved 2026-08-25**
 
-**Needed by:** M19 (the coding sandbox's live containment check), the research
-scenarios' real SearXNG, and the compose-level checks in `docs/verification.md`.
+Kept, rather than deleted, because three claims elsewhere were written around it.
 
-`jarvisdev` is not in the `docker` group, so `docker ps` is a permission error
-and nothing in this run can start, stop or inspect a container.
+`jarvisdev` is now in the `docker` group and the socket is reachable:
 
-What is affected, precisely:
+```
+$ id -nG | grep docker        → docker
+$ docker run --rm hello-world → Hello from Docker!
+$ docker compose ls           → jarvis running(3), jarvis-core restarting(1), running(6)
+```
 
-* **The coding agent's containment claim.** `container_argv()` is a pure
-  function and every fence it builds is asserted offline (`tests/test_code_sandbox.py`),
-  so the *command line* is proved. That a real container honours it is not, and
-  cannot be from here.
-* **SearXNG.** The research scenarios run against `testing/live/fixture_search.py`,
-  which serves SearXNG's own `/search?format=json` shape over a fixture website
-  this repository owns. Jarvis's real search client, fetcher and reader all run
-  unchanged; SearXNG itself — its engines, ranking and rate limits — is not
-  exercised.
-* **The whisper container's flags.** The doubled-transcript issue in
-  `ISSUES.md` may be a `condition_on_previous_text` setting on the
-  faster-whisper container, which cannot be changed or tested without
-  restarting it.
+What that unblocks, and where it is now tracked:
 
-**To unblock:** `sudo usermod -aG docker jarvisdev` (then a new login), or run
-the affected checks as a user who is already in the group.
+* **The coding agent's live containment check** — M19 runs it for real.
+* **SearXNG**, so `evals/research_eval.py --backend live` (the Scripted claim in
+  `docs/verification.md`) can be run here: `docker compose --profile search up -d
+  searxng`, then `SEARXNG_URL=http://127.0.0.1:8888`.
+* **The whole compose-native testing addition** — M28 and M29.
+
+Two things it immediately surfaced, both real and both fixed under M28: `photon`
+restarts in a loop, and `jarvis-web` reports unhealthy.
 
 ## 2. A faster model for the voice path, or a GPU
 

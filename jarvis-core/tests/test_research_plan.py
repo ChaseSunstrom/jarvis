@@ -18,10 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jarvis.integrations.research.plan import (  # noqa: E402
+    MAX_CLAIMS,
     MAX_QUERIES,
     Note,
     Source,
     collect_sources,
+    cross_check,
     domain_of,
     format_report,
     is_empty_note,
@@ -375,3 +377,79 @@ def test_two_bare_lines_are_a_list_and_one_is_a_sentence():
 
 def test_a_marked_list_of_one_is_still_a_list():
     assert parse_queries("- the only search", question="q") == ["the only search"]
+
+
+# --- cross-checking ------------------------------------------------------------
+
+
+def _note(url: str, text: str) -> Note:
+    return Note(source=Source(url=url, title=url), text=text, ok=True)
+
+
+def test_a_claim_two_sites_make_is_corroborated():
+    notes = [
+        _note("https://a.test/1", "The maximum boiler pressure is 2.5 bar."),
+        _note("https://b.test/1", "This boiler must not be operated above 2.5 bar."),
+        _note("https://c.test/1", "Cheese is made from milk."),
+    ]
+    claims = cross_check("The maximum boiler pressure is 2.5 bar [1].", notes)
+    assert len(claims) == 1
+    assert claims[0].confidence == "corroborated"
+    assert claims[0].supported_by == ["a.test", "b.test"]
+
+
+def test_a_claim_one_site_makes_says_so():
+    notes = [
+        _note("https://a.test/1", "The cheap rate runs from 00:30 to 07:30."),
+        _note("https://b.test/1", "Nothing about tariffs here."),
+    ]
+    claims = cross_check("The cheap rate runs from 00:30 to 07:30 [1].", notes)
+    assert claims[0].confidence == "single-source"
+
+
+def test_a_claim_nothing_supports_is_marked_uncorroborated():
+    """The one that matters: a sentence the model wrote from its own training,
+    in a report that otherwise looks fully sourced."""
+    notes = [_note("https://a.test/1", "The maximum boiler pressure is 2.5 bar.")]
+    claims = cross_check(
+        "Heat pumps are generally quieter than gas boilers in most installations.", notes
+    )
+    assert claims[0].confidence == "uncorroborated"
+    assert claims[0].supported_by == []
+
+
+def test_figures_carry_more_weight_than_wording():
+    """Two pages that agree on "55 °C" are agreeing, even when they say it in
+    quite different language."""
+    notes = [
+        _note(
+            "https://a.test/1",
+            "The recommended flow temperature for the radiators is 55 degrees, lower "
+            "than the factory default of 75.",
+        ),
+        _note(
+            "https://b.test/1",
+            "Reducing flow temperature to 55 from the factory 75 improves condensing "
+            "efficiency.",
+        ),
+    ]
+    claims = cross_check(
+        "The handbook recommends a radiator flow temperature of 55 degrees, lower than "
+        "the factory default of 75 [1].",
+        notes,
+    )
+    assert claims[0].confidence == "corroborated"
+
+
+def test_a_report_with_no_readable_notes_has_no_confidence_section():
+    assert cross_check("Anything at all.", []) == []
+
+
+def test_only_the_first_few_claims_are_checked():
+    """The report is read by a person."""
+    notes = [_note("https://a.test/1", "x " * 50)]
+    answer = " ".join(
+        f"This is claim number {i} and it is long enough to count as a sentence." 
+        for i in range(20)
+    )
+    assert len(cross_check(answer, notes)) <= MAX_CLAIMS

@@ -1368,6 +1368,25 @@ def _outcome(changed: list[dict[str, Any]], failed: dict[str, str]) -> dict[str,
     return payload
 
 
+#: The manifest shape `create_tool` accepts, as a worked example.
+#:
+#: Handed back with a REFUSAL rather than carried in the tool's description: a
+#: description is posted on every round of every turn (`tests/test_prompt_budget.py`
+#: measures what that costs), and this is useful only to a turn that is writing
+#: a tool and got the shape wrong. `tests/test_create_tool_handler.py` puts it
+#: through the real validator, because an example the validator refuses teaches
+#: the model to fail — which is exactly how this tool spent its first life.
+CREATE_TOOL_EXAMPLE = {
+    "name": "bin_day",
+    "description": "Which bin goes out this week.",
+    "service": {
+        "method": "GET",
+        "url": "http://192.168.1.5/bins?street={{ street }}",
+        "fields": {"street": {"type": "string", "description": "The street name."}},
+    },
+}
+
+
 def register_builtin_tools(
     registry: ToolRegistry, user_context: dict[str, Any] | None = None
 ) -> None:
@@ -2364,6 +2383,74 @@ def register_builtin_tools(
         handler=_vacuum_control,
     )
 
+    # --- stopping something ---------------------------------------------
+    #
+    # "Actually, stop that" is the second thing anybody says after asking for a
+    # long job, and until now the honest answer was "I have no tool to stop a
+    # background task" — which the model said, correctly, while the job ran on.
+    # Cancelling is Tier 1: it stops work rather than doing any, and the thing
+    # it stops is something the same person just started.
+    async def _cancel_task(args: dict[str, Any], context: Any) -> Any:
+        tasks = getattr(jarvis, "tasks", None)
+        if tasks is None:
+            return {"status": "error", "error": "this server does not track tasks"}
+        wanted = str(args.get("task_id") or "").strip()
+        target = tasks.get(wanted) if wanted else None
+        if target is None:
+            # "That one" almost always means the most recent job that is still
+            # going. Naming an id is possible and nobody says an id out loud.
+            running = [task for task in tasks.tasks if not task.finished]
+            if not running:
+                return {
+                    "status": "error",
+                    "error": "nothing is running, so there is nothing to stop",
+                }
+            if wanted:
+                return {
+                    "status": "error",
+                    "error": f"there is no task {wanted!r}",
+                    "running": [t.id for t in running],
+                }
+            target = running[-1]
+        if target.finished:
+            return {
+                "status": "error",
+                "error": f"that one already finished ({target.status})",
+            }
+        from ..api import common as api_common
+
+        outcome = await api_common.async_cancel_task(jarvis, target.id)
+        return {
+            "status": "ok" if outcome.get("cancelled") else "error",
+            "task_id": target.id,
+            "title": target.title,
+            # The honest bit, which `async_cancel_task` documents: this is a
+            # REQUEST. A worker that does not check its cancellation flag keeps
+            # going, and every worker in this repo checks.
+            "message": (
+                "Stopped. Tell the user it has been cancelled — the worker "
+                "checks between steps, so anything already finished stays done."
+            ),
+        }
+
+    registry.register(
+        name="cancel_task",
+        description=(
+            "Stop a background job — research, a coding task, anything on the "
+            "task list. With no id it stops the most recent one still running, "
+            "which is what \"stop that\" means."
+        ),
+        parameters=schema_object(
+            {
+                "task_id": {
+                    "type": "string",
+                    "description": "Which job. Omit for the one still running.",
+                }
+            },
+        ),
+        handler=_cancel_task,
+    )
+
     registry.register(
         name="run_background_task",
         description=(
@@ -2585,20 +2672,24 @@ def register_builtin_tools(
                 allow_local_targets=False,
             )
         except ApiError as exc:
-            return {"status": "error", "error": exc.message}
+            # The worked example rides on the REFUSAL rather than on the
+            # description. It used to be in the description, where every turn
+            # in the system paid for it — `tests/test_prompt_budget.py` is the
+            # measurement — and where it is only useful to the one turn in a
+            # thousand that writes a tool. Here it arrives exactly when the
+            # model got the shape wrong, which is when it helps.
+            return {
+                "status": "error",
+                "error": exc.message,
+                "example": CREATE_TOOL_EXAMPLE,
+            }
         return {"status": "ok", "tool": result.get("tool", result)}
 
     registry.register(
         name="create_tool",
         description=(
-            "Teach yourself a new capability by writing a tool manifest. A tool "
-            "is an HTTP call: you give it a name, say what it does, and name the "
-            "endpoint. Always needs the user's explicit approval, and they see "
-            "the whole manifest first, because a tool can name any endpoint. "
-            'Example: {"name": "bin_day", "description": "Which bin goes out '
-            'this week.", "service": {"method": "GET", "url": '
-            '"http://192.168.1.5/bins?street={{ street }}", "fields": '
-            '{"street": {"type": "string", "description": "The street name."}}}}'
+            "Write yourself a new tool: a named HTTP call. Always needs the "
+            "user's approval, and they see the whole manifest first."
         ),
         # This schema is the validator's shape, field for field. It used to be a
         # different shape entirely — `service` was declared a string
@@ -2619,24 +2710,17 @@ def register_builtin_tools(
             {
                 "name": {
                     "type": "string",
-                    "description": (
-                        "snake_case, unique, 3-48 chars. Cannot shadow a tool "
-                        "you already have."
-                    ),
+                    "description": "snake_case, unique, 3-48 chars.",
                 },
                 "description": {
                     "type": "string",
-                    "description": (
-                        "What it does, written for you to read later when "
-                        "deciding whether to call it."
-                    ),
+                    "description": "What it does, for you to read later.",
                 },
                 "service": {
                     "type": "object",
                     "description": (
-                        "The HTTP call this tool makes. `url` is required and "
-                        "must start with http:// or https://. Use {{ field }} "
-                        "to put a field's value into the url, headers or body."
+                        "The HTTP call. `url` is required; {{ field }} "
+                        "interpolates a field into url, headers or body."
                     ),
                     "properties": {
                         "url": {
@@ -2649,10 +2733,7 @@ def register_builtin_tools(
                         },
                         "fields": {
                             "type": "object",
-                            "description": (
-                                "The arguments you will pass when calling it, by "
-                                "name. Each is {type, description, required}."
-                            ),
+                            "description": "Its arguments: {type, description, required}.",
                         },
                         "headers": {
                             "type": "object",
@@ -2671,10 +2752,7 @@ def register_builtin_tools(
                 },
                 "tier": {
                     "type": "integer",
-                    "description": (
-                        "1 to run directly, 3 to need the user's approval every "
-                        "time it is called. Default 1."
-                    ),
+                    "description": "1 runs directly, 3 needs approval each call. Default 1.",
                 },
             },
             required=["name", "description", "service"],

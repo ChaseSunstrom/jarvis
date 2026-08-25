@@ -943,8 +943,16 @@ async def test_shutdown_stops_a_job_in_flight(jarvis, repo_dir):
 
     await setup_code(jarvis, Slow(), repo_dir)
     task = await code_integration.async_start(jarvis, "project", "hang about")
-    await asyncio.sleep(0.05)
-    run = jarvis.data["code"]["runs"].get(task.id)
+    # A condition, not a sleep: 0.05 s was enough on an idle box and not enough
+    # under a full suite, so this failed roughly one run in twenty with the job
+    # simply not started yet. The gate below is what holds it open, so once it
+    # is in the registry it stays there.
+    run = None
+    for _ in range(200):
+        run = jarvis.data["code"]["runs"].get(task.id)
+        if run is not None:
+            break
+        await asyncio.sleep(0.01)
     assert run is not None and not run.done()
     await jarvis.async_stop()
     assert run.cancelled() or run.done()

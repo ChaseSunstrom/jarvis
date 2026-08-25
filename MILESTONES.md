@@ -262,7 +262,7 @@ files both would touch, which the integrating session merges.
 
 ## Agent intelligence
 
-- [ ] **M18 — Research engine** · size L · deps M16, M11, M10 · parallel-ok M19
+- [x] **M18 — Research engine** · size L · deps M16, M11, M10 · parallel-ok M19
   - Scope: keep `integrations/research/` and the SearXNG-only stack. Add: lead-following (a
     read page may propose up to N further queries, bounded by depth), a cross-check pass (each
     key claim is matched against ≥ 2 sources or marked single-source), a confidence note per key
@@ -402,11 +402,119 @@ runs in full mode only. `--implemented-only` runs the ungated ones and must exit
     ≥ 95 %, WER ≤ 10 %, routing accuracy ≥ 90 %, median round trip ≤ 2 s, zero critical issues.
   - Verify: `bash scripts/verify/m27-live-report.sh`
 
+## Compose is the runtime (added mid-run)
+
+The stack in `docker-compose.yml` is what actually runs, so it is what the tests run against.
+These land after the live rig and before the remaining capability milestones that would
+otherwise be verified against something nobody deploys.
+
+Docker access arrived on this host while this was being written (`docker run` works,
+`jarvisdev` is in the `docker` group), which is what makes all of it possible — and what
+unblocks M19's containment check and the live research backend at the same time.
+
+- [ ] **M28 — The compose stack is a described, pinned, healthy runtime** · size M · deps M00
+  - Scope: every service pinned to a version (five are on `:latest` today — whisper, piper,
+    openwakeword, photon, searxng), a healthcheck on every service including the three Wyoming
+    ones the voice path depends on, resource limits (`mem_limit`/`cpus`) sized for a 4 vCPU /
+    8 GB host, named volumes for everything that holds state, and `docker compose up -d --wait`
+    bringing the whole stack to healthy from cold. Fix what this surfaces: `photon` is in a
+    restart loop and `jarvis-web` is unhealthy right now. `docs/RUNBOOK.md` — bring-up,
+    teardown, logs, and backup/restore per named volume, each command run and its output
+    pasted. `scripts/verify/m28-compose.sh` checks the file statically (pins, healthchecks,
+    limits, volumes) and then brings the stack up and asserts every container is healthy.
+  - Verify: `bash scripts/verify/m28-compose.sh`
+
+- [ ] **M29 — The suite runs against the real containers** · size L · deps M28, M25
+  - Scope: `scripts/verify/live_interaction.sh` starts with `docker compose up -d --wait`; the
+    scenarios talk to the real service endpoints rather than to a harness-owned copy; the run
+    fails if any container is unhealthy at the start or has ERROR-level log lines at the end
+    (`docker compose logs --since`). Two resilience scenarios: restart the core container
+    mid-conversation → the session recovers and the thread survives; kill the STT container
+    mid-utterance → the failure is surfaced in the UI rather than swallowed. Data safety
+    without fakes: destructive scenarios (memory wipe, forget, task-history clear) snapshot the
+    affected named volumes to a tarball before and restore after, so the suite is re-runnable
+    against a live stack; read-only scenarios write under a `test:` namespace and assert their
+    own cleanup. Dev loop: `docker compose watch` (or an equivalent documented in the runbook)
+    so a code change lands in the running container.
+  - Verify: `bash scripts/verify/m29-compose-testing.sh`
+
+## The local AI toolbelt (added mid-run)
+
+Each slot below is adopted only if it moves a number this suite already reports. The contract
+is the same for all of them, and `scripts/verify/m30-toolbelt.sh` enforces it: **a baseline is
+recorded before** (`.verify/toolbelt/<slot>-before.json`, from the research eval, the routing
+accuracy, the latency table and the WER), **the service ships in compose** with a pinned
+version, a healthcheck and CPU-only defaults, **it gets live-scenario coverage**, and **the
+after number must be better than the before or the service comes out**. Choices and rejections
+— with the web research behind them — go in `docs/TOOLING_DECISIONS.md`.
+
+- [ ] **M30 — The toolbelt contract, and the research behind it** · size M · deps M28, M26
+  - Scope: `docs/TOOLING_DECISIONS.md` — for every slot below, what was chosen, what was
+    rejected and why, checked against current sources rather than against what was
+    state-of-the-art when the model was trained; the VRAM justification rule (nothing takes GPU
+    residency without one, because the 3090s hold qwen's KV cache); and the measurement
+    harness: `scripts/verify/toolbelt_baseline.py` snapshots the scorecard, `--compare` diffs
+    two snapshots and exits non-zero when a metric got worse.
+  - Verify: `bash scripts/verify/m30-toolbelt.sh`
+
+- [ ] **M31 — One headless browser service, shared** · size M · deps M28, M30
+  - Scope: `jarvis-browser` becomes the only Chromium in the system — the research engine's
+    agentic browsing and the test rig's browser transport both use it, and
+    `testing/live/fixture_browser.py` becomes a fallback for a host with no stack rather than
+    the default. Per-task browser installs go. Live scenarios cover a JS-heavy page that plain
+    fetch cannot read.
+  - Verify: `bash scripts/verify/m31-browser-service.sh`
+
+- [ ] **M32 — Crawling and document extraction** · size L · deps M31, M30
+  - Scope: Crawl4AI (or whatever the research in M30 lands on) as a compose service for pages
+    plain fetch handles badly, and Docling for documents (PDF/DOCX → clean markdown) so
+    research and notes can ingest a real file. Baseline first: the research eval's pass rate
+    and cited-source count on the fixture web and on a fixed set of hard pages. Adopted only if
+    both improve.
+  - Verify: `bash scripts/verify/m32-extraction.sh`
+
+- [ ] **M33 — Embeddings and reranking as services** · size L · deps M28, M30
+  - Scope: a dedicated CPU embedding server (TEI/Infinity class) and a local cross-encoder
+    reranker, used by memory, notes and research retrieval — rerank-after-retrieve is the
+    cheapest quality win in the whole system. Embeddings stop going through llama-swap, which
+    is a KV-cache eviction the voice path pays for. Baseline: recall on the memory eval's
+    targeted queries and the research eval's source quality.
+  - Verify: `bash scripts/verify/m33-embeddings.sh`
+
+- [ ] **M34 — The vector store, decided** · size S · deps M33
+  - Scope: either promote memory/notes retrieval to Qdrant as a compose service, or write the
+    paragraph justifying the embedded store — with the numbers that justify it (entries,
+    query latency, recall). Either answer is acceptable; an unexamined one is not.
+  - Verify: `bash scripts/verify/m34-vector-store.sh`
+
+- [ ] **M35 — Speech as services, and a TTS A/B** · size L · deps M28, M30
+  - Scope: STT behind an OpenAI-compatible container (speaches / faster-whisper-server class)
+    instead of the in-process Wyoming client; TTS stays Piper and gains a Kokoro-FastAPI
+    container beside it, A/B'd through the live suite — judge scores and the operator's ears
+    decide, and the WER and latency numbers are the tie-break. The doubled-transcript issue in
+    `ISSUES.md` is re-tested here, because it may be a `condition_on_previous_text` setting the
+    current container does not expose.
+  - Verify: `bash scripts/verify/m35-speech-services.sh`
+
+- [ ] **M36 — Agent observability** · size L · deps M28, M30
+  - Scope: self-hosted Langfuse (or an equivalent that fits 8 GB) tracing every agent step,
+    subagent, tool call, token count, latency and judge verdict; wired into the research,
+    coding and subagent loops; a "view trace" link from the task-execution UI. The memory cost
+    is measured before it is adopted — it is the largest single ask in this list.
+  - Verify: `bash scripts/verify/m36-observability.sh`
+
+- [ ] **M37 — n8n bridge, flag-gated and off** · size M · deps M28, M30
+  - Scope: a bridge to the operator's existing self-hosted n8n over the tailnet, exposing
+    selected workflows as Jarvis tools, behind a config flag that defaults OFF and a per-workflow
+    allow-list. Nothing is enabled until the operator says so; the tests cover the flag being
+    off, the allow-list refusing an un-listed workflow, and one worked example with the flag on.
+  - Verify: `bash scripts/verify/m37-n8n-bridge.sh`
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M27
-  - Scope: `make verify-all` green; **`bash scripts/verify/live_interaction.sh` in full mode
-    exits 0** — every scenario, including the ones that were gated, inside the thresholds
+- [ ] **M23 — Final integration** · size M · deps M00–M37
+  - Scope: `make verify-all` green; **the stack comes up healthy and the whole suite runs
+    against it** (M28/M29); **`bash scripts/verify/live_interaction.sh` in full mode exits 0** — every scenario, including the ones that were gated, inside the thresholds
     (intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median round trip ≤ 2 s, zero critical issues) —
     and `docs/LIVE_TEST_REPORT.md` exists and is current; a CI workflow runs `make verify-all`
     (JDK/SDK via actions); `README.md`, `docs/verification.md` (re-measured, names the harness,
@@ -430,4 +538,9 @@ runs in full mode only. `--implemented-only` runs the ungated ones and must exit
 - M24 → M25 come **before** M13, because every milestone after them must pass
   `live_interaction.sh --implemented-only`. M26 ∥ M27 only after the capabilities they measure
   exist, so in practice they land last, before M23.
+- M28 before M29, and both before the toolbelt: a service adopted against a stack nobody
+  brings up cleanly is a service adopted against nothing. M30 before M31–M37, because it is the
+  measurement they are each judged by.
+- M31 ∥ M33 ∥ M35 (browser, embeddings, speech: separate services, separate scorecard rows);
+  M32 after M31; M34 after M33; M36 and M37 last, and M37 stays off.
 - Everything else is serial in the order written.

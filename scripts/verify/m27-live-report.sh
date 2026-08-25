@@ -45,7 +45,21 @@ for block in re.split(r"^## ", text, flags=re.M)[1:]:
 assert not missing, f"issues with no regression scenario: {missing}"
 print("every issue has a regression scenario")
 '
-check_not "no critical issue is still open" grep -nE '^\s*[-*]?\s*severity:\s*critical' ISSUES.md
+# An OPEN critical, not a fixed one. A critical defect that was found, fixed and
+# written down is the suite working; deleting the entry to keep this green is
+# the opposite, so the check reads the status line rather than the severity.
+check "no critical issue is still open" python3 -c '
+import re, sys
+from pathlib import Path
+text = Path("ISSUES.md").read_text(encoding="utf-8")
+open_criticals = [
+    block.splitlines()[0].strip()
+    for block in re.split(r"^## ", text, flags=re.M)[1:]
+    if re.search(r"^severity:\s*critical", block, re.M)
+    and not re.search(r"^status:\s*\*\*fixed\*\*", block, re.M)
+]
+assert not open_criticals, f"still open: {open_criticals}"
+'
 # No live scenarios of its own — this milestone does not add a capability
 # anybody talks to. What it must not do is break the ones that exist, so a
 # named smoke subset runs: house-light-on, chat-context-retention, lock-needs-a-human.
