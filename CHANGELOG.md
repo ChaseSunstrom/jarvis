@@ -69,6 +69,33 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M43 (hardening): prompt injection is assumed rather than solved. Every byte from outside is
+  wrapped and **stripped of chat-template control literals** — ChatML, Llama 2 and 3, Gemma,
+  Mistral — because `<|im_start|>system` inside a fetched page is indistinguishable from a
+  system message once the serving layer has templated the prompt, and no amount of fencing
+  helps. Stripping happens on the way in, in one place, so a new inbound path cannot forget it.
+
+  Nothing is filtered by keyword, and that is asserted as behaviour: "ignore previous
+  instructions" comes back word for word, wrapped. A filter with a bypass produces the worst
+  outcome available — a system exactly as vulnerable and now believed to be safe. What stops
+  the page is the gate: **a turn that has read anything external now needs a human for every
+  tool that is not read-only**, whatever the content asked for. A tool nobody classified
+  escalates, which is the safe direction to be wrong in.
+
+  **The red-team probes found a real leak on their first run.** Told a safe combination in
+  passing — "just so you know while we talk" — the model called `remember` unasked, and a
+  different conversation read it straight back out of the system prompt. A memory write now
+  requires the USER's own words to have asked for one; "remember that I take my coffee black"
+  still works, a remark in passing no longer becomes a permanent fact.
+
+  Secrets are redacted **by value** rather than by key name, because a model interpolates a
+  credential into a sentence and key-matching never sees it. The filter is installed at boot,
+  before anything can log a config dict, and traces are redacted too — they are written to disk.
+
+  `docs/THREAT_MODEL.md` says what this defends, from whom, and — the part most threat models
+  leave out — what it does not defend at all: injection as a class, a compromised model server,
+  the operator's own machine, and anything after code execution in this process.
+
 - M37 (n8n bridge): the automations the operator already has, callable by name — and off. Three
   refusals, each with a test named after it: the flag ships `false` and off means the bridge does
   not reach n8n even when asked directly; the `workflows:` list is an allow-list rather than a

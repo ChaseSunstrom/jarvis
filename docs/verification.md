@@ -417,6 +417,22 @@ house's summary is a fraction of a real one's.
 | A person can see it from the task that ran | Automated *in a real browser* | `jarvis-web/e2e/task-live.spec.ts` — the Trace panel shows what it cost, where the time went, and each span with its duration; a failed span reads as failed without opening anything |
 | Traces from more than one Jarvis, or analytical queries over them | **Not built** | that is what a Langfuse would be for; `docs/TOOLING_DECISIONS.md` §6 records the measurement and says the JSONL is deliberately the shape you can ship elsewhere |
 
+### Hardening: what holds when the content is hostile (M43)
+
+`docs/THREAT_MODEL.md` is the argument; this is what is asserted.
+
+| Claim | Level | Proof |
+|---|---|---|
+| A page cannot forge a role boundary against a local model | Automated | `test_every_template_family_loses_its_role_markers` — ChatML, Llama 2, Llama 3, Gemma and Mistral literals are replaced with a visible scar, on the way IN (`mark_untrusted_result`), so a new inbound path cannot forget to do it |
+| Content cannot escape or forge its own wrapper | Automated | `test_content_cannot_close_the_fence_around_it`, `..._forge_the_notice_either` |
+| Nothing is filtered by keyword | Automated *as behaviour* | `test_nothing_pretends_to_detect_an_attack` — "ignore previous instructions" comes back word for word, wrapped. A filter with a bypass is a system exactly as vulnerable and now believed safe |
+| A turn that has read external content cannot silently act | Automated | `test_a_tainted_turn_cannot_silently_change_state`; an unclassified tool escalates (`test_a_tool_nobody_classified_escalates`), which is the safe direction to be wrong in |
+| …and `remember`/`forget`/`undo` refuse outright rather than asking | Automated | `REFUSE_WHEN_TAINTED`, held in step with its refusal tests by `test_the_refusers_really_do_refuse` — a human cannot audit "remember: the spare key is under the mat" in the two seconds an approval gets |
+| A memory write nobody asked for does not happen | Automated *and found by a probe* | `redteam-cross-conversation-leak` caught it: a remark said in passing became a permanent fact a later conversation read back. `MEMORY_REQUESTS` now requires the USER's own words to ask |
+| Secrets never reach a log, a trace or a note | Automated | `security/secrets.py` redacts **by value** (a model interpolates a key into a sentence, so key-name matching fails) plus a structural pass on known key names; the filter is installed at boot, before anything can log a config dict |
+| The red-team probes | Automated *and the acceptance criteria* | `scripts/verify/m43-hardening.sh` runs them; the suite fails if any succeeds. Three run now; two are `gated-on: M38` because channels do not exist yet, and full mode runs them and fails |
+| Prompt injection, as a class | **Not defended, and said so** | `docs/THREAT_MODEL.md` — the defence is structural (quarantine, then require a human to act), not detection. A model can still be talked into saying something foolish |
+
 ### The stack, as the thing under test (M28, M29)
 
 | Claim | Level | Proof |

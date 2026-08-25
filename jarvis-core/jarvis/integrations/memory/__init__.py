@@ -100,6 +100,25 @@ DEFAULT_SEARCH_LIMIT = 5
 #: Score at or above which a query is judged to be *about* a note, rather than
 #: merely ranking above the notes it is about even less.
 #:
+#: Phrasings that mean "write this down about me". A memory write is only made
+#: when the user's OWN words contain one.
+#:
+#: Found by a red-team probe (M43, `redteam-cross-conversation-leak`): told the
+#: safe combination in passing — "just so you know while we talk" — the model
+#: helpfully called `remember`, and a later conversation read it straight back
+#: out of the system prompt. Nobody had asked for anything to be kept.
+#:
+#: This is deliberately a check on the USER's sentence rather than on the
+#: model's arguments: the arguments are the model's opinion of what was said,
+#: and the model is the thing being second-guessed. `evals/routing.py` holds
+#: the same distinction for note-vs-memory routing.
+MEMORY_REQUESTS = (
+    "remember", "don't forget", "do not forget", "keep in mind", "bear in mind",
+    "note that", "make a note", "write that down", "write this down",
+    "jot that down", "commit that to memory", "memorise", "memorize",
+    "for future reference", "from now on", "always ", "never forget",
+)
+
 #: How many candidates the cross-encoder is shown. It reads the query with each
 #: one, so this is the knob that decides what reranking costs: twenty short
 #: notes is tens of milliseconds, the whole store would be seconds.
@@ -1283,7 +1302,7 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         _LOGGER.debug("memory: no LLM tool registry; services registered without tools")
         return
 
-    from ...api.devices import turn_is_untrusted
+    from ...api.devices import turn_is_untrusted, utterance_of
     from ...llm.tools import schema_object
 
     async def tool_remember(args: dict[str, Any], context: Any = None) -> Any:
@@ -1301,6 +1320,20 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         # this check a hostile page can write itself into Jarvis's standing
         # instructions and still be there next week. `undo_last_action` has
         # refused on a tainted turn all along; this is the same refusal.
+        # Nobody asked. See `MEMORY_REQUESTS` — this is the leak a red-team
+        # probe found: a remark said in passing became a permanent fact that
+        # every later conversation could read.
+        said = utterance_of(jarvis, context)
+        if said and not any(phrase in said.lower() for phrase in MEMORY_REQUESTS):
+            return {
+                "stored": False,
+                "reason": "not stored: the user did not ask for this to be remembered",
+                "message": (
+                    "I have not written that down, Sir — you did not ask me to. "
+                    "Say \"remember …\" and I will keep it."
+                ),
+            }
+
         if turn_is_untrusted(jarvis, context):
             return {
                 "stored": False,

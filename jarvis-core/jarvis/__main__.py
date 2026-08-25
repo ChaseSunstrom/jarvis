@@ -172,6 +172,23 @@ async def async_run(args: argparse.Namespace) -> int:
         return 2
 
     setup_logging(config, "debug" if args.verbose else args.log_level)
+
+    # Every value from secrets.yaml and every credential-shaped environment
+    # variable, registered before anything can log one (M43). The filter goes
+    # on the root logger because the leak it defends against is somebody
+    # logging a config dict at DEBUG — which is nobody's fault and happens in
+    # every codebase eventually. Registration is by VALUE, so it works wherever
+    # the value ends up, including inside a sentence a model wrote.
+    try:
+        from .config import load_secrets
+        from .security.secrets import install_log_filter, register_config
+
+        known = register_config(load_secrets(config_dir), dict(os.environ))
+        install_log_filter()
+        _LOGGER.debug("Redacting %d known secret value(s) from logs and traces", known)
+    except Exception:  # pragma: no cover - a boot must not fail over redaction
+        _LOGGER.warning("Could not install the secret redactor", exc_info=True)
+
     host, port = _server_options(config, args)
 
     jarvis = Jarvis(config_dir)

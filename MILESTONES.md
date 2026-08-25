@@ -575,7 +575,7 @@ and every milestone here ends with its own live scenarios.
     backends, and rolls up a coherent result with trace evidence.
   - Verify: `bash scripts/verify/m42-delegation.sh`
 
-- [ ] **M43 — Hardening: injection, least privilege, secrets, red team** · size XL · deps M11, M13
+- [x] **M43 — Hardening: injection, least privilege, secrets, red team** · size XL · deps M11, M13
   - Scope: **prompt injection is unsolved, so it is assumed.** Every piece of external content
     — email bodies, fetched pages, channel messages, file contents, catalog metadata — is
     wrapped and quarantined before it reaches the model and stripped of chat-template control

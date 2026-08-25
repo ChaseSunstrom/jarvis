@@ -327,6 +327,15 @@ class Runner:
                     # the next scenario needs speech to work.
                     killed.append(turn.kill)
                     ground.stack.stop(turn.kill)  # type: ignore[union-attr]
+                if turn.new_conversation:
+                    # A different thread, as a second person or a later day
+                    # would be. Without this every turn shares one conversation
+                    # id and "the other thread does not know" is unassertable.
+                    conversation_id = (
+                        f"{TEST_NAMESPACE}{scenario.name}:{variant}:{index}"
+                        if ground.name == "stack"
+                        else None
+                    )
                 if turn.restart:
                     # The whole point of the turn: kill the process and see
                     # what survived. The socket does not, so the client and

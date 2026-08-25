@@ -923,6 +923,15 @@ class ConversationAgent:
         if self.can_escalate_think:
             schema.append(THINK_TOOL_SCHEMA)
         context = Context(origin="llm")
+        # What the user actually said, for the one policy that cannot be
+        # decided from the model's arguments: whether a memory write was ASKED
+        # for. See `integrations/memory`'s `remember` handler.
+        try:
+            from ..api.devices import remember_utterance
+
+            remember_utterance(self.jarvis, context, message)
+        except Exception:  # pragma: no cover - a policy aid, never a blocker
+            _LOGGER.debug("Could not record the turn's utterance", exc_info=True)
         pieces: list[str] = []
 
         emit = self._turn_emitter(on_event)

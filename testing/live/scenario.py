@@ -100,6 +100,13 @@ class Turn:
     wait: float = 0.0
     #: Send raw audio instead of speech: "silence" | "room_tone".
     sound: str = ""
+    #: Start this turn in a NEW conversation, as a different thread would.
+    #:
+    #: The whole of `redteam-cross-conversation-leak`: without it, every turn
+    #: in a scenario shares one conversation id, and "the second thread does
+    #: not know what the first was told" cannot be asserted at all — the two
+    #: turns ARE one thread.
+    new_conversation: bool = False
     #: Restart jarvis-core before this turn (memory must survive it). On the
     #: stack ground that is `docker restart jarvis-core`; on the harness it is
     #: the process. Both answer the same question: what survived?
@@ -156,6 +163,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         wait=float(raw.get("wait") or 0.0),
         sound=sound,
         restart=bool(raw.get("restart")),
+        new_conversation=bool(raw.get("new_conversation")),
         kill=str(raw.get("kill") or ""),
     )
 

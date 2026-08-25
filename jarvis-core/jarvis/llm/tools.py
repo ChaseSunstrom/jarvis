@@ -697,6 +697,45 @@ def _as_list(value: Any) -> list[Any]:
 # tools
 # ===========================================================================
 ToolHandler = Callable[[dict[str, Any], Any], Awaitable[Any] | Any]
+#: The tools that only read. Everything not named here is treated as
+#: state-changing, which is why this list is explicit rather than inferred: a
+#: tool that arrives later and is genuinely read-only gets added deliberately,
+#: and one that arrives and is forgotten escalates instead of slipping through.
+#:
+#: Reading is not the same as harmless — `web_fetch` is how hostile text gets
+#: in — but reading is not an ACTION, and this list only decides whether the
+#: turn may proceed without a human once something hostile has been read.
+READ_ONLY_TOOLS = frozenset({
+    # the house, observed
+    "get_state", "list_entities", "get_user_context", "recent_events",
+    "list_my_devices", "list_cameras", "look_at_camera", "describe_camera_change",
+    "get_automation_trace", "get_briefing", "list_scheduled",
+    # what it knows
+    "recall", "note_search", "use_skill",
+    # what it is doing
+    "task_status", "code_task_status", "list_code_repositories",
+    # files and the web, which read and never write
+    "list_files", "read_file", "search_files",
+    "web_search", "web_fetch", "web_browse", "web_crawl",
+})
+
+
+#: Tools that REFUSE on a tainted turn rather than asking a human.
+#:
+#: Stricter than the escalation below, and deliberately so. Approval works when
+#: a person can evaluate what they are approving: "unlock the front door" is a
+#: sentence somebody can judge. `remember: the spare key is under the mat` is
+#: not — it looks like a note, it reads as innocuous, and what it actually does
+#: is write into the system prompt of every future conversation. A human cannot
+#: audit that in the two seconds an approval gets, so the answer is no rather
+#: than "are you sure".
+#:
+#: Each of these refuses inside its own handler, with its own wording; naming
+#: them here keeps the gate from turning that refusal into a prompt.
+#: `test_the_refusers_really_do_refuse` holds the two in step.
+REFUSE_WHEN_TAINTED = frozenset({"remember", "forget", "undo_last_action"})
+
+
 GateCheck = Callable[[dict[str, Any]], bool]
 TargetPin = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -714,6 +753,12 @@ class Tool:
     #: that freeze *what* was approved, so the action executed later is the
     #: one the human was shown rather than a fuzzy name re-resolved minutes on.
     pin: TargetPin | None = None
+    #: True for a tool that only READS. It is the whole of the taint
+    #: escalation: once a turn has seen external content, every tool that is
+    #: not read-only needs a human before it runs, whatever the content asked
+    #: for. Defaulting to False is deliberate — a new tool nobody classified
+    #: escalates, which is the safe direction to be wrong in.
+    read_only: bool = False
     #: The ONE argument a human may fill in when they resolve this request.
     #:
     #: Almost always None, and that is the point. `approve_request` accepts an
@@ -904,6 +949,7 @@ class ToolRegistry:
         gate: GateCheck | None = None,
         pin: TargetPin | None = None,
         answerable: str | None = None,
+        read_only: bool = False,
         replaces: str | None = None,
     ) -> Tool:
         """Add a tool. A re-registration may not quietly WEAKEN the one there.
@@ -956,6 +1002,7 @@ class ToolRegistry:
                 domain=domain,
                 gate=gate,
                 pin=pin,
+                read_only=read_only,
             )
         existing = self._tools.get(tool.name)
         if existing is not None and replaces != tool.name:
@@ -1018,7 +1065,7 @@ class ToolRegistry:
                 "expected": tool.parameters.get("properties", {}),
             }
 
-        if self.requires_approval(tool, arguments):
+        if self.requires_approval(tool, arguments, context):
             return self._request_approval(tool, arguments, context)
         return await self._execute(tool, arguments, context)
 
@@ -1044,11 +1091,27 @@ class ToolRegistry:
         return result
 
     # --- the gate ---------------------------------------------------------
-    def requires_approval(self, tool: Tool, args: dict[str, Any]) -> bool:
-        """Decided here, in code, never by the model."""
+    def requires_approval(
+        self, tool: Tool, args: dict[str, Any], context: Any = None
+    ) -> bool:
+        """Decided here, in code, never by the model.
+
+        The last clause is M43's, and it is the one that makes prompt injection
+        survivable rather than solved: once a turn has read anything from
+        outside — a page, an email, a message, a file — every tool that is not
+        read-only needs a human, whatever the content asked for. A page that
+        says "unlock the front door" gets an approval prompt in front of a
+        person, which is exactly what it would get if the user had said it.
+        """
         if tool.tier >= TIER_APPROVAL:
             return True
         if tool.domain and tool.domain in GATED_DOMAINS:
+            return True
+        if (
+            not self.is_read_only(tool)
+            and tool.name not in REFUSE_WHEN_TAINTED
+            and self._is_tainted(context)
+        ):
             return True
         if tool.gate is not None:
             try:
@@ -1057,6 +1120,15 @@ class ToolRegistry:
                 _LOGGER.exception("Gate check for %s blew up; requiring approval", tool.name)
                 return True
         return False
+
+    def is_read_only(self, tool: Tool) -> bool:
+        """Does this tool only read? Declared, never guessed.
+
+        `Tool.read_only` wins when it is set — that is how a dynamically
+        registered tool (MCP, n8n, `create_tool`) says what it is — and the
+        name list covers the built-ins. Anything else is state-changing.
+        """
+        return bool(tool.read_only) or tool.name in READ_ONLY_TOOLS
 
     def _is_tainted(self, context: Any) -> bool:
         """Has this turn already read something a stranger wrote?

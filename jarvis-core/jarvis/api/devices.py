@@ -709,6 +709,64 @@ class UntrustedTurns:
         return True
 
 
+#: ``jarvis.data`` key for what the user said this turn.
+DATA_UTTERANCE = "turn_utterances"
+
+
+class TurnUtterances:
+    """What the user actually said, per turn, for the policies that need it.
+
+    One policy needs it and it is a serious one: `remember` writes into the
+    system prompt of every future conversation, and a model that volunteers
+    that for a remark said in passing has turned a sentence into a permanent
+    fact nobody chose. Deciding that needs the user's own words, and the tool
+    handler only gets the model's arguments — which are, by construction, the
+    model's opinion of what was said.
+
+    Same shape and TTL as `UntrustedTurns`: keyed on the context id the agent
+    builds once per turn and hands to every tool it calls.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._turns: dict[str, tuple[float, str]] = {}
+
+    def remember(self, context: Any, text: str) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._turns = {k: v for k, v in self._turns.items() if v[0] > now}
+        self._turns[key] = (now + self.ttl, str(text or ""))
+
+    def get(self, context: Any) -> str:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return ""
+        entry = self._turns.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._turns.pop(key, None)
+            return ""
+        return entry[1]
+
+
+def get_turn_utterances(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> TurnUtterances:
+    store = jarvis.data.get(DATA_UTTERANCE)
+    if not isinstance(store, TurnUtterances):
+        store = jarvis.data.setdefault(DATA_UTTERANCE, TurnUtterances(ttl))
+    return store
+
+
+def remember_utterance(jarvis: "Jarvis", context: Any, text: str) -> None:
+    """Record what the user said this turn. Called once, by the agent."""
+    get_turn_utterances(jarvis).remember(context, text)
+
+
+def utterance_of(jarvis: "Jarvis", context: Any) -> str:
+    """What the user said this turn, or "" if nobody recorded it."""
+    return get_turn_utterances(jarvis).get(context)
+
+
 def get_untrusted_turns(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> UntrustedTurns:
     """The shared taint set, created on first use."""
     store = jarvis.data.get(DATA_UNTRUSTED)
@@ -756,15 +814,48 @@ def result_is_untrusted(result: Any) -> bool:
 
 
 def mark_untrusted_result(jarvis: "Jarvis", context: Any, result: Any) -> Any:
-    """Taint this turn if ``result`` is fenced content, then pass it through.
+    """Taint this turn if ``result`` is fenced content, strip it, pass it through.
 
-    The one call a tool that returns somebody else's words should make. Fencing
-    tells the *model* the text is data; this is what stops that same turn
-    reaching an action dispatcher without the user being shown the real action
-    — the tier is the control, the wording is not.
+    The one call a tool that returns somebody else's words should make. Three
+    things happen here and they are three different defences:
+
+    * **Fencing** tells the model the text is data. Wording only.
+    * **Stripping** (M43) removes the chat-template control literals that would
+      let that text forge a role boundary — `<|im_start|>system` in a page is
+      indistinguishable from a system message once the serving layer has
+      templated it, and no amount of fencing helps. This is done here rather
+      than in each integration so a new inbound path cannot forget it.
+    * **Tainting** is the one that stops an action: every state-changing tool
+      for the rest of this turn now needs a human, whatever the text asked for.
     """
-    if result_is_untrusted(result):
-        mark_untrusted(jarvis, context)
+    if not result_is_untrusted(result):
+        return result
+    mark_untrusted(jarvis, context)
+    return _strip_control_literals(result)
+
+
+def _strip_control_literals(result: Any, depth: int = 0) -> Any:
+    """Every string in a tool result, with template control tokens removed.
+
+    Walks the payload rather than one known key: a tool result is a dict whose
+    shape belongs to the tool, and the text could be under `text`, `content`,
+    `body`, `summary` or a list of any of them. Depth-bounded, because a result
+    is data from outside and "deeply nested" is a cheap way to spend somebody's
+    stack.
+    """
+    if depth > 6:
+        return result
+    try:
+        from ..security.quarantine import strip_control_tokens
+    except Exception:  # pragma: no cover - a partial install must not break a tool
+        return result
+    if isinstance(result, str):
+        cleaned, _ = strip_control_tokens(result)
+        return cleaned
+    if isinstance(result, dict):
+        return {k: _strip_control_literals(v, depth + 1) for k, v in result.items()}
+    if isinstance(result, list):
+        return [_strip_control_literals(v, depth + 1) for v in result]
     return result
 
 

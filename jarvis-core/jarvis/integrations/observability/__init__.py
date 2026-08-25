@@ -318,7 +318,16 @@ class Recorder:
 
 
 def _small(data: dict[str, Any], limit: int = 200) -> dict[str, Any]:
-    """A payload small enough to keep hundreds of. Values are clipped, not dropped."""
+    """A payload small enough to keep hundreds of, with no secrets in it.
+
+    Clipped rather than dropped, and redacted rather than trusted: a trace is
+    written to disk and read by whoever can read the config directory, and a
+    tool's arguments are exactly where a credential would be if one were ever
+    passed as one. `security/secrets.py` says why this is by value.
+    """
+    from ...security.secrets import redact
+
+    data = redact(data)
     out: dict[str, Any] = {}
     for key, value in list(data.items())[:16]:
         if key in ("context", "task"):
