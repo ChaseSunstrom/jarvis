@@ -182,6 +182,9 @@ services:
       - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-}
       - RERANK_URL=${RERANK_URL:-}
       - RERANK_MODEL=${RERANK_MODEL:-}
+      # The operator's own n8n, if they have one and switched the bridge on
+      # (M37). Empty by default, like the bridge itself.
+      - N8N_URL=${N8N_URL:-}
       - BROWSER_APPROVAL_SECRET=${BROWSER_APPROVAL_SECRET:-}
       # The orchestrator pair. Its services are commented out below, so these
       # are normally empty and the tools answer "not configured" — but the

@@ -503,7 +503,7 @@ after number must be better than the before or the service comes out**. Choices 
     is measured before it is adopted — it is the largest single ask in this list.
   - Verify: `bash scripts/verify/m36-observability.sh`
 
-- [ ] **M37 — n8n bridge, flag-gated and off** · size M · deps M28, M30
+- [x] **M37 — n8n bridge, flag-gated and off** · size M · deps M28, M30
   - Scope: a bridge to the operator's existing self-hosted n8n over the tailnet, exposing
     selected workflows as Jarvis tools, behind a config flag that defaults OFF and a per-workflow
     allow-list. Nothing is enabled until the operator says so; the tests cover the flag being

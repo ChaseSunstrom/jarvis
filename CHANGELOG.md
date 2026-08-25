@@ -69,6 +69,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M37 (n8n bridge): the automations the operator already has, callable by name — and off. Three
+  refusals, each with a test named after it: the flag ships `false` and off means the bridge does
+  not reach n8n even when asked directly; the `workflows:` list is an allow-list rather than a
+  discovery, so adding a workflow to n8n can never silently add a capability to Jarvis; and each
+  one is Tier 3 unless the operator lowers it themselves, because running an automation has
+  effects this process cannot see.
+
+  Workflows are started through their Webhook trigger node — n8n's public API cannot start an
+  arbitrary one — so a workflow configured without a `webhook:` is listed and refuses to run,
+  naming the node it needs rather than 404ing against a guessed URL. The API key is a header,
+  never a URL, where it would sit in n8n's access log.
+
 - M36 (agent observability): every tool call, model call, approval and subagent in a turn is now
   a **trace** you can read — with what each step took and what the turn cost in tokens — and the
   task page links to it. The correlation needed no new plumbing at all: every bus event already

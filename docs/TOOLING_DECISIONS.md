@@ -311,12 +311,31 @@ than read them. The JSONL on disk is deliberately the shape you can ship
 somewhere else — if the operator runs Langfuse elsewhere on the tailnet, these
 events go to it without changing what produces them.
 
-### 7. n8n — *a bridge, off by default* (M37)
+### 7. n8n — *a bridge, off, with an allow-list* (M37)
 
-**Chosen:** a bridge to the operator's existing n8n over the tailnet. Nothing
-is installed here. The flag defaults off, the allow-list names the workflows
-that may be called, and an un-listed workflow is refused. This is a reach
-surface, so M43's rules apply to it before it is switched on.
+**Chosen:** a bridge to the operator's existing n8n. Nothing is installed here
+and nothing is rebuilt: their odd jobs stay where they live.
+
+Three refusals, in order, each with a test named after it:
+
+* **`enabled: false` is the shipped value.** It runs code on another machine,
+  which `PROCESS.md` §2d calls a reach surface, and a reach surface is opt-in.
+  Off means off: with the flag down the bridge does not reach n8n even when
+  asked directly.
+* **The `workflows:` list is an allow-list, not a discovery.** n8n's API can
+  enumerate every workflow on the instance and this deliberately never calls
+  it, so adding a workflow to n8n can never silently add a capability to
+  Jarvis. The refusal names what IS allowed, so the failure is actionable.
+* **Tier 3 unless the operator lowers it themselves.** Running an automation
+  has effects this process cannot see — an email, a garage door. A `tier: 1` is
+  a sentence in their config file rather than a default nobody chose, and an
+  unparseable tier is the safe one rather than a crash at startup.
+
+A workflow is started through its **Webhook trigger node**, because n8n's
+public API cannot start an arbitrary workflow. One configured without a
+`webhook:` is listed and refuses to run, naming the node it needs — a better
+failure than a 404 from a URL nobody meant to call. The API key travels as a
+header and never in a URL, where it would land in n8n's access log.
 
 ### 8. LLM gateway — *LiteLLM, self-hosted* (M40, listed here for the budget)
 
