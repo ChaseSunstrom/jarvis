@@ -58,3 +58,10 @@ jarvis-core/config/packages/
 # the same reason as `jarvis-core/wyoming/` above: hundreds of megabytes,
 # fetched once, and never something a checkout should carry.
 jarvis-core/models/
+
+# The Whisper and Piper weights the Wyoming containers download on first start.
+# ~200 MB, and one blob is 139 MB — over GitHub's hard limit, so a push fails
+# outright with them tracked. They were committed by accident in "The console
+# gets a component library"; that commit's history was rewritten before this
+# branch was ever pushed.
+jarvis-core/wyoming/
