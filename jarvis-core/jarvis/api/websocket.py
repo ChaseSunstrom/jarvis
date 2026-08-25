@@ -910,6 +910,29 @@ class WebSocketHandler:
     async def _cmd_skills_reload(self, msg: dict[str, Any]) -> Any:
         return await common.async_reload_skills(self.jarvis)
 
+    async def _cmd_extensions_list(self, msg: dict[str, Any]) -> Any:
+        return await common.extensions_list_payload(self.jarvis)
+
+    async def _cmd_extensions_set(self, msg: dict[str, Any]) -> Any:
+        return await common.async_set_extension(
+            self.jarvis,
+            {
+                key: msg[key]
+                for key in ("key", "enabled", "permissions")
+                if key in msg
+            },
+        )
+
+    async def _cmd_extensions_scaffold(self, msg: dict[str, Any]) -> Any:
+        return await common.async_scaffold_skill(
+            self.jarvis,
+            {
+                key: msg[key]
+                for key in ("name", "description", "tools", "permissions", "body")
+                if key in msg
+            },
+        )
+
     async def _cmd_mcp_list(self, msg: dict[str, Any]) -> Any:
         return common.mcp_list_payload(self.jarvis)
 
@@ -1341,6 +1364,9 @@ WebSocketHandler._HANDLERS = {
     "jarvis/skills/list": WebSocketHandler._cmd_skills_list,
     "jarvis/skills/get": WebSocketHandler._cmd_skills_get,
     "jarvis/skills/reload": WebSocketHandler._cmd_skills_reload,
+    "jarvis/extensions/list": WebSocketHandler._cmd_extensions_list,
+    "jarvis/extensions/set": WebSocketHandler._cmd_extensions_set,
+    "jarvis/extensions/scaffold": WebSocketHandler._cmd_extensions_scaffold,
     "jarvis/mcp/list": WebSocketHandler._cmd_mcp_list,
     "jarvis/mcp/inspect": WebSocketHandler._cmd_mcp_inspect,
     "jarvis/mcp/add": WebSocketHandler._cmd_mcp_add,

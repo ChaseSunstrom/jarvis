@@ -1761,6 +1761,63 @@ async def async_reload_skills(jarvis: "Jarvis") -> dict[str, Any]:
     return {"loaded": store.load(), "errors": list(store.errors)}
 
 
+async def extensions_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """Everything extensible, with health, in one call.
+
+    Health is included rather than left to a second round trip: the page is a
+    list of things that are either working or not, and a list that paints
+    without that is a list that changes under the reader a moment later.
+    """
+    registry = jarvis.data.get("extensions")
+    if registry is None:
+        return {"extensions": [], "errors": [], "enabled": False}
+    await registry.health()
+    state = jarvis.data.get("extensions_state")
+    rows = registry.listing()
+    if state is not None:
+        for row in rows:
+            row["last_used"] = state.last_used.get(row["key"])
+    return {
+        "extensions": rows,
+        "errors": list(registry.errors),
+        "enabled": True,
+        "permissions": list(_extension_permissions()),
+        "counts": {
+            kind: len([r for r in rows if r["kind"] == kind])
+            for kind in ("skill", "mcp", "plugin")
+        },
+    }
+
+
+def _extension_permissions() -> tuple[str, ...]:
+    from ..integrations.extensions.manifest import PERMISSIONS
+
+    return PERMISSIONS
+
+
+async def async_set_extension(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    """Enable/disable, or narrow the permission scope. Applied before it returns."""
+    if jarvis.data.get("extensions") is None:
+        raise ApiError("not_configured", "the extension registry is not set up", 400)
+    result = await jarvis.services.async_call(
+        "extensions", "set", dict(data), blocking=True, return_response=True
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise ApiError("invalid", str(result["error"]), 400)
+    return result or {}
+
+
+async def async_scaffold_skill(jarvis: "Jarvis", data: dict[str, Any]) -> dict[str, Any]:
+    if jarvis.data.get("extensions") is None:
+        raise ApiError("not_configured", "the extension registry is not set up", 400)
+    result = await jarvis.services.async_call(
+        "extensions", "scaffold", dict(data), blocking=True, return_response=True
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise ApiError("invalid", str(result["error"]), 400)
+    return result or {}
+
+
 def mcp_list_payload(jarvis: "Jarvis") -> dict[str, Any]:
     manager = _mcp(jarvis)
     return {

@@ -117,29 +117,36 @@ class ToolPlugin:
 
     def register(self) -> int:
         """Put every tool on the registry. Returns how many."""
+        count = sum(1 for tool in self.tools() if self.register_one(tool))
+        _LOGGER.info("%s: %d tool(s) registered", self.domain, count)
+        return count
+
+    def register_one(self, tool: PluginTool) -> bool:
+        """One tool, by itself.
+
+        Split out of [register] so a tool an operator withdrew can be put back
+        without re-registering the whole plugin — re-registering all of them
+        would restore the ones they had just taken away (M46).
+        """
         from ...llm.tools import schema_object
 
         registry = self.jarvis.data.get("llm_tools")
         if registry is None:
             _LOGGER.debug("%s: no tool registry yet", self.domain)
-            return 0
-        count = 0
-        for tool in self.tools():
-            parameters = tool.parameters
-            if isinstance(parameters, dict) and "type" not in parameters:
-                parameters = schema_object(parameters)
-            registry.register(
-                name=tool.name,
-                description=tool.description,
-                parameters=parameters,
-                handler=self._wrap(tool),
-                tier=tool.resolved_tier(),
-                domain=self.domain,
-                read_only=tool.read_only,
-            )
-            count += 1
-        _LOGGER.info("%s: %d tool(s) registered", self.domain, count)
-        return count
+            return False
+        parameters = tool.parameters
+        if isinstance(parameters, dict) and "type" not in parameters:
+            parameters = schema_object(parameters)
+        registry.register(
+            name=tool.name,
+            description=tool.description,
+            parameters=parameters,
+            handler=self._wrap(tool),
+            tier=tool.resolved_tier(),
+            domain=self.domain,
+            read_only=tool.read_only,
+        )
+        return True
 
     def _wrap(self, tool: PluginTool) -> Callable[..., Any]:
         """Time it, report it, and never let a network error kill a turn."""

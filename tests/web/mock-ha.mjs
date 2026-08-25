@@ -1165,6 +1165,123 @@ index 1234567..89abcde 100644
 	// Skills: folders of instructions the operator wrote. The console lists
 	// them beside the tools, because "a thing the assistant knows how to do" is
 	// one idea whether it arrives as a tool or as a document.
+	// Every extensible thing, as `jarvis/extensions/list` returns it (M46).
+	// One of each kind, one disabled, one unhealthy and one that never ran —
+	// the console has a different row for each and a fixture with three happy
+	// rows tests none of them.
+	const extensions = [
+		{
+			id: 'research-report',
+			kind: 'skill',
+			key: 'skill:research-report',
+			version: '1',
+			description: 'Answering a question that needs sources.',
+			author: 'Jarvis',
+			source_url: '',
+			permissions: ['read_state', 'network', 'memory_write'],
+			granted: ['read_state', 'network', 'memory_write'],
+			revoked: [],
+			tools: ['deep_research', 'web_search', 'web_fetch', 'note_create'],
+			network: { needs: true, hosts: ['*'] },
+			filesystem: { read: [], write: [] },
+			origin: 'bundled',
+			enabled: true,
+			location: '/app/jarvis/integrations/skills/bundled/research-report/SKILL.md',
+			health: { ok: true, detail: 'loaded' },
+			last_used: Math.floor(Date.now() / 1000) - 900
+		},
+		{
+			id: 'house-style',
+			kind: 'skill',
+			key: 'skill:house-style',
+			version: '1',
+			description: 'How Jarvis should answer in this house.',
+			author: 'the household',
+			source_url: '',
+			permissions: ['read_state'],
+			granted: ['read_state'],
+			revoked: [],
+			tools: ['get_state', 'list_entities'],
+			network: { needs: false, hosts: [] },
+			filesystem: { read: [], write: [] },
+			origin: 'user',
+			enabled: false,
+			location: '/config/skills/house-style/SKILL.md',
+			health: { ok: true, detail: 'loaded' },
+			last_used: null
+		},
+		{
+			id: 'calendar',
+			kind: 'plugin',
+			key: 'plugin:calendar',
+			version: '1',
+			description: 'CalDAV: the diary, and what is in it.',
+			author: 'Jarvis',
+			source_url: '',
+			permissions: ['read_state', 'act'],
+			granted: ['read_state', 'act'],
+			revoked: [],
+			tools: ['calendar_availability', 'calendar_create', 'calendar_delete', 'calendar_list'],
+			network: { needs: true, hosts: ['dav.example'] },
+			filesystem: { read: [], write: [] },
+			origin: 'bundled',
+			enabled: true,
+			location: 'jarvis.integrations.calendar',
+			health: { ok: true, detail: 'fine' },
+			last_used: Math.floor(Date.now() / 1000) - 120
+		},
+		{
+			id: 'notes-server',
+			kind: 'mcp',
+			key: 'mcp:notes-server',
+			version: '0',
+			description: 'MCP server over http at notes.example',
+			author: '',
+			source_url: 'https://notes.example/mcp',
+			permissions: ['act', 'network', 'read_state'],
+			granted: ['act', 'network', 'read_state'],
+			revoked: [],
+			tools: [],
+			network: { needs: true, hosts: ['notes.example'] },
+			filesystem: { read: [], write: [] },
+			origin: 'user',
+			enabled: true,
+			location: 'https://notes.example/mcp',
+			health: { ok: false, detail: 'not connected' },
+			last_used: null
+		}
+	];
+
+	const extensionErrors = [
+		{
+			kind: 'skill',
+			id: 'bad-manifest',
+			location: '/config/skills/bad-manifest/SKILL.md',
+			error: "the manifest declares a permission nobody enforces: 'become_root'"
+		}
+	];
+
+	const extensionsListing = () => ({
+		extensions: extensions.map((e) => ({ ...e })),
+		errors: extensionErrors,
+		enabled: true,
+		permissions: [
+			'read_state',
+			'act',
+			'memory_read',
+			'memory_write',
+			'network',
+			'filesystem_read',
+			'filesystem_write',
+			'run_process'
+		],
+		counts: {
+			skill: extensions.filter((e) => e.kind === 'skill').length,
+			mcp: extensions.filter((e) => e.kind === 'mcp').length,
+			plugin: extensions.filter((e) => e.kind === 'plugin').length
+		}
+	});
+
 	const skills = [
 		{
 			name: "house-style",
@@ -2110,6 +2227,63 @@ index 1234567..89abcde 100644
 						entries: memoryEntries
 					});
 					break;
+
+				// --- extensions (M46) ----------------------------------------
+				case 'jarvis/extensions/list':
+					ok(msg.id, extensionsListing());
+					break;
+
+				case 'jarvis/extensions/set': {
+					const row = extensions.find((e) => e.key === String(msg.key || ''));
+					if (!row) {
+						fail(msg.id, 'invalid', `nothing installed called '${msg.key}'`);
+						break;
+					}
+					if ('enabled' in msg) row.enabled = Boolean(msg.enabled);
+					if ('permissions' in msg) {
+						const wanted = Array.isArray(msg.permissions) ? msg.permissions : null;
+						// Narrowing only, exactly as the server does it: a grant
+						// cannot add a permission the manifest never declared.
+						row.granted = wanted === null ? [...row.permissions] : row.permissions.filter((p) => wanted.includes(p));
+						row.revoked = row.permissions.filter((p) => !row.granted.includes(p));
+					}
+					ok(msg.id, { extension: row, removed: [], restored: [] });
+					break;
+				}
+
+				case 'jarvis/extensions/scaffold': {
+					const name = String(msg.name || '');
+					if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name)) {
+						fail(msg.id, 'invalid', `'${name}' is not a skill name`);
+						break;
+					}
+					if (extensions.some((e) => e.key === `skill:${name}`)) {
+						fail(msg.id, 'invalid', `there is already a skill called '${name}'`);
+						break;
+					}
+					extensions.push({
+						id: name,
+						kind: 'skill',
+						key: `skill:${name}`,
+						version: '1',
+						description: String(msg.description || ''),
+						author: 'written in the console',
+						source_url: '',
+						permissions: ['read_state'],
+						granted: ['read_state'],
+						revoked: [],
+						tools: Array.isArray(msg.tools) ? msg.tools : [],
+						network: { needs: false, hosts: [] },
+						filesystem: { read: [], write: [] },
+						origin: 'user',
+						enabled: true,
+						location: `/config/skills/${name}/SKILL.md`,
+						health: { ok: true, detail: 'loaded' },
+						last_used: null
+					});
+					ok(msg.id, { created: `/config/skills/${name}/SKILL.md` });
+					break;
+				}
 
 				// --- skills --------------------------------------------------
 				case 'jarvis/skills/list':

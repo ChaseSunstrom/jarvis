@@ -38,6 +38,7 @@ reachable by keyboard and announced as one.
 
 <style>
 	.toggle {
+		position: relative;
 		display: grid;
 		grid-template-columns: auto 1fr;
 		align-items: center;
@@ -48,11 +49,27 @@ reachable by keyboard and announced as one.
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
+	/*
+	 * The real checkbox, invisible but COVERING the control rather than
+	 * collapsed to nothing in a corner.
+	 *
+	 * It used to be `width: 0; height: 0`, which works for a person (the label
+	 * is clickable) and not for anything that addresses the input itself: a
+	 * zero-size element cannot be clicked at a point, so a test given this
+	 * component's `testid` timed out on "element is not stable". Covering the
+	 * label means the same click, the same focus ring on the track, and one
+	 * testid that both `toBeChecked()` and `click()` can use.
+	 */
 	input {
 		position: absolute;
+		inset: 0;
+		/* ABOVE the track it is invisible behind. Without this the track — a
+		   positioned element later in the DOM — wins the hit test, and a click
+		   addressed to the control lands on the decoration instead. */
+		z-index: 1;
+		margin: 0;
 		opacity: 0;
-		width: 0;
-		height: 0;
+		cursor: inherit;
 	}
 	.track {
 		display: block;

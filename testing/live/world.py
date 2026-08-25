@@ -251,6 +251,38 @@ class Observer:
             return []
         return list((answer or {}).get("entries") or [])
 
+    async def extensions(self) -> list[dict[str, Any]]:
+        """Everything installed, as the console's own page sees it."""
+        try:
+            answer = await self.client.command("jarvis/extensions/list")
+        except Exception:  # noqa: BLE001
+            return []
+        return list((answer or {}).get("extensions") or [])
+
+    async def set_extension(self, key: str, **patch: Any) -> dict[str, Any]:
+        return await self.client.command("jarvis/extensions/set", key=key, **patch)
+
+    async def offered_skills(self) -> list[str]:
+        """The skills the MODEL is offered — the store, not the console's list."""
+        try:
+            answer = await self.client.command("jarvis/skills/list")
+        except Exception:  # noqa: BLE001
+            return []
+        return [str(row.get("name") or "") for row in (answer or {}).get("skills") or []]
+
+    async def offered_tools(self) -> list[str]:
+        """What the MODEL is offered, not what the console lists.
+
+        The two are different questions and the second one is the claim worth
+        testing: a plugin hidden from a page is one the model can still call.
+        """
+        try:
+            answer = await self.client.command("jarvis/tools/list")
+        except Exception:  # noqa: BLE001
+            return []
+        rows = (answer or {}).get("tools") or []
+        return [str(row.get("name") or "") for row in rows]
+
     async def wait_for_note(self, contains: str = "", title_contains: str = "",
                             timeout: float = 60.0) -> dict[str, Any] | None:
         deadline = time.monotonic() + timeout

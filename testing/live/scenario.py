@@ -61,6 +61,8 @@ EXPECT_KEYS = {
     "error",             # the turn failed, visibly: {contains?, code?}
     "within_seconds",    # the whole turn must finish inside this
     "capability",        # which capability the router should have chosen
+    "extension",         # {key, enabled?, granted?, tool_offered?, tool_withheld?,
+                         #  skill_offered?, skill_withheld?}
 }
 
 VARIANTS = ("voice", "text")
@@ -114,6 +116,14 @@ class Turn:
     #: Stop a container before this turn and bring it back at the end of the
     #: scenario. Stack ground only — there is nothing to kill on a harness.
     kill: str = ""
+    #: Change something before speaking.
+    #:
+    #: Only `extension: {key, enabled?, permissions?}` today, and deliberately
+    #: narrow: this is for asserting that an operator's decision reaches a
+    #: conversation ALREADY IN PROGRESS, which is when somebody actually flips
+    #: a switch. A general "call any service" key here would be a scenario
+    #: format that can set up the very state it then asserts.
+    do: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -156,6 +166,15 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
     expect = raw.get("expect") or {}
     if not isinstance(expect, dict):
         raise ValueError(f"{name}: turn {index}'s expect is not a mapping")
+    do = raw.get("do") or {}
+    if not isinstance(do, dict):
+        raise ValueError(f"{name}: turn {index}'s do is not a mapping")
+    unknown_do = set(do) - {"extension"}
+    if unknown_do:
+        raise ValueError(
+            f"{name}: turn {index} asks to do {', '.join(sorted(unknown_do))}, "
+            "which the rig cannot do — only 'extension'"
+        )
     return Turn(
         say=say,
         expect=Expectation(expect),
@@ -165,6 +184,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         restart=bool(raw.get("restart")),
         new_conversation=bool(raw.get("new_conversation")),
         kill=str(raw.get("kill") or ""),
+        do=do,
     )
 
 

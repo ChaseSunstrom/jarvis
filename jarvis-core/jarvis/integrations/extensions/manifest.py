@@ -327,6 +327,13 @@ class Record:
     location: str = ""
     #: Filled by the registry's health pass. `{}` means "not asked yet".
     health: dict[str, Any] = field(default_factory=dict)
+    #: What it actually HOLDS, once the operator's decisions are applied — the
+    #: manifest's list, narrowed. Separate from `manifest.permissions` because
+    #: a surface has to be able to show both: what it asked for, and what it got.
+    granted: tuple[str, ...] = ()
+    #: Epoch seconds, or None if it has never run. `None` and `0` are different
+    #: answers and a surface shows different things for them.
+    last_used: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         out = self.manifest.as_dict()
@@ -336,6 +343,9 @@ class Record:
                 "enabled": self.enabled,
                 "location": self.location,
                 "health": dict(self.health),
+                "granted": list(self.granted or self.manifest.permissions),
+                "revoked": sorted(set(self.manifest.permissions) - set(self.granted or self.manifest.permissions)),
+                "last_used": self.last_used,
             }
         )
         return out

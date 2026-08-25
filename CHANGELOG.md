@@ -8,6 +8,20 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Fixed
+- **A model this install could not use, named nowhere.** Putting the LiteLLM gateway in front of
+  the model server (M40) renamed every model, and an `llm.model` an operator had chosen in the
+  console went on pointing at the old name. Every turn that used it came back as a 400 from the
+  proxy — a log line that means nothing unless you built the proxy — and the console's own
+  dropdown showed a value that was not among its choices. The boot probe now says so plainly,
+  naming the model that is set and the ones the server actually has.
+- **The switch worked exactly once.** Turning a skill off removed it from the store, and nothing
+  ever put one back: turning it on again did nothing until the next reload, while the console
+  cheerfully showed it as on. Found by the live suite, on the third turn of the first scenario
+  written for it.
+- **A toggle nothing could click.** `Toggle`'s checkbox was collapsed to zero size in a corner,
+  which works for a person (the label is clickable) and not for anything addressing the control
+  itself — a test given the component's own testid timed out on "element is not stable". The
+  input covers the control now, and sits above the track that was winning the hit test.
 - **The browser could not open a page, and said it was healthy.** `jarvis-browser` answered
   `/healthz` with 200 and every `/fetch` with a 500: `playwright install-deps chromium` had
   installed nothing, because Playwright 1.49 does not know Debian trixie and its fallback
@@ -50,6 +64,14 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M46 (the management surface): a Skills & Plugins section in the console — a row per installed
+  thing whatever kind it is, with what it holds, whether it is working, when it last ran, and
+  one switch. Turning something off reaches the running system rather than the page: a disabled
+  plugin's tools are off the model's list by the time the request returns, and narrowing a
+  permission scope withdraws exactly the tools that needed it — revoke `act` and the writer goes
+  while the reader stays. A skill can be written from the console without anybody opening a
+  file, and the permissions its chosen tools require are written in for it, so the file cannot
+  fail its own validator a second later. It is a section on `/tools` rather than a new tab.
 - M45 (the extension registry): skills, MCP servers and tool plugins each arrived by their own
   road and described themselves differently, so nothing could answer "what is installed, what
   may it reach, and is it working" — the answer lived in three shapes. One index now does,

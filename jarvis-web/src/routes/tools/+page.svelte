@@ -3,6 +3,7 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
+	import Extensions from '$lib/components/Extensions.svelte';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
 	import McpServers from '$lib/components/McpServers.svelte';
 	import SkillsPanel from '$lib/components/SkillsPanel.svelte';
@@ -492,6 +493,11 @@
 />
 
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
+
+<!-- Above the toolbox, because it is the thing that DECIDES the toolbox: what
+     is installed and what it holds is the cause, and the tool list below is
+     the effect. -->
+<Extensions {conn} />
 
 <section class="panel">
 	<div class="panel-head">

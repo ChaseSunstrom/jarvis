@@ -571,6 +571,25 @@ house's summary is a fraction of a real one's.
 | A recorded measurement can reach a sentence | Automated | `metrics_query` (read-only, in `READ_ONLY_TOOLS`) over the same sources the dashboards draw; the gate asserts the skill names it |
 | A third party's manifest, from a catalog | **Not yet** | M47. The gate for it is the same `Manifest.from_raw` call; what does not exist yet is anything that installs code from off this machine |
 
+### The management surface (M46)
+
+`bash scripts/verify/m46-plugins-ui.sh` — 15 checks.
+
+| Claim | Level | Proof |
+|---|---|---|
+| Turning a plugin off takes its tools off the MODEL, not off a list | Automated | `test_disabling_a_plugin_takes_its_tools_off_the_model` — the tool registry, not the console's listing. A plugin hidden from a page is one the model can still call |
+| An edited permission scope is enforced on the very next call | Automated | revoking `act` withdraws the writers and keeps the readers; `permissions: null` restores exactly what was withdrawn |
+| A permission the manifest never declared cannot be granted | Automated | narrowing only — the manifest is the statement people read, and an operator granting more does not make the thing need more |
+| A decision outlives the process | Automated | `.storage/extensions.json`; the gate boots twice and checks the skill is still off and the others are still on |
+| Turning something back on actually brings it back | Automated *and found by the live suite* | `test_turning_a_skill_back_on_actually_brings_it_back`. The switch worked exactly once: disabling popped the skill out of the store and nothing ever put one back |
+| A skill can be written from the console, and it validates | Automated | `extensions/scaffold` — the permissions its chosen tools require are written in for it, so the file cannot fail its own validator a second later |
+| A name that is nearly a path is refused, not corrected | Automated | `../escape`, `Bin Day`, `bin/day` and `bin_day` are all refused; the folder is named exactly what was asked for. A name quietly turned into something else is how somebody ends up with a skill they did not write in a folder they did not name |
+| A switch flipped MID-CONVERSATION reaches the running Jarvis | Automated *against the real containers* | `extensions-toggle-enforced` (live, `gated-on: M46`) — three turns against the deployment, asserted through `jarvis/skills/list`, which is the store the prompt's skill index is built from |
+| The section has real loading, empty, error and rejected states | Automated | `e2e/extensions.spec.ts`, 6 tests, plus a structural check that each state is rendered |
+| It did not cost a tab | Automated | the gate asserts the top-level nav count did not grow and that no `/extensions` route exists — the section lives on `/tools` |
+| The same enforcement for an MCP server's tools | **Not measured** | an MCP server's tools are withdrawn by disabling the server, which `mcp/*` already does; nothing here asserts the two agree |
+| The live half for a PLUGIN | **Not measured live** | no `ToolPlugin` is configured in a default deployment — calendar and mail need the operator's own account, and the radicale fixture is behind `--profile fixtures` deliberately. The plugin case is the pytest above, against a real registry |
+
 ### Motion (M44)
 
 `bash scripts/verify/m44-motion.sh` — 12 checks. Measured in a real headless

@@ -530,12 +530,23 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # server cannot be reached, which is the single most common way this
     # install is misconfigured and previously produced no output at all until
     # somebody spoke to it.
-    jarvis.async_create_task(_probe_model_server(ollama, url))
+    jarvis.async_create_task(_probe_model_server(ollama, url, agent))
     return True
 
 
-async def _probe_model_server(client: Any, url: str) -> None:
-    """Warm the model list and say plainly if the server is not there."""
+async def _probe_model_server(client: Any, url: str, agent: Any = None) -> None:
+    """Warm the model list, and say plainly what is wrong before anybody speaks.
+
+    Two failures, both of which used to be silent until the first turn:
+
+    * the server is not there at all;
+    * the server is there and does not have the model this install is set to.
+      That is not hypothetical — putting the LiteLLM gateway in front of the
+      model server (M40) renamed every model, and a `llm.model` an operator had
+      chosen in the console went on pointing at the OLD name. Each turn then
+      came back as a 400 from the proxy with the model name in it, which is a
+      log line that means nothing to anybody who did not build the gateway.
+    """
     try:
         models = await client.list_models()
     except Exception as err:
@@ -547,6 +558,20 @@ async def _probe_model_server(client: Any, url: str) -> None:
         )
         return
     _LOGGER.info("Model server at %s is serving %d model(s)", url, len(models))
+
+    # Only when the server actually answered with a list: an endpoint that
+    # serves no `/models` at all is not evidence that the model is missing.
+    wanted = str(getattr(agent, "model", "") or getattr(client, "model", "") or "")
+    if wanted and models and wanted not in models:
+        _LOGGER.error(
+            "The model this install is set to (%r) is not one %s serves. It has: %s. "
+            "Every turn will fail until this is changed — in the console under "
+            "Settings, or by clearing the stored `llm.model` override so the "
+            "LLM_MODEL environment variable is used again.",
+            wanted,
+            url,
+            ", ".join(sorted(models)[:12]) or "nothing",
+        )
 
 
 def _bridge_questions_to_the_phone(jarvis: "Jarvis", registry: ToolRegistry) -> None:

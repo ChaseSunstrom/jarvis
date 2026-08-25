@@ -436,6 +436,14 @@ unblocks M19's containment check and the live research backend at the same time.
     against a live stack; read-only scenarios write under a `test:` namespace and assert their
     own cleanup. Dev loop: `docker compose watch` (or an equivalent documented in the runbook)
     so a code change lands in the running container.
+  - **Open defect, found under M46**: `stack-logs-clean` is red on the dev box because
+    jarvis-core makes an unauthenticated `GET /v1/models` to the LiteLLM gateway every
+    thirty seconds, and the 401 it earns is an ERROR-level record in the gateway's log.
+    Nothing is broken by it — the conversation path carries the key and works — but a
+    check that is permanently red is a check nobody reads. The caller has not been found:
+    every `OpenAICompatClient` built in core is built WITH `api_key`, and the request
+    carries none. Find it by logging the stack at the call site rather than by reading
+    more code, which is what an afternoon of grep already failed to do.
   - Verify: `bash scripts/verify/m29-compose-testing.sh`
 
 ## The local AI toolbelt (added mid-run)
@@ -652,7 +660,7 @@ install code is the marketplace attack surface that class of tool actually got b
     could put a recorded measurement in a sentence, so `metrics_query` (read-only, Tier 1) now
     reads the series the dashboards draw.
 
-- [ ] **M46 — The management surface** · size L · deps M45, M05
+- [x] **M46 — The management surface** · size L · deps M45, M05
   - Scope: a Skills & Plugins section in the console on the design system with real loading,
     empty, error and offline states: browse installed items by category, enable and disable
     per item, view and edit each item's permission scope, see health, last-used and error
@@ -661,7 +669,15 @@ install code is the marketplace attack surface that class of tool actually got b
     one. Asserted through the live suite against the real containers: toggling a skill enables
     and disables its tool, a disabled skill is not offered to the model at all, and an edited
     permission scope is enforced on the very next call.
-  - Verify: `bash scripts/verify/m46-plugins-ui.sh`
+  - Verify: `bash scripts/verify/m46-plugins-ui.sh` — 15 checks.
+  - It is a SECTION on `/tools`, not an eleventh tab: that page is already "what Jarvis can
+    call and what it is allowed to call", and the operator has asked for four or five
+    destinations rather than eleven (M48). The live half asserts the skill case — turning one
+    off takes it out of the store the prompt's skill index is built from — because no
+    ToolPlugin is configured in a default deployment (calendar and mail need the operator's
+    own account, and the radicale fixture is behind `--profile fixtures` on purpose). The
+    plugin case, where turning one off withdraws its tools from the registry the model is
+    offered, is `tests/test_extensions.py` against a real registry.
 
 - [ ] **M47 — The catalog, and installing from it safely** · size XL · deps M45, M43, M19
   - Scope: discovery and installation from configured catalog sources — Anthropic's own

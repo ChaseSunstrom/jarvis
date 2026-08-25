@@ -370,3 +370,218 @@ async def test_setup_registers_the_services_and_indexes_without_a_bus_start(tmp_
         "extensions", "schema", {}, blocking=True, return_response=True
     )
     assert doc["schema"]["properties"]["permissions"]["items"]["enum"]
+
+
+# --- what the operator decided, and whether it bites -------------------------
+async def _install(tmp_path: Path):
+    """A Jarvis with one plugin, four shipped skills, and the registry up."""
+    from jarvis.integrations.extensions import async_setup
+    from jarvis.integrations.plugins import get_registry as plugin_registry
+    from jarvis.llm.tools import ToolRegistry
+
+    jarvis = Jarvis(config_dir=str(tmp_path))
+    jarvis.data["llm_tools"] = ToolRegistry(jarvis)
+    store = SkillStore(tmp_path / "skills", bundled_root=BUNDLED)
+    store.load()
+    jarvis.data["skills"] = store
+    plugin = _Plugin(jarvis)
+    plugin_registry(jarvis).add(plugin)
+    plugin.register()
+    assert await async_setup(jarvis, None) is True
+    return jarvis
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_plugin_takes_its_tools_off_the_model(tmp_path: Path) -> None:
+    """"Not offered to the model at all" has to mean the tool registry.
+
+    A plugin that is merely hidden from a list is one the model can still call,
+    which is the difference between a management surface and a filter.
+    """
+    jarvis = await _install(tmp_path)
+    tools = jarvis.data["llm_tools"]
+    assert tools.get("example_write") is not None
+
+    result = await jarvis.services.async_call(
+        "extensions", "set", {"key": "plugin:example", "enabled": False},
+        blocking=True, return_response=True,
+    )
+    assert result["extension"]["enabled"] is False
+    assert tools.get("example_write") is None
+    assert tools.get("example_read") is None
+    assert "example_write" in result["removed"]
+
+    # And back, without re-registering the ones that were withdrawn separately.
+    back = await jarvis.services.async_call(
+        "extensions", "set", {"key": "plugin:example", "enabled": True},
+        blocking=True, return_response=True,
+    )
+    assert tools.get("example_write") is not None
+    assert set(back["restored"]) == {"example_read", "example_write"}
+
+
+@pytest.mark.asyncio
+async def test_revoking_act_withdraws_only_the_tools_that_change_something(tmp_path: Path) -> None:
+    """An edited permission scope, enforced on the very next call."""
+    jarvis = await _install(tmp_path)
+    tools = jarvis.data["llm_tools"]
+    result = await jarvis.services.async_call(
+        "extensions", "set", {"key": "plugin:example", "permissions": ["read_state"]},
+        blocking=True, return_response=True,
+    )
+    assert result["extension"]["revoked"] == ["act"]
+    assert tools.get("example_write") is None, "a writer survived its permission being revoked"
+    assert tools.get("example_read") is not None, "a reader was withdrawn with it"
+
+
+@pytest.mark.asyncio
+async def test_a_permission_the_manifest_never_declared_cannot_be_granted(tmp_path: Path) -> None:
+    """Narrowing only: the manifest is the statement people read."""
+    jarvis = await _install(tmp_path)
+    result = await jarvis.services.async_call(
+        "extensions",
+        "set",
+        {"key": "plugin:example", "permissions": ["read_state", "act", "run_process"]},
+        blocking=True,
+        return_response=True,
+    )
+    assert "run_process" not in result["extension"]["granted"]
+
+    refused = await jarvis.services.async_call(
+        "extensions", "set", {"key": "plugin:example", "permissions": ["become_root"]},
+        blocking=True, return_response=True,
+    )
+    assert "no such permission" in refused["error"]
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_skill_takes_it_out_of_the_prompt(tmp_path: Path) -> None:
+    """A skill owns no tools, so this is what disabling one can mean."""
+    jarvis = await _install(tmp_path)
+    store = jarvis.data["skills"]
+    assert "diary" in store.index_block()
+
+    await jarvis.services.async_call(
+        "extensions", "set", {"key": "skill:diary", "enabled": False},
+        blocking=True, return_response=True,
+    )
+    assert "diary" not in store.skills
+    assert "diary" not in store.index_block()
+    assert store.body_for("diary")["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_turning_a_skill_back_on_actually_brings_it_back(tmp_path: Path) -> None:
+    """The live suite found this: the switch worked exactly once.
+
+    Disabling pops the skill out of the store, and nothing else ever put one
+    back — so a skill turned off was gone until the next reload, while the
+    console cheerfully showed it as on again.
+    """
+    jarvis = await _install(tmp_path)
+    store = jarvis.data["skills"]
+
+    await jarvis.services.async_call(
+        "extensions", "set", {"key": "skill:diary", "enabled": False},
+        blocking=True, return_response=True,
+    )
+    assert "diary" not in store.skills
+
+    await jarvis.services.async_call(
+        "extensions", "set", {"key": "skill:diary", "enabled": True},
+        blocking=True, return_response=True,
+    )
+    assert "diary" in store.skills
+    assert "diary" in store.index_block()
+    # And the others were not disturbed by the reload that brought it back.
+    assert sorted(store.skills) == ["diary", "homelab-status", "note-taking", "research-report"]
+
+
+@pytest.mark.asyncio
+async def test_a_reload_does_not_resurrect_a_skill_that_was_turned_off(tmp_path: Path) -> None:
+    """The other half: bringing one back must not bring back all of them."""
+    jarvis = await _install(tmp_path)
+    store = jarvis.data["skills"]
+    for name in ("diary", "note-taking"):
+        await jarvis.services.async_call(
+            "extensions", "set", {"key": f"skill:{name}", "enabled": False},
+            blocking=True, return_response=True,
+        )
+    await jarvis.services.async_call(
+        "extensions", "set", {"key": "skill:diary", "enabled": True},
+        blocking=True, return_response=True,
+    )
+    assert "diary" in store.skills
+    assert "note-taking" not in store.skills, "a reload brought back one that was off"
+
+
+@pytest.mark.asyncio
+async def test_a_decision_survives_a_restart(tmp_path: Path) -> None:
+    jarvis = await _install(tmp_path)
+    await jarvis.services.async_call(
+        "extensions", "set", {"key": "plugin:example", "enabled": False},
+        blocking=True, return_response=True,
+    )
+    again = await _install(tmp_path)
+    assert again.data["llm_tools"].get("example_write") is None, "it came back after a restart"
+    listed = await again.services.async_call(
+        "extensions", "list", {}, blocking=True, return_response=True
+    )
+    row = [r for r in listed["extensions"] if r["key"] == "plugin:example"][0]
+    assert row["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_last_used_comes_from_the_events_that_already_fire(tmp_path: Path) -> None:
+    jarvis = await _install(tmp_path)
+    from jarvis.integrations.plugins import EVENT_PLUGIN_CALL
+
+    state = jarvis.data["extensions_state"]
+    assert state.last_used.get("plugin:example") is None
+    await jarvis.bus.async_fire(EVENT_PLUGIN_CALL, {"plugin": "example", "tool": "example_read"})
+    assert state.last_used.get("plugin:example") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_skill_can_be_written_from_the_console_and_is_live_at_once(tmp_path: Path) -> None:
+    """Guided creation: no YAML, and the result validates or nothing is written."""
+    jarvis = await _install(tmp_path)
+    made = await jarvis.services.async_call(
+        "extensions",
+        "scaffold",
+        {
+            "name": "bin-day",
+            "description": "Which bin goes out, and on which night.",
+            "tools": ["get_state", "web_search"],
+        },
+        blocking=True,
+        return_response=True,
+    )
+    assert "bin-day" in made["skills"], made
+    store = jarvis.data["skills"]
+    assert "bin-day" in store.index_block()
+
+    listed = await jarvis.services.async_call(
+        "extensions", "list", {"kind": "skill"}, blocking=True, return_response=True
+    )
+    row = [r for r in listed["extensions"] if r["id"] == "bin-day"][0]
+    # The permission the chosen tool requires was written for them: ticking
+    # `web_search` and getting a file the validator then rejects is not guided.
+    assert "network" in row["permissions"]
+    assert row["origin"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_scaffolding_refuses_a_name_that_is_nearly_a_path(tmp_path: Path) -> None:
+    jarvis = await _install(tmp_path)
+    for name in ("../escape", "Bin Day", "x"):
+        refused = await jarvis.services.async_call(
+            "extensions", "scaffold", {"name": name, "description": "x"},
+            blocking=True, return_response=True,
+        )
+        assert "error" in refused, name
+    clash = await jarvis.services.async_call(
+        "extensions", "scaffold", {"name": "diary", "description": "Mine."},
+        blocking=True, return_response=True,
+    )
+    assert "created" in clash, "a user skill may override a bundled one"

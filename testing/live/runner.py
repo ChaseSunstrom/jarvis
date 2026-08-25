@@ -327,6 +327,12 @@ class Runner:
                     # the next scenario needs speech to work.
                     killed.append(turn.kill)
                     ground.stack.stop(turn.kill)  # type: ignore[union-attr]
+                if turn.do.get("extension"):
+                    # An operator flipping a switch while a conversation is
+                    # already in progress, which is when they actually do it.
+                    patch = dict(turn.do["extension"])
+                    key = str(patch.pop("key", ""))
+                    await observer.set_extension(key, **patch)
                 if turn.new_conversation:
                     # A different thread, as a second person or a later day
                     # would be. Without this every turn shares one conversation
@@ -843,6 +849,43 @@ class Runner:
                     f"{want_file.get('path')} "
                     + ("does not exist and should" if wanted else "exists and should not")
                 )
+
+        want_extension = expect.get("extension")
+        if want_extension:
+            key = str(want_extension.get("key") or "")
+            rows = {str(row.get("key")): row for row in await observer.extensions()}
+            row = rows.get(key)
+            if row is None:
+                fail(f"nothing installed called {key!r}; installed: {sorted(rows)[:8]}")
+            else:
+                if "enabled" in want_extension:
+                    wanted = bool(want_extension["enabled"])
+                    if bool(row.get("enabled")) is not wanted:
+                        fail(f"{key} is {'on' if row.get('enabled') else 'off'}, expected the other")
+                for permission in _as_list(want_extension.get("granted")):
+                    if permission not in (row.get("granted") or []):
+                        fail(f"{key} does not hold {permission!r}; it holds {row.get('granted')}")
+            # The claim that matters: what the MODEL is offered, which is a
+            # different question from what the console lists.
+            offered = set(await observer.offered_tools())
+            for tool in _as_list(want_extension.get("tool_offered")):
+                if tool not in offered:
+                    fail(f"{tool!r} is not offered to the model, and should be")
+            for tool in _as_list(want_extension.get("tool_withheld")):
+                if tool in offered:
+                    fail(f"{tool!r} is still offered to the model after being withdrawn")
+            wanted_skills = _as_list(want_extension.get("skill_offered"))
+            unwanted_skills = _as_list(want_extension.get("skill_withheld"))
+            if wanted_skills or unwanted_skills:
+                # The store, which is what builds the prompt's skill index —
+                # not the registry's list, which is what the console draws.
+                skills = set(await observer.offered_skills())
+                for skill in wanted_skills:
+                    if skill not in skills:
+                        fail(f"the skill {skill!r} is not offered to the model, and should be")
+                for skill in unwanted_skills:
+                    if skill in skills:
+                        fail(f"the skill {skill!r} is still offered after being turned off")
 
         for unsupported in ("ui",):
             if unsupported in expect:
