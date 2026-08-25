@@ -37,7 +37,7 @@ assert not missing, f"no route for: {missing}"
 '
 check "the /api prefix is where the console looks" \
     grep -qE 'api_router *= *APIRouter\(prefix="/api"' jarvis-core/jarvis/api/rest.py
-check "the console lists loaded skills" grep -qi 'skill' jarvis-web/src/routes/tools/+page.svelte
+check "the console lists loaded skills" grep -qi 'skill' jarvis-web/src/lib/sections/Tools.svelte
 check "mock backend serves jarvis/skills/list" grep -q 'jarvis/skills/list' tests/web/mock-ha.mjs
 check_sh "an example skill ships in the format" \
     'f=$(ls jarvis-core/config/examples/skills/*/SKILL.md 2>/dev/null | head -1); [ -n "$f" ] && head -1 "$f" | grep -q "^---" && grep -qE "^name:" "$f" && grep -qE "^description:" "$f"'

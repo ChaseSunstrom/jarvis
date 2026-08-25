@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
 
 test('every note is listed, with its tags', async ({ page }) => {
 	await page.goto('/notes');
-	await expect(page.getByTestId('notes-screen')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('notes-lede')).toBeVisible({ timeout: 15_000 });
 
 	const list = page.getByTestId('notes-list');
 	await expect(list).toContainText('Boiler serviced');

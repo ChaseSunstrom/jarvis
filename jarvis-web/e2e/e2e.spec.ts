@@ -102,17 +102,19 @@ test("the tts proxy only reaches media paths", async ({ request }) => {
 
 // --- management UI ---------------------------------------------------------
 
-test("console nav links the HUD to the management pages", async ({ page }) => {
+test("console nav links the HUD to the four destinations", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("console-link").click();
-  await expect(page).toHaveURL(/\/devices$/);
+  // The console link lands in HOUSE, which redirects to its first section.
+  await expect(page).toHaveURL(/\/house\/devices$/);
 
+  // Four destinations, not eleven (M48). Each lands on its own first section,
+  // because a destination's own path is a redirect and never a second page.
   for (const [testid, path] of [
-    ["nav-areas", "/areas"],
-    ["nav-automations", "/automations"],
-    ["nav-tools", "/tools"],
-    ["nav-settings", "/settings"],
-    ["nav-devices", "/devices"],
+    ["nav-work", "/work/tasks"],
+    ["nav-knowledge", "/knowledge/notes"],
+    ["nav-settings", "/settings/assistant"],
+    ["nav-house", "/house/devices"],
   ] as const) {
     await page.getByTestId(testid).click();
     await expect(page).toHaveURL(new RegExp(`${path}$`));
@@ -126,7 +128,7 @@ test("console nav links the HUD to the management pages", async ({ page }) => {
 test("devices page groups entities by area and a toggle round-trips call_service", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
 
   // Grouped under the area the entity registry puts it in.
   const lab = page.getByTestId("area-lab");
@@ -198,7 +200,7 @@ test("the devices page shows the phones and desktops running Jarvis", async ({
   // Distinct from the entity list below it: these are the machines on the
   // other end of the socket. Nothing showed them before, so you could grant
   // your phone forty capabilities and never confirm it had connected.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   const panel = page.getByTestId("companions");
   await expect(panel).toBeVisible({ timeout: 15_000 });
 
@@ -299,7 +301,7 @@ test("a held action can be approved from the console, on any page", async ({
 }) => {
   // The console had no way to answer an approval at all: the gate fired, the
   // model was told to wait, and only the phone could say yes.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
@@ -344,7 +346,7 @@ test("a held action can be approved from the console, on any page", async ({
   // It must survive navigation: the action is still waiting whatever page you
   // wander to, and an approval that expires unseen looks like Jarvis ignoring
   // you.
-  await page.getByTestId("nav-automations").click();
+  await page.getByTestId("nav-house").click();
   await expect(page.getByTestId("approvals")).toBeVisible();
 
   await page.getByTestId("approve-lock_control").click();
@@ -698,7 +700,7 @@ test("settings page reports the selected backend and streams events", async ({
   // the live event stream fills once something moves
   await expect(page.getByTestId("live-filter")).toHaveText("state_changed");
   const page2 = await page.context().newPage();
-  await page2.goto("/devices");
+  await page2.goto("/house/devices");
   await page2.getByTestId("toggle-switch.desk_fan").click({ timeout: 15_000 });
   await expect(page.getByTestId("event-log")).toContainText("switch.desk_fan", {
     timeout: 15_000,
@@ -714,7 +716,7 @@ test("the boot sequence plays, never blocks a click, and runs once per session",
 }) => {
   // `commit` returns before hydration, so the poll below starts early enough
   // to catch a 1.2 s overlay instead of racing it.
-  await page.goto("/devices", { waitUntil: "commit" });
+  await page.goto("/house/devices", { waitUntil: "commit" });
   await expect(page.getByTestId("boot")).toBeAttached({ timeout: 10_000 });
 
   // The precise claim is "pointer-events: none": while the overlay is on
@@ -747,7 +749,7 @@ test("the boot sequence plays, never blocks a click, and runs once per session",
 
   // And does not replay on the next load in the same session.
   await page.reload();
-  await expect(page.getByTestId("nav-devices")).toBeVisible();
+  await expect(page.getByTestId("nav-house")).toBeVisible();
   await expect(page.getByTestId("boot")).toHaveCount(0);
 });
 
@@ -755,8 +757,8 @@ test("prefers-reduced-motion skips the boot sequence entirely", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/devices", { waitUntil: "commit" });
-  await expect(page.getByTestId("nav-devices")).toBeVisible({
+  await page.goto("/house/devices", { waitUntil: "commit" });
+  await expect(page.getByTestId("nav-house")).toBeVisible({
     timeout: 10_000,
   });
   await expect(page.getByTestId("boot")).toHaveCount(0);
@@ -769,22 +771,41 @@ test("prefers-reduced-motion skips the boot sequence entirely", async ({
 test("route changes swap the console body and mark the current nav item", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   const route = page.getByTestId("route");
-  await expect(route).toHaveAttribute("data-route", "/devices");
-  await expect(page.getByTestId("nav-devices")).toHaveAttribute(
+  await expect(route).toHaveAttribute("data-route", "/house/devices");
+
+  // The DESTINATION is lit while you are anywhere inside it. It is a prefix
+  // match: a destination's own path redirects to its first section, so the
+  // user is never at `/house` — they are at `/house/devices` — and an exact
+  // match left every tab unlit the moment the consolidation landed.
+  await expect(page.getByTestId("nav-house")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByTestId("nav-work")).not.toHaveAttribute(
     "aria-current",
     "page",
   );
 
-  await page.getByTestId("nav-automations").click();
-  await expect(route).toHaveAttribute("data-route", "/automations");
-  await expect(route).toContainText("AUTOMATIONS");
-  await expect(page.getByTestId("nav-automations")).toHaveAttribute(
+  // Switching SECTION keeps the destination lit and swaps the body.
+  await page.getByTestId("section-automations").click();
+  await expect(route).toHaveAttribute("data-route", "/house/automations");
+  // The section's own probe, not a heading: a section no longer repeats its
+  // name under a tab that already says it.
+  await expect(page.getByTestId("automations-screen")).toBeVisible();
+  await expect(page.getByTestId("nav-house")).toHaveAttribute(
     "aria-current",
     "page",
   );
-  await expect(page.getByTestId("nav-devices")).not.toHaveAttribute(
+
+  // Switching DESTINATION moves the mark.
+  await page.getByTestId("nav-work").click();
+  await expect(page.getByTestId("nav-work")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByTestId("nav-house")).not.toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -797,7 +818,7 @@ test("route changes swap the console body and mark the current nav item", async 
 test("the connection indicator reports the real websocket state", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -811,7 +832,7 @@ test("the connection indicator reports the real websocket state", async ({
 test("the command palette opens from the keyboard, filters, and toggles an entity", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -868,7 +889,7 @@ test("the command palette opens from the keyboard, filters, and toggles an entit
 });
 
 test("the command palette jumps to a page", async ({ page }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   // data-status only becomes "connected" from client code, so this doubles as
   // "the page has hydrated" — a keystroke sent before that lands nowhere.
   await expect(page.getByTestId("link-status")).toHaveAttribute(
@@ -881,11 +902,11 @@ test("the command palette jumps to a page", async ({ page }) => {
   await page.keyboard.press("Control+k");
   await page.getByTestId("palette-input").fill("settings");
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/assistant$/);
 });
 
 test("keyboard shortcuts focus the filter and navigate", async ({ page }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -926,7 +947,7 @@ test("keyboard shortcuts focus the filter and navigate", async ({ page }) => {
 test("a rejected call_service raises a toast as well as an inline error", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   const lock = page.getByTestId("lock-lock.front_door");
   await expect(lock).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("filter").fill("front door");
@@ -951,11 +972,11 @@ test("the console is usable at phone width without sideways scrolling", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByTestId("nav-devices")).toBeVisible();
+  await expect(page.getByTestId("nav-house")).toBeVisible();
   await expect(page.getByTestId("toggle-light.lab_lights")).toBeVisible();
 
   const overflow = await page.evaluate(
@@ -1040,7 +1061,7 @@ test("every management editor fits a phone, which is where the app shows them", 
 test("keyboard focus is visible, and icon-only controls are labelled", async ({
   page,
 }) => {
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("link-status")).toHaveAttribute(
     "data-status",
     "connected",
@@ -1087,7 +1108,7 @@ test("keyboard focus is visible, and icon-only controls are labelled", async ({
 
 test("the console header stays put when the page scrolls", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 480 });
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
@@ -1109,7 +1130,7 @@ test("the console header stays put when the page scrolls", async ({ page }) => {
   // asserts the thing in its own name.
   const header = (await page.locator(".console-top").boundingBox())!;
   expect(header.y).toBe(0);
-  const nav = (await page.getByTestId("nav-devices").boundingBox())!;
+  const nav = (await page.getByTestId("nav-house").boundingBox())!;
   expect(nav.y).toBeGreaterThanOrEqual(0);
   expect(nav.y + nav.height).toBeLessThanOrEqual(header.y + header.height);
   const badge = (await page.getByTestId("link-status").boundingBox())!;
@@ -1167,7 +1188,7 @@ test("a turn shows every tool it calls, with real progress and a reason when one
   // The bug this replaces: a turn that called four tools and took nine seconds
   // rendered a spinner. Tool calls are the moment the assistant touches the
   // house, and they were the one thing the console never showed.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   // Wait for the page's own connection to be live before asking the mock to
   // broadcast — an event fired before the layout subscribes reaches nobody,
   // and the test would fail for a reason that has nothing to do with the panel.
@@ -1243,7 +1264,7 @@ test("a phone that registers while the console is open appears without a reload"
   // frame through the relay (fixed in the app), and this half: the console
   // read the companion list exactly once, at mount, so a device that arrived
   // a minute later was invisible for as long as the tab stayed open.
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("companion-pixel-8")).toBeVisible({
     timeout: 15_000,
   });
@@ -1290,7 +1311,7 @@ test("Jarvis can ask a question and the answer reaches the server", async ({
   // A question rides the approval gate rather than a second channel, so it
   // inherits single use, an expiry and human-only resolution. What it does not
   // inherit is the words: "APPROVE / DENY" is the wrong pair for "which lamp?".
-  await page.goto("/devices");
+  await page.goto("/house/devices");
   await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
     timeout: 15_000,
   });
@@ -1797,12 +1818,12 @@ test("the console drops its own nav when the Android app is framing it", async (
     userAgent: "JarvisAndroid/1.0.0 (ai.jarvis.app; management)",
   });
   const page = await framed.newPage();
-  await page.goto("/devices");
+  await page.goto("/house/devices");
 
   // The page is there and working...
   await expect(page.getByTestId("area-lab")).toBeVisible({ timeout: 15_000 });
   // ...and its copy of the frame's chrome is not.
-  await expect(page.getByTestId("nav-devices")).toBeHidden();
+  await expect(page.getByTestId("nav-house")).toBeHidden();
   await expect(page.getByTestId("hud-link")).toBeHidden();
   await framed.close();
 
@@ -1810,8 +1831,8 @@ test("the console drops its own nav when the Android app is framing it", async (
   // there, and a rule that hid it everywhere would pass the assertions above.
   const plain = await browser.newContext();
   const normal = await plain.newPage();
-  await normal.goto("/devices");
-  await expect(normal.getByTestId("nav-devices")).toBeVisible({ timeout: 15_000 });
+  await normal.goto("/house/devices");
+  await expect(normal.getByTestId("nav-house")).toBeVisible({ timeout: 15_000 });
   await expect(normal.getByTestId("hud-link")).toBeVisible();
   await plain.close();
 });

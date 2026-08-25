@@ -18,7 +18,7 @@ check "config: llm.max_concurrent" grep -q 'max_concurrent' "$CORE/integrations/
 check "context budget enforced before the call" grep -qi 'budget' "$CORE/llm/pool.py"
 check "subagents are child tasks with their own context" grep -qE 'child' "$CORE/tasks.py"
 check "parent/child task events for the tree" grep -q 'jarvis_task_child_added' tests/contracts/task_events.json
-check "the task UI renders the tree" grep -rqiE 'tree|children' "jarvis-web/src/routes/tasks/[id]/+page.svelte"
+check "the task UI renders the tree" grep -rqiE 'tree|children' "jarvis-web/src/routes/work/tasks/[id]/+page.svelte"
 check "the orchestrator delegates through core" grep -qE 'agents|subagent' "$CORE/integrations/orchestrator/__init__.py"
 require_file jarvis-core/tests/test_agents.py
 require_file jarvis-core/tests/test_llm_pool.py

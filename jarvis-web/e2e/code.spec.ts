@@ -142,7 +142,7 @@ test('the sandbox line does not claim more than it can', async ({ page }) => {
 	await expect(page.getByTestId('code-sandbox')).toContainText('wrapper');
 });
 
-test('CODE is in the nav and reachable by its chord', async ({ page }) => {
+test('CODE is a section of WORK, and its chord still finds it', async ({ page }) => {
 	await page.goto('/tasks');
 	await expect(page.getByTestId('tasks-lede')).toHaveAttribute('data-redialling', 'false', {
 		timeout: 15_000
@@ -156,7 +156,7 @@ test('CODE is in the nav and reachable by its chord', async ({ page }) => {
 	await expect(page.getByTestId('boot')).toHaveCount(0, { timeout: 15_000 });
 	await page.keyboard.press('g');
 	await page.keyboard.press('c');
-	await expect(page).toHaveURL(/\/code$/, { timeout: 10_000 });
+	await expect(page).toHaveURL(/\/work\/code$/, { timeout: 10_000 });
 });
 
 

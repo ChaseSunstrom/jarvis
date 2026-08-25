@@ -25,10 +25,10 @@ check "orchestrator jobs appear in the task registry" \
     grep -qE 'async_add\(' "$CORE/integrations/orchestrator/__init__.py"
 check "per-task event log is persisted" grep -rqE 'task_events|events\.jsonl' "$CORE/tasks.py" "$CORE/integrations/recorder/__init__.py"
 
-require_file "jarvis-web/src/routes/tasks/[id]/+page.svelte"
+require_file "jarvis-web/src/routes/work/tasks/[id]/+page.svelte"
 require_file jarvis-web/src/lib/components/TaskTimeline.svelte
 require_file jarvis-web/src/lib/components/TaskOutput.svelte
-check "task detail offers cancel" grep -qE 'jarvis/tasks/cancel|cancelTask' "jarvis-web/src/routes/tasks/[id]/+page.svelte"
+check "task detail offers cancel" grep -qE 'jarvis/tasks/cancel|cancelTask' "jarvis-web/src/routes/work/tasks/[id]/+page.svelte"
 check "mock backend streams task output" grep -q jarvis_task_output tests/web/mock-ha.mjs
 check "mock backend streams task tool events" grep -q jarvis_task_tool_started tests/web/mock-ha.mjs
 

@@ -11,6 +11,7 @@
 	 * arrive when nobody is watching; `Moment.svelte` is the shape, and this is
 	 * where they accumulate.
 	 */
+	import { Button } from '$lib/ui';
 	import { onMount } from 'svelte';
 	import Moment from './Moment.svelte';
 	import { describeError, type Connection } from '$lib/connection';
@@ -131,9 +132,9 @@
 					{/each}
 				</div>
 				{#if unread}
-					<button class="btn ghost" onclick={readAll} data-testid="notifications-read-all">
+					<Button onclick={readAll} testid="notifications-read-all">
 						MARK ALL READ
-					</button>
+					</Button>
 				{/if}
 			{/if}
 		{/if}

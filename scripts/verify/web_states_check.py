@@ -34,6 +34,25 @@ if manifest.is_file():
 else:
     problems.append(f"missing screen manifest: {manifest}")
 
+SECTIONS = WEB / "lib" / "sections"
+
+
+def rendered_source(page: Path) -> str:
+    """The markup a route actually shows.
+
+    Since the consolidation (M48) most routes are two lines — an import and a
+    component from `lib/sections/`. Reading only the route file said every one
+    of them had lost its states, which was the opposite of true: the states
+    moved into the section, whole, and the route is a mount point.
+    """
+    text = page.read_text()
+    for name in re.findall(r"from\s+['\"]\$lib/sections/([A-Za-z]+)\.svelte['\"]", text):
+        section = SECTIONS / f"{name}.svelte"
+        if section.is_file():
+            text += "\n" + section.read_text()
+    return text
+
+
 pages = sorted(WEB.glob("routes/**/+page.svelte"))
 routed: set[str] = set()
 for page in pages:
@@ -42,14 +61,23 @@ for page in pages:
         continue
     path = "/" + rel[: -len("+page.svelte")].rstrip("/")
     routed.add(path)
-    text = page.read_text()
+    text = rendered_source(page)
     if "<ScreenState" not in text:
         problems.append(f"{page.relative_to(ROOT)}: does not use <ScreenState> from $lib/ui")
     if path not in declared:
         problems.append(f"{page.relative_to(ROOT)}: route {path} is not in src/lib/screens.ts")
 
+# A destination is a layout and a redirect to its first section, so it has no
+# `+page.svelte` of its own — and must not: two pages rendering the same thing
+# are two pages that drift, and the one nobody opens drifts first.
 for path in sorted(declared - routed):
-    problems.append(f"screens.ts declares {path} but no +page.svelte exists for it")
+    folder = WEB / "routes" / path.lstrip("/")
+    served_by_redirect = (folder / "+page.ts").is_file() and (folder / "+layout.svelte").is_file()
+    if not served_by_redirect:
+        problems.append(
+            f"screens.ts declares {path} and nothing serves it — no +page.svelte, "
+            "and no +layout.svelte with a +page.ts redirect either"
+        )
 
 if not (WEB / "routes" / "+error.svelte").is_file():
     problems.append("missing jarvis-web/src/routes/+error.svelte")

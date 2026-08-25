@@ -14,6 +14,7 @@
 	 * that produced it. Every one of those is a field on the record, not a
 	 * reconstruction.
 	 */
+	import { Button } from '$lib/ui';
 	import type { Snippet } from 'svelte';
 
 	interface Props {
@@ -75,18 +76,15 @@
 			</a>
 		{/if}
 		{#if onread && !read}
-			<button class="btn ghost" onclick={onread} data-testid={testid ? `${testid}-read` : undefined}>
+			<Button onclick={onread} testid={testid ? `${testid}-read` : undefined}>
 				MARK READ
-			</button>
+			</Button>
 		{/if}
 		{#if ondismiss}
-			<button
-				class="btn ghost"
-				onclick={ondismiss}
-				data-testid={testid ? `${testid}-dismiss` : undefined}
-			>
+			<Button onclick={ondismiss}
+				testid={testid ? `${testid}-dismiss` : undefined}>
 				DISMISS
-			</button>
+			</Button>
 		{/if}
 		{#if source}
 			<button

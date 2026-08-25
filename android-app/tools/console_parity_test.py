@@ -122,14 +122,32 @@ def check_the_two_navs_are_one() -> list[str]:
 
 
 def check_every_tab_is_a_real_route() -> list[str]:
-    """A label with no page behind it is a button that opens a 404."""
+    """A label with no page behind it is a button that opens a 404.
+
+    Three shapes count as a page, because the console has three:
+
+    * `+page.svelte` — a page that draws itself;
+    * `+page.ts` — a page that redirects. Every destination's own path is a
+      307 to its first section (M48), because `/house` and `/house/devices`
+      rendering the same thing would be two pages that drift;
+    * `+layout.svelte` with sections under it — the destination itself.
+
+    Requiring `+page.svelte` alone reported all four destinations as 404s the
+    moment the consolidation landed, which is a check describing last month's
+    console.
+    """
     failures = []
     for label, path in phone_tabs():
-        page = ROUTES / path.lstrip("/") / "+page.svelte"
-        if not page.is_file():
+        folder = ROUTES / path.lstrip("/")
+        served = (
+            (folder / "+page.svelte").is_file()
+            or (folder / "+page.ts").is_file()
+            or (folder / "+layout.svelte").is_file()
+        )
+        if not served:
             failures.append(
-                f"the phone's {label} tab points at {path}, and there is no "
-                f"{page.relative_to(REPO)}"
+                f"the phone's {label} tab points at {path}, and nothing under "
+                f"{folder.relative_to(REPO)} serves it"
             )
     return failures
 

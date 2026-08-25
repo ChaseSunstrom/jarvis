@@ -36,23 +36,24 @@ Every route that exists today, and its home after the consolidation. Nothing is
 deleted: a page becomes a **section** of its new home, reachable by its own
 anchor, and its old path redirects.
 
-| Today | After | How it appears |
+| Today | Becomes | How it appears |
 |---|---|---|
 | `/` | `/` | Unchanged. The HUD. |
-| `/devices` | **HOUSE** | The default section. Entities by area, with their controls. |
-| `/areas` | **HOUSE** | A section: the rooms voice resolves against, and what is in them. |
-| `/dashboards` | **HOUSE** | A section: the graphs. Same page, one level in. |
-| `/automations` | **HOUSE** | A section: the rules, their traces, the editor. |
-| `/tasks` | **WORK** | The default section. |
-| `/tasks/[id]` | **WORK** | A detail view, not a section — one task, opened from the list. |
-| `/code` | **WORK** | A section: coding jobs, repositories, diffs. |
-| `/notes` | **KNOWLEDGE** | The default section. |
-| `/memory` | **KNOWLEDGE** | A section, beside the notes rather than a tab away. |
-| `/settings` | **SETTINGS** | The default section. |
-| `/tools` | **SETTINGS** | A section: what the model can call, and what it is allowed to call. |
-| `/tools` → Extensions (M46/M47) | **SETTINGS** | A section: what is installed, its permissions, and the catalog. |
-| `/desktop` | **SETTINGS** | A section: the machines running the desktop agent. |
+| `/devices` | `/house/devices` | HOUSE's default section. Entities by area, with their controls. |
+| `/areas` | `/house/areas` | A section: the rooms voice resolves against, and what is in them. |
+| `/dashboards` | `/house/dashboards` | A section: the graphs. Same page, one level in. |
+| `/automations` | `/house/automations` | A section: the rules, their traces, the editor. |
+| `/tasks` | `/work/tasks` | WORK's default section. |
+| `/tasks/[id]` | `/work/tasks/[id]` | A detail view, not a section — one task, opened from the list. The id is carried through the redirect, because a link to a task is the link people actually share. |
+| `/code` | `/work/code` | A section: coding jobs, repositories, diffs. |
+| `/notes` | `/knowledge/notes` | KNOWLEDGE's default section. |
+| `/memory` | `/knowledge/memory` | A section, beside the notes rather than a tab away. |
+| `/settings` | `/settings/assistant` | SETTINGS' default section. |
+| `/tools` | `/settings/tools` | A section: what the model can call, what it is allowed to call, and — since M46/M47 — what is installed, its permission scope, and the catalog. |
+| `/desktop` | `/settings/desktop` | A section: the machines running the desktop agent. |
 | `/styleguide` | `/styleguide` | Unchanged, and still not in the nav. It is a developer surface. |
+
+Every row on the left is a 308 to the row on its right. Nothing 404s.
 
 Components that are not routes keep their homes: `Approvals`, `Notifications`,
 `CommandPalette`, `TaskDock`, `Toasts` and `BootSequence` are chrome, drawn by
@@ -86,55 +87,78 @@ and a headless screenshot of it lands in `docs/ui-review/<page>/<breakpoint>.png
 
 ### Destinations
 
-- [ ] `/` — the voice HUD
-- [ ] **HOUSE** — shell, section switching, deep-link anchors
-- [ ] **WORK** — shell, section switching, deep-link anchors
-- [ ] **KNOWLEDGE** — shell, section switching, deep-link anchors
-- [ ] **SETTINGS** — shell, section switching, deep-link anchors
+- [x] `/` — the voice HUD
+- [x] **HOUSE** — shell, section switching, deep-link anchors
+- [x] **WORK** — shell, section switching, deep-link anchors
+- [x] **KNOWLEDGE** — shell, section switching, deep-link anchors
+- [x] **SETTINGS** — shell, section switching, deep-link anchors
 
 ### Sections
 
-- [ ] HOUSE · Devices (from `/devices`)
-- [ ] HOUSE · Areas (from `/areas`)
-- [ ] HOUSE · Dashboards (from `/dashboards`)
-- [ ] HOUSE · Automations (from `/automations`)
-- [ ] WORK · Tasks (from `/tasks`)
-- [ ] WORK · Task detail (from `/tasks/[id]`)
-- [ ] WORK · Code (from `/code`)
-- [ ] KNOWLEDGE · Notes (from `/notes`)
-- [ ] KNOWLEDGE · Memory (from `/memory`)
-- [ ] SETTINGS · Assistant (from `/settings`)
-- [ ] SETTINGS · Tools (from `/tools`)
-- [ ] SETTINGS · Extensions and catalog (M46, M47)
-- [ ] SETTINGS · Desktop (from `/desktop`)
-- [ ] SETTINGS · Pairing and devices (`Pairing.svelte`)
+- [x] HOUSE · Devices (from `/devices`)
+- [x] HOUSE · Areas (from `/areas`)
+- [x] HOUSE · Dashboards (from `/dashboards`)
+- [x] HOUSE · Automations (from `/automations`)
+- [x] WORK · Tasks (from `/tasks`)
+- [x] WORK · Task detail (from `/tasks/[id]`)
+- [x] WORK · Code (from `/code`)
+- [x] KNOWLEDGE · Notes (from `/notes`)
+- [x] KNOWLEDGE · Memory (from `/memory`)
+- [x] SETTINGS · Assistant (from `/settings`)
+- [x] SETTINGS · Tools (from `/tools`)
+- [x] SETTINGS · Extensions and catalog (M46, M47)
+- [x] SETTINGS · Desktop (from `/desktop`)
+- [x] SETTINGS · Pairing and devices (`Pairing.svelte`)
 
 ### Chrome, drawn on every destination
 
-- [ ] Layout shell: header, nav, status readout, skip link
-- [ ] `CommandPalette` — and it must index sections, not only destinations
-- [ ] `Approvals`
-- [ ] `Notifications`
-- [ ] `TaskDock` / `TaskBar` / `TaskCard`
-- [ ] `Toasts`
-- [ ] `BootSequence`
-- [ ] `Orb` / `Reactor`
+- [x] Layout shell: header, nav, status readout, skip link
+- [x] `CommandPalette` — and it must index sections, not only destinations
+- [x] `Approvals`
+- [x] `Notifications`
+- [x] `TaskDock` / `TaskBar` / `TaskCard`
+- [x] `Toasts`
+- [x] `BootSequence`
+- [x] `Orb` / `Reactor`
 
 ### Views and modals
 
-- [ ] `ChatPanel` / `ChatMessage`
-- [ ] `ModeToggle`
-- [ ] `EntityRow`
-- [ ] `TaskTimeline` / `TaskOutput` / `ToolActivity`
-- [ ] `CodeDiff`
-- [ ] `ScheduledJobs`
-- [ ] `SkillsPanel`
-- [ ] `McpServers`
-- [ ] `Extensions` (the row, the scope editor, the catalog and install dialogs)
-- [ ] `EnrolVoice`
-- [ ] `Moment`
-- [ ] `Pairing`
-- [ ] `/styleguide` — every token group and every state, on the new structure
+- [x] `ChatPanel` / `ChatMessage`
+- [x] `ModeToggle`
+- [x] `EntityRow`
+- [x] `TaskTimeline` / `TaskOutput` / `ToolActivity`
+- [x] `CodeDiff`
+- [x] `ScheduledJobs`
+- [x] `SkillsPanel`
+- [x] `McpServers`
+- [x] `Extensions` (the row, the scope editor, the catalog and install dialogs)
+- [x] `EnrolVoice`
+- [x] `Moment`
+- [x] `Pairing`
+- [x] `/styleguide` — every token group and every state, on the new structure
+
+### What stayed a raw `<button>`, and why
+
+Eighty-four controls became `<Button>`. The library grew twice on the way —
+`pressed` (a toggle is a button state, and two pages were keeping raw markup
+purely for a `class:on` directive) and the `approve` variant (the yes half of a
+held action; three more raw buttons existed only to wear it) — plus attribute
+forwarding, so an `aria-expanded` no longer forces a page to hand-roll one.
+
+What is left is not a button in this library's sense, and converting it would
+be worse than leaving it:
+
+| Control | Why it stays |
+|---|---|
+| `ChatPanel`'s mic, send, chip and drawer | Purpose-built shapes, not actions on a page. A mic is a mic. |
+| `TaskCard`'s disclosure and act rows | A disclosure triangle and a clickable row, styled as rows. |
+| `EntityRow`'s manage affordance | Sits inside the row's grid and is styled by it. |
+| `Extensions`' expander | The whole row is the control; it has no button chrome. |
+| `SkillsPanel`, `Moment`, `Notifications`, `Toasts`, `ModeToggle` | One bespoke control each, each drawn by its own component's CSS and using tokens throughout. |
+
+Each of these is on the tokens — `token_lint.py` is at zero across the console
+— and each is a control this library does not have a shape for. Adding one
+component per one-off would be the same duplication in a different place.
 
 ## 3. What "clean" means here
 

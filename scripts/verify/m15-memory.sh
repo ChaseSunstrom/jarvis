@@ -23,8 +23,8 @@ assert "/api/memory/export" in paths, sorted(p for p in paths if "memory" in p)
 check "WS: jarvis/memory/list" grep -q '"jarvis/memory/list"' jarvis-core/jarvis/api/websocket.py
 check "the turn records which memory entries it used (memory_used)" grep -q 'memory_used' jarvis-core/jarvis/llm/agent.py
 check_not "research no longer writes reports into memory (notes own that)" grep -n '_remember' jarvis-core/jarvis/integrations/research/__init__.py
-require_file jarvis-web/src/routes/memory/+page.svelte
-check "console memory route can export and wipe" grep -qE 'export' jarvis-web/src/routes/memory/+page.svelte
+require_file jarvis-web/src/lib/sections/Memory.svelte
+check "console memory route can export and wipe" grep -qE 'export' jarvis-web/src/lib/sections/Memory.svelte
 check "mock backend serves jarvis/memory/*" grep -q 'jarvis/memory/' tests/web/mock-ha.mjs
 require_file jarvis-core/tests/test_memory.py
 check_sh "memory unit tests" 'cd jarvis-core && python3 -m pytest tests/test_memory.py tests/test_memory_vectors.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'

@@ -36,6 +36,20 @@
 		chord: screen.chord ?? ''
 	}));
 
+	/**
+	 * Is the current URL inside this destination?
+	 *
+	 * Prefix, not equality. A destination's own path redirects to its first
+	 * section, so the user is never AT `/house` — they are at `/house/devices`,
+	 * and an exact match left every tab unlit the moment the consolidation
+	 * landed (M48). `/` is the exception: everything starts with it.
+	 */
+	function inDestination(href: string): boolean {
+		const here = page.url.pathname;
+		if (href === '/') return here === '/';
+		return here === href || here.startsWith(href + '/');
+	}
+
 	// The voice HUD owns the whole viewport and paints its own chrome, so the
 	// console frame is only drawn for the management routes.
 	let isHud = $derived(page.url.pathname === '/');
@@ -165,10 +179,10 @@
 
 			<nav aria-label="Management sections">
 				{#each NAV as item (item.href)}
-					<a
+						<a
 						href={item.href}
-						class:active={page.url.pathname === item.href}
-						aria-current={page.url.pathname === item.href ? 'page' : undefined}
+						class:active={inDestination(item.href)}
+						aria-current={inDestination(item.href) ? 'page' : undefined}
 						title="{item.label} ({item.chord})"
 						data-testid="nav-{item.label.toLowerCase()}">{item.label}</a
 					>

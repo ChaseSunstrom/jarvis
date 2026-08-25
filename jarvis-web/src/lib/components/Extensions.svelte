@@ -554,10 +554,21 @@ study.
 		justify-content: space-between;
 		gap: var(--jv-space-4);
 		margin-bottom: var(--jv-space-3);
+		/*
+		 * Wrap, or the sentence is crushed.
+		 *
+		 * At 390px the two buttons took their natural width and the paragraph
+		 * collapsed to a two-character column — a readable line of prose
+		 * rendered one letter per line, which the mobile screenshot caught and
+		 * nothing else would have.
+		 */
+		flex-wrap: wrap;
 	}
 	.head p {
 		margin: 0;
 		max-width: 60ch;
+		/* Its own line as soon as the buttons cannot sit beside it. */
+		flex: 1 1 24rem;
 	}
 	.group {
 		font-family: var(--jv-font-chrome);

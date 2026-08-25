@@ -34,7 +34,7 @@ check "note_search reads one note when it is named" \
     grep -q 'args.get("id") or args.get("title")' "$N"
 check "research saves its report as a note" grep -qE 'note' jarvis-core/jarvis/integrations/research/__init__.py
 check "voice intent: note that …" grep -qiE 'note that|make a note' evals/routing.py
-require_file jarvis-web/src/routes/notes/+page.svelte
+require_file jarvis-web/src/lib/sections/Notes.svelte
 check "mock backend serves jarvis/notes/*" grep -q 'jarvis/notes/' tests/web/mock-ha.mjs
 # The phone reaches notes the way it reaches every other management screen:
 # the console's own page, in its authenticated WebView. That is the app's
@@ -47,7 +47,7 @@ check "the phone offers NOTES, as a console section" \
     grep -qE 'NOTES\("NOTES", "/notes"\)' android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt
 check_sh "and the phone's nav still matches the console's" \
     'python3 android-app/tools/console_parity_test.py 2>&1 | tail -1'
-check "the console route exists for it to open" test -f jarvis-web/src/routes/notes/+page.svelte
+check "the console route exists for it to open" test -f jarvis-web/src/lib/sections/Notes.svelte
 check "desktop reaches the notes API" grep -rq 'jarvis/notes\|api/notes' jarvis-desktop/jarvis_desktop
 require_file jarvis-core/tests/test_notes.py
 require_file jarvis-core/tests/test_notes_voice.py

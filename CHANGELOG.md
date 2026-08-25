@@ -63,6 +63,23 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   console was answering every request perfectly well. Both were true while every test suite in
   the repository was green, which is the argument for M29.
 
+### Changed
+- M48 (the console): **eleven top-level destinations became four** — HOUSE, WORK, KNOWLEDGE,
+  SETTINGS, plus the voice HUD. Devices, areas, dashboards and automations are sections of
+  HOUSE; tasks and code are WORK; notes and memory are KNOWLEDGE; the assistant's settings,
+  tools, extensions and desktop machines are SETTINGS. The structure was reduced BEFORE any
+  page moved, because a page restyled in its old place is a page that has to move twice.
+  Every old path is a 308 to where it lives now — `/tasks/42` included, carrying the id,
+  because a link to a task is the link people share. Every keyboard chord anybody learnt still
+  lands on the same page (`g d` reaches devices, inside HOUSE), and `g b` — which the nav's
+  tooltip has advertised for months against a chord table that never had it — works.
+- M48: four hand-maintained copies of the route list became one. The layout's tab strip,
+  `shortcuts.ts`, the command palette and the Android parity mirror all read `screens.ts`; the
+  palette indexes sections as well as destinations, which matters more with four front doors
+  than it did with eleven.
+- M48: a section no longer repeats its own name under a tab that already says it, and the notes
+  editor pane says what it is for instead of being half a blank screen.
+
 ### Added
 - M47 (the catalog): discovery and installation from operator-allowed sources, browsable in the
   console. Almost all of it is refusals. Only two things can be installed and neither is code

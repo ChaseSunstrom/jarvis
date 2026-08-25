@@ -13,6 +13,7 @@
 	 *
 	 * All validation lives in `$lib/schedule.ts` and is tested in Node.
 	 */
+	import { Button } from '$lib/ui';
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
 	import { isUnsupported } from '$lib/jarvisClient';
@@ -158,21 +159,17 @@
 						<span class="acts">
 							<span class="pill">{job.kind}</span>
 							{#if job.editable}
-								<button
-									type="button"
-									class="btn ghost"
-									data-testid="sched-toggle-{job.id}"
+								<Button testid="sched-toggle-{job.id}"
 									disabled={!!busy}
 									onclick={() => toggle(job)}
 								>
 									{job.enabled ? 'PAUSE' : 'RESUME'}
-								</button>
-								<button
-									type="button"
-									class="btn ghost danger"
-									data-testid="sched-remove-{job.id}"
+								</Button>
+								<Button
+									variant="danger"
+									testid="sched-remove-{job.id}"
 									disabled={!!busy}
-									onclick={() => remove(job)}>REMOVE</button
+									onclick={() => remove(job)}>REMOVE</Button
 								>
 							{:else}
 								<span class="eid" data-testid="sched-readonly-{job.id}">{readOnlyNote(job)}</span>
@@ -187,10 +184,9 @@
 		</ul>
 
 		<div class="toolbar">
-			<button
-				type="button"
-				class="btn"
-				data-testid="sched-new"
+			<Button
+				variant="primary"
+				testid="sched-new"
 				aria-expanded={adding}
 				onclick={() => {
 					adding = !adding;
@@ -198,7 +194,7 @@
 				}}
 			>
 				{adding ? 'CANCEL' : '+ SCHEDULE SOMETHING'}
-			</button>
+			</Button>
 		</div>
 
 		{#if adding}
@@ -264,13 +260,10 @@
 					{#if form.mode === 'weekly'}
 						<span class="days" id="sched-days" data-testid="sched-days">
 							{#each DAYS as day (day)}
-								<button
-									type="button"
-									class="btn ghost"
-									class:on={form.days.includes(day)}
-									data-testid="sched-day-{day}"
-									aria-pressed={form.days.includes(day)}
-									onclick={() => toggleDay(day)}>{day.toUpperCase()}</button
+								<Button
+									pressed={form.days.includes(day)}
+									testid="sched-day-{day}"
+									onclick={() => toggleDay(day)}>{day.toUpperCase()}</Button
 								>
 							{/each}
 						</span>
@@ -278,15 +271,14 @@
 				{/if}
 
 				<div class="row">
-					<button
-						type="button"
-						class="btn"
-						data-testid="sched-save"
+					<Button
+						variant="primary"
+						testid="sched-save"
 						disabled={busy === 'add'}
 						onclick={add}
 					>
 						{busy === 'add' ? 'SAVING…' : 'SCHEDULE'}
-					</button>
+					</Button>
 				</div>
 			</div>
 		{/if}

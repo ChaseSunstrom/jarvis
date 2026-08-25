@@ -17,6 +17,7 @@
 	 * entity ids — so what runs is what is shown here, and a second click cannot
 	 * run it twice because jarvis-core pops the request before executing.
 	 */
+	import { Button } from '$lib/ui';
 	import { onMount } from 'svelte';
 	import { describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
@@ -213,15 +214,14 @@
 					{#if choicesOf(req).length}
 						<div class="choices" data-testid="question-choices">
 							{#each choicesOf(req) as choice (choice)}
-								<button
-									type="button"
-									class="btn approve"
-									data-testid="answer-choice-{choice}"
+								<Button
+									variant="approve"
+									testid="answer-choice-{choice}"
 									disabled={busy === id}
 									onclick={() => resolve(req, true, choice)}
 								>
 									{choice}
-								</button>
+								</Button>
 							{/each}
 						</div>
 					{:else}
@@ -240,25 +240,21 @@
 								}
 							}}
 						/>
-						<button
-							type="button"
-							class="btn approve"
-							data-testid="answer-send"
+						<Button
+							variant="approve"
+							testid="answer-send"
 							disabled={busy === id || !(answers[id] ?? '').trim()}
 							onclick={() => resolve(req, true, (answers[id] ?? '').trim())}
 						>
 							SEND
-						</button>
+						</Button>
 					{/if}
-					<button
-						type="button"
-						class="btn ghost danger"
-						data-testid="answer-dismiss"
+					<Button variant="danger" testid="answer-dismiss"
 						disabled={busy === id}
 						onclick={() => resolve(req, false)}
 					>
 						DISMISS
-					</button>
+					</Button>
 				</div>
 			{:else}
 				<div class="req" class:tainted={req.tainted} data-testid="approval-{req.tool}">
@@ -275,24 +271,20 @@
 					{#if left !== null}
 						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
 					{/if}
-					<button
-						type="button"
-						class="btn approve"
-						data-testid="approve-{req.tool}"
+					<Button
+						variant="approve"
+						testid="approve-{req.tool}"
 						disabled={busy === id}
 						onclick={() => resolve(req, true)}
 					>
 						APPROVE
-					</button>
-					<button
-						type="button"
-						class="btn ghost danger"
-						data-testid="deny-{req.tool}"
+					</Button>
+					<Button variant="danger" testid="deny-{req.tool}"
 						disabled={busy === id}
 						onclick={() => resolve(req, false)}
 					>
 						DENY
-					</button>
+					</Button>
 				</div>
 			{/if}
 		{/each}
@@ -374,9 +366,5 @@
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		color: var(--jv-warn);
-	}
-	.approve {
-		border-color: var(--jv-ok);
-		color: var(--jv-ok);
 	}
 </style>

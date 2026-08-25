@@ -206,12 +206,12 @@ test('the page says so plainly when there is nothing running', async ({ page }) 
 	await expect(page.getByTestId('task-dock')).toHaveCount(0);
 });
 
-test('TASKS is reachable by nav, chord and palette', async ({ page }) => {
+test('TASKS is a section of WORK, reachable by nav, chord and palette', async ({ page }) => {
 	await page.goto('/devices');
-	await expect(page.getByTestId('nav-tasks')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('nav-work')).toBeVisible({ timeout: 15_000 });
 
-	await page.getByTestId('nav-tasks').click();
-	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/tasks');
+	await page.getByTestId('nav-work').click();
+	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/work/tasks');
 
 	// Waited on, not merely navigated to: `page.goto` resolves on load and the
 	// chord listener is attached during hydration, so keys pressed straight
@@ -230,7 +230,7 @@ test('TASKS is reachable by nav, chord and palette', async ({ page }) => {
 	await expect(page.getByTestId('boot')).toHaveCount(0, { timeout: 15_000 });
 	await page.keyboard.press('g');
 	await page.keyboard.press('k');
-	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/tasks', {
+	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/work/tasks', {
 		timeout: 10_000
 	});
 
@@ -240,8 +240,8 @@ test('TASKS is reachable by nav, chord and palette', async ({ page }) => {
 	// Clicked by id rather than by pressing Enter on whatever ranked first: the
 	// index also holds every entity, and this test is about the page being IN
 	// the palette, not about how it scores against a lamp called "task".
-	await page.getByTestId('palette-item-page:/tasks').click();
-	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/tasks', {
+	await page.getByTestId('palette-item-page:/work/tasks').click();
+	await expect(page.getByTestId('route')).toHaveAttribute('data-route', '/work/tasks', {
 		timeout: 10_000
 	});
 });

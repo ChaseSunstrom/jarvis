@@ -186,7 +186,7 @@ class TaskOverlay(private val context: Context) {
     private fun openTasks() {
         try {
             context.startActivity(
-                ManagementActivity.intent(context, ConsoleTab.TASKS)
+                ManagementActivity.intent(context, ConsoleTab.WORK)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         } catch (t: Throwable) {

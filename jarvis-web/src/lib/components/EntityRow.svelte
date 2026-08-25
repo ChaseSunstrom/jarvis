@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '$lib/ui';
 	import { domainOf, isOn, type EntityState } from '$lib/jarvisClient';
 	import { staggerStyle } from '$lib/motion';
 
@@ -68,17 +69,16 @@
 
 	<div class="ctl">
 		{#if domain === 'light' || domain === 'switch' || domain === 'fan' || domain === 'siren' || domain === 'input_boolean'}
-			<button
-				type="button"
-				class="btn"
-				class:on
+			<Button
+				variant="primary"
+				pressed={on}
 				disabled={unavailable}
-				data-testid="toggle-{entityId}"
+				testid="toggle-{entityId}"
 				aria-label="{on ? 'Turn off' : 'Turn on'} {name}"
 				onclick={() => call(on ? 'turn_off' : 'turn_on')}
 			>
 				{on ? 'TURN OFF' : 'TURN ON'}
-			</button>
+			</Button>
 			{#if domain === 'light'}
 				<label class="slider">
 					<span class="slabel">BRI</span>
@@ -107,11 +107,11 @@
 				</label>
 			{/if}
 		{:else if domain === 'cover'}
-			<button type="button" class="btn" data-testid="open-{entityId}" aria-label="Open {name}" onclick={() => call('open_cover')}>OPEN</button>
-			<button type="button" class="btn ghost" aria-label="Stop {name}" onclick={() => call('stop_cover')}>STOP</button>
-			<button type="button" class="btn" data-testid="close-{entityId}" aria-label="Close {name}" onclick={() => call('close_cover')}>
+			<Button variant="primary" testid="open-{entityId}" aria-label="Open {name}" onclick={() => call('open_cover')}>OPEN</Button>
+			<Button aria-label="Stop {name}" onclick={() => call('stop_cover')}>STOP</Button>
+			<Button variant="primary" testid="close-{entityId}" aria-label="Close {name}" onclick={() => call('close_cover')}>
 				CLOSE
-			</button>
+			</Button>
 			<label class="slider">
 				<span class="slabel">POS</span>
 				<input
@@ -151,28 +151,22 @@
 				{/each}
 			</select>
 		{:else if domain === 'media_player'}
-			<button
-				type="button"
-				class="btn ghost"
-				data-testid="prev-{entityId}"
+			<Button testid="prev-{entityId}"
 				aria-label="Previous track on {name}"
 				onclick={() => call('media_previous_track')}
 			>
 				<span aria-hidden="true">‹‹</span>
-			</button>
-			<button type="button" class="btn" data-testid="play-{entityId}" aria-label="Play {name}" onclick={() => call('media_play')}>PLAY</button>
-			<button type="button" class="btn" data-testid="pause-{entityId}" aria-label="Pause {name}" onclick={() => call('media_pause')}>
+			</Button>
+			<Button variant="primary" testid="play-{entityId}" aria-label="Play {name}" onclick={() => call('media_play')}>PLAY</Button>
+			<Button variant="primary" testid="pause-{entityId}" aria-label="Pause {name}" onclick={() => call('media_pause')}>
 				PAUSE
-			</button>
-			<button
-				type="button"
-				class="btn ghost"
-				data-testid="next-{entityId}"
+			</Button>
+			<Button testid="next-{entityId}"
 				aria-label="Next track on {name}"
 				onclick={() => call('media_next_track')}
 			>
 				<span aria-hidden="true">››</span>
-			</button>
+			</Button>
 			<label class="slider">
 				<span class="slabel">VOL</span>
 				<input
@@ -186,20 +180,17 @@
 				/>
 			</label>
 		{:else if domain === 'lock'}
-			<button type="button" class="btn" data-testid="lock-{entityId}" aria-label="Lock {name}" onclick={() => call('lock')}>LOCK</button>
-			<button type="button" class="btn ghost" data-testid="unlock-{entityId}" aria-label="Unlock {name}" onclick={() => call('unlock')}>
+			<Button variant="primary" testid="lock-{entityId}" aria-label="Lock {name}" onclick={() => call('lock')}>LOCK</Button>
+			<Button testid="unlock-{entityId}" aria-label="Unlock {name}" onclick={() => call('unlock')}>
 				UNLOCK
-			</button>
+			</Button>
 		{:else if domain === 'button' || domain === 'scene' || domain === 'script'}
-			<button
-				type="button"
-				class="btn"
-				data-testid="press-{entityId}"
+			<Button variant="primary" testid="press-{entityId}"
 				aria-label="Run {name}"
 				onclick={() => call(domain === 'button' ? 'press' : 'turn_on')}
 			>
 				RUN
-			</button>
+			</Button>
 		{:else if domain === 'select' || domain === 'input_select'}
 			<select
 				data-testid="select-{entityId}"
@@ -225,8 +216,8 @@
 				onchange={(e) => call('set_value', { value: num(target(e).value) })}
 			/>
 		{:else if domain === 'vacuum'}
-			<button type="button" class="btn" aria-label="Start {name}" onclick={() => call('start')}>START</button>
-			<button type="button" class="btn ghost" aria-label="Send {name} to its dock" onclick={() => call('return_to_base')}>DOCK</button>
+			<Button variant="primary" aria-label="Start {name}" onclick={() => call('start')}>START</Button>
+			<Button aria-label="Send {name} to its dock" onclick={() => call('return_to_base')}>DOCK</Button>
 		{:else if attrs.unit_of_measurement}
 			<span class="muted">{attrs.unit_of_measurement}</span>
 		{/if}

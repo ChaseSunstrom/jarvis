@@ -23,6 +23,7 @@
 	 * this file at all until a session has been proved. See
 	 * `$lib/server/consoleAuth` for what that keeps and what it changes.
 	 */
+	import { Button } from '$lib/ui';
 	import { onDestroy, onMount } from 'svelte';
 	import { qrSvg } from '$lib/qr';
 	import { describeError, openConnection, type Connection } from '$lib/connection';
@@ -517,20 +518,16 @@
 				onkeydown={(e) => e.key === 'Enter' && unlock()}
 				placeholder="set where the console runs"
 			/>
-			<button
-				type="button"
-				class="btn"
-				data-testid="pair-unlock"
+			<Button variant="primary" testid="pair-unlock"
 				disabled={unlocking || !password.trim()}
 				title={unlocking
 					? 'Checking'
 					: !password.trim()
 						? 'Type the console password first'
 						: 'Unlock pairing'}
-				onclick={unlock}
-			>
+				onclick={unlock}>
 				{unlocking ? 'CHECKING…' : 'UNLOCK'}
-			</button>
+			</Button>
 		</div>
 		<p class="muted small">
 			Minting a code needs it as well as the console's own access, because anything that can
@@ -542,9 +539,9 @@
 			<span class="name">
 				<b>Console unlocked</b><span class="eid">for this browser session</span>
 			</span>
-			<button type="button" class="btn ghost" data-testid="pair-relock" onclick={relock}>
+			<Button testid="pair-relock" onclick={relock}>
 				LOCK
-			</button>
+			</Button>
 		</div>
 	{/if}
 
@@ -568,15 +565,11 @@
 				onkeydown={(e) => e.key === 'Enter' && adoptSecret()}
 				placeholder="set where jarvis-core runs"
 			/>
-			<button
-				type="button"
-				class="btn"
-				data-testid="pair-secret-save"
+			<Button variant="primary" testid="pair-secret-save"
 				disabled={busy || !secretDraft.trim()}
-				onclick={adoptSecret}
-			>
+				onclick={adoptSecret}>
 				HOLD IT
-			</button>
+			</Button>
 		</div>
 		<p class="muted small">
 			jarvis-core prints it on first run. Set {secretVar} where this console runs and it survives
@@ -593,19 +586,15 @@
 			</span>
 			{#if revealed}
 				<code class="small" data-testid="pair-secret-value">{revealed}</code>
-				<button type="button" class="btn ghost" data-testid="pair-conceal" onclick={hideSecret}>
+				<Button testid="pair-conceal" onclick={hideSecret}>
 					HIDE
-				</button>
+				</Button>
 			{:else}
-				<button
-					type="button"
-					class="btn ghost"
-					data-testid="pair-reveal"
+				<Button testid="pair-reveal"
 					disabled={revealing}
-					onclick={reveal}
-				>
+					onclick={reveal}>
 					{revealing ? 'READING…' : 'SHOW PAIRING SECRET'}
-				</button>
+				</Button>
 			{/if}
 		</div>
 	{/if}
@@ -640,20 +629,16 @@
 	{/if}
 
 	<div class="row">
-		<button
-			type="button"
-			class="btn"
-			data-testid="pair-new"
+		<Button variant="primary" testid="pair-new"
 			disabled={busy || !canIssue}
 			title={issueBlockedBecause || 'Generate a one-time pairing code.'}
-			onclick={issue}
-		>
+			onclick={issue}>
 			{busy ? 'GENERATING…' : 'GENERATE CODE'}
-		</button>
+		</Button>
 		{#if live}
-			<button type="button" class="btn ghost" data-testid="pair-hide" onclick={forget}>
+			<Button testid="pair-hide" onclick={forget}>
 				HIDE
-			</button>
+			</Button>
 		{/if}
 	</div>
 </section>
@@ -684,15 +669,12 @@
 				<span class="muted" data-testid="token-state-{row.id}">
 					{row.connected ? 'connected now' : 'not connected'}
 				</span>
-				<button
-					type="button"
-					class="btn ghost danger"
-					data-testid="token-revoke-{row.id}"
+				<Button variant="danger" testid="token-revoke-{row.id}"
 					disabled={revoking === row.id}
 					onclick={() => revoke(row)}
 				>
 					REVOKE
-				</button>
+				</Button>
 			</div>
 		{/each}
 		<p class="muted small">

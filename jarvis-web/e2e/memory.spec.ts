@@ -11,7 +11,7 @@ import { test, expect } from '@playwright/test';
 
 test('every note is listed, with where it came from', async ({ page }) => {
 	await page.goto('/memory');
-	await expect(page.getByTestId('memory-screen')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('memory-lede')).toBeVisible({ timeout: 15_000 });
 
 	const list = page.getByTestId('memory-list');
 	await expect(list).toContainText('spare key');
@@ -37,7 +37,7 @@ test('export is a file, not a screen', async ({ page }) => {
 	// "You can leave with your data" means a download. The browser cannot hold
 	// the backend token, so it goes through the console's own route.
 	await page.goto('/memory');
-	await expect(page.getByTestId('memory-screen')).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('memory-lede')).toBeVisible({ timeout: 15_000 });
 
 	const answer = await page.request.get('/api/memory/export?format=json');
 	expect(answer.ok()).toBe(true);

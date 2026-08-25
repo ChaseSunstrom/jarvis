@@ -51,24 +51,23 @@ enum class ConsoleTab(
     /** Path under the console's origin. Never taken from an intent. */
     val path: String,
 ) {
-    DEVICES("DEVICES", "/devices"),
-    AREAS("AREAS", "/areas"),
-    AUTOMATIONS("AUTOMATIONS", "/automations"),
-    TOOLS("TOOLS", "/tools"),
-    TASKS("TASKS", "/tasks"),
-    DASHBOARDS("DASHBOARDS", "/dashboards"),
-    CODE("CODE", "/code"),
-    NOTES("NOTES", "/notes"),
-    MEMORY("MEMORY", "/memory"),
-    // M07 put the console in a desktop window and gave it a page; the phone
-    // gained nothing, so a browser at the same URL showed strictly more app
-    // than the phone did. `console_parity_test.py` is the check that noticed.
-    DESKTOP("DESKTOP", "/desktop"),
+    // Four, not eleven. M48 consolidated the console's destinations — devices,
+    // areas, dashboards and automations are sections of HOUSE now, and so on —
+    // and this table mirrors that exactly, because a phone offering a
+    // different set of front doors from the browser at the same URL is the
+    // defect `console_parity_test.py` exists to catch. It caught the eleventh
+    // (DESKTOP) being here and not there, twice.
+    //
+    // The sections themselves are reached inside the WebView, from the
+    // destination's own strip. This table is the front doors only.
+    HOUSE("HOUSE", "/house"),
+    WORK("WORK", "/work"),
+    KNOWLEDGE("KNOWLEDGE", "/knowledge"),
     SETTINGS("SETTINGS", "/settings");
 
     companion object {
         /** Where a tap with no tab lands. The console's own default. */
-        val DEFAULT = DEVICES
+        val DEFAULT = HOUSE
 
         /**
          * Resolve an intent's extra, or [DEFAULT].

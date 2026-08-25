@@ -147,7 +147,7 @@ from pathlib import Path
 inventory = Path("jarvis-web/src/lib/screens.ts").read_text()
 nav = inventory.count("nav: true")
 assert nav <= 11, f"{nav} top-level destinations; M48 is reducing these, not adding to them"
-page = Path("jarvis-web/src/routes/tools/+page.svelte").read_text()
+page = Path("jarvis-web/src/lib/sections/Tools.svelte").read_text()
 assert "Extensions" in page, "the section is not mounted anywhere"
 assert not Path("jarvis-web/src/routes/extensions").exists(), "it took a route of its own"
 print(f"mounted on /tools; {nav} top-level destinations, unchanged")

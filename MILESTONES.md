@@ -708,7 +708,7 @@ install code is the marketplace attack surface that class of tool actually got b
 
 ## The console, finished (added mid-run)
 
-- [ ] **M48 — Every page in the web console is C2** · size XL · deps M02, M05, M44
+- [x] **M48 — Every page in the web console is C2** · size XL · deps M02, M05, M44
   - Scope: the chosen design direction is **C · Reactor II** (`docs/design/c2-reactor.html`,
     the decision is recorded in `docs/design/README.md`) and the console is only partly on it.
     Every route, view and modal in `jarvis-web/` implements it — no page keeps its old,
@@ -761,11 +761,30 @@ install code is the marketplace attack surface that class of tool actually got b
       (`android-app/tools/console_parity_test.py`, `ConsoleTab.kt`). They move in the SAME
       change or that mirror goes red — full parity across surfaces carries later, but the
       contract cannot be left broken in between.
-  - Verify: `bash scripts/verify/m48-webui-c2.sh` — it **fails** if the top-level nav has more
-    than five destinations, if a current page is not accounted for in the
-    navigation-architecture section, if any inventory row is unchecked, if token-lint finds a
-    hardcoded style value anywhere in the console's source, if a page is missing a required
-    state, or if an old-design component is still referenced. The
+  - Verify: `bash scripts/verify/m48-webui-c2.sh` — 15 checks. It fails if the top-level nav has
+    more than five destinations, if a current page is not accounted for in the
+    navigation-architecture section, if a moved path 404s instead of redirecting, if a chord
+    anybody learnt no longer lands where its page went, if the nav/chords/palette/phone stop
+    reading one list, if token-lint finds a hardcoded style value, or if a screen is missing a
+    required state.
+  - **Eleven destinations became four**: HOUSE, WORK, KNOWLEDGE, SETTINGS, plus the HUD. Every
+    old path is a 308 to where it lives now — including `/tasks/[id]`, carrying the id, because
+    a link to a task is the link people actually share. Every keyboard chord anybody learnt
+    still lands on the same page (`g d` reaches devices, inside HOUSE), and `g b` — which the
+    nav's tooltip has advertised for months against a table that never had it — works now.
+    Four lists became one: the layout's tab strip, `shortcuts.ts`, the command palette and the
+    Android parity mirror all read `screens.ts`.
+  - **84 controls became `<Button>`**, and the library grew twice on the way rather than the
+    pages working around it: `pressed` (a toggle is a button state, and two pages kept raw
+    markup purely for a `class:on` directive) and an `approve` variant (three more existed only
+    to wear it), plus attribute forwarding so an `aria-expanded` no longer forces a hand-rolled
+    button. What stays raw is listed in `docs/UI_MIGRATION.md` with the reason: a mic, a
+    disclosure triangle and a clickable row are not buttons in this library's sense, and adding
+    one component per one-off would be the same duplication somewhere else.
+  - 48 screenshots — 16 screens at mobile, tablet and desktop — are in `docs/ui-review/`, and
+    they earned their place immediately: the Extensions panel's header was rendering one letter
+    per line at 390px, which nothing else would have caught. `responsive.spec.ts` fails on
+    crushed prose now, not only on sideways scrolling. The
     live suite navigates to every inventoried route and asserts it loads with no console error
     and matches the C2 token expectations; `docs/LIVE_TEST_REPORT.md` gains a migration section
     (pages migrated / total, per-breakpoint screenshots, remaining offenders — which must be

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { SCREENS } from '../src/lib/screens';
+import { SCREENS, sectionsOf } from '../src/lib/screens';
 
 /**
  * Every screen, in every state it can be driven into.
@@ -30,7 +30,19 @@ const gotoScreen = async (page: Page, path: string) => {
 	await page.goto(path);
 };
 
-for (const screen of SCREENS) {
+/**
+ * The screens that OWN their states.
+ *
+ * A destination is a layout and a redirect to its first section (M48): it has
+ * no connection of its own, so it has no offline state of its own, and driving
+ * one through this test raced — its lede is static markup that appears before
+ * the section beneath it has opened a socket, so the sockets were closed
+ * before there were any. Its sections are all here, which is what "no screen
+ * is forgotten" actually means.
+ */
+const STATEFUL = SCREENS.filter((screen) => sectionsOf(screen.path).length === 0);
+
+for (const screen of STATEFUL) {
 	test(`${screen.name} renders, and says so when the link drops`, async ({ page }) => {
 		const sockets: { close: () => void }[] = [];
 		await page.routeWebSocket(/\/ws$/, (ws) => {
@@ -59,7 +71,7 @@ for (const screen of SCREENS) {
 // The console screens only. The HUD has no loading state and should not: it
 // dials when you speak, so it is ready the moment it paints — and its own
 // first-paint sequence is the boot animation, which the other tests skip.
-for (const screen of SCREENS.filter((s) => s.nav)) {
+for (const screen of STATEFUL.filter((s) => s.within || s.nav)) {
 	test(`${screen.name} shows it is loading rather than a blank`, async ({ page }) => {
 		// Connected, and told nothing: the exact window a skeleton is for.
 		await page.routeWebSocket(/\/ws$/, () => {

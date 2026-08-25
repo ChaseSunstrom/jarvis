@@ -14,6 +14,7 @@
 	 * buttons — the parts that need a browser and cannot be unit-tested — and
 	 * nothing else. When a state question comes up here, it belongs there.
 	 */
+	import { Button } from '$lib/ui';
 	import { MicCapture } from '$lib/audio/capture';
 	import {
 		ENROLMENT_RATE,
@@ -169,7 +170,7 @@
 					{/if}
 				</span>
 			</span>
-			<button class="btn" data-testid="enrol-start" onclick={begin}>ENROL</button>
+			<Button variant="primary" testid="enrol-start" onclick={begin}>ENROL</Button>
 		</div>
 		{#if error}<p class="err" role="alert">{error}</p>{/if}
 	{:else}
@@ -184,7 +185,7 @@
 					{/if}
 				</span>
 			</span>
-			<button class="btn ghost" data-testid="enrol-cancel" onclick={cancel}>DONE</button>
+			<Button testid="enrol-cancel" onclick={cancel}>DONE</Button>
 		</div>
 
 		<!--
@@ -221,22 +222,18 @@
 							<span class="meter" aria-hidden="true">
 								<span class="meter-fill" style="width: {Math.min(100, level * 320)}%"></span>
 							</span>
-							<button
-								class="btn danger"
-								data-testid="enrol-stop-{i}"
+							<Button variant="danger" testid="enrol-stop-{i}"
 								onclick={() => finish(i)}
 							>
 								STOP
-							</button>
+							</Button>
 						{:else}
-							<button
-								class="btn"
-								data-testid="enrol-record-{i}"
+							<Button variant="primary" testid="enrol-record-{i}"
 								disabled={recording}
 								onclick={() => record(i)}
 							>
 								{slot.state === 'accepted' ? 'AGAIN' : slot.state === 'rejected' ? 'RETRY' : 'RECORD'}
-							</button>
+							</Button>
 						{/if}
 					</span>
 					{#if slot.detail}

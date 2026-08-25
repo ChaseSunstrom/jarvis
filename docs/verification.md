@@ -610,6 +610,26 @@ house's summary is a fraction of a real one's.
 | The same enforcement for an MCP server's tools | **Not measured** | an MCP server's tools are withdrawn by disabling the server, which `mcp/*` already does; nothing here asserts the two agree |
 | The live half for a PLUGIN | **Not measured live** | no `ToolPlugin` is configured in a default deployment — calendar and mail need the operator's own account, and the radicale fixture is behind `--profile fixtures` deliberately. The plugin case is the pytest above, against a real registry |
 
+### The console's structure (M48)
+
+`bash scripts/verify/m48-webui-c2.sh` — 15 checks. `docs/UI_MIGRATION.md` is the inventory.
+
+| Claim | Level | Proof |
+|---|---|---|
+| No more than five top-level destinations | Automated | the gate counts `nav: true` in `screens.ts` and fails at six. Eleven became four |
+| Every current page has a home in the navigation architecture | Automated | the gate walks `src/routes` and fails on a page the architecture does not place |
+| Every moved path redirects rather than 404s | Automated | ten 308s, each asserted to point where `MOVED` says. `/tasks/[id]` carries the id through |
+| Every keyboard chord anybody learnt still lands on its page | Automated | the gate holds the pre-consolidation chord table against the current one; `g d` must still reach devices. `g b` is asserted present because the nav's tooltip had been promising it |
+| The nav, the chords, the palette and the phone read one list | Automated | four copies of the route list became one; the gate fails if any of the four stops reading `screens.ts` |
+| The palette indexes sections, not only destinations | Automated | with four front doors instead of eleven this is the fast path, and a palette offering only the four would make the console slower to use |
+| The phone offers the same front doors as the browser | Automated | `console_parity_test.py` — four, in the same order |
+| No hard-coded style value anywhere in the console | Automated | `token_lint.py` at zero, with the ratchet empty |
+| Every screen declares itself and uses `ScreenState` | Automated | `web_states_check.py`, which now reads the section a route mounts rather than the two-line route file |
+| Nothing overflows OR is crushed at five widths | Automated | `responsive.spec.ts` — the second half is new: the Extensions panel was rendering a sentence one letter per line at 390px while scrolling nothing sideways |
+| 84 controls use the shared component library | Automated *as a count* | and the library grew `pressed`, an `approve` variant and attribute forwarding rather than the pages working around it |
+| What is still a raw `<button>` | **Deliberate, and listed** | a mic, a disclosure triangle, a clickable row and five other one-offs — `docs/UI_MIGRATION.md` names each with its reason. All on tokens; none is a button in this library's sense |
+| Whether it is *good* | **Needs eyes** | 48 screenshots in `docs/ui-review/`, 16 screens at three widths. The harness can prove structure, states and spacing; "would a first-time user understand this" is not a test |
+
 ### Motion (M44)
 
 `bash scripts/verify/m44-motion.sh` — 12 checks. Measured in a real headless

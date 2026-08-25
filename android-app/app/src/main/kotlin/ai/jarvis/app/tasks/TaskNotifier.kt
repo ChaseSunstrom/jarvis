@@ -101,7 +101,7 @@ object TaskNotifier {
     }
 
     private fun openTasks(app: Context): PendingIntent? = try {
-        val intent = ManagementActivity.intent(app, ConsoleTab.TASKS)
+        val intent = ManagementActivity.intent(app, ConsoleTab.WORK)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         // IMMUTABLE because nothing may rewrite where this lands: a mutable
         // PendingIntent handed to the notification shade is a handle any app

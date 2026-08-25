@@ -74,9 +74,9 @@ check_sh "scripted eval: the tests pass inside the sandbox, and nothing outside 
 
 # --- the console ------------------------------------------------------------
 check "task detail shows the commits and the diff" \
-    grep -q 'task-commits' 'jarvis-web/src/routes/tasks/[id]/+page.svelte'
+    grep -q 'task-commits' 'jarvis-web/src/routes/work/tasks/[id]/+page.svelte'
 check "and a held action can be approved or declined from the job" \
-    grep -q 'approve-held' 'jarvis-web/src/routes/tasks/[id]/+page.svelte'
+    grep -q 'approve-held' 'jarvis-web/src/routes/work/tasks/[id]/+page.svelte'
 check "the mock backend serves the new keys" grep -q 'commits:' tests/web/mock-ha.mjs
 
 # This milestone's own live scenarios. A capability is not done until it works

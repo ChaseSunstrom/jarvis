@@ -21,7 +21,7 @@ const WIDTHS = [
 ];
 
 for (const size of WIDTHS) {
-	test(`no horizontal overflow at ${size.width}px (${size.name})`, async ({ page }) => {
+	test(`nothing overflows or is crushed at ${size.width}px (${size.name})`, async ({ page }) => {
 		await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
 		await page.setViewportSize({ width: size.width, height: size.height });
 
@@ -47,6 +47,28 @@ for (const size of WIDTHS) {
 				overflow.scrollWidth,
 				`${screen.name} at ${size.width}px overflows by ${overflow.scrollWidth - overflow.clientWidth}px; widest: ${JSON.stringify(overflow.widest)}`
 			).toBeLessThanOrEqual(overflow.clientWidth + 1);
+
+			// The other way a layout breaks at a narrow width: not overflowing,
+			// but CRUSHED. A flex row whose buttons take their natural width
+			// squeezes the sentence beside them to a two-character column, and
+			// a paragraph rendered one letter per line reads as damage while
+			// scrolling nothing sideways. The Extensions panel did exactly this
+			// at 390px and only a screenshot caught it.
+			const crushed = await page.evaluate(() => {
+				const narrow: { text: string; width: number }[] = [];
+				for (const el of document.querySelectorAll('p, li, dd')) {
+					const text = (el.textContent || '').trim();
+					if (text.length < 60) continue;
+					const rect = el.getBoundingClientRect();
+					if (rect.width === 0 && rect.height === 0) continue;
+					if (rect.width < 140) narrow.push({ text: text.slice(0, 40), width: Math.round(rect.width) });
+				}
+				return narrow.slice(0, 3);
+			});
+			expect(
+				crushed,
+				`${screen.name} at ${size.width}px has prose squeezed into a sliver: ${JSON.stringify(crushed)}`
+			).toEqual([]);
 		}
 	});
 }

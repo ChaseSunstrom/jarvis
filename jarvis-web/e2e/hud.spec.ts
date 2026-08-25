@@ -59,7 +59,7 @@ test('a held action is answerable on the HUD, without it becoming the console', 
 	await expect(page.getByTestId('approval-args-lock_control')).toContainText('lock.front_door');
 
 	// Still the HUD. No nav, no console frame — the orb is still the page.
-	await expect(page.getByTestId('nav-devices')).toHaveCount(0);
+	await expect(page.getByTestId('nav-house')).toHaveCount(0);
 	await expect(page.getByTestId('orb')).toBeVisible();
 
 	// The buttons are dressed, not browser defaults. `.btn` is declared under
@@ -115,7 +115,7 @@ test('what a turn is doing is visible on the HUD, which is where the turn was sp
 		.toBe(true);
 
 	await expect(page.getByTestId('tool-row-lock_control')).toBeVisible();
-	await expect(page.getByTestId('nav-devices')).toHaveCount(0);
+	await expect(page.getByTestId('nav-house')).toHaveCount(0);
 });
 
 test('the palette shortcut is left to the browser on the HUD, and taken in the console', async ({

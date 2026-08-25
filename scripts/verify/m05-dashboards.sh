@@ -19,7 +19,7 @@ require_file tests/contracts/dashboard_layout.json
 check "jarvis-core reads the layout contract" grep -rlq dashboard_layout.json jarvis-core/tests
 check "jarvis-web reads the layout contract" grep -rlq dashboard_layout.json jarvis-web/src
 
-require_file jarvis-web/src/routes/dashboards/+page.svelte
+require_file jarvis-web/src/lib/sections/Dashboards.svelte
 check "console nav has Dashboards" grep -qi dashboards jarvis-web/src/routes/+layout.svelte
 check "Android tab strip mirrors the new nav" grep -q DASHBOARDS android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt
 check "console parity mirror passes" python3 android-app/tools/console_parity_test.py

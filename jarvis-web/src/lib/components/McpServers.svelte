@@ -23,6 +23,7 @@
 	 * Everything about validation lives in `$lib/mcpDraft.ts` and is tested in
 	 * Node. This file owns the buttons.
 	 */
+	import { Button } from '$lib/ui';
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
 	import { isUnsupported, type McpListing, type McpServerDetail } from '$lib/jarvisClient';
@@ -221,34 +222,25 @@
 						</span>
 						<span class="acts">
 							<span class="pill" data-tier={server.tier}>{tierLabel(server.tier)}</span>
-							<button
-								type="button"
-								class="btn ghost"
-								data-testid="mcp-tools-{server.name}"
+							<Button testid="mcp-tools-{server.name}"
 								aria-expanded={expanded === server.name}
 								onclick={() => inspect(server.name)}
 							>
 								{server.tools.length ? `${server.tool_count} TOOLS` : 'INSPECT'}
-							</button>
-							<button
-								type="button"
-								class="btn ghost"
-								data-testid="mcp-reconnect-{server.name}"
+							</Button>
+							<Button testid="mcp-reconnect-{server.name}"
 								disabled={!!busy}
 								onclick={() => reconnect(server.name)}
 							>
 								{busy === server.name ? '…' : 'RECONNECT'}
-							</button>
+							</Button>
 							{#if server.editable}
-								<button
-									type="button"
-									class="btn ghost danger"
-									data-testid="mcp-remove-{server.name}"
+								<Button variant="danger" testid="mcp-remove-{server.name}"
 									disabled={!!busy}
 									onclick={() => remove(server)}
 								>
 									REMOVE
-								</button>
+								</Button>
 							{:else}
 								<span class="eid" data-testid="mcp-readonly-{server.name}">
 									{readOnlyNote(server)}
@@ -288,16 +280,13 @@
 									<li>
 										<code>{tool.name}</code>
 										<span class="eid">{tool.description}</span>
-										<button
-											type="button"
-											class="btn ghost"
-											data-testid="mcp-try-{tool.name}"
+										<Button testid="mcp-try-{tool.name}"
 											disabled={!!busy}
 											onclick={() => tryTool(tool.name)}
 											title="Call it through the same approval gate the assistant uses"
 										>
 											{busy === tool.name ? '…' : 'TEST CALL'}
-										</button>
+										</Button>
 										{#if 'parameters' in tool && tool.parameters}
 											<pre class="schema" data-testid="mcp-schema-{tool.name}">{JSON.stringify(
 													tool.parameters,
@@ -320,10 +309,7 @@
 		</ul>
 
 		<div class="toolbar">
-			<button
-				type="button"
-				class="btn"
-				data-testid="mcp-new"
+			<Button variant="primary" testid="mcp-new"
 				aria-expanded={adding}
 				onclick={() => {
 					adding = !adding;
@@ -331,17 +317,14 @@
 				}}
 			>
 				{adding ? 'CANCEL' : '+ ADD SERVER'}
-			</button>
+			</Button>
 			{#if servers.length}
-				<button
-					type="button"
-					class="btn ghost"
-					data-testid="mcp-reconnect-all"
+				<Button testid="mcp-reconnect-all"
 					disabled={!!busy}
 					onclick={() => reconnect()}
 				>
 					RECONNECT ALL
-				</button>
+				</Button>
 			{/if}
 		</div>
 
@@ -403,15 +386,11 @@
 				</select>
 
 				<div class="row">
-					<button
-						type="button"
-						class="btn"
-						data-testid="mcp-save"
+					<Button variant="primary" testid="mcp-save"
 						disabled={busy === 'add'}
-						onclick={add}
-					>
+						onclick={add}>
 						{busy === 'add' ? 'CONNECTING…' : 'ADD'}
-					</button>
+					</Button>
 				</div>
 			</div>
 		{/if}

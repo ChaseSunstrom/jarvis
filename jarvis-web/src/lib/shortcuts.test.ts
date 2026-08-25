@@ -56,9 +56,9 @@ describe('ChordTracker', () => {
 	it('completes the documented chords', () => {
 		const t = new ChordTracker();
 		expect(t.press('g', 0).href).toBeUndefined();
-		expect(t.press('d', 10).href).toBe('/devices');
+		expect(t.press('d', 10).href).toBe('/house/devices');
 		expect(t.press('g', 20).pending).toBe(true);
-		expect(t.press('a', 30).href).toBe('/automations');
+		expect(t.press('a', 30).href).toBe('/house/automations');
 	});
 
 	// `g a` is taken by automations, so areas gets `g r` — a collision here would
@@ -68,9 +68,9 @@ describe('ChordTracker', () => {
 		expect(new Set(keys).size).toBe(keys.length);
 		const targets = Object.values(CHORDS);
 		expect(new Set(targets).size).toBe(targets.length);
-		expect(CHORDS['g d']).toBe('/devices');
-		expect(CHORDS['g a']).toBe('/automations');
-		expect(CHORDS['g r']).toBe('/areas');
+		expect(CHORDS['g d']).toBe('/house/devices');
+		expect(CHORDS['g a']).toBe('/house/automations');
+		expect(CHORDS['g r']).toBe('/house/areas');
 	});
 
 	it('arms only on a key that can start a chord', () => {
@@ -91,7 +91,7 @@ describe('ChordTracker', () => {
 		t.press('g', 0);
 		const again = t.press('g', 10);
 		expect(again.pending).toBe(true);
-		expect(t.press('s', 20).href).toBe('/settings');
+		expect(t.press('s', 20).href).toBe('/settings/assistant');
 	});
 
 	it('an unknown second key clears the chord', () => {
@@ -111,7 +111,7 @@ describe('ChordTracker', () => {
 	it('is case-insensitive', () => {
 		const t = new ChordTracker();
 		t.press('G', 0);
-		expect(t.press('D', 10).href).toBe('/devices');
+		expect(t.press('D', 10).href).toBe('/house/devices');
 	});
 
 	it('takes a custom chord table', () => {

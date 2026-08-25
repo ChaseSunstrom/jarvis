@@ -17,18 +17,31 @@ export interface Screen {
 	name: string;
 	/** One line: what somebody comes to this screen to do. */
 	purpose: string;
-	/** In the console's tab strip? The HUD and the style guide are not. */
+	/** In the console's TOP-LEVEL tab strip? A section is not; its destination is. */
 	nav: boolean;
+	/**
+	 * The destination this is a section of, e.g. `/house`.
+	 *
+	 * Empty for a destination itself and for anything outside the four. The
+	 * console has four primary destinations rather than eleven (M48): a
+	 * section lives inside one, switched by a strip that persists while its
+	 * content changes, and has a real URL so a link to it still works.
+	 */
+	within?: string;
 	/** A `data-testid` the ready screen renders. */
 	probe: string;
 	/**
-	 * The `g _` keyboard chord, for the screens that are in the tab strip.
+	 * The `g _` keyboard chord.
 	 *
-	 * Here rather than in the layout, because the layout used to carry its own
-	 * copy of the whole nav — eleven entries beside this file's nine, with
-	 * `/notes` and `/desktop` in one and not the other. Two lists of the same
-	 * thing is how a route ends up reachable and undeclared, which is what
-	 * `web_states_check.py` found.
+	 * On SECTIONS rather than destinations, so every chord anybody learnt still
+	 * lands where its page now lives: `g d` was devices and reaches devices,
+	 * inside HOUSE. Consolidating the nav was allowed to cost a click; it was
+	 * not allowed to cost a keystroke somebody already knows.
+	 *
+	 * Here rather than in the layout or in `shortcuts.ts`, both of which used
+	 * to carry their own copy — nine entries, eleven and ten, disagreeing, with
+	 * the nav's tooltip advertising a `g b` for dashboards that no table had.
+	 * It works now.
 	 */
 	chord?: string;
 }
@@ -42,105 +55,173 @@ export const SCREENS: Screen[] = [
 		probe: 'status',
 		chord: 'g h'
 	},
+
+	// --- the four destinations ------------------------------------------
 	{
-		path: '/devices',
+		path: '/house',
+		name: 'House',
+		purpose: 'What is on, where it is, what it has been doing, and the rules that run themselves.',
+		nav: true,
+		probe: 'house-screen'
+	},
+	{
+		path: '/work',
+		name: 'Work',
+		purpose: 'What Jarvis is doing or has done for you: tasks, research, coding jobs.',
+		nav: true,
+		probe: 'work-screen'
+	},
+	{
+		path: '/knowledge',
+		name: 'Knowledge',
+		purpose: 'What Jarvis has written down, and what it remembers about you.',
+		nav: true,
+		probe: 'knowledge-screen'
+	},
+	{
+		path: '/settings',
+		name: 'Settings',
+		purpose: 'Configuration and capability: settings, tools, what is installed, the machines it runs on.',
+		nav: true,
+		probe: 'settings-screen'
+	},
+
+	// --- their sections --------------------------------------------------
+	{
+		path: '/house/devices',
 		name: 'Devices',
 		purpose: 'Every entity, grouped by area, live — and the controls for them.',
-		nav: true,
+		nav: false,
+		within: '/house',
 		probe: 'devices-lede',
 		chord: 'g d'
 	},
 	{
-		path: '/areas',
+		path: '/house/areas',
 		name: 'Areas',
 		purpose: 'The rooms voice commands resolve against, and what is in them.',
-		nav: true,
+		nav: false,
+		within: '/house',
 		probe: 'areas-screen',
 		chord: 'g r'
 	},
 	{
-		path: '/automations',
-		name: 'Automations',
-		purpose: 'What runs by itself, when it last ran, and whether it is on.',
-		nav: true,
-		probe: 'automations-screen',
-		chord: 'g a'
-	},
-	{
-		path: '/tools',
-		name: 'Tools',
-		purpose: 'What Jarvis can call, what it is allowed to call, and MCP servers.',
-		nav: true,
-		probe: 'tools-screen',
-		chord: 'g t'
-	},
-	{
-		path: '/tasks',
-		name: 'Tasks',
-		purpose: 'Everything slow enough to ask about: running, scheduled, finished.',
-		nav: true,
-		probe: 'tasks-lede',
-		chord: 'g k'
-	},
-	{
-		path: '/dashboards',
+		path: '/house/dashboards',
 		name: 'Dashboards',
-		purpose: 'Graphs you arranged: Jarvis’s own numbers, this host, and anything else configured.',
-		nav: true,
+		purpose: 'The graphs: what this house records, over time.',
+		nav: false,
+		within: '/house',
 		probe: 'dashboards-screen',
 		chord: 'g b'
 	},
 	{
-		path: '/code',
-		name: 'Code',
-		purpose: 'Repositories Jarvis may work in, and the jobs it has run in them.',
-		nav: true,
-		probe: 'code-screen',
-		chord: 'g c'
+		path: '/house/automations',
+		name: 'Automations',
+		purpose: 'The rules that run themselves, their traces, and the editor.',
+		nav: false,
+		within: '/house',
+		probe: 'automations-screen',
+		chord: 'g a'
 	},
 	{
-		path: '/notes',
-		name: 'Notes',
-		purpose: 'What Jarvis has written down, and what it wrote it from.',
-		nav: true,
-		probe: 'notes-screen',
-		chord: 'g n'
+		path: '/work/tasks',
+		name: 'Tasks',
+		purpose: 'Everything running or finished, with its steps and its tool calls.',
+		nav: false,
+		within: '/work',
+		probe: 'tasks-lede',
+		chord: 'g k'
 	},
 	{
-		path: '/memory',
-		name: 'Memory',
-		purpose: 'What Jarvis remembers about you — and the buttons to take it back.',
-		nav: true,
-		probe: 'memory-screen',
-		chord: 'g m'
-	},
-	{
-		path: '/desktop',
-		name: 'Desktop',
-		purpose: 'The machines running the desktop agent, and what they are doing.',
-		nav: true,
-		probe: 'desktop-lede',
-		chord: 'g e'
-	},
-	{
-		path: '/tasks/[id]',
+		path: '/work/tasks/[id]',
 		name: 'Task',
 		purpose: 'One task: its steps, its tool calls and how it ended.',
 		nav: false,
 		probe: 'task-lede'
 	},
 	{
-		path: '/settings',
-		name: 'Settings',
+		path: '/work/code',
+		name: 'Code',
+		purpose: 'Coding jobs, the repositories they run in, and what they changed.',
+		nav: false,
+		within: '/work',
+		probe: 'code-lede',
+		chord: 'g c'
+	},
+	{
+		path: '/knowledge/notes',
+		name: 'Notes',
+		purpose: 'What Jarvis has written down, and what it wrote it from.',
+		nav: false,
+		within: '/knowledge',
+		probe: 'notes-lede',
+		chord: 'g n'
+	},
+	{
+		path: '/knowledge/memory',
+		name: 'Memory',
+		purpose: 'What Jarvis remembers about you, and where each fact came from.',
+		nav: false,
+		within: '/knowledge',
+		probe: 'memory-lede',
+		chord: 'g m'
+	},
+	{
+		path: '/settings/assistant',
+		name: 'Assistant',
 		purpose: 'The backend’s own settings, pairing, voice identity and this console.',
-		nav: true,
-		probe: 'settings-screen',
+		nav: false,
+		within: '/settings',
+		probe: 'assistant-screen',
 		chord: 'g s'
+	},
+	{
+		path: '/settings/tools',
+		name: 'Tools',
+		purpose: 'What Jarvis can call, what it is allowed to call, and what is installed.',
+		nav: false,
+		within: '/settings',
+		probe: 'tools-screen',
+		chord: 'g t'
+	},
+	{
+		path: '/settings/desktop',
+		name: 'Desktop',
+		purpose: 'The machines running the desktop agent, and what they are doing.',
+		nav: false,
+		within: '/settings',
+		probe: 'desktop-lede',
+		chord: 'g e'
 	}
 ];
 
-/** The screens the console's tab strip offers, in order. */
+/** The console's top-level destinations, in order. Four of them, by design. */
 export const NAV_SCREENS = SCREENS.filter((screen) => screen.nav);
+
+/** The sections of one destination, in declaration order. */
+export function sectionsOf(destination: string): Screen[] {
+	return SCREENS.filter((screen) => screen.within === destination);
+}
+
+/**
+ * Where a path from before the consolidation lives now.
+ *
+ * Every old top-level route redirects rather than 404s: a bookmark, a link in
+ * a note and the phone's own tab strip all point at these, and "it used to
+ * work" is the worst thing a console can say.
+ */
+export const MOVED: Readonly<Record<string, string>> = {
+	'/devices': '/house/devices',
+	'/areas': '/house/areas',
+	'/dashboards': '/house/dashboards',
+	'/automations': '/house/automations',
+	'/tasks': '/work/tasks',
+	'/code': '/work/code',
+	'/notes': '/knowledge/notes',
+	'/memory': '/knowledge/memory',
+	'/tools': '/settings/tools',
+	'/desktop': '/settings/desktop'
+};
 
 /**
  * `g _` chord → route, built from the list above.
