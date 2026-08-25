@@ -47,6 +47,12 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   and per-volume backup/restore, and what upgrading a pinned image costs.
 
 ### Changed
+- Planning (fourth mid-run addition): M48 — every page in the web console on the chosen C2
+  direction. `docs/UI_MIGRATION.md` is a walked inventory with one row per page, and
+  `scripts/verify/m48-webui-c2.sh` fails while any row is unchecked, any hardcoded style value
+  survives token-lint, any page lacks one of the four states, or any old-design component is
+  still referenced; the live suite navigates every route and `docs/LIVE_TEST_REPORT.md` gains
+  a migration section with per-breakpoint screenshots.
 - Planning (third mid-run addition): reach, routing, delegation, motion and an ecosystem —
   M38 channels (Telegram/Signal behind an identity allowlist, tailnet-only, mock server in CI),
   M39 CalDAV + IMAP/SMTP behind the approval model with fixture containers, M40 a self-hosted

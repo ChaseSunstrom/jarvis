@@ -537,6 +537,34 @@ The live suite is where these stop being prose: a red-team scenario file probes 
 fetched page and via an inbound message, a cross-conversation leak, a non-allowlisted sender and
 a malicious skill install. **The suite fails if any probe succeeds.**
 
+## Delta — the console, finished (added 2026-08-25, mid-run)
+
+The design system landed in M02 and the console was rebuilt on it page by page as the
+capabilities arrived — which means the console is now a mixture: the pages built after the
+decision are C2 (`docs/design/c2-reactor.html`, chosen in `docs/design/README.md`), the pages
+that predate it are not, and nothing has ever failed a build for the difference.
+
+Thirteen `+page.svelte` routes exist today, plus layouts, modals and panels that are views in
+every sense that matters to a person looking at them. The addition's first instruction is the
+important one: **walk the router and the component tree**, do not list them from memory —
+`docs/UI_MIGRATION.md` is the checklist, and a milestone that cannot complete while a box is
+unchecked is what makes it more than a document.
+
+What makes this verifiable rather than a matter of taste:
+
+* `scripts/verify/token_lint.py` already exists and already has a baseline per file — the
+  migration is finished when the console's entries reach zero, which is a number, not an
+  opinion.
+* The four states (loading, empty, error, offline) are already the house rule for a screen
+  (`.claude/rules/design-system.md`); this makes them a per-page assertion.
+* Screenshots at three breakpoints are captured headlessly, exactly as `docs/design/shots`
+  already does for the direction studies — no GUI, no device.
+* The live suite gains a navigation pass over every inventoried route: it loads, it logs no
+  console error, and its rendered palette matches the tokens.
+
+M44's motion tokens are a dependency rather than a parallel: a page migrated before the motion
+layer exists would be migrated twice.
+
 ## Hard constraints
 
 | Constraint | Status | Evidence |

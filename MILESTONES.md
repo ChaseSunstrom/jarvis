@@ -665,9 +665,41 @@ install code is the marketplace attack surface that class of tool actually got b
     malicious-skill-install probe, and the suite fails if anything unapproved executes.
   - Verify: `bash scripts/verify/m47-catalog.sh`
 
+## The console, finished (added mid-run)
+
+- [ ] **M48 — Every page in the web console is C2** · size XL · deps M02, M05, M44
+  - Scope: the chosen design direction is **C · Reactor II** (`docs/design/c2-reactor.html`,
+    the decision is recorded in `docs/design/README.md`) and the console is only partly on it.
+    Every route, view and modal in `jarvis-web/` implements it — no page keeps its old,
+    bespoke styling.
+    * **The inventory, walked rather than remembered**: `docs/UI_MIGRATION.md` lists one
+      `- [ ]` row per page/view/modal, found by walking `src/routes` and the component tree,
+      each honestly marked migrated / partial / old. That checklist is the source of truth and
+      the milestone is not done while a box is unchecked.
+    * **The migration**: each page rebuilt on the C2 tokens and the shared component library —
+      no ad-hoc colour, spacing or one-off component; consistent layout, navigation and
+      spacing; the four required states (loading, empty, error, offline) reachable on every
+      page; responsive at mobile, tablet and desktop; the M44 motion tokens applied; zero
+      hardcoded style values. A page needing a component the library lacks **adds it to the
+      library** and documents it on the style guide rather than growing a one-off, and an
+      old-styled component is deleted once nothing references it.
+    * **Proof, page by page**: `scripts/verify/token_lint.py` passes for the page, it renders
+      at three breakpoints, all four states are reachable, and a headless screenshot lands in
+      `docs/ui-review/<page>/<breakpoint>.png`. A visual-consistency check flags a page whose
+      rendered palette or spacing deviates from the tokens.
+  - Verify: `bash scripts/verify/m48-webui-c2.sh` — it **fails** if any inventory row is
+    unchecked, if token-lint finds a hardcoded style value anywhere in the console's source, if
+    a page is missing a required state, or if an old-design component is still referenced. The
+    live suite navigates to every inventoried route and asserts it loads with no console error
+    and matches the C2 token expectations; `docs/LIVE_TEST_REPORT.md` gains a migration section
+    (pages migrated / total, per-breakpoint screenshots, remaining offenders — which must be
+    zero).
+  - Not in scope: desktop and Android C2 parity. The same discipline applies to them later;
+    this milestone is the web console.
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M47
+- [ ] **M23 — Final integration** · size M · deps M00–M48
   - Scope: `make verify-all` green; **the stack comes up healthy and the whole suite runs
     against it** (M28/M29); **`bash scripts/verify/live_interaction.sh` in full mode exits 0** — every scenario, including the ones that were gated, inside the thresholds
     (intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median round trip ≤ 2 s, zero critical issues) —
