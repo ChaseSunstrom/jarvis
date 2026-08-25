@@ -566,7 +566,7 @@ and every milestone here ends with its own live scenarios.
     scripted stand-in that speaks the same protocol.
   - Verify: `bash scripts/verify/m41-claude-code-backend.sh`
 
-- [ ] **M42 — Delegation across backends** · size L · deps M20, M41
+- [x] **M42 — Delegation across backends** · size L · deps M20, M41
   - Scope: one spoken request fans out into a plan of subtasks across the specialised subagents
     and the backends (local agent, Claude Code, research, integrations), independent ones in
     parallel, rolling up to a lead that reports progress in the task UI and stops at approval

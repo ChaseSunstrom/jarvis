@@ -218,7 +218,11 @@ def test_only_scenarios_that_need_our_own_web_leave_the_stack():
     """A scenario asks for the fixture ground for one reason, and says so."""
     from testing.live.scenario import load_all
 
-    allowed = {"research", "coding", "subagents", "skills"}
+    # `security` joined them with M43: a red-team probe's hostile page is one
+    # this repository serves, and pointing an injection probe at the open web
+    # would be testing somebody else's server. The channel probes are here for
+    # the same reason — the message they send is one we wrote.
+    allowed = {"research", "coding", "subagents", "skills", "security"}
     off_stack = {s.name: s.capability for s in load_all() if s.ground == "fixture"}
     strays = {name: cap for name, cap in off_stack.items() if cap not in allowed}
     assert not strays, f"these do not need the fixture web: {strays}"

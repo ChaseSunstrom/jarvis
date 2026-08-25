@@ -69,6 +69,20 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M42 (delegation across backends): a plan's pieces can now go to different kinds of worker. An
+  entry naming `research` runs the research engine; `code` (or `code:claude-code`) starts a
+  coding job; anything else is one of the specialists M20 built. They run at the same time,
+  bounded by the same model pool, and roll up as one answer under one lead.
+
+  Delegated work **waits on the subsystems' own tasks** rather than reimplementing them: a
+  research run keeps its steps and citations, a coding job keeps its branch and its approval
+  gate, and the console draws the tree it already draws. A child stopped by an unanswered
+  approval ends the wait and is reported as stopped, rather than being waited out.
+
+  One routing label changed with it: a fan-out that starts a research child was being reported
+  as *research*, because the child's kind was read first. Delegation is the outer act, so it
+  wins — same principle as "a coding job that also called `get_state` is still coding".
+
 - M41 (Claude Code as an execution backend): heavy coding work can be delegated to Claude Code
   headlessly, selectable per task — and it is **off**, because it is the one deliberate exception
   to "nothing goes to the cloud" in this project: the repository's contents are sent to

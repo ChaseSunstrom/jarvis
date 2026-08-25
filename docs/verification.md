@@ -429,6 +429,18 @@ house's summary is a fraction of a real one's.
 | Proactive moments go out on channels | Automated *as wiring* | the hub subscribes to `jarvis_notification`; `notifications` stays the one notion of "tell them" |
 | Telegram and Signal against real accounts | **Unproven, by design** | no test touches an account. `MemoryChannel` ships in the product and the live probes drive the real hub through it — only the wire is a fake. `BLOCKERS.md` §4 has the accounts |
 
+### Delegation across backends (M42)
+
+| Claim | Level | Proof |
+|---|---|---|
+| One request can reach more than one kind of worker | Automated *live* | `delegation-across-backends` — and the gate asserts the run actually used two of `deep_research` / `delegate_to_agents` / `start_coding_job`, not that it could have |
+| A plan entry may name a subsystem or a specialist | Automated | `split()` — `research`, `code`, `code:claude-code`, and everything else is a specialist's name |
+| Delegated work reuses the subsystems' own tasks | Automated | `wait_for_task` waits on the registry; the research run and the coding job keep their own progress, steps and approval gates. The console draws the tree it already draws |
+| An approval nobody answered ends the wait | Automated | `test_a_cancelled_task_ends_the_wait_rather_than_timing_out` — a stopped child is reported as stopped rather than waited out |
+| A coding job will not guess between repositories | Automated | `test_a_coding_job_will_not_guess_between_repositories` |
+| Concurrency stays bounded | **By construction** | the same `ModelPool` M20 built; nothing here spawns model calls outside it |
+| A fan-out is reported as a fan-out | Automated | `capability.py` puts delegation ahead of the child kinds — reading the children first labels a fan-out as whatever it delegated, which hides what happened |
+
 ### The delegated coding backend (M41)
 
 | Claim | Level | Proof |

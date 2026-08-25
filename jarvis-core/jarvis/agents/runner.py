@@ -37,6 +37,13 @@ from typing import TYPE_CHECKING, Any
 from ..llm.pool import ModelPool, budgeted
 from ..tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
 from . import AgentDefinition
+from .backends import (
+    BACKEND_AGENT,
+    BACKEND_RESEARCH,
+    run_code,
+    run_research,
+    split,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..core import Jarvis
@@ -153,6 +160,14 @@ async def delegate(
     chosen = list(assignments)[:MAX_SUBAGENTS]
 
     async def _one(assignment: Assignment) -> Finding:
+        # A plan entry may name a BACKEND rather than a specialist (M42):
+        # `research`, `code`, or `code:claude-code`. Those are task-producing
+        # subsystems with their own progress and their own approval gates, so
+        # they are started and waited on rather than reimplemented here.
+        kind, flavour = split(assignment.agent)
+        if kind != BACKEND_AGENT:
+            return await _run_backend(jarvis, assignment, kind, flavour, lead_task_id)
+
         definition = definitions.get(assignment.agent)
         if definition is None:
             return Finding(
@@ -183,6 +198,43 @@ async def delegate(
             )
         )
     return Rollup(findings=findings, pool=pool.snapshot(), seconds=time.monotonic() - started)
+
+
+async def _run_backend(
+    jarvis: "Jarvis",
+    assignment: Assignment,
+    kind: str,
+    flavour: str,
+    lead_task_id: str,
+) -> Finding:
+    """One piece of work done by a subsystem rather than by a specialist.
+
+    The result is a `Finding` like any other, so the lead rolls up one shape
+    whatever ran — and the child task id travels with it, which is what lets
+    the console draw a research run and a coding job under the same lead.
+    """
+    started = time.monotonic()
+    finding = Finding(agent=assignment.agent, task=assignment.task)
+    try:
+        if kind == BACKEND_RESEARCH:
+            outcome = await run_research(jarvis, assignment.task, lead_task_id)
+        else:
+            outcome = await run_code(
+                jarvis, assignment.task, lead_task_id, backend=flavour
+            )
+    except Exception as err:  # noqa: BLE001 - one backend failing keeps the rest
+        _LOGGER.exception("delegated %s failed", kind)
+        finding.ok = False
+        finding.error = f"{type(err).__name__}: {err}"
+        finding.seconds = time.monotonic() - started
+        return finding
+
+    finding.ok = bool(outcome.get("ok"))
+    finding.answer = str(outcome.get("text") or "")
+    finding.error = str(outcome.get("error") or "")
+    finding.task_id = str(outcome.get("task_id") or "")
+    finding.seconds = time.monotonic() - started
+    return finding
 
 
 async def _run_agent(

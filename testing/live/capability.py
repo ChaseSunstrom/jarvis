@@ -60,6 +60,13 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
     that a model self-reports is a model grading its own homework. Ordered by
     specificity — a coding job that also called `get_state` is still coding.
     """
+    # Delegation FIRST, and before the task kinds. A lead that fanned work out
+    # across backends starts research and coding children, so reading the child
+    # kinds first labels a fan-out as whatever it delegated — which hides the
+    # thing that actually happened. Same principle as "a coding job that also
+    # called get_state is still coding": the outer act is the answer.
+    if "delegate_to_agents" in tools or "delegation" in task_kinds:
+        return "subagents"
     if "code" in task_kinds:
         return "coding"
     if "research" in task_kinds:
