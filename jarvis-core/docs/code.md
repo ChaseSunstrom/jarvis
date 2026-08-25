@@ -449,3 +449,68 @@ too short to act on and says why.
 
 **It does not commit unless it changed something.** A job that concludes
 nothing needed changing says so, which is a legitimate and useful answer.
+
+## Permission modes, and the gate a job waits on
+
+Two questions, and they are not the same one: *may this job run at all* is the
+model's Tier-3 gate on `start_coding_job`, answered before anything starts.
+*May it do this particular thing* is the job's own gate, answered while it
+runs, and it is what the four modes are about.
+
+| Mode | Edits | The repository's own checks | Anything else it runs |
+|---|---|---|---|
+| `ask` | asks | asks | asks |
+| `accept-edits` | lands | asks | asks |
+| `auto-run-tests` *(default)* | lands | runs | asks |
+| `full-auto` | lands | runs | runs |
+
+Every mode asks about a **destructive** command — `rm -r`, `git push`, a
+`curl … | sh`, `sudo`, anything that touches a device or the init system —
+unless this task's `allow:` names that exact command line. `is_destructive()`
+is deliberately conservative: a false positive costs one approval prompt, a
+false negative costs somebody's working tree.
+
+`auto-run-tests` and not `ask` is the default because a job's edits land on a
+branch nobody merges without looking, inside a container whose only host path
+is the repository, and the review a person actually does is the diff at the
+end. Asking forty times to write forty lines buys nothing and makes the feature
+useless from a room with no screen in it. `ask` exists for the repository where
+even the branch matters, and is one line of config:
+
+```yaml
+code:
+  permission_mode: auto-run-tests   # the default; ask · accept-edits · full-auto
+  allow_commands: []                # exact command lines that may skip the gate
+  repositories:
+    - name: house
+      path: ~/src/house
+      permission_mode: ask          # this one, whatever the global setting says
+```
+
+The mode is never the model's to choose. It comes from configuration, or from a
+console caller holding a bearer token (`jarvis/code/start` takes `mode:`), for
+the same reason `default_environment` is the operator's: a model that could read
+the list of modes could hand itself the permissive one.
+
+### How a held action reaches a person
+
+`code/approvals.py` fires the same `jarvis_approval_required` event as the
+model's own gate, carrying the job's `task_id`, so the console shows it on the
+job — with the diff or the command in front of the buttons — and `jarvis/approve`
+answers it with the same command the phone already sends. The difference from
+the model's gate is what happens next: a chat turn ENDS at `approval_required`,
+while a coding job **blocks** until somebody answers. Nobody answering is a
+refusal, not a release, after ten minutes.
+
+### Verify until the tests pass
+
+When a job finishes, the repository's first declared check runs — even when the
+job changed nothing, which is the case that matters. A model deciding it is
+finished before it starts ("Very good, Sir", empty diff, task `done`) is the
+commonest failure of a coding agent and looks exactly like success; the check
+turns it into a red result and another attempt. Three attempts, then the job
+stops and says the check still fails.
+
+Then, if anything changed, one commit on the job's branch — so what a person
+receives is a branch they can `git log`, cherry-pick and revert, rather than a
+dirty working tree they have to reconstruct.

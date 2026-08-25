@@ -17,12 +17,24 @@
 export const EVENT_TASK_TOOL_STARTED = 'jarvis_task_tool_started';
 export const EVENT_TASK_TOOL_FINISHED = 'jarvis_task_tool_finished';
 export const EVENT_TASK_OUTPUT = 'jarvis_task_output';
+/**
+ * A coding job wanting a human before it edits, runs or checks anything.
+ *
+ * The same event the model's own safety gate fires — one vocabulary for "this
+ * has NOT happened and is waiting on you" — with a `task_id`, which is what
+ * lets it appear on the job it belongs to instead of only in the global
+ * approval banner.
+ */
+export const EVENT_APPROVAL_REQUIRED = 'jarvis_approval_required';
+export const EVENT_APPROVAL_RESOLVED = 'jarvis_approval_resolved';
 
 /** The events a task detail page subscribes to, beyond the three lifecycle ones. */
 export const TASK_ACTIVITY_EVENTS = [
 	EVENT_TASK_TOOL_STARTED,
 	EVENT_TASK_TOOL_FINISHED,
-	EVENT_TASK_OUTPUT
+	EVENT_TASK_OUTPUT,
+	EVENT_APPROVAL_REQUIRED,
+	EVENT_APPROVAL_RESOLVED
 ] as const;
 
 export interface ToolCall {
@@ -52,10 +64,27 @@ export interface LogEntry {
 	text: string;
 }
 
+/** One action this job is waiting on a person for. */
+export interface HeldAction {
+	requestId: string;
+	/** `edit`, `check` or `command`. */
+	kind: string;
+	summary: string;
+	/** The change itself, or the command's text — what a person actually reads. */
+	detail: string;
+	at: number;
+}
+
 export interface Activity {
 	taskId: string;
 	calls: ToolCall[];
 	output: OutputChunk[];
+	/**
+	 * What the job is waiting for, if anything. A list rather than one, because
+	 * nothing in the protocol promises a job holds only one action at a time,
+	 * and a second request arriving would otherwise replace the first silently.
+	 */
+	held: HeldAction[];
 	/**
 	 * Everything that happened, oldest first: replayed once when the page opens
 	 * (so somebody arriving late sees what they missed) and extended by every
@@ -74,7 +103,7 @@ export const MAX_OUTPUT_CHUNKS = 400;
 export const MAX_CALLS = 200;
 
 export function emptyActivity(taskId: string): Activity {
-	return { taskId, calls: [], output: [], log: [] };
+	return { taskId, calls: [], output: [], held: [], log: [] };
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -103,6 +132,32 @@ export function applyActivityEvent(
 
 	const note = (kind: LogEntry['kind'], text: string): LogEntry[] =>
 		[...activity.log, { at: now / 1000, kind, text }].slice(-MAX_LOG);
+
+	if (eventType === EVENT_APPROVAL_REQUIRED) {
+		const held: HeldAction = {
+			requestId: str(payload.request_id),
+			kind: str(payload.kind, 'action'),
+			summary: str(payload.summary ?? payload.description),
+			detail: str(payload.detail),
+			at: now
+		};
+		if (!held.requestId) return activity;
+		return {
+			...activity,
+			held: [...activity.held.filter((h) => h.requestId !== held.requestId), held],
+			log: note('note', `waiting for approval: ${held.summary}`)
+		};
+	}
+
+	if (eventType === EVENT_APPROVAL_RESOLVED) {
+		const requestId = str(payload.request_id);
+		const approved = payload.approved === true;
+		return {
+			...activity,
+			held: activity.held.filter((h) => h.requestId !== requestId),
+			log: note('note', approved ? 'approved' : 'declined')
+		};
+	}
 
 	if (eventType === EVENT_TASK_TOOL_STARTED) {
 		const call: ToolCall = {

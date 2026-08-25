@@ -13,6 +13,34 @@ and is not misled).
 
 ---
 
+## "How is that going?" — "I have no way to check on the job's progress"
+
+severity: major
+status: **fixed** (`jarvis-core/jarvis/llm/tools.py`, `task_status`)
+Regression: `coding-fix-failing-tests`
+Test: `jarvis-core/tests/test_tasks.py::test_task_status_reports_what_is_running`
+
+Asked, mid coding job, how it was going, Jarvis said:
+
+> "I have no way to check on the job's progress from here, Sir — I can only
+> cancel it if you wish."
+
+Which was true. It could **start** background jobs (`run_background_task`,
+`start_coding_job`, `deep_research`) and it could **stop** them
+(`cancel_task`), and there was no tool between those two. Every screen in the
+system has shown live task progress since M12 — the console, the phone, the
+task dock — so the gap was invisible to anyone testing with a screen in front
+of them, and total for anyone in a room talking to it.
+
+`task_status` reports what is running, how far through it is, what step it is
+on, and the result of the last few if nothing is running — because "how did
+that go" is the same question one minute later.
+
+Found by the live suite the first time a coding job was long enough to ask
+about.
+
+---
+
 ## Nonsense in, a confident answer out
 
 severity: minor

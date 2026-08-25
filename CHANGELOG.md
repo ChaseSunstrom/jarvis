@@ -26,6 +26,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M19 (the coding agent): a verify-until-green loop that runs the repository's own check after
+  the job says it is finished — and **when it changed nothing**, which is the case that matters,
+  because a model that decides it is done before it starts looks exactly like success; one
+  commit on the `jarvis/…` branch, with the diff measured from the branch point so a committed
+  job still reports what it changed; four permission modes (`ask` · `accept-edits` ·
+  `auto-run-tests` · `full-auto`) chosen by the operator and never by the model, with
+  destructive commands asking in every mode unless the task allowed that exact line; and a gate
+  that **blocks the job** rather than ending a turn — same `jarvis_approval_required` event, same
+  `jarvis/approve` command, shown on the job in the console with the diff above the buttons, and
+  an unanswered request expiring as a refusal. `fixtures/coding/failing-tests` (three bugs, three
+  kinds, standard-library tests because the sandbox has no network) and `evals/coding_eval.py`,
+  which re-runs the suite in the container itself and hashes everything outside the job's mount.
 - M29 (the suite runs against the real stack): `scripts/verify/live_interaction.sh` starts with
   `docker compose up -d --wait`, 22 of 29 scenarios now address the running jarvis-core and the
   console container rather than a copy of them, and the run fails if any container is unhealthy

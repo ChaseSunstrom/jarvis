@@ -2350,6 +2350,22 @@ index 1234567..89abcde 100644
 										{ tool: 'read_file', args: 'path=src/app.py', outcome: 'read 2 lines' },
 										{ tool: 'edit_file', args: 'path=src/app.py', outcome: 'edited' }
 									],
+									// M19: a job's output is a branch with commits on it, and
+									// the console shows them. A new server key that is not
+									// here means the console's own tests pass while the real
+									// console renders nothing.
+									commits: repo.writable
+										? [
+												{
+													sha: 'a1b2c3d',
+													message: instruction.slice(0, 68),
+													stat: ' src/app.py | 2 +-',
+													files: 1
+												}
+											]
+										: [],
+									approvals: [{ kind: 'edit', summary: 'edit src/app.py', approved: true }],
+									verified: true,
 									summary: 'changed the handler to return 2',
 									rounds: 3
 								});

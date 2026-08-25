@@ -332,3 +332,54 @@ async def test_a_task_that_finds_more_work_can_go_open_ended_again(jarvis):
     assert task.fraction == 0
     await registry.async_update(task.id, open_ended=True)
     assert task.fraction is None
+
+
+# --- "how is that going?" -----------------------------------------------------
+#
+# Jarvis could start background jobs and stop them, and could not report on one.
+# Asked "how is that going?" during a coding job it answered, truthfully and
+# uselessly, "I have no way to check on the job's progress from here, Sir".
+# Every screen has had this since M12; the question people actually ask out
+# loud had nothing behind it. Found by the live suite (M19).
+
+
+async def test_task_status_reports_what_is_running(jarvis):
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+
+    task = await jarvis.tasks.async_add("fix the tests", kind="code", steps=["read", "edit"])
+    await jarvis.tasks.async_update(task.id, detail="editing src/app.py")
+
+    answer = await registry.call("task_status", {})
+    assert answer["status"] == "ok"
+    row = answer["tasks"][0]
+    assert row["id"] == task.id
+    assert row["kind"] == "code"
+    assert row["step"] == "editing src/app.py"
+    assert row["steps_total"] == 2
+
+
+async def test_and_the_last_few_when_nothing_is_running(jarvis):
+    """"How did that go?" is the same question one minute later."""
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+
+    task = await jarvis.tasks.async_add("write it up", kind="research")
+    await jarvis.tasks.async_update(task.id, status="done", result="four sources")
+
+    answer = await registry.call("task_status", {})
+    assert [row["result"] for row in answer["tasks"]] == ["four sources"]
+
+
+async def test_an_id_that_does_not_exist_says_so(jarvis):
+    from jarvis.llm.tools import ToolRegistry, register_builtin_tools
+
+    registry = ToolRegistry(jarvis)
+    register_builtin_tools(registry)
+
+    answer = await registry.call("task_status", {"task_id": "nope"})
+    assert answer["status"] == "error"

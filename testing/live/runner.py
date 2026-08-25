@@ -115,9 +115,17 @@ TOOL_CAPABILITY = {
     # otherwise.
     "web_search": "research",
     "web_fetch": "research",
+    # Two coding paths, and both are "coding": `start_coding_job` is Jarvis's
+    # own agent (M19), `code_task`/`apply_code_task` are the orchestrator's
+    # delegation to a bigger model. A turn routed to either did the same thing
+    # from the user's side of the room.
+    "start_coding_job": "coding",
     "code_task": "coding",
     "apply_code_task": "coding",
     "run_background_task": "task",
+    # Asking how a job is going is about the job, not about starting one.
+    "task_status": "task",
+    "cancel_task": "task",
 }
 
 
@@ -243,6 +251,14 @@ class Runner:
         self._search: FixtureSearch | None = None
         self._browser: FixtureBrowser | None = None
         self.judge = Judge()
+        #: Background "keep clicking approve" loops, one per scenario that
+        #: approved something. Cancelled when the scenario ends, so a later one
+        #: never inherits a hand that says yes to everything.
+        self._approvers: list[asyncio.Task] = []
+        #: How far through the held actions this scenario has answered. A
+        #: scenario is one conversation, so the cursor is per scenario rather
+        #: than per turn.
+        self._approval_cursor = 0
         self.mouth = Mouth()
         self.ears = Ears()
 
@@ -426,6 +442,7 @@ class Runner:
             gated_on=scenario.gated_on,
         )
         killed: list[str] = []
+        self._approval_cursor = 0
         transport = transports.get(variant)
         if transport is None:
             result.ok = False
@@ -472,12 +489,12 @@ class Runner:
                     observer = await Observer(fresh).start()
                     self.observer = observer
                 mark, event_mark = observer.mark(), observer.event_mark()
-                tool_mark = observer.tool_mark()
+                tool_mark, approval_mark = observer.tool_mark(), observer.approval_mark()
                 spoken = await self._speak(transport, turn, variant, conversation_id)
                 conversation_id = spoken.conversation_id or conversation_id
                 turn_result = await self._check(
                     scenario, variant, index, turn, spoken, observer, mark,
-                    event_mark, tool_mark,
+                    event_mark, tool_mark, approval_mark,
                 )
                 if turn.kill:
                     # Back immediately, not at the end of the scenario: the
@@ -496,6 +513,9 @@ class Runner:
             result.ok = False
             result.error = f"{type(err).__name__}: {err}"
         finally:
+            for approver in self._approvers:
+                approver.cancel()
+            self._approvers.clear()
             for container in killed:
                 try:
                     ground.stack.start(container)  # type: ignore[union-attr]
@@ -679,6 +699,7 @@ class Runner:
     async def _check(
         self, scenario: Scenario, variant: str, index: int, turn, spoken,
         observer: Observer, mark: int, event_mark: int, tool_mark: int = 0,
+        approval_mark: int = 0,   # noqa: ARG002 - see `_approval_cursor`
     ) -> TurnResult:
         expect = turn.expect
         # Wall clock, because a task's `created` is one: the comparison has to
@@ -711,6 +732,49 @@ class Runner:
                 fail(f"a wake word fired on audio that has none: {spoken.wake_word!r}")
             elif isinstance(want, str) and spoken.wake_word != want:
                 fail(f"wake word was {spoken.wake_word!r}, expected {want!r}")
+
+        # --- an action a human had to answer
+        #
+        # The rig is the human: it waits for the request, says yes or no, and
+        # asserts what followed. Saying **no** is the half that is never tested
+        # anywhere and the half that matters — a gate that can be worn down by
+        # asking again is not a gate.
+        want_approval = expect.get("approval")
+        if want_approval:
+            decision = str(want_approval.get("decision") or "approve").lower()
+            # From the scenario's cursor, not from this turn's mark: a coding
+            # job starts during the FIRST turn and is holding its first action
+            # long before somebody says "actually, don't". Looking only at what
+            # was raised after the current sentence found nothing, every time
+            # the job was quicker than the person.
+            held = await observer.wait_for_approval(
+                mark=self._approval_cursor,
+                kind=str(want_approval.get("kind") or ""),
+                tool=str(want_approval.get("tool") or ""),
+                timeout=float(want_approval.get("within") or 300.0),
+            )
+            if held is None:
+                fail(
+                    "nothing was held for approval, so there was no gate to "
+                    f"{decision}. Held so far: {observer.approvals[approval_mark:]!r}"
+                )
+            else:
+                self._approval_cursor = observer.approvals.index(held) + 1
+                answered = await observer.answer(held["request_id"], decision == "approve")
+                if not answered:
+                    fail(f"could not answer the held action {held!r}")
+                elif decision == "approve" and want_approval.get("keep_approving"):
+                    # Opt-in, and it has to be: a scenario that approves the
+                    # FIRST gate and then denies the second one (which is the
+                    # only way to test a denial mid-job) had its denial
+                    # approved out from under it by a loop that kept clicking
+                    # yes. `keep_approving` says "be the person who watches the
+                    # whole job through", and nothing else does.
+                    self._approvers.append(
+                        asyncio.create_task(
+                            _keep_approving(observer, self._approval_cursor)
+                        )
+                    )
 
         # --- what it did
         wanted = expect.get("service")
@@ -899,7 +963,17 @@ class Runner:
             if forgotten and forgotten.lower() in texts.lower():
                 fail(f"memory still holds {forgotten!r} after it was forgotten")
 
-        for unsupported in ("approval", "ui", "file"):
+        want_file = expect.get("file")
+        if want_file:
+            path = REPO_ROOT / str(want_file.get("path") or "")
+            wanted = bool(want_file.get("exists", True))
+            if path.exists() is not wanted:
+                fail(
+                    f"{want_file.get('path')} "
+                    + ("does not exist and should" if wanted else "exists and should not")
+                )
+
+        for unsupported in ("ui",):
             if unsupported in expect:
                 fail(
                     f"this scenario asserts {unsupported!r}, which the rig checks only "
@@ -908,6 +982,19 @@ class Runner:
 
         out.ok = not out.failures
         return out
+
+
+async def _keep_approving(observer: Observer, mark: int, seconds: float = 900.0) -> None:
+    """Answer every further held action the way the first one was answered."""
+    seen = {row["request_id"] for row in observer.approvals[:mark]}
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        for row in list(observer.approvals):
+            if row["request_id"] in seen:
+                continue
+            seen.add(row["request_id"])
+            await observer.answer(row["request_id"], True)
+        await asyncio.sleep(0.5)
 
 
 def _as_list(value: Any) -> list[str]:

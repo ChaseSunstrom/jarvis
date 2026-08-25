@@ -2433,12 +2433,70 @@ def register_builtin_tools(
             ),
         }
 
+    async def _task_status(args: dict[str, Any], context: Any) -> Any:
+        """How the background work is going, for the model to say out loud.
+
+        Jarvis could START jobs and STOP them and could not answer "how is that
+        going" — it said, truthfully and uselessly, "I have no way to check on
+        the job's progress from here". Every screen has had this since M12; the
+        thing people actually ask, in the room, out loud, had nothing behind it.
+        """
+        tasks = getattr(jarvis, "tasks", None)
+        if tasks is None:
+            return {"status": "error", "error": "this server does not track tasks"}
+        wanted = str(args.get("task_id") or "").strip()
+        if wanted:
+            target = tasks.get(wanted)
+            if target is None:
+                return {"status": "error", "error": f"there is no task {wanted!r}"}
+            rows = [target]
+        else:
+            running = [task for task in tasks.tasks if not task.finished]
+            # Nothing running: the last few that finished are what "how did
+            # that go" means, and answering "nothing is running" to that
+            # question is a non-answer.
+            rows = running or list(tasks.tasks)[-3:]
+        if not rows:
+            return {"status": "ok", "tasks": [], "message": "nothing has run yet"}
+        return {
+            "status": "ok",
+            "tasks": [
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "kind": task.kind,
+                    "state": task.status,
+                    "step": task.detail or "",
+                    "steps_done": sum(1 for step in task.steps if step.status == "done"),
+                    "steps_total": len(task.steps),
+                    "result": (task.result or task.error or "")[:400],
+                }
+                for task in rows[-5:]
+            ],
+        }
+
+    registry.register(
+        name="task_status",
+        description=(
+            "How a background job is going: what it is doing, how far through, "
+            "and its result if it finished. No id means whatever is running."
+        ),
+        parameters=schema_object(
+            {
+                "task_id": {
+                    "type": "string",
+                    "description": "Which job. Omit for whatever is running.",
+                }
+            },
+        ),
+        handler=_task_status,
+    )
+
     registry.register(
         name="cancel_task",
         description=(
-            "Stop a background job — research, a coding task, anything on the "
-            "task list. With no id it stops the most recent one still running, "
-            "which is what \"stop that\" means."
+            "Stop a background job. With no id, the most recent one still "
+            "running — what \"stop that\" means."
         ),
         parameters=schema_object(
             {

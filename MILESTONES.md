@@ -277,7 +277,7 @@ files both would touch, which the integrating session merges.
     responses so the pipeline is verified offline, `--backend live` is the Scripted claim.
   - Verify: `bash scripts/verify/m18-research.sh`
 
-- [ ] **M19 — Coding agent (Jarvis as its own Claude Code)** · size XL · deps M11, M10, M04 · parallel-ok M18
+- [x] **M19 — Coding agent (Jarvis as its own Claude Code)** · size XL · deps M11, M10, M04 · parallel-ok M18
   - Scope: keep `integrations/code/` and every sandbox invariant. Add: a verify-until-green loop
     (`run_tests` runs the repository's declared test command as a check and the loop continues
     on failure, bounded); commits with messages on the job branch (`git commit` inside the job,

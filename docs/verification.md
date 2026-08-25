@@ -469,6 +469,22 @@ they are the only places that particular bug can come back.
 | Sandbox network isolation as deployed | Manual | `./scripts/egress-audit.sh` against the live stack |
 | Firewall rules as deployed | Manual | `DRY_RUN=1 ./scripts/apply-firewall.sh` to preview, then run it |
 
+### Jarvis Code (M19)
+
+| Claim | Level | Proof |
+|---|---|---|
+| It fixes a repository whose tests fail, and the tests really pass afterwards | Automated | `python3 evals/coding_eval.py` — three bugs of three kinds in `fixtures/coding/failing-tests`, and the suite is re-run **in the container by the eval itself** after the job says it is done; ~40–60 s against the local model |
+| Nothing outside the job's mount changed | Automated | the same eval's host canary: every file under the fixture and under `jarvis-core/jarvis` hashed before and after, plus a listing of `$HOME` and the config directory. A sandbox escape fails the eval |
+| The specification was not "fixed" by deleting it | Automated | the eval compares `tests/` by name and digest — "make the tests pass" and "make the tests go away" are different instructions |
+| It verifies until the tests pass, rather than until it feels finished | Automated | `_verify_until_green` runs the repository's own first check — **even when the job changed nothing**, which is the case that matters — and sends failures back, three attempts. `test_code_agent.py::test_a_job_that_did_nothing_is_still_checked` |
+| Work lands as a commit on a `jarvis/…` branch, never on yours | Automated | `test_the_work_is_committed_on_the_job_branch`; the diff is measured from the branch point, so a committed job still reports what it changed |
+| Four permission modes, and the model chooses none of them | Automated | `MODES` + `test_code_approvals.py`; the mode comes from configuration or from a console caller holding a bearer token, and `start_coding_job` has no `mode` argument at all |
+| A destructive command asks in every mode, including `full-auto` | Automated | `is_destructive` + its parametrised tests; only this task's `allow:` can skip it |
+| A held action blocks the job, and silence is a refusal | Automated | `test_code_approvals.py::test_silence_is_a_refusal_not_a_release` — the model's gate ends a turn, this one waits, and an unanswered request expires denied |
+| Saying **no** actually stops it | Automated *and live* | `coding-denied-approval` — the rig denies the job's first held action and asserts nothing was committed and no success was claimed |
+| The whole thing, asked for out loud | Automated *live* | `coding-fix-failing-tests` — spoken instruction, Tier-3 start approved, every held action answered, task `done`, and the fixture it was copied from still red |
+| The console shows the commits, the diff, and the buttons | Automated | `task-commits` / `approve-held` in the task detail page; `tests/web/mock-ha.mjs` carries the new keys |
+
 ### The security model
 
 | Property | Level | Proof |

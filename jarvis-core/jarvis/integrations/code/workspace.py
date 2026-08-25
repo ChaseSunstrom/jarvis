@@ -177,6 +177,10 @@ class Repo:
     #: for one declared in configuration.yaml. The console shows which, because
     #: "I made this" and "you pointed me at this" deserve different care.
     managed: bool = False
+    #: This repository's own permission mode, overriding `code: permission_mode`.
+    #: "" means the global one. A scratch project can run `full-auto` while the
+    #: repository somebody's job depends on asks about every edit.
+    permission_mode: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -187,6 +191,7 @@ class Repo:
             "writable": self.writable,
             "environment": self.environment,
             "managed": self.managed,
+            "permission_mode": self.permission_mode,
             "origin": self.origin,
         }
 
@@ -205,6 +210,7 @@ def repo_from_dict(raw: Any) -> Repo | None:
         checks=[str(c) for c in (raw.get("checks") or []) if str(c).strip()][:8],
         writable=bool(raw.get("writable")),
         environment=str(raw.get("environment") or "").strip(),
+        permission_mode=str(raw.get("permission_mode") or "").strip(),
     )
 
 
@@ -246,6 +252,10 @@ class Workspace:
         self.environment = environment
         #: The live container, once a job has asked for one.
         self._session: Any = None
+        #: The commit this job branched from, set by `start_branch`. The job's
+        #: diff is measured from here, so a job that commits its work still
+        #: reports what it changed rather than an empty patch.
+        self.base_sha = ""
 
     @property
     def sandboxed(self) -> bool:
@@ -648,12 +658,23 @@ class Workspace:
         `-B` rather than `-b`: a job re-run after a crash would otherwise fail
         on "branch already exists", and the branch it would be re-using is its
         own from moments ago.
+
+        The commit it branched FROM is remembered, because that is what the
+        job's diff is against once the job starts committing: after a commit
+        the working tree is clean, and "the change this job made" is the range
+        from here to the branch tip, not whatever is still unstaged.
         """
+        self.base_sha = (await self.git("rev-parse", "HEAD")).strip()
         await self.git("checkout", "-B", name)
         return name
 
-    async def diff(self) -> tuple[str, str]:
-        """The working tree against HEAD: the patch, and its stat line.
+    async def diff(self, since: str = "") -> tuple[str, str]:
+        """The change, as a patch and a stat line.
+
+        Against `since` when the job has a branch point — which covers the
+        commits it made AND anything still in the working tree — and against
+        HEAD otherwise. `since` defaults to the branch point recorded by
+        `start_branch`; pass it explicitly for a working-tree-only view.
 
         `--no-ext-diff` and `--no-textconv` are not cosmetic. Both name a
         command in `.git/config` that git runs to produce the diff, and
@@ -662,10 +683,13 @@ class Workspace:
         looking at what the job did.
         """
         await self.git("add", "-A", "--intent-to-add")
-        patch = await self.git("diff", "--no-color", "--no-ext-diff", "--no-textconv")
-        stat = await self.git(
-            "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--stat"
-        )
+        base = since if since is not None else ""
+        if base == "":
+            base = self.base_sha
+        common = ["--no-color", "--no-ext-diff", "--no-textconv"]
+        against = [base] if base else []
+        patch = await self.git("diff", *common, *against)
+        stat = await self.git("diff", *common, "--stat", *against)
         return patch[:MAX_DIFF_BYTES], stat.strip()[-2000:]
 
     async def commit(self, message: str) -> str:

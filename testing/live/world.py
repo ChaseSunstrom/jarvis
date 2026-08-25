@@ -48,6 +48,10 @@ class Observer:
         #: use" is a question about what happened, and a model reporting its
         #: own choice is a model grading its own homework.
         self.tools: list[str] = []
+        #: Every action held for a human, in order. `{"request_id", "kind",
+        #: "tool", "summary", "task_id"}` — enough to answer it and enough to
+        #: assert on what was asked.
+        self.approvals: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
         self._streams: list[Any] = []
         self._pumps: list[asyncio.Task] = []
@@ -59,7 +63,11 @@ class Observer:
         "jarvis_task_completed",
         "jarvis_task_failed",
         "jarvis_task_cancelled",
-        "jarvis_approval_requested",
+        # `required`, not `requested`. The rig subscribed to an event nothing
+        # fires for months: every approval assertion would have waited its full
+        # timeout and then reported that nothing was ever held.
+        "jarvis_approval_required",
+        "jarvis_approval_resolved",
         "jarvis_tool_started",
     )) -> "Observer":
         for event_type in event_types:
@@ -85,6 +93,17 @@ class Observer:
                 name = str((event.get("data") or {}).get("name") or "")
                 if name:
                     self.tools.append(name)
+            if kind == "jarvis_approval_required":
+                data = event.get("data") or {}
+                self.approvals.append(
+                    {
+                        "request_id": str(data.get("request_id") or ""),
+                        "kind": str(data.get("kind") or ""),
+                        "tool": str(data.get("tool") or ""),
+                        "summary": str(data.get("summary") or data.get("description") or ""),
+                        "task_id": str(data.get("task_id") or ""),
+                    }
+                )
             if kind == "call_service":
                 data = event.get("data") or {}
                 self.calls.append(
@@ -154,6 +173,34 @@ class Observer:
                 return True
             await asyncio.sleep(0.2)
         return False
+
+    def approval_mark(self) -> int:
+        return len(self.approvals)
+
+    async def wait_for_approval(
+        self, mark: int = 0, kind: str = "", tool: str = "", timeout: float = 240.0
+    ) -> dict[str, Any] | None:
+        """The next held action after `mark`, or None if nobody asked."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for row in self.approvals[mark:]:
+                if kind and row.get("kind") != kind:
+                    continue
+                if tool and tool not in row.get("tool", ""):
+                    continue
+                return row
+            await asyncio.sleep(0.5)
+        return None
+
+    async def answer(self, request_id: str, approved: bool) -> bool:
+        """Do what a person does in the console: say yes or no."""
+        try:
+            await self.client.command(
+                "jarvis/approve", request_id=request_id, approved=approved
+            )
+            return True
+        except Exception:  # noqa: BLE001 - an already-resolved request is not news
+            return False
 
     async def notes(self, query: str = "") -> list[dict[str, Any]]:
         """Every note the server holds, or the ones matching a query."""

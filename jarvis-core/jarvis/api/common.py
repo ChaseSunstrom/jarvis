@@ -337,6 +337,21 @@ async def async_approve(
     """
     if not request_id:
         raise ApiError("invalid_format", "jarvis/approve needs 'request_id'", 400)
+
+    # A coding job's held edit or command first. Two gates share this command —
+    # the model's (which ends a turn) and Jarvis Code's (which blocks a job
+    # until somebody looks at a diff) — and a request id says nothing about
+    # which one is holding it, so the one that recognises the id answers it.
+    from ..integrations.code import resolve_approval as _resolve_code
+
+    decided = approval_flag(approved)
+    if _resolve_code(jarvis, request_id, decided):
+        return {
+            "status": "executed" if decided else "denied",
+            "request_id": request_id,
+            "tool": "code",
+        }
+
     if not jarvis.services.has_service(LLM_DOMAIN, "approve"):
         raise ApiError(
             "not_supported", "the llm integration is not set up, nothing to approve", 501
@@ -346,7 +361,7 @@ async def async_approve(
         "approve",
         {
             "request_id": request_id,
-            "approved": approval_flag(approved),
+            "approved": decided,
             "answer": answer,
         },
         blocking=True,
@@ -1879,6 +1894,11 @@ async def async_start_code_job(jarvis: "Jarvis", data: dict[str, Any]) -> dict[s
         str(payload.get("repo") or ""),
         str(payload.get("instruction") or ""),
         source=str(payload.get("source") or "console"),
+        # Per task, from a caller holding a bearer token — a person in the
+        # console choosing how much this particular job may do without asking.
+        # Never from the model: `start_coding_job` does not forward it, for the
+        # same reason the model does not pick its own environment.
+        mode=str(payload.get("mode") or ""),
     )
     if isinstance(started, str):
         raise ApiError("invalid_format", started, 400)

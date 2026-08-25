@@ -55,8 +55,30 @@ export interface CodeResult {
 	diff: string;
 	checks: CodeCheck[];
 	trail: CodeTrailEntry[];
+	/** Commits the job made on its own branch, newest last. */
+	commits?: CodeCommit[];
+	/** Every action a human was asked about, and what they said. */
+	approvals?: CodeApproval[];
+	/** True when the repository's own check passed at the end of the job. */
+	verified?: boolean;
 	summary: string;
 	rounds: number;
+}
+
+/** One commit on the job's branch. */
+export interface CodeCommit {
+	sha: string;
+	message: string;
+	stat: string;
+	files: number;
+}
+
+/** One held action, and the answer it got. */
+export interface CodeApproval {
+	/** `edit`, `check` or `command`. */
+	kind: string;
+	summary: string;
+	approved: boolean;
 }
 
 export interface CodeEnvironment {

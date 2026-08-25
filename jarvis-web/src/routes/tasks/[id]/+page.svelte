@@ -27,6 +27,8 @@
 	import TaskBar from '$lib/components/TaskBar.svelte';
 	import TaskOutput from '$lib/components/TaskOutput.svelte';
 	import TaskTimeline from '$lib/components/TaskTimeline.svelte';
+	import CodeDiff from '$lib/components/CodeDiff.svelte';
+	import type { CodeResult } from '$lib/code';
 
 	const taskId = $derived(page.params.id ?? '');
 
@@ -39,6 +41,9 @@
 	let activity = $state<Activity>(emptyActivity(''));
 	let cancelling = $state(false);
 	let said = $state('');
+	/** A coding job's branch, commits and diff. Null for every other kind. */
+	let code = $state<CodeResult | null>(null);
+	let answering = $state('');
 
 	let screen = $derived<'ready' | 'error' | 'offline' | 'loading' | 'empty'>(
 		status === 'closed' || status === 'error'
@@ -77,12 +82,49 @@
 			task = await link.client.getTask(taskId);
 			// What happened before this page was open.
 			activity = { ...activity, log: await link.client.taskLog(taskId) };
+			await loadCode();
 			err = '';
 		} catch (error) {
 			err = error instanceof Error ? error.message : String(error);
 		} finally {
 			loading = false;
 			redialling = false;
+		}
+	}
+
+	/**
+	 * The job's branch, commits and diff, once there are any.
+	 *
+	 * Only for `code` tasks and only when the job has finished: the record is
+	 * written when the run ends, and asking earlier gets a `not_found` that is
+	 * not an error, only an "of course not yet".
+	 */
+	async function loadCode() {
+		if (!conn || task?.kind !== 'code') return;
+		try {
+			code = await conn.client.getCodeResult(taskId);
+		} catch {
+			code = null;
+		}
+	}
+
+	/**
+	 * Say yes or no to something the job is waiting on.
+	 *
+	 * The job is BLOCKED while this sits here — it is not a notification, it is
+	 * the thing standing between a diff and a commit — so the buttons live on
+	 * the job rather than only in the global approval banner.
+	 */
+	async function answer(requestId: string, approved: boolean) {
+		if (!conn) return;
+		answering = requestId;
+		try {
+			await conn.client.resolveApproval(requestId, approved);
+			said = approved ? 'Approved.' : 'Declined — it will not retry.';
+		} catch (error) {
+			said = error instanceof Error ? error.message : String(error);
+		} finally {
+			answering = '';
 		}
 	}
 
@@ -103,6 +145,12 @@
 	onDestroy(() => conn?.close());
 
 	const live = $derived(!!task && !task.finished);
+	// A finished coding job that has not been fetched yet: the run record is
+	// written as the task closes, so the page that watched it live has to ask
+	// once more at the end.
+	$effect(() => {
+		if (task?.kind === 'code' && task.finished && !code) void loadCode();
+	});
 </script>
 
 <svelte:head><title>Jarvis · {task?.title ?? 'Task'}</title></svelte:head>
@@ -210,6 +258,61 @@
 				{/snippet}
 			</Panel>
 
+			{#if activity.held.length}
+				<Panel title="Waiting for you" meta={`${activity.held.length}`}>
+					{#snippet children()}
+						{#each activity.held as held (held.requestId)}
+							<div class="held" data-testid="task-approval">
+								<Row>
+									{#snippet children()}
+										<Pill tone="warn">{held.kind}</Pill>
+										<span class="grow">{held.summary}</span>
+										<Button
+											variant="primary"
+											disabled={answering === held.requestId}
+											onclick={() => answer(held.requestId, true)}
+											testid="approve-held">APPROVE</Button
+										>
+										<Button
+											disabled={answering === held.requestId}
+											onclick={() => answer(held.requestId, false)}
+											testid="deny-held">DECLINE</Button
+										>
+									{/snippet}
+								</Row>
+								{#if held.detail}
+									<pre class="detail">{held.detail}</pre>
+								{/if}
+							</div>
+						{/each}
+					{/snippet}
+				</Panel>
+			{/if}
+
+			{#if code}
+				{@const job = code}
+				<Panel title="Branch" meta={job.branch}>
+					{#snippet children()}
+						{#if job.commits?.length}
+							<ul class="commits" data-testid="task-commits">
+								{#each job.commits as commit (commit.sha)}
+									<li>
+										<code>{commit.sha}</code>
+										<span>{commit.message}</span>
+										<span class="stat">{commit.stat}</span>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<p class="said">Nothing was committed — the job changed no files.</p>
+						{/if}
+						{#if job.diff}
+							<CodeDiff diff={job.diff} stat={job.diff_stat} />
+						{/if}
+					{/snippet}
+				</Panel>
+			{/if}
+
 			{#if it.result}
 				<Panel title="Result">
 					{#snippet children()}
@@ -250,6 +353,44 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		max-width: 28ch;
+	}
+	.held {
+		display: flex;
+		flex-direction: column;
+		gap: var(--jv-space-2);
+		padding: var(--jv-space-2) 0;
+	}
+	.detail {
+		margin: 0;
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.6;
+		color: var(--jv-text-dim);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		max-height: 12rem;
+		overflow-y: auto;
+	}
+	.commits {
+		margin: 0 0 var(--jv-space-3);
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: var(--jv-space-2);
+	}
+	.commits li {
+		display: flex;
+		align-items: baseline;
+		gap: var(--jv-space-2);
+		font-size: var(--jv-fs-2xs);
+	}
+	.commits code {
+		font-family: var(--jv-font-chrome);
+		color: var(--jv-accent);
+	}
+	.stat {
+		color: var(--jv-text-faint);
 	}
 	.result {
 		margin: 0;

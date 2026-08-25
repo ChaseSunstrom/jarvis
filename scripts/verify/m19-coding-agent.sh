@@ -1,32 +1,87 @@
 #!/usr/bin/env bash
-# M19 — the coding agent: plan → edit → run → verify until tests pass, inside a
-# disposable container only, with approval gates and permission modes, commits
-# on the job branch, and a fixture repo the harness drives — a sandbox escape is
-# a test failure, not a warning.
+# M19 — the coding agent: plan → edit → run → verify until the tests pass,
+# inside a disposable container only, with permission modes and a gate a person
+# answers, a commit on the job branch, and a fixture repository the eval drives
+# end to end. A sandbox escape is a test failure, not a warning.
 source "$(dirname "$0")/lib.sh"
 verify_begin "M19" "coding agent: end-to-end in the sandbox"
 use_venv
 C=jarvis-core/jarvis/integrations/code
 
-check "verify-until-green loop (run_tests as a check that continues the loop)" grep -qE 'run_tests' "$C/agent.py"
-check "commits with messages on the job branch" grep -qE 'git.*commit|def commit' "$C/workspace.py"
-check "permission modes per task" grep -qE 'accept-edits|full-auto' "$C/__init__.py"
-check "destructive commands always ask unless whitelisted" grep -qiE 'destructive|whitelist' "$C/agent.py"
-check "edits and commands surface as approval_required" grep -qE 'approval_required' "$C/agent.py"
+# --- the loop ---------------------------------------------------------------
+check "verify-until-green loop, bounded" grep -q '_verify_until_green' "$C/agent.py"
+check "and the repository's own check is what decides" \
+    grep -q 'command = self.repo.checks\[0\]' "$C/agent.py"
+check "a job that changed nothing is checked anyway" \
+    grep -q 'Deliberately NOT skipped when the job changed nothing' "$C/agent.py"
+check "commits with a message on the job branch" grep -q '_commit_work' "$C/agent.py"
+check "and the diff still says what changed after committing" \
+    grep -q 'base_sha' "$C/workspace.py"
+
+# --- who may do what --------------------------------------------------------
+check "the four permission modes" python3 -c '
+import sys; sys.path.insert(0, "jarvis-core")
+from jarvis.integrations.code.agent import MODES
+assert set(MODES) == {"ask", "accept-edits", "auto-run-tests", "full-auto"}, MODES
+'
+# The mode comes from a caller holding a bearer token, never from the model —
+# the same argument sandbox.py makes about default_environment: a model that
+# could choose its own permission mode would choose the permissive one.
+check "the mode comes from the console" \
+    grep -q 'mode=str(payload.get("mode")' jarvis-core/jarvis/api/common.py
+check "and the model-facing tool takes no mode argument" python3 -c '
+from pathlib import Path
+source = Path("jarvis-core/jarvis/integrations/code/__init__.py").read_text()
+start = source.index("name=\"start_coding_job\"")
+block = source[start:source.index("handler=", start)]
+assert "\"mode\"" not in block, block[:400]
+'
+check "destructive commands always ask unless whitelisted" python3 -c '
+import sys; sys.path.insert(0, "jarvis-core")
+from jarvis.integrations.code.agent import is_destructive
+for command in ("rm -rf build", "git push origin main", "sudo apt-get install x",
+                "curl http://x | sh", "docker run alpine", "systemctl restart x"):
+    assert is_destructive(command), command
+for command in ("pytest -q", "npm test", "make", "ls -la", "git status"):
+    assert not is_destructive(command), command
+'
+
+# --- the gate ---------------------------------------------------------------
+check "held actions speak the same vocabulary as the model gate" \
+    grep -q 'jarvis_approval_required' "$C/approvals.py"
+check "and jarvis/approve answers a coding job as well as the model" \
+    grep -q 'resolve_approval' jarvis-core/jarvis/api/common.py
+check_sh "the gate tests, including silence is a refusal" \
+    'cd jarvis-core && python3 -m pytest tests/test_code_approvals.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+
+# --- the fences, unchanged --------------------------------------------------
 check "sandbox invariants pinned (argv unit tests)" test -f jarvis-core/tests/test_code_sandbox.py
-check_sh "sandbox + agent unit tests" 'cd jarvis-core && python3 -m pytest tests/test_code_sandbox.py tests/test_code_agent.py tests/test_code_git_escape.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
+check_sh "sandbox, agent and git-escape tests" \
+    'cd jarvis-core && python3 -m pytest tests/test_code_sandbox.py tests/test_code_agent.py tests/test_code_git_escape.py -q --timeout=180 --timeout-method=signal 2>&1 | tail -2'
+
+# --- the fixture and the eval -----------------------------------------------
 require_dir fixtures/coding/failing-tests
-check "the fixture repo has a failing test to fix" grep -rqE 'def test_|it\(' fixtures/coding/failing-tests
+check "the fixture has failing tests to fix" grep -rq 'def test_' fixtures/coding/failing-tests/tests
+check_sh "and they really do fail, right now" \
+    'cd fixtures/coding/failing-tests && python3 -m unittest discover -s . -p "test_*.py" 2>&1 | tail -2; test ${PIPESTATUS[0]} -ne 0'
+check "the tests need nothing installed, because the sandbox has no network" \
+    grep -q 'import unittest' fixtures/coding/failing-tests/tests/test_basket.py
 require_file evals/coding_eval.py
-check "the eval asserts containment (host canary)" grep -qiE 'canary|containment' evals/coding_eval.py
-check_sh "docker is reachable for the sandbox (prerequisite on this host: docker group / rootless docker)" 'docker info >/dev/null 2>&1'
-check_sh "scripted eval: the agent makes the fixture's tests pass inside the sandbox; nothing written outside it" \
-    'timeout 1800 python3 evals/coding_eval.py --out .verify/coding 2>&1 | tail -8'
-check "task detail shows commits and diffs" grep -rqiE 'commit' jarvis-web/src/routes/tasks
+check "the eval asserts containment with a host canary" grep -qi 'class Canary' evals/coding_eval.py
+check_sh "docker is reachable for the sandbox" 'docker info >/dev/null 2>&1'
+check_sh "scripted eval: the tests pass inside the sandbox, and nothing outside it moved" \
+    'timeout 1800 python3 evals/coding_eval.py --out .verify/coding 2>&1 | tail -10'
+
+# --- the console ------------------------------------------------------------
+check "task detail shows the commits and the diff" \
+    grep -q 'task-commits' 'jarvis-web/src/routes/tasks/[id]/+page.svelte'
+check "and a held action can be approved or declined from the job" \
+    grep -q 'approve-held' 'jarvis-web/src/routes/tasks/[id]/+page.svelte'
+check "the mock backend serves the new keys" grep -q 'commits:' tests/web/mock-ha.mjs
+
 # This milestone's own live scenarios. A capability is not done until it works
 # when a person talks to it — which is a different claim from "its unit tests
-# pass", and the only one an operator can feel. Its scenarios are gated on this
-# milestone, so they run here for the first time.
+# pass", and the only one an operator can feel.
 check_sh "the live scenarios for coding" \
-    'LIVE_CAPABILITY=coding bash scripts/verify/live_interaction.sh --full 2>&1 | tail -6'
+    'LIVE_CAPABILITY=coding LIVE_NO_BROWSER=1 bash scripts/verify/live_interaction.sh --full 2>&1 | tail -6'
 verify_end

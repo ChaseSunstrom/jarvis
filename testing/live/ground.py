@@ -90,6 +90,55 @@ class HarnessGround(Ground):
         self.harness: Any = None
         self._console: Console | None = None
 
+    def _coding_fixture(self, work_dir: Path) -> dict[str, Any]:
+        """A copy of `fixtures/coding/failing-tests`, as a repository Jarvis owns.
+
+        A copy, and never the fixture itself: a coding scenario ends with a
+        branch, a commit and three fixed files, and doing that to a directory in
+        this repository would leave the next run nothing to fix. The copy is
+        also what makes the containment assertion mean something — the original
+        must still be red afterwards.
+        """
+        import shutil
+        import subprocess
+
+        source = REPO_ROOT / "fixtures" / "coding" / "failing-tests"
+        if not source.is_dir():
+            return {}
+        target = work_dir / "coding" / "failing-tests"
+        shutil.rmtree(target.parent, ignore_errors=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, target)
+        subprocess.run(["git", "init", "-q"], cwd=target, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=target, check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git", "-c", "user.email=rig@local", "-c", "user.name=Rig",
+                "commit", "-qm", "the fixture, as it fails",
+            ],
+            cwd=target, check=True, capture_output=True,
+        )
+        return {
+            "repositories": [
+                {
+                    "name": "fixture",
+                    "path": str(target),
+                    "writable": True,
+                    "description": "a small project whose tests fail",
+                    "checks": ['python -m unittest discover -s . -p "test_*.py"'],
+                    "environment": "python",
+                    # `ask`, so a coding scenario exercises the gate: the rig
+                    # is the human, and `coding-denied-approval` is the half of
+                    # a gate nothing else in this repository tests.
+                    "permission_mode": "ask",
+                }
+            ],
+            "environments": [
+                {"name": "python", "image": "python:3.12-bookworm", "network": "none"}
+            ],
+            "max_minutes": 10,
+        }
+
     def start(self) -> "HarnessGround":
         from testing.harness import Harness
 
@@ -110,6 +159,7 @@ class HarnessGround(Ground):
             },
             search_url=self.web.get("search", ""),
             browser_url=self.web.get("browser", ""),
+            code=self._coding_fixture(Path(work_dir)),
         )
         self.harness.start()
         self.base_url = self.harness.base_url

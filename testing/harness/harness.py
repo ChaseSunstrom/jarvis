@@ -259,6 +259,7 @@ def build_config(
     wyoming_host: str = "127.0.0.1",
     search_url: str = "",
     browser_url: str = "",
+    code: dict[str, Any] | None = None,
 ) -> str:
     """A complete jarvis-core configuration.yaml, pointed at the fakes.
 
@@ -287,6 +288,17 @@ web:
         if search_url and browser_url
         else ""
     )
+    # `code:` only when a caller asked for it. A harness that always declared a
+    # repository would give every test a coding agent pointed at something, and
+    # the interesting property of Jarvis Code is what it CANNOT reach.
+    code_block = ""
+    if code:
+        import yaml as _yaml
+
+        code_block = "\n# Jarvis Code, as this test wants it.\n" + _yaml.safe_dump(
+            {"code": code}, sort_keys=False, default_flow_style=False
+        )
+
     return f"""\
 # Written by testing/harness/harness.py. Throwaway: delete the directory.
 jarvis:
@@ -334,7 +346,7 @@ sun:
 demo:
   create_areas: true
 
-{web_block}
+{web_block}{code_block}
 # Researching a question: several searches, read the best pages, write it up
 # with citations. Needs `web:` above, which the caller has to point somewhere.
 research:
@@ -540,6 +552,7 @@ class Harness:
         wyoming: dict[str, Any] | None = None,
         search_url: str | None = None,
         browser_url: str | None = None,
+        code: dict[str, Any] | None = None,
     ) -> None:
         self.host = host
         # The fakes never leave this box: jarvis-core reaches them over
@@ -575,6 +588,9 @@ class Harness:
         #: for a harness that must never reach the internet by accident.
         self.search_url = str(search_url or "").rstrip("/")
         self.browser_url = str(browser_url or "").rstrip("/")
+        #: A `code:` block for this run — repositories, environments and the
+        #: permission mode. `evals/coding_eval.py` is the caller that matters.
+        self.code_config = dict(code) if code else {}
         self.ollama_script = Path(ollama_script).resolve() if ollama_script else DEFAULT_OLLAMA_SCRIPT
         self.wyoming_script = Path(wyoming_script).resolve() if wyoming_script else None
 
@@ -834,6 +850,7 @@ class Harness:
                 wyoming_host=getattr(self, "wyoming_host", self.fake_host),
                 search_url=self.search_url,
                 browser_url=self.browser_url,
+                code=self.code_config,
             ),
             encoding="utf-8",
         )

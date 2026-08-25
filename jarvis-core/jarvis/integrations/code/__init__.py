@@ -95,7 +95,8 @@ from pathlib import Path
 
 from ...services import ServiceCall
 from ...tasks import STATUS_DONE, STATUS_ERROR, STATUS_RUNNING
-from .agent import CodeAgent, CodeRun, MAX_ROUNDS, Stopped
+from .agent import DEFAULT_MODE, MAX_ROUNDS, CodeAgent, CodeRun, Stopped, normalise_mode
+from .approvals import CodeApprovals
 from ...store import Store
 from .repos import RepoStore, check_name
 from .forges import Forge, forge_from_dict, permits, split_project
@@ -118,6 +119,7 @@ DATA_CONFIG = "config"
 DATA_RUNS = "runs"
 DATA_RESULTS = "results"
 DATA_REPOS = "repos"
+DATA_APPROVALS = "approvals"
 
 MAX_INSTRUCTION_CHARS = 2000
 #: Finished runs kept, with their diffs, in `<config>/.storage/code-runs.json`.
@@ -163,6 +165,18 @@ class CodeConfig:
     #: A command prefix every check runs behind. Empty means none, and the
     #: console says as much rather than implying isolation there is not.
     sandbox: list[str] = field(default_factory=list)
+    #: What a job may do without asking: `ask` · `accept-edits` ·
+    #: `auto-run-tests` · `full-auto`. The operator's choice, and never the
+    #: model's — see `agent.MODES`. A repository may override it.
+    permission_mode: str = DEFAULT_MODE
+    #: Commands a job may run even though they look destructive, exact strings.
+    #: Empty, and it should stay empty for almost everybody: the point of the
+    #: destructive list is that somebody is asked.
+    allow_commands: list[str] = field(default_factory=list)
+
+    def mode_for(self, repo: Repo) -> str:
+        """The mode this repository runs under."""
+        return normalise_mode(repo.permission_mode or self.permission_mode)
 
     @classmethod
     def from_config(cls, config: Any) -> "CodeConfig":
@@ -184,6 +198,9 @@ class CodeConfig:
             except (TypeError, ValueError):
                 value = default
             return max(low, min(value, high))
+
+        raw_allow = data.get("allow_commands") or []
+        allow_commands = [str(item) for item in raw_allow if str(item).strip()]
 
         raw_sandbox = data.get("sandbox") or ""
         if isinstance(raw_sandbox, (list, tuple)):
@@ -277,6 +294,8 @@ class CodeConfig:
             max_rounds=_int("max_rounds", MAX_ROUNDS, 4, 200),
             max_seconds=_int("max_minutes", 20, 1, 120) * 60.0,
             sandbox=sandbox,
+            permission_mode=normalise_mode(data.get("permission_mode")),
+            allow_commands=allow_commands,
         )
 
     def listing(self) -> list[dict[str, Any]]:
@@ -286,6 +305,7 @@ class CodeConfig:
             environment = self.environments.get(repo.environment)
             entry["environment_detail"] = environment.describe() if environment else ""
             entry["networked"] = bool(environment and environment.networked)
+            entry["permission_mode"] = self.mode_for(repo)
             rows.append(entry)
         return rows
 
@@ -314,6 +334,10 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     cfg = CodeConfig.from_config(config)
     store = _store(jarvis)
     store[DATA_CONFIG] = cfg
+    # One gate for the server, not one per job: `jarvis/approve` arrives with a
+    # request id and nothing else, so the thing that resolves it has to be
+    # findable without knowing which job asked.
+    store.setdefault(DATA_APPROVALS, CodeApprovals(jarvis))
     store.setdefault(DATA_RUNS, {})
     store.setdefault(DATA_RESULTS, {})
 
@@ -716,6 +740,23 @@ def _register_tools(jarvis: "Jarvis") -> None:
 # ---------------------------------------------------------------------------
 # making a repository
 # ---------------------------------------------------------------------------
+def get_approvals(jarvis: "Jarvis") -> CodeApprovals | None:
+    """The gate held actions wait on, or None if `code:` is not set up."""
+    store = jarvis.data.get(DOMAIN)
+    return store.get(DATA_APPROVALS) if isinstance(store, dict) else None
+
+
+def resolve_approval(jarvis: "Jarvis", request_id: str, approved: bool) -> bool:
+    """Answer a coding job's held action. True if this id was one of ours.
+
+    `api/common.async_approve` calls this before the model's own gate, because
+    the two share `jarvis/approve` and a request id says nothing about which
+    gate is holding it.
+    """
+    approvals = get_approvals(jarvis)
+    return bool(approvals and approvals.resolve(request_id, approved))
+
+
 def get_repos(jarvis: "Jarvis") -> RepoStore | None:
     found = _store(jarvis).get(DATA_REPOS)
     return found if isinstance(found, RepoStore) else None
@@ -873,7 +914,12 @@ async def async_reset_environment(
 # starting a job
 # ---------------------------------------------------------------------------
 async def async_start(
-    jarvis: "Jarvis", repo_name: str, instruction: str, *, source: str = ""
+    jarvis: "Jarvis",
+    repo_name: str,
+    instruction: str,
+    *,
+    source: str = "",
+    mode: str = "",
 ) -> "Task | str":
     """Record the task, start the worker, return at once.
 
@@ -916,7 +962,9 @@ async def async_start(
         detail="planning",
     )
     runs = _store(jarvis).setdefault(DATA_RUNS, {})
-    run = asyncio.ensure_future(_drive(jarvis, cfg, repo, task.id, instruction))
+    run = asyncio.ensure_future(
+        _drive(jarvis, cfg, repo, task.id, instruction, normalise_mode(mode) if mode else "")
+    )
     runs[task.id] = run
     run.add_done_callback(lambda _f, tid=task.id: runs.pop(tid, None))
     return task
@@ -926,7 +974,12 @@ async def async_start(
 # the worker
 # ---------------------------------------------------------------------------
 async def _drive(
-    jarvis: "Jarvis", cfg: CodeConfig, repo: Repo, task_id: str, instruction: str
+    jarvis: "Jarvis",
+    cfg: CodeConfig,
+    repo: Repo,
+    task_id: str,
+    instruction: str,
+    mode: str = "",
 ) -> None:
     registry = jarvis.tasks
     agent = CodeAgent(
@@ -938,6 +991,9 @@ async def _drive(
         workspace=Workspace(
             repo, sandbox=cfg.sandbox, environment=cfg.environment_for(repo)
         ),
+        mode=mode or cfg.mode_for(repo),
+        allow=cfg.allow_commands,
+        approvals=get_approvals(jarvis),
     )
     try:
         await registry.async_update(task_id, status=STATUS_RUNNING)
@@ -965,6 +1021,9 @@ async def _drive(
             )
     except Stopped:
         _LOGGER.info("code job %s stopped at the user's request", task_id)
+        approvals = get_approvals(jarvis)
+        if approvals is not None:
+            approvals.cancel_task(task_id)
         _keep(jarvis, task_id, agent.run)
         await _tidy(agent)
     except asyncio.CancelledError:

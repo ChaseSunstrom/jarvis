@@ -476,8 +476,11 @@ async def test_a_job_that_ends_any_way_at_all_removes_its_container(
         return 0, ""
 
     model = FakeModel([[call("run_command", command="pip install pygame")], "done"])
+    # `full-auto`, because this test is about container teardown: under the
+    # default mode a `run_command` waits for a human, no container is ever
+    # created, and the test would pass for the wrong reason.
     agent = make_agent(
-        jarvis, repo_dir, model, environment=Environment(name="build")
+        jarvis, repo_dir, model, environment=Environment(name="build"), mode="full-auto"
     )
     session = await agent.ws.open_session()
     session._run = _docker
@@ -1013,3 +1016,187 @@ async def test_asking_for_a_job_that_never_finished_is_a_clean_404(jarvis, repo_
     await setup_code(jarvis, FakeModel(), repo_dir)
     with pytest.raises(ApiError):
         common.code_result_payload(jarvis, "nope")
+
+
+# --- permission modes, and the verify-until-green loop ------------------------
+#
+# M19. What a job may do without asking is the operator's choice, expressed as
+# one of four modes, and it is never the model's: a model that could read the
+# list of modes could hand itself the permissive one — the same argument
+# `sandbox.py` makes about `default_environment`.
+
+
+class _Gate:
+    """A human who always says the same thing, immediately."""
+
+    def __init__(self, answer: bool = True) -> None:
+        self.answer = answer
+        self.asked: list[tuple[str, str]] = []
+
+    async def ask(self, *, task_id, kind, summary, detail="", timeout=None):
+        from jarvis.integrations.code.approvals import REFUSED, Decision
+
+        self.asked.append((kind, summary))
+        return Decision(self.answer, "req", "" if self.answer else REFUSED)
+
+
+async def test_in_ask_mode_an_edit_waits_for_a_human(jarvis, repo_dir):
+    gate = _Gate(answer=False)
+    model = FakeModel([[call("edit_file", path="src/app.py", old="return 1", new="return 2")], "done"])
+    agent = make_agent(jarvis, repo_dir, model, mode="ask", approvals=gate)
+    await agent.execute("make handle return 2")
+
+    assert gate.asked and gate.asked[0][0] == "edit"
+    # Refused, so the file is untouched — the assertion that makes the gate
+    # real rather than decorative.
+    assert "return 1" in (repo_dir / "src" / "app.py").read_text()
+    assert agent.run.approvals == [
+        {"kind": "edit", "summary": gate.asked[0][1], "approved": False}
+    ]
+
+
+async def test_in_the_default_mode_edits_land_and_checks_run(jarvis, repo_dir):
+    gate = _Gate()
+    model = FakeModel([[call("edit_file", path="src/app.py", old="return 1", new="return 2")], "done"])
+    agent = make_agent(jarvis, repo_dir, model, approvals=gate)
+    await agent.execute("make handle return 2")
+
+    assert gate.asked == []
+    assert "return 2" in (repo_dir / "src" / "app.py").read_text()
+
+
+async def test_a_destructive_command_asks_even_in_full_auto(jarvis, repo_dir):
+    from jarvis.integrations.code.sandbox import Environment
+
+    gate = _Gate(answer=False)
+    model = FakeModel([[call("run_command", command="rm -rf .git")], "done"])
+    agent = make_agent(
+        jarvis, repo_dir, model, mode="full-auto", approvals=gate,
+        environment=Environment(name="build"),
+    )
+    await agent.execute("clean up")
+
+    assert gate.asked == [("command", "rm -rf .git")]
+    assert agent.run.commands == []  # it never ran
+
+
+async def test_unless_this_task_allowed_that_exact_command(jarvis, repo_dir):
+    from jarvis.integrations.code.sandbox import Environment
+
+    gate = _Gate(answer=False)
+    ran: list[str] = []
+
+    model = FakeModel([[call("run_command", command="rm -rf build")], "done"])
+    agent = make_agent(
+        jarvis, repo_dir, model, mode="full-auto", approvals=gate,
+        environment=Environment(name="build"), allow=["rm -rf build"],
+    )
+
+    async def _run(command, timeout=None):
+        ran.append(command)
+        return 0, ""
+
+    agent.ws.run_sandboxed = _run  # type: ignore[method-assign]
+    await agent.execute("clean up")
+
+    assert gate.asked == []
+    assert ran == ["rm -rf build"]
+
+
+async def test_a_check_that_fails_sends_the_model_back_until_it_passes(jarvis, repo_dir):
+    """The difference between plausible code and a green suite.
+
+    The model writes something wrong, says it is finished, and the job runs the
+    repository's own check anyway. It fails, the output goes back, and the
+    model gets another go — bounded, so the other failure mode (rewriting the
+    same function until the clock runs out) cannot happen either.
+    """
+    attempts: list[str] = []
+
+    async def _check(argv, timeout=None, **kwargs):
+        attempts.append(" ".join(argv))
+        # Fails the first time, passes once the second edit has landed.
+        ok = len(attempts) > 1
+        return (0, "1 passed") if ok else (1, "E   assert 1 == 2")
+
+    model = FakeModel([
+        [call("edit_file", path="src/app.py", old="return 1", new="return 3")],
+        "done, I think",
+        # The second pass: the failure output is in the prompt, so this is the
+        # model reacting to a real test failure.
+        [call("edit_file", path="src/app.py", old="return 3", new="return 2")],
+        "fixed",
+    ])
+    # `sandbox=` because a writable repository with no confinement is not
+    # offered `run_check` at all — see `Workspace.unconfined_check_refusal`.
+    agent = make_agent(
+        jarvis, repo_dir, model, checks=["pytest -q"], approvals=_Gate(),
+        sandbox=["/usr/bin/env"],
+    )
+    agent._spawn = lambda argv: _check(argv)  # type: ignore[method-assign]
+    await agent.execute("make handle return 2")
+
+    assert len(attempts) == 2, attempts
+    assert agent.run.verified is True
+    assert "return 2" in (repo_dir / "src" / "app.py").read_text()
+
+
+async def test_the_work_is_committed_on_the_job_branch(jarvis, repo_dir):
+    model = FakeModel([[call("edit_file", path="src/app.py", old="return 1", new="return 2")], "done"])
+    agent = make_agent(jarvis, repo_dir, model, approvals=_Gate())
+    run = await agent.execute("make handle return 2")
+
+    assert run.commits and run.commits[0]["sha"]
+    # And the diff still says what changed: after a commit the working tree is
+    # clean, so a diff against HEAD would be empty and the console would show a
+    # job that did nothing.
+    assert "return 2" in run.diff
+
+    log = subprocess.run(
+        ["git", "log", "--oneline", "-1"], cwd=repo_dir, capture_output=True, text=True
+    ).stdout
+    assert "make handle return 2" in log
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert branch.startswith("jarvis/"), branch
+
+
+async def test_a_job_that_changed_nothing_commits_nothing(jarvis, repo_dir):
+    model = FakeModel(["nothing needed changing"])
+    agent = make_agent(jarvis, repo_dir, model, approvals=_Gate())
+    run = await agent.execute("have a look")
+    assert run.commits == []
+
+
+async def test_a_job_that_did_nothing_is_still_checked(jarvis, repo_dir):
+    """The commonest failure of a coding agent, and it looks like success.
+
+    The model decides it is finished before it starts — "Very good, Sir", an
+    empty diff, the task closed `done`. Observed twice in one hour against the
+    real model, including in the eval that exists to prove this milestone.
+    Running the repository's own check anyway turns it into a red result and
+    another attempt.
+    """
+    attempts: list[str] = []
+
+    async def _check(argv, timeout=None, **kwargs):
+        attempts.append(" ".join(argv))
+        return (0, "OK") if len(attempts) > 1 else (1, "FAILED (failures=3)")
+
+    model = FakeModel([
+        "Very good, Sir.",
+        [call("edit_file", path="src/app.py", old="return 1", new="return 2")],
+        "fixed",
+    ])
+    agent = make_agent(
+        jarvis, repo_dir, model, checks=["pytest -q"], approvals=_Gate(),
+        sandbox=["/usr/bin/env"],
+    )
+    agent._spawn = lambda argv: _check(argv)  # type: ignore[method-assign]
+    run = await agent.execute("make handle return 2")
+
+    assert len(attempts) == 2, attempts
+    assert run.verified is True
+    assert "return 2" in (repo_dir / "src" / "app.py").read_text()
