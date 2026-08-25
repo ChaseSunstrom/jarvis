@@ -412,7 +412,7 @@ Docker access arrived on this host while this was being written (`docker run` wo
 `jarvisdev` is in the `docker` group), which is what makes all of it possible — and what
 unblocks M19's containment check and the live research backend at the same time.
 
-- [ ] **M28 — The compose stack is a described, pinned, healthy runtime** · size M · deps M00
+- [x] **M28 — The compose stack is a described, pinned, healthy runtime** · size M · deps M00
   - Scope: every service pinned to a version (five are on `:latest` today — whisper, piper,
     openwakeword, photon, searxng), a healthcheck on every service including the three Wyoming
     ones the voice path depends on, resource limits (`mem_limit`/`cpus`) sized for a 4 vCPU /

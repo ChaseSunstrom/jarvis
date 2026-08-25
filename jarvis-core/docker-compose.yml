@@ -54,6 +54,21 @@
 #
 # Every bind mount here is a relative path, so its host side lands inside the
 # Docker build context. Anything added must also be listed in .dockerignore.
+#
+# --- why these version numbers ---------------------------------------------
+#
+# Every image is pinned, and the three Wyoming ones are pinned to EXACTLY the
+# images this repository's numbers were measured against — whisper 3.5.0, piper
+# 2.3.1, openwakeword 2.1.0 are the ids that were running when
+# `docs/LIVE_TEST_REPORT.md`'s word error rate and latency table were produced
+# (`docker images` agreed digest for digest). `:latest` meant "whatever was
+# pushed since", so "the version we tested" was not a thing that existed, and a
+# recogniser that changed under a WER threshold would look like a regression in
+# Jarvis.
+#
+# Upgrading one is a deliberate act with a cost attached: bump the tag, run
+# `bash scripts/verify/live_interaction.sh --implemented-only`, and compare the
+# WER and latency rows before committing it.
 
 services:
   # --- Jarvis Core --------------------------------------------------------
@@ -182,8 +197,22 @@ services:
   # Streams audio in, says "the wake word fired" out. `hey_jarvis` ships with
   # the image; custom models trained per docs/wake-word-training.md go in
   # ./openwakeword and are picked up by --custom-model-dir.
+    # The whole platform: the event loop, the recorder, the agent's own process. Given the most of anything here, and still bounded — an unbounded core on an 8 GB box takes the voice services down with it.
+    mem_limit: 3g
+    cpus: 3.0
+    # `docker compose watch`: a source change lands in the running container
+    # rather than in the next person's rebuild. Sync-and-restart rather than
+    # sync alone, because jarvis-core reads its integrations at start-up and a
+    # hot-swapped module would be half of the old process.
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./jarvis
+          target: /app/jarvis
+        - action: rebuild
+          path: ./requirements.txt
   wyoming-openwakeword:
-    image: rhasspy/wyoming-openwakeword:latest
+    image: rhasspy/wyoming-openwakeword:2.1.0
     container_name: wyoming-openwakeword
     restart: unless-stopped
     network_mode: host
@@ -195,6 +224,20 @@ services:
       - ./wyoming/openwakeword:/custom
     environment:
       - TZ=${TZ:-Europe/London}
+    # A TCP connect, because Wyoming is a socket protocol and there is no HTTP
+    # endpoint to ask. These three had no healthcheck at all, which meant the
+    # three services the whole voice path depends on were the only ones
+    # `up --wait` could not wait for — and a wake word that never fired looked
+    # like a Jarvis bug rather than a container that had not finished loading
+    # its model.
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10400),2)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    mem_limit: 1g
+    cpus: 1.5
 
   # --- Wyoming: speech to text -------------------------------------------
   # This image IS faster-whisper, so WHISPER_MODEL must be one of ITS names:
@@ -209,7 +252,7 @@ services:
   # 10300, only that something speaks Wyoming there, so a different STT server
   # is fine; its model names are then that server's business, not this list.
   wyoming-whisper:
-    image: rhasspy/wyoming-whisper:latest
+    image: rhasspy/wyoming-whisper:3.5.0
     container_name: wyoming-whisper
     restart: unless-stopped
     network_mode: host
@@ -223,6 +266,20 @@ services:
       - ./wyoming/whisper:/data
     environment:
       - TZ=${TZ:-Europe/London}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10300),2)\""]
+      interval: 30s
+      timeout: 5s
+      # A cold start downloads the model. base.en is small; large-v3 is not,
+      # and a start period that assumed the small one would report unhealthy
+      # for ten minutes of perfectly normal downloading.
+      start_period: 300s
+      retries: 3
+    # Whisper is the CPU-hungriest thing in the stack on a box with no GPU:
+    # transcribing a three-second utterance with base.en takes about a second
+    # of four-core time. Capped so it cannot starve jarvis-core's event loop.
+    mem_limit: 2g
+    cpus: 3.0
 
   # --- Wyoming: text to speech -------------------------------------------
   # Piper. `--voice` is the voice this container LOADS, and it is the one the
@@ -233,7 +290,7 @@ services:
   # en_US-lessac-medium) makes Piper fetch it on first use into ./wyoming/piper;
   # that request is slow the first time and fails outright with no internet.
   wyoming-piper:
-    image: rhasspy/wyoming-piper:latest
+    image: rhasspy/wyoming-piper:2.3.1
     container_name: wyoming-piper
     restart: unless-stopped
     network_mode: host
@@ -246,23 +303,59 @@ services:
       - ./wyoming/piper:/data
     environment:
       - TZ=${TZ:-Europe/London}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10200),2)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    mem_limit: 1g
+    cpus: 2.0
 
   # --- Offline geocoder ---------------------------------------------------
   # Place lookups ("how long to the hardware shop?") without calling Google.
   # First start downloads a sizeable planet/country index into ./photon —
   # expect it to sit there a while before it answers.
+  # `--profile geocode`, and it is opt-in for a reason this host discovered the
+  # hard way: with no REGION set, the image downloads the WHOLE PLANET index —
+  # 58 GB, needing 152 GB of temp space — checks the disk, refuses, and exits.
+  # `restart: unless-stopped` turns that into a loop, and it had run **2,699
+  # times** over two days while every test suite in this repository was green.
+  # Nothing was watching the runtime.
+  #
+  # To use it, set a country extract and bring it up deliberately:
+  #
+  #     PHOTON_REGION=gb docker compose --profile geocode up -d photon
+  #
+  # A country is one to two GB and answers the same "how far to the hardware
+  # shop" question; the planet is for somebody with a spare 200 GB.
   photon:
-    image: rtuszik/photon-docker:latest
+    image: rtuszik/photon-docker:2.4.0
     container_name: photon
     restart: unless-stopped
     network_mode: host
+    profiles: [geocode]
     environment:
       - TZ=${TZ:-Europe/London}
-      # Country extract instead of the full planet index. Unset = planet.
+      # Country extract instead of the full planet index. Unset = planet, and
+      # the planet is 58 GB of download needing 152 GB of temp space.
       - REGION=${PHOTON_REGION:-}
       - UPDATE_STRATEGY=${PHOTON_UPDATE_STRATEGY:-PARALLEL}
     volumes:
       - ./photon:/photon/photon_data
+    healthcheck:
+      # Photon answers HTTP once its index is built, and building it is the
+      # slow part — hence the hour of start period. Before that it is
+      # legitimately starting; after it, a failure is a real one.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2322/status || exit 1"]
+      interval: 60s
+      timeout: 10s
+      start_period: 3600s
+      retries: 3
+    # A Java service with an index in memory. A country extract is small; the
+    # planet is not, and this is the ceiling that says so.
+    mem_limit: 2g
+    cpus: 2.0
 
   # --- The web: fetching, crawling, gated browser automation --------------
   # Everything Jarvis reads off the internet goes through here, and every byte
@@ -370,6 +463,16 @@ services:
   #
   # Loopback-only and anonymous, which are the same decision: see the header of
   # mosquitto/mosquitto.conf before widening either.
+    # Chromium. The one service whose memory is somebody else's HTML.
+    mem_limit: 2g
+    cpus: 2.0
+    develop:
+      watch:
+        - action: sync+restart
+          path: ../jarvis-browser/jarvis_browser
+          target: /app/jarvis_browser
+        - action: rebuild
+          path: ../jarvis-browser/requirements.txt
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: mosquitto
@@ -403,8 +506,11 @@ services:
       retries: 3
       start_period: 5s
 
+    # A broker with a handful of devices on it.
+    mem_limit: 256m
+    cpus: 0.5
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.8.22-9fea41204
     container_name: searxng
     restart: unless-stopped
     profiles: [search]
@@ -528,5 +634,25 @@ services:
   #   volumes:
   #     - ../jarvis-workspace:/workspace   # the only writable crossover
 
+# --- where state lives, and why most of it is not a named volume -----------
+#
+# One named volume, and that is deliberate. Everything else this stack keeps —
+# `./config` (the house, the notes, the memory, the tokens), `./wyoming/*` (the
+# STT and TTS models), `./photon` (the geocoder index) — is a BIND MOUNT, and
+# it stays one because the operator has to be able to read and edit it:
+# `config/configuration.yaml` is a file people edit, `config/notes/*.md` are
+# documents they own, and `config/.storage/*.json` is what "it is your data"
+# means when somebody wants to grep it.
+#
+# A named volume would hide all of that behind `docker run --rm -v …`, which is
+# the wrong trade for state whose whole promise is that it is inspectable.
+#
+# What that costs, and how it is paid: backup and restore are a `tar` per
+# directory rather than a volume driver's job, and `docs/RUNBOOK.md` gives the
+# exact commands — including the snapshot/restore the live suite uses around
+# any scenario that wipes memory or clears history.
+#
+# `mosquitto-data` IS a named volume because nobody edits a broker's
+# persistence file by hand, and losing it costs a retained topic.
 volumes:
   mosquitto-data:

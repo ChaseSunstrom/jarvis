@@ -7,6 +7,23 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+### Fixed
+- M28: `photon` had restarted **2,699 times over two days** — with no `REGION` it downloads a
+  58 GB planet index needing 152 GB of temp space, checks the disk, refuses, and
+  `restart: unless-stopped` does it again. It is behind `--profile geocode` now and takes a
+  country extract. `jarvis-web` reported **unhealthy** for the same two days because its
+  healthcheck used `localhost`, which resolves to ::1 first while the server binds IPv4 — the
+  console was answering every request perfectly well. Both were true while every test suite in
+  the repository was green, which is the argument for M29.
+
+### Added
+- M28 (the compose stack is the runtime): every image pinned — the three Wyoming services to
+  the exact versions this repository's WER and latency numbers were measured against — a
+  healthcheck on every long-running service including the three voice ones that had none,
+  `mem_limit`/`cpus` sized for a 4 vCPU / 8 GB host, `docker compose watch` blocks so a code
+  change reaches a running container, and `docs/RUNBOOK.md`: bring-up, teardown, per-directory
+  and per-volume backup/restore, and what upgrading a pinned image costs.
+
 ### Changed
 - Planning (mid-run addition): the compose stack becomes the runtime under test — M28 (pinned
   images, healthchecks on every service including the three Wyoming ones, resource limits,

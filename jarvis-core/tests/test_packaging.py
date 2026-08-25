@@ -218,7 +218,14 @@ def _example_config() -> dict[str, Any]:
     """The worked example's configuration, loaded, with nothing left behind."""
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp) / "config"
-        shutil.copytree(CONFIG, target)
+        # `.storage` is skipped for the same reason `config_copy` skips it: on
+        # a box where the stack is RUNNING, those files belong to the
+        # container's uid and are mode 600, so copying them is a permission
+        # error — and this test is about the YAML, not about the house's live
+        # registries.
+        shutil.copytree(
+            CONFIG, target, ignore=shutil.ignore_patterns(".storage", "*.db", "*.db-*")
+        )
         return load_config(_overlay_example(target))
 
 
@@ -1435,7 +1442,13 @@ def test_only_optional_extras_are_profile_gated(compose: dict[str, Any]) -> None
     gated = {
         name for name, service in compose["services"].items() if service.get("profiles")
     }
-    assert gated == {"searxng", "mosquitto"}
+    # photon joined them, and the reason is the strongest of the three: with no
+    # REGION set the image downloads the WHOLE PLANET index — 58 GB, needing
+    # 152 GB of temp space — checks the disk, refuses and exits, and
+    # `restart: unless-stopped` turns that into a loop. On this host it had run
+    # 2,699 times over two days. A geocoder that needs a deliberate choice of
+    # region is not something `up -d` should start.
+    assert gated == {"searxng", "mosquitto", "photon"}
 
 
 def test_compose_ships_no_secrets(compose: dict[str, Any]) -> None:
