@@ -780,7 +780,7 @@ async def notes_delete(request: Request, note_id: str) -> dict[str, Any]:
 @api_router.get("/memory")
 async def memory_list(request: Request) -> dict[str, Any]:
     try:
-        return common.memory_list_payload(
+        return await common.async_memory_list_payload(
             get_jarvis(request),
             tag=str(request.query_params.get("tag") or ""),
             query=str(request.query_params.get("query") or ""),

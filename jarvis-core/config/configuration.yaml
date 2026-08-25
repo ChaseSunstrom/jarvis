@@ -440,11 +440,37 @@ memory:
   # Without either, this degrades silently to the keyword search that has
   # always shipped — one log line, no error, no lost turn.
   #
-  # On an 8 GB card, set OLLAMA_MAX_LOADED_MODELS=2 so the chat model and the
-  # embedder do not evict each other between turns.
-  # embeddings: true
-  # embedding_model: nomic-embed-text
-  # embedding_url: http://127.0.0.1:11434/v1   # defaults to the chat backend
+  # ON, and pointed at a container of its own (M33). The paragraph above
+  # describes what this used to be: embeddings from the chat server, which on
+  # this deployment meant embeddings from NOWHERE — llama-swap answers
+  # `/embeddings` with "no router for requested model", so semantic recall was
+  # configured, degraded silently, and had never once run.
+  #
+  # It has its own server now, and the reason is not tidiness. An embedding
+  # request routed through llama-swap evicts KV cache the voice path is using:
+  # writing a note made the next spoken sentence slower. `jarvis-embeddings` is
+  # 329 MB of CPU RAM, answers in 9 ms, and touches no GPU at all.
+  embeddings: true
+  embedding_model: !env_var EMBEDDINGS_MODEL BAAI/bge-small-en-v1.5
+  embedding_url: !env_url EMBEDDINGS_URL http://127.0.0.1:7997 /v1
+
+  # Rerank-after-retrieve: a cross-encoder reads the query and each candidate
+  # TOGETHER, which is the only stage that can tell "where do we keep the
+  # caffeine" from a note about coffee mugs. Far too slow to run over a whole
+  # store, so it runs over the twenty candidates retrieval already chose.
+  #
+  # Unset the URL and retrieval is exactly what it was: keyword, plus semantic
+  # if that is up. Nothing here can make a search worse than it was.
+  # OFF, and the measurement is why. On the memory eval's six paraphrase
+  # queries the embedder alone put the right note first 6/6; adding the same
+  # cross-encoder made it 5/6. A note is one line — "I take my coffee black" —
+  # and a model trained to rank web passages has almost nothing to read. The
+  # client and the wiring are here, tested, one line from being switched on:
+  #
+  #   rerank_url: !env_var RERANK_URL http://127.0.0.1:7998
+  #   rerank_model: !env_var RERANK_MODEL cross-encoder/ms-marco-MiniLM-L-6-v2
+  #
+  # `research:` below DOES use it, on the same host, for the same money.
 
 # ---------------------------------------------------------------------------
 # Undo and trace — what it did, and taking it back.
@@ -701,6 +727,17 @@ mcp:
 # It needs `web` configured. With no SearXNG it fails saying so, the same way
 # `web.search` does, rather than reaching for a cloud engine.
 research:
+  # Which pages get READ, decided by a cross-encoder before any of them is
+  # fetched — the one signal neither the search engine's order nor "how many
+  # angles found it" contains. Measured on the fixture web, picking the single
+  # page that answers each of five questions: 3/5 without it, 4/5 with.
+  #
+  # The same model makes personal-note retrieval WORSE (5/6 against 6/6), which
+  # is why `memory:` leaves reranking off. Long documents and one-line facts are
+  # not the same retrieval problem, and one number for both would have hidden
+  # that.
+  rerank_url: !env_var RERANK_URL http://127.0.0.1:7998
+  rerank_model: !env_var RERANK_MODEL cross-encoder/ms-marco-MiniLM-L-6-v2
   max_queries: 4          # angles to search the question from (1-6)
   max_sources: 8          # pages to actually read (1-12)
   # Pages from any ONE site. The cap is the difference between a report and a

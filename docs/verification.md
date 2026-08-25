@@ -389,6 +389,18 @@ house's summary is a fraction of a real one's.
 | Latency noise does not fire the check, and a real slowdown does | Automated | `test_latency_noise_does_not_fire_and_a_real_slowdown_does` — +17 % passes, ×2 fails |
 | That these are the right components | **Judgement, and revisable** | the doc says what would overturn each decision, and `--compare` is how |
 
+### Retrieval: embeddings and reranking (M33)
+
+| Claim | Level | Proof |
+|---|---|---|
+| A question that shares no word with the note that answers it finds it anyway | Automated *and measured* | `python3 evals/memory_eval.py` reports recall@1 and recall@3 over six paraphrase queries. Keyword only: **0% and 0%**. With `jarvis-embeddings`: **100% and 100%**. `scripts/verify/m33-embeddings.sh` runs both and fails if the second is not higher |
+| Embeddings never touch the GPU or the chat model server | Automated | the same script compares `memory: embedding_url` against `llm: url` and fails if they share a host — an embedding through llama-swap evicts the KV cache the voice path is using |
+| The reranker is used where it helps and not where it hurts | Automated *from a measurement* | `research:` reranks (3/5 → 4/5 on choosing the page that answers the question); `memory:` does not (6/6 → 5/6 on notes). The check asserts both settings AND that the numbers are written beside them |
+| A rerank service being down cannot make a search worse | Automated | `tests/test_rerank.py` — an unreachable, slow, or nonsense-answering reranker all return "no opinion" and the caller keeps its order; it stops asking after the first failure |
+| The similarity floor is a property of the model, not a constant | Automated | `test_the_similarity_floor_belongs_to_the_model` — 0.62 was tuned for nomic and discarded five of six bge paraphrases that had ranked correctly |
+| Both services are up and can do the job, not merely running | Automated | the script asks the embedder for a paraphrase pair and the reranker for an ordering; a container that answers `/health` and nothing else fails |
+| That these are the best models available | **Judgement** | four were measured (bge-small, ms-marco-MiniLM, mxbai-rerank-xsmall, bge-reranker-base) and the numbers are in `docs/TOOLING_DECISIONS.md` §3. Nothing here says a fifth would not be better |
+
 ### The stack, as the thing under test (M28, M29)
 
 | Claim | Level | Proof |

@@ -295,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
         search_url=searxng,
         browser_url=fetcher,
         browser_token=browser_token,
+        # The cross-encoder that decides which pages get read, when one is
+        # running. Its effect is exactly what this eval measures.
+        rerank_url=os.environ.get("RERANK_URL", ""),
+        rerank_model=os.environ.get(
+            "RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        ),
     )
     try:
         harness.start()

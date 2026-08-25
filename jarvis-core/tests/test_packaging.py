@@ -1368,6 +1368,10 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         "searxng",
         "mosquitto",
         "jarvis-config-init",
+        # Retrieval (M33). Two containers of one image because the measurement
+        # said so — see `docs/TOOLING_DECISIONS.md` §3.
+        "jarvis-embeddings",
+        "jarvis-reranker",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1920,7 +1924,11 @@ def test_every_documented_env_var_is_actually_read_by_something(
         match.group(1)
         for line in config_text.splitlines()
         if not line.lstrip().startswith("#")
-        for match in [re.search(r"!env_var\s+([A-Z][A-Z0-9_]*)", line)]
+        # `!env_url` as well as `!env_var`. Its sibling test above already
+        # matched both; this one did not, so a variable read through the newer
+        # tag was reported as "handed over and never read" — which is the exact
+        # opposite of true, and the fix would have been to stop passing it.
+        for match in [re.search(r"!env_(?:var|url)\s+([A-Z][A-Z0-9_]*)", line)]
         if match
     }
     # Some names are read by the application directly rather than through the

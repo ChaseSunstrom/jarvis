@@ -13,13 +13,17 @@ measurable is removed, however fashionable it is.
 
 ## The two budgets everything is spent against
 
-**RAM, on this host.** 8 GB total, 4 vCPU, ~2 GB free with the stack up. This
-is the binding constraint and it is small. A service that wants 4 GB is asking
-for half of everything.
+**RAM, on this host.** 16 GB total, 4 vCPU — doubled from 8 GB on 2026-08-25,
+mid-run, by the operator. Every decision below that was taken against the 8 GB
+figure is marked, because a rejection whose reason has since changed is a
+rejection that should be re-opened rather than quietly kept.
 
     $ free -g | head -2
                    total        used        free      shared  buff/cache   available
-    Mem:               8           5           2           0           0           2
+    Mem:              16           1          13           0           1          15
+
+The CPU count did not change, and on this box that is now the tighter of the
+two: four cores, of which `wyoming-whisper` may take three during a spoken turn.
 
 **VRAM, on the model host.** There is no GPU on this box; `qwen3.8-27b` is
 served by llama-swap over the tailnet (`BLOCKERS.md` §2). The 3090s hold that
@@ -106,23 +110,67 @@ JavaScript-heavy *crawling* at depth, and no page-to-page link following —
 when a search surfaces it. The fixture search now indexes PDFs and .docx files
 for that reason, which is what a real search engine does.
 
-### 3. Embeddings and reranking — *yes, on CPU, and off llama-swap* (M33)
+### 3. Embeddings and reranking — *TEI, two instances, and the reranker only where it wins* (M33)
 
-**Chosen (to try, in this order):** Infinity (`michaelf34/infinity:latest-cpu`)
-serves an embedder **and** a cross-encoder reranker from one process, which on
-this box is the deciding property; TEI (`ghcr.io/huggingface/text-embeddings-inference:cpu-1.9`)
-is faster per model but Hugging Face's own guidance is one instance per model,
-so the same pair costs two containers.
+**Chosen: Text Embeddings Inference `cpu-1.9`, twice.** The prediction here was
+Infinity, on the reasoning that one process serving both models is the cheaper
+shape on a small box. Measured, that is backwards:
 
-**Why at all:** `jarvis-core/jarvis/integrations/memory/vectors.py` currently
-embeds through the LLM client — the exact thing the VRAM rule forbids. Moving
-it to CPU is the point; a rerank-after-retrieve pass on top is the cheapest
-quality win available to memory, notes and research.
+| | Infinity `latest-cpu` | TEI `cpu-1.9` |
+|---|---|---|
+| image | 2.34 GB | **686 MB**, shared by both instances |
+| resident, embedder + reranker | **4 GB** (OOM-killed at 3) | **329 MB + 218 MB** |
+| models per process | two | one |
+| containers | 1 | 2 |
+| embed latency | 77 ms | **9 ms** |
 
-**What it must not break:** `jarvis-core`'s dependency list stays seven
-pure-Python wheels (`DEVIATIONS.md` §9). The embedder is a service it talks to
-over HTTP, never a package it imports, and every failure mode still ends in
-"fall back to keyword search" rather than an error the user sees.
+Two containers of one image is seven times cheaper in memory than one container
+of another, so the "fewer processes" instinct cost nothing to check and would
+have cost 3.5 GB to keep. TEI is Rust; Infinity carries torch, onnxruntime and
+OpenVINO.
+
+One more thing the measurement found: Infinity refused to load
+`mxbai-rerank-xsmall-v1` at all — OpenVINO cannot compile DeBERTa's dynamic
+rank — so the model choice was constrained by the server, which is its own
+argument.
+
+**Why any of this is worth a container.** `memory/vectors.py` embedded through
+the LLM client, and this deployment's llama-swap answers `/embeddings` with
+`no router for requested model`. So semantic recall was configured, degraded
+silently to keyword search exactly as designed, and **had never once run
+here**. Worse, had it worked it would have been an eviction: an embedding
+request through llama-swap costs the voice path's KV cache. On CPU it costs
+9 ms and nobody's cache.
+
+The number it moved, on the memory eval's six paraphrase queries — queries that
+share no content word with the note that answers them:
+
+    keyword only          recall@1   0%    recall@3   0%     (nothing at all)
+    + embeddings         recall@1 100%    recall@3 100%
+
+**And the reranker earns its place in exactly one of the two jobs.** Same
+model, same host, measured both ways:
+
+| | embedder alone | + cross-encoder |
+|---|---|---|
+| personal notes (6 paraphrases, 4 candidates) | **6/6** | 5/6 |
+| documents (5 questions, 8 fixture pages) | 3/5 | **4/5** |
+
+A note is one line — *"I take my coffee black"* — and a model trained to rank
+web passages has almost nothing to read. A page is a page. So `research:` uses
+the cross-encoder to choose which pages get FETCHED (the expensive step, and
+the decision is made before any of them is), and `memory:` ships with it off,
+one line from being switched on, with those numbers in the config beside it.
+
+`bge-reranker-base` was measured too and matched the small model exactly (5/6
+and 4/5) for **2.16 GB and 91 ms** against **177 MB and 12 ms**. Size bought
+nothing here.
+
+**The floor is part of the model.** `SIMILARITY_FLOOR = 0.62` was tuned for
+`nomic-embed-text`. `bge-small-en-v1.5` ranked all six paraphrases correctly at
+0.450–0.652, and that constant threw five of them away — a working model
+turned into an empty search by a number from a different one. Floors and task
+prefixes now live in one table per family (`vectors.py`).
 
 ### 4. The vector store — *decide, do not drift* (M34)
 
@@ -200,8 +248,8 @@ records why it was tried.
 Checked on 2026-08-25, against the projects' own documentation rather than
 against what was current when this model was trained:
 
-* Text Embeddings Inference — <https://github.com/huggingface/text-embeddings-inference> (v1.9, CPU images, cross-encoder rerankers, one model per instance)
-* Infinity — <https://github.com/michaelfeil/infinity> (`latest-cpu`, multiple models in one process, ONNX/Optimum on CPU)
+* Text Embeddings Inference — <https://github.com/huggingface/text-embeddings-inference> (v1.9, CPU images, cross-encoder rerankers, one model per instance). **Run here**: 686 MB image, 329 MB resident for `bge-small-en-v1.5` and 218 MB for `ms-marco-MiniLM-L-6-v2`, 9 ms per embed
+* Infinity — <https://github.com/michaelfeil/infinity> (`latest-cpu`, multiple models in one process, ONNX/Optimum on CPU). **Run here**: 2.34 GB image, 4 GB resident for the same two models (OOM-killed at 3 GB), 77 ms per embed, and its OpenVINO path could not load a DeBERTa reranker at all
 * Crawl4AI — <https://github.com/unclecode/crawl4ai> (0.9.2, `unclecode/crawl4ai:latest`, REST on 11235, `--shm-size=1g`, its own Playwright Chromium). Also **pulled and run here**: 4.23 GB image, 411 MB resident idle, and its SSRF guard refuses loopback exactly as ours does
 * Docling — <https://github.com/docling-project/docling> (`docling-serve`, PDF/DOCX/PPTX/XLSX/HTML → markdown). Also **resolved here**: `pip install --dry-run docling` → 101 packages including torch, transformers, opencv and the CUDA stack
 * Langfuse self-hosting — <https://langfuse.com/self-hosting/docker-compose> (v4; 4 cores / 16 GiB recommended, ClickHouse + Postgres + Redis + MinIO)

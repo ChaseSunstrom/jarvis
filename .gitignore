@@ -53,3 +53,8 @@ testing/live/voices/
 # nobody owns is worse than one that controls nothing. The worked examples are
 # tracked, under config/examples/house/.
 jarvis-core/config/packages/
+
+# The embedding and reranker weights TEI downloads on first start (M33), for
+# the same reason as `jarvis-core/wyoming/` above: hundreds of megabytes,
+# fetched once, and never something a checkout should carry.
+jarvis-core/models/

@@ -69,6 +69,35 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   following 5/5, graceful failure 5/5; first word in 5.5 s and a whole spoken turn in 7.1 s
   when idle; round-trip word error 0.058.
 
+- M33 (embeddings and reranking as services): **semantic recall works for the first time.**
+  It was configured, and it degraded silently to keyword search exactly as designed, because
+  this deployment's llama-swap answers `/embeddings` with `no router for requested model`.
+  Measured on six queries that share no word with the note that answers them — "where do we
+  keep the caffeine" against "I take my coffee black" — keyword search returned **nothing at
+  all**. With a CPU embedding service of its own: **100% recall@1**.
+
+  It is a separate service rather than a model to pull, and that is the point: an embedding
+  request through llama-swap evicts KV cache the voice path is using, so writing a note would
+  have made the next spoken sentence slower. `jarvis-embeddings` is 329 MB of CPU RAM and
+  answers in 9 ms.
+
+  The prediction in `TOOLING_DECISIONS.md` was Infinity, because one process serving both
+  models sounded cheaper on a small box. Measured, it needed **4 GB** (OOM at 3) where TEI
+  needs **329 MB + 218 MB** from one 686 MB image. Two containers of one image beat one
+  container of another by a factor of seven, and checking cost half an hour.
+
+  **The reranker earns its place in one of its two jobs, and the numbers decide which.** On
+  personal notes the embedder alone put the right note first 6/6 and the cross-encoder made it
+  5/6 — a note is one line, and a model trained on web passages has nothing to read. On
+  documents it went the other way: 3/5 → 4/5 on choosing which page answers the question. So
+  research reranks (before fetching anything, which is the expensive step) and memory does not,
+  with those numbers in the config beside each setting.
+
+  Also: the similarity floor turned out to be a property of the model. 0.62 was tuned for
+  `nomic-embed-text`; `bge-small` ranked all six paraphrases correctly at 0.450–0.652 and the
+  inherited constant threw five of them away. Floors and task prefixes are one table per model
+  family now.
+
 - M32 (crawling and document extraction): **Jarvis can read a PDF.** A `.pdf` or `.docx` URL
   now comes back through `/fetch` as text — headings, paragraphs and tables — fenced as
   untrusted exactly like a page, because a document somebody sent you is a stranger's text

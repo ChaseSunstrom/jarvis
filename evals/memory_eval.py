@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -41,6 +42,23 @@ FACTS = [
 
 #: The one that gets forgotten, by text.
 FORGET_QUERY = "coffee"
+
+#: The recall set (M33): queries that share NO content word with the note that
+#: answers them. This is the gap `vectors.py` was written for — "where do we
+#: keep the caffeine" against "the good coffee is in the left cupboard" — and
+#: the number it produces is what says whether an embedding server and a
+#: cross-encoder were worth adding.
+#:
+#: Keyword search scores near zero on these by construction. That is the point:
+#: a baseline that the change cannot move is not a baseline.
+RECALL = [
+    ("where do we keep the caffeine", "I take my coffee black, no sugar."),
+    ("what age is my child", "Mira is my daughter and she is seven."),
+    ("who lets themselves in when I am away", "The spare key is in the blue tin on the shelf."),
+    ("when did the heating engineer last visit", "The boiler was serviced in March."),
+    ("is the hot water system due a check", "The boiler was serviced in March."),
+    ("what should I not put in a drink for you", "I take my coffee black, no sugar."),
+]
 
 
 class Failed(Exception):
@@ -100,6 +118,37 @@ async def run(harness: Harness, out: Path) -> dict:
             )
         record("retrieve", True, f"{len(FACTS)} targeted queries, right note first")
 
+        # --- recall, as a number -------------------------------------------
+        #
+        # Not pass/fail: a measurement, reported, so that adding a service can
+        # be shown to have helped rather than asserted to have. `PROCESS.md`
+        # §2c is the rule this exists to satisfy.
+        hits_at_1 = hits_at_3 = 0
+        misses: list[str] = []
+        for query, expected in RECALL:
+            found = await client.command("jarvis/memory/list", query=query, limit=3)
+            texts = [entry["text"] for entry in found["entries"]]
+            if texts[:1] == [expected]:
+                hits_at_1 += 1
+            if expected in texts[:3]:
+                hits_at_3 += 1
+            else:
+                misses.append(f"{query!r} -> {texts[:1] or ['nothing']}")
+        recall = {
+            "queries": len(RECALL),
+            "recall_at_1": round(hits_at_1 / len(RECALL), 3),
+            "recall_at_3": round(hits_at_3 / len(RECALL), 3),
+            "misses": misses,
+        }
+        record(
+            "recall",
+            True,
+            f"recall@1 {recall['recall_at_1']:.0%}, recall@3 {recall['recall_at_3']:.0%} "
+            f"over {len(RECALL)} paraphrase queries",
+        )
+        for miss in misses:
+            print(f"       · missed {miss}", flush=True)
+
         # --- forget --------------------------------------------------------
         coffee = [
             entry
@@ -156,19 +205,41 @@ async def run(harness: Harness, out: Path) -> dict:
 
     out.mkdir(parents=True, exist_ok=True)
     (out / "memory_eval.json").write_text(
-        json.dumps({"steps": steps, "facts": len(FACTS)}, indent=2) + "\n"
+        json.dumps(
+            {"steps": steps, "facts": len(FACTS), "recall": recall}, indent=2
+        )
+        + "\n"
     )
-    return {"steps": steps}
+    return {"steps": steps, "recall": recall}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=".verify/memory", help="where to write the report")
     parser.add_argument("--keep", action="store_true", help="keep the harness work directory")
+    parser.add_argument("--embeddings-url", default=os.environ.get("EMBEDDINGS_URL", ""),
+                        help="an OpenAI-compatible embedding server ('' = keyword only)")
+    parser.add_argument("--embeddings-model",
+                        default=os.environ.get("EMBEDDINGS_MODEL", "BAAI/bge-small-en-v1.5"))
+    parser.add_argument("--rerank-url", default=os.environ.get("RERANK_URL", ""),
+                        help="a cross-encoder rerank endpoint ('' = no reranking)")
+    parser.add_argument("--rerank-model",
+                        default=os.environ.get("RERANK_MODEL",
+                                               "cross-encoder/ms-marco-MiniLM-L-6-v2"))
     args = parser.parse_args(argv)
 
     out = Path(args.out)
-    harness = Harness(work_dir=str(out / "harness"), keep=True)
+    harness = Harness(
+        work_dir=str(out / "harness"),
+        keep=True,
+        # The retrieval services, when they are up. Without them this measures
+        # the keyword baseline, which is exactly what it measured before M33 —
+        # and the printed line says which one you are looking at.
+        embeddings_url=args.embeddings_url,
+        embeddings_model=args.embeddings_model,
+        rerank_url=args.rerank_url,
+        rerank_model=args.rerank_model,
+    )
     print("memory eval: store → restart → retrieve → forget → export → wipe", flush=True)
     try:
         harness.start()

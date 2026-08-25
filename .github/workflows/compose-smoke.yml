@@ -36,7 +36,10 @@ name: Compose smoke
 # Covered: jarvis-config-init, jarvis-core, jarvis-browser, wyoming-whisper,
 # wyoming-piper, wyoming-openwakeword, plus mosquitto (`--profile mqtt`, where
 # bug 3 lived) and searxng (`--profile search`, which carries the identical
-# cap_add fix and is the only other place it can regress).
+# cap_add fix and is the only other place it can regress), and the two
+# retrieval services — they download ~220 MB of model on first start, which is
+# well inside this job's budget and is exactly the step that can fail on a
+# runner with no cache.
 #
 # Skipped: photon, and only photon. It is an offline geocoder whose first start
 # downloads a planet index — tens of GB with `PHOTON_REGION` unset, which is
@@ -97,6 +100,8 @@ env:
     wyoming-openwakeword
     mosquitto
     searxng
+    jarvis-embeddings
+    jarvis-reranker
   SKIPPED_SERVICES: photon
 
   # How long to sit still before asking whether anything restarted. A crash
@@ -513,4 +518,4 @@ jobs:
           # bind-mount parents were created by docker as root. The runner is
           # thrown away, but leave the checkout as it was found anyway.
           sudo rm -rf .env config/.storage config/jarvis.db config/jarvis.db-wal \
-                      config/jarvis.db-shm wyoming photon
+                      config/jarvis.db-shm wyoming photon models

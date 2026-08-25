@@ -1636,6 +1636,28 @@ def memory_list_payload(jarvis: "Jarvis", tag: str = "", query: str = "",
     }
 
 
+async def async_memory_list_payload(
+    jarvis: "Jarvis", tag: str = "", query: str = "", limit: int = 200
+) -> dict[str, Any]:
+    """The same listing, with semantic recall and the reranker in front of it.
+
+    The synchronous version above is the fallback for callers that cannot
+    await, and it is keyword-only by construction — an embedding call and a
+    cross-encoder are both HTTP. Every route that CAN await uses this one, so
+    what a person sees in the console is what the assistant sees.
+    """
+    store = _memory(jarvis)
+    if not query:
+        return memory_list_payload(jarvis, tag=tag, query=query, limit=limit)
+    entries = await store.async_search(query=query, tags=tag or None, limit=limit)
+    return {
+        "entries": [entry.as_dict() for entry in entries],
+        "total": len(store.entries),
+        "query": query,
+        "tag": tag,
+    }
+
+
 def memory_export_payload(jarvis: "Jarvis", fmt: str = "json") -> dict[str, Any]:
     return _memory(jarvis).export(fmt)
 

@@ -260,6 +260,10 @@ def build_config(
     search_url: str = "",
     browser_url: str = "",
     browser_token: str = "",
+    embeddings_url: str = "",
+    embeddings_model: str = "",
+    rerank_url: str = "",
+    rerank_model: str = "",
     code: dict[str, Any] | None = None,
 ) -> str:
     """A complete jarvis-core configuration.yaml, pointed at the fakes.
@@ -272,6 +276,30 @@ def build_config(
     # Only when both are given. `web.search` with no SearXNG fails saying so,
     # which is the shipped behaviour; a harness that half-configured it would
     # be testing a state nobody runs.
+    # Retrieval services, when the caller has them. Off by default, because a
+    # harness that silently depended on two containers would fail on a laptop
+    # in a way that looked like a broken assistant.
+    retrieval_block = ""
+    research_rerank = ""
+    if rerank_url:
+        # Research is where the cross-encoder measurably helps: it picks which
+        # pages get READ, before any of them is fetched.
+        research_rerank = (
+            f"  rerank_url: {rerank_url.rstrip('/')}\n"
+            f"  rerank_model: {rerank_model}\n"
+        )
+    if embeddings_url:
+        retrieval_block += (
+            f"  embeddings: true\n"
+            f"  embedding_url: {embeddings_url.rstrip('/')}/v1\n"
+            f"  embedding_model: {embeddings_model}\n"
+        )
+    if rerank_url:
+        retrieval_block += (
+            f"  rerank_url: {rerank_url.rstrip('/')}\n"
+            f"  rerank_model: {rerank_model}\n"
+        )
+
     web_block = (
         f"""
 # Private search and page fetching. Pointed at whatever the caller passed —
@@ -353,7 +381,7 @@ demo:
 # Researching a question: several searches, read the best pages, write it up
 # with citations. Needs `web:` above, which the caller has to point somewhere.
 research:
-  max_queries: 3
+{research_rerank}  max_queries: 3
   max_sources: 4
 
 # The record of everything Jarvis says without being asked. On here because
@@ -376,7 +404,7 @@ memory:
   max_entries: 200
   context_limit: 600
   context_entries: 8
-
+{retrieval_block}
 # One skill, copied in beside this file by the harness. The live rig asks it
 # something only the skill knows, which is the only way to tell "the skill was
 # loaded" from "the persona happened to say something similar".
@@ -565,6 +593,10 @@ class Harness:
         search_url: str | None = None,
         browser_url: str | None = None,
         browser_token: str | None = None,
+        embeddings_url: str | None = None,
+        embeddings_model: str | None = None,
+        rerank_url: str | None = None,
+        rerank_model: str | None = None,
         code: dict[str, Any] | None = None,
     ) -> None:
         self.host = host
@@ -602,6 +634,10 @@ class Harness:
         self.search_url = str(search_url or "").rstrip("/")
         self.browser_url = str(browser_url or "").rstrip("/")
         self.browser_token = str(browser_token or "harness-browser-token")
+        self.embeddings_url = str(embeddings_url or "").rstrip("/")
+        self.embeddings_model = str(embeddings_model or "")
+        self.rerank_url = str(rerank_url or "").rstrip("/")
+        self.rerank_model = str(rerank_model or "")
         #: A `code:` block for this run — repositories, environments and the
         #: permission mode. `evals/coding_eval.py` is the caller that matters.
         self.code_config = dict(code) if code else {}
@@ -866,6 +902,10 @@ class Harness:
                 search_url=self.search_url,
                 browser_url=self.browser_url,
                 browser_token=self.browser_token,
+                embeddings_url=self.embeddings_url,
+                embeddings_model=self.embeddings_model,
+                rerank_url=self.rerank_url,
+                rerank_model=self.rerank_model,
                 code=self.code_config,
             ),
             encoding="utf-8",

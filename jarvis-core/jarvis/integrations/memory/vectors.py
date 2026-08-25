@@ -76,14 +76,62 @@ STORAGE_VERSION = 1
 #: 384 dims) is the Pi-tier alternative and needs no code change.
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
 
-DOCUMENT_PREFIX = "search_document: "
-QUERY_PREFIX = "search_query: "
+#: Task prefixes, per model family. A model trained with them is measurably
+#: worse without, and a model trained WITHOUT them is not harmed by a few
+#: tokens — but they are not the same tokens, so guessing one family's prefix
+#: for another is the failure this table exists to prevent.
+#:
+#: `nomic-embed-text` embeds documents and queries with different verbs.
+#: `bge-*-en-v1.5` embeds documents bare and puts an instruction on the query
+#: only; that exact sentence is the one BAAI trained with.
+#: The floor belongs here too, and finding that out cost a measurement. A
+#: cosine is not comparable between models: `nomic-embed-text` puts a genuine
+#: paraphrase around 0.7 and unrelated text around 0.4, so 0.62 separated them.
+#: `bge-small-en-v1.5` puts the SAME six paraphrases at 0.450–0.652 and their
+#: best wrong answer at 0.395–0.454 — it ranked all six correctly and the
+#: nomic-tuned floor threw five of them away. A constant that is right for one
+#: model is a bug for the next one.
+#:
+#: bge's floor is deliberately below its worst right answer rather than above
+#: its best wrong one, because those two overlap and a floor cannot separate
+#: them. Ordering is the reranker's job (`llm/rerank.py`); the floor's job is
+#: only to keep "everything, ranked" from being mistaken for "everything
+#: relevant".
+PREFIXES = {
+    "nomic": ("search_document: ", "search_query: ", 0.62),
+    "bge": ("", "Represent this sentence for searching relevant passages: ", 0.35),
+    "e5": ("passage: ", "query: ", 0.72),
+}
 
-#: Below this, two notes are not about the same thing. Cosine on normalised
-#: embeddings runs about 0.3-0.5 for unrelated text from the same domain, so a
-#: floor well above that is what keeps "everything ranked" from being mistaken
-#: for "everything relevant".
-SIMILARITY_FLOOR = 0.62
+#: What a model nobody recognises gets: no prefix, and the conservative floor
+#: this file shipped with.
+NO_PREFIX = ("", "", 0.62)
+
+
+def prefixes_for(model: str) -> tuple[str, str]:
+    """(document prefix, query prefix) for an embedding model's family."""
+    return _family(model)[:2]
+
+
+def floor_for(model: str) -> float:
+    """The similarity below which this model's scores mean "not about that"."""
+    return _family(model)[2]
+
+
+def _family(model: str) -> tuple[str, str, float]:
+    name = str(model or "").rsplit("/", 1)[-1].lower()
+    for family, row in PREFIXES.items():
+        if name.startswith(family) or f"-{family}-" in name or family in name.split("-")[0]:
+            return row
+    return NO_PREFIX
+
+
+DOCUMENT_PREFIX, QUERY_PREFIX, _ = PREFIXES["nomic"]
+
+#: The default floor, for a model whose family nobody here recognises. Per-model
+#: floors are in `PREFIXES` above, and the paragraph there says why one constant
+#: could not do this job.
+SIMILARITY_FLOOR = NO_PREFIX[2]
 
 
 def text_hash(text: str) -> str:
@@ -142,6 +190,8 @@ class VectorIndex:
     ) -> None:
         self.client = client
         self.model = model or DEFAULT_EMBED_MODEL
+        self.document_prefix, self.query_prefix = prefixes_for(self.model)
+        self.floor = floor_for(self.model)
         self._store = store
         self._vectors: dict[str, array] = {}
         self._hashes: dict[str, str] = {}
@@ -254,7 +304,7 @@ class VectorIndex:
         wanted = [(i, t) for i, t in items if t.strip() and not self.is_current(i, t)]
         if not wanted:
             return 0
-        vectors = await self._embed([DOCUMENT_PREFIX + t for _, t in wanted])
+        vectors = await self._embed([self.document_prefix + t for _, t in wanted])
         if not vectors:
             return 0
         written = 0
@@ -282,7 +332,7 @@ class VectorIndex:
         """`{entry_id: similarity}` for everything at or above the floor."""
         if not self.enabled or not self._vectors or not query.strip():
             return {}
-        vectors = await self._embed([QUERY_PREFIX + query])
+        vectors = await self._embed([self.query_prefix + query])
         if not vectors or not vectors[0]:
             return {}
         probe = normalise(vectors[0])
@@ -292,7 +342,7 @@ class VectorIndex:
             entry_id: similarity(probe, vector)
             for entry_id, vector in self._vectors.items()
         }
-        return {i: s for i, s in scored.items() if s >= SIMILARITY_FLOOR}
+        return {i: s for i, s in scored.items() if s >= self.floor}
 
     # --- plumbing ---------------------------------------------------------
     async def _embed(self, texts: Sequence[str]) -> list[list[float]]:

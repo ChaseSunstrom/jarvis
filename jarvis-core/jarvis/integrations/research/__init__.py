@@ -134,6 +134,18 @@ class ResearchConfig:
     #: Match each key claim against the other pages read, and say in the report
     #: whether anything else said it.
     cross_check: bool = True
+    #: A cross-encoder, asked which of the search results actually answers the
+    #: question, before any of them is fetched. Empty means "rank by the search
+    #: engine's order and how many angles found it", which is what shipped.
+    #:
+    #: This is where a reranker earns its keep and the numbers say so. Measured
+    #: on the fixture web, choosing the one page that answers each of five
+    #: questions: the embedder alone got 3/5, the cross-encoder 4/5. On personal
+    #: notes the same model made retrieval WORSE (5/6 against 6/6), which is why
+    #: `memory:` ships with it off. Long documents and one-line facts are not
+    #: the same retrieval problem.
+    rerank_url: str = ""
+    rerank_model: str = ""
 
     def for_mode(self, mode: str) -> "ResearchConfig":
         """This config, narrowed to a mode's budget.
@@ -168,6 +180,8 @@ class ResearchConfig:
             per_domain=_int("per_domain", PER_DOMAIN, 5),
             model=str(data.get("model") or "").strip(),
             search_limit=_int("search_limit", 8, 20),
+            rerank_url=str(data.get("rerank_url") or "").strip(),
+            rerank_model=str(data.get("rerank_model") or "").strip(),
         )
 
 
@@ -465,6 +479,7 @@ async def _run(
         return
 
     sources = collect_sources(per_query)
+    sources = await _reranked(cfg, question, sources)
     chosen = rank_sources(sources, limit=cfg.max_sources, per_domain=cfg.per_domain)
     if not chosen:
         await registry.async_update(
@@ -621,6 +636,41 @@ async def _run(
 
     if remember and usable:
         await _keep_report(jarvis, question, report)
+
+
+async def _reranked(cfg: ResearchConfig, question: str, sources: list) -> list:
+    """Reorder the search results by what a cross-encoder thinks answers the question.
+
+    This runs BEFORE anything is fetched, which is what makes it worth doing: a
+    page that is not read costs nothing, and reading the wrong four pages costs
+    the whole run. The cross-encoder sees the question and the search snippet
+    together — the one signal neither the search engine's ranking nor "how many
+    angles found it" contains.
+
+    It reorders; it does not filter. `rank_sources` still applies the
+    per-domain cap afterwards, so a reranker cannot hand one site the whole
+    read list. And a reranker that is down, slow or absent leaves the order
+    exactly as it was.
+    """
+    if not cfg.rerank_url or len(sources) < 2:
+        return sources
+    from ...llm.rerank import Reranker
+
+    candidates = [
+        f"{source.title}. {source.snippet}".strip() or source.url for source in sources
+    ]
+    order = await Reranker(url=cfg.rerank_url, model=cfg.rerank_model).order(
+        question, candidates
+    )
+    if not order:
+        return sources
+    # `best_rank` is what `Source.score` sorts on, so the reranker's opinion is
+    # expressed in the same currency the rest of the ranking already uses —
+    # rather than as a second, invisible sort that fights the per-domain cap.
+    for position, index in enumerate(order):
+        if index < len(sources):
+            sources[index].best_rank = position
+    return sources
 
 
 def _check(jarvis: "Jarvis", task_id: str) -> None:

@@ -100,6 +100,11 @@ DEFAULT_SEARCH_LIMIT = 5
 #: Score at or above which a query is judged to be *about* a note, rather than
 #: merely ranking above the notes it is about even less.
 #:
+#: How many candidates the cross-encoder is shown. It reads the query with each
+#: one, so this is the knob that decides what reranking costs: twenty short
+#: notes is tens of milliseconds, the whole store would be seconds.
+RERANK_CANDIDATES = 20
+
 #: `_score` ranks everything it is given, so without a floor "the top 8" and
 #: "the 8 relevant ones" are the same list whenever fewer than 8 match. `forget`
 #: has always used this number, for the strongest possible reason — it decides
@@ -412,6 +417,7 @@ class MemoryStore:
         context_limit: int = DEFAULT_CONTEXT_LIMIT,
         context_entries: int = DEFAULT_CONTEXT_ENTRIES,
         vectors: "VectorIndex | None" = None,
+        reranker: Any = None,
     ) -> None:
         self.jarvis = jarvis
         self.store = store or Store(jarvis.config_dir, STORAGE_KEY, STORAGE_VERSION)
@@ -426,6 +432,9 @@ class MemoryStore:
         #: no embedding model pulled, and everything below degrades to the
         #: keyword scorer rather than failing — see `vectors.py`.
         self.vectors = vectors
+        #: A cross-encoder, or None. Retrieval works either way; this only ever
+        #: reorders a shortlist retrieval has already chosen.
+        self.reranker = reranker
 
     # --- persistence ------------------------------------------------------
     async def async_load(self) -> None:
@@ -661,6 +670,58 @@ class MemoryStore:
         self.purge_expired()
         results = self._score(str(query or ""), _clean_tags(tags))
         return [entry for _, entry in results[: max(1, int(limit or DEFAULT_SEARCH_LIMIT))]]
+
+    async def async_search(
+        self, query: str = "", tags: Any = None, limit: int = DEFAULT_SEARCH_LIMIT
+    ) -> list[MemoryEntry]:
+        """`search`, plus semantic recall and a cross-encoder over the shortlist.
+
+        Three stages, each cheap enough to justify the next: keyword ranks
+        everything (it is a dict comprehension), semantic re-ranks what the
+        words missed (one embedding call), and the reranker reads the query and
+        each candidate TOGETHER — which is the only stage that can tell "where
+        do we keep the caffeine" from a note about coffee mugs, and is far too
+        slow to run over a whole store. So it runs over the shortlist.
+
+        Every stage degrades to the one before it. No embedding server means
+        keyword; no reranker means keyword-plus-semantic, which is what M15
+        shipped. A search cannot get *worse* by a service being down.
+        """
+        limit = max(1, int(limit or DEFAULT_SEARCH_LIMIT))
+        query = str(query or "")
+        if not query:
+            return self.search(query, tags, limit)
+
+        semantic = await self.async_semantic_ids(query)
+        wanted = set(_clean_tags(tags))
+        by_id = {entry.id: entry for entry in self.entries}
+        keyword = {
+            entry.id: score
+            for score, entry in self._score(query, _clean_tags(tags))
+            if score >= MATCH_FLOOR
+        }
+        if semantic:
+            ordered_ids = fuse(keyword, {i: s for i, s in semantic.items() if i in by_id})
+        else:
+            ordered_ids = sorted(keyword, key=lambda i: -keyword[i])
+        shortlist = [
+            by_id[entry_id]
+            for entry_id in ordered_ids
+            if entry_id in by_id and (not wanted or wanted & set(by_id[entry_id].tags))
+        ][:RERANK_CANDIDATES]
+        if not shortlist:
+            return self.search(query, tags, limit)
+
+        order = await self.rerank_order(query, [entry.text for entry in shortlist])
+        if order:
+            shortlist = [shortlist[i] for i in order]
+        return shortlist[:limit]
+
+    async def rerank_order(self, query: str, texts: list[str]) -> list[int]:
+        """The reranker's opinion, or [] when there is nobody to ask."""
+        if self.reranker is None:
+            return []
+        return await self.reranker.order(query, texts)
 
     def all(self, tag: Any = None, limit: int | None = None) -> list[MemoryEntry]:
         self.purge_expired()
@@ -1034,6 +1095,25 @@ def _build_index(jarvis: "Jarvis", options: dict[str, Any]) -> VectorIndex | Non
     )
 
 
+def _build_reranker(jarvis: "Jarvis", options: dict[str, Any]) -> Any:
+    """A cross-encoder client, or None when no URL is configured.
+
+    Off unless pointed somewhere, like everything else that needs a service:
+    an install with no reranker gets exactly the retrieval it had before, and
+    `docker compose up` is what turns it on.
+    """
+    url = str(options.get("rerank_url") or "").strip()
+    if not url:
+        return None
+    from ...llm.rerank import Reranker
+
+    return Reranker(
+        url=url,
+        model=str(options.get("rerank_model") or ""),
+        timeout=float(options.get("rerank_timeout") or 3.0),
+    )
+
+
 def _embedding_client(jarvis: "Jarvis", options: dict[str, Any]) -> Any:
     """A client with an `embed()`, or None.
 
@@ -1076,6 +1156,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         ),
         context_entries=int(options.get("context_entries") or DEFAULT_CONTEXT_ENTRIES),
         vectors=_build_index(jarvis, options),
+        reranker=_build_reranker(jarvis, options),
     )
     await memory.async_load()
     # The documented hook: the LLM agent reads this and calls

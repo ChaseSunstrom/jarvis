@@ -15,6 +15,9 @@
 config/
 photon/
 wyoming/
+# The embedding and reranker weights TEI downloads (M33), same reasoning
+# as wyoming/: fetched once, hundreds of megabytes, never in an image.
+models/
 ollama/
 searxng/
 mosquitto/

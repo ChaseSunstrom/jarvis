@@ -473,7 +473,7 @@ after number must be better than the before or the service comes out**. Choices 
     both improve.
   - Verify: `bash scripts/verify/m32-extraction.sh`
 
-- [ ] **M33 — Embeddings and reranking as services** · size L · deps M28, M30
+- [x] **M33 — Embeddings and reranking as services** · size L · deps M28, M30
   - Scope: a dedicated CPU embedding server (TEI/Infinity class) and a local cross-encoder
     reranker, used by memory, notes and research retrieval — rerank-after-retrieve is the
     cheapest quality win in the whole system. Embeddings stop going through llama-swap, which

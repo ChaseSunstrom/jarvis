@@ -860,7 +860,7 @@ class WebSocketHandler:
         )
 
     async def _cmd_memory_list(self, msg: dict[str, Any]) -> Any:
-        return common.memory_list_payload(
+        return await common.async_memory_list_payload(
             self.jarvis,
             tag=str(msg.get("tag") or ""),
             query=str(msg.get("query") or ""),

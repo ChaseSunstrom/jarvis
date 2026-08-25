@@ -175,6 +175,13 @@ services:
       # the client. Keep them DIFFERENT values — holding the API token must
       # not be enough to approve a click on "Pay".
       - JARVIS_BROWSER_TOKEN=${JARVIS_BROWSER_TOKEN:-}
+      # Retrieval, M33. The URLs are what jarvis-core dials; the model names
+      # are here too so that changing one in `.env` changes it in both places
+      # — the container that serves it and the config that asks for it.
+      - EMBEDDINGS_URL=${EMBEDDINGS_URL:-}
+      - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-}
+      - RERANK_URL=${RERANK_URL:-}
+      - RERANK_MODEL=${RERANK_MODEL:-}
       - BROWSER_APPROVAL_SECRET=${BROWSER_APPROVAL_SECRET:-}
       # The orchestrator pair. Its services are commented out below, so these
       # are normally empty and the tools answer "not configured" — but the
@@ -504,6 +511,73 @@ services:
           target: /srv/jarvis_browser
         - action: rebuild
           path: ../jarvis-browser/requirements.txt
+  # --- retrieval: embeddings and reranking ---------------------------------
+  #
+  # Two containers of one image, because that is what the measurement said.
+  # Infinity serves both models from a single process, which is why
+  # `docs/TOOLING_DECISIONS.md` originally chose it — and on this host it needed
+  # **4 GB** (it OOMed at 3) for a 33M embedder and a 22M cross-encoder. TEI is
+  # Rust, one model per instance, and the same pair costs **329 MB + 218 MB**
+  # from one 686 MB image. Two containers is the cheaper shape here by a factor
+  # of seven, and the numbers are in the decision doc.
+  #
+  # Neither of these ever touches the GPU. That is the whole point: an embedding
+  # request routed through llama-swap evicts KV cache the voice path is using,
+  # so a note being indexed made the next spoken sentence slower. On CPU it
+  # costs 9 ms and nobody's cache.
+  jarvis-embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: jarvis-embeddings
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --model-id ${EMBEDDINGS_MODEL:-BAAI/bge-small-en-v1.5}
+      --port ${EMBEDDINGS_PORT:-7997}
+      --auto-truncate
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Weights land here and are reused on restart. Same shape as the Wyoming
+      # models: fetched once, gitignored, never in the image.
+      - HUGGINGFACE_HUB_CACHE=/data
+    volumes:
+      - ./models/embeddings:/data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:${EMBEDDINGS_PORT:-7997}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # First start downloads the weights (~130 MB); after that it is seconds.
+      start_period: 180s
+    mem_limit: 1g
+    cpus: 1.5
+
+  jarvis-reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: jarvis-reranker
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      --model-id ${RERANK_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      --port ${RERANK_PORT:-7998}
+      --auto-truncate
+    environment:
+      - TZ=${TZ:-Europe/London}
+      - HUGGINGFACE_HUB_CACHE=/data
+    volumes:
+      - ./models/embeddings:/data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:${RERANK_PORT:-7998}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    mem_limit: 1g
+    cpus: 1.5
+
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: mosquitto

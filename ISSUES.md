@@ -13,6 +13,43 @@ and is not misled).
 
 ---
 
+## Semantic recall was configured, degraded silently, and had never run
+
+severity: major
+status: **fixed** (M33 — `jarvis-embeddings`, and the config now points at it)
+Regression: the recall measurement in `evals/memory_eval.py`, and
+`scripts/verify/m33-embeddings.sh` asserts the before and the after
+Found by: reading what the model server actually serves
+
+`memory/vectors.py` embeds through the LLM client. This deployment's model
+server is llama-swap, which serves two chat models and answers `/embeddings`
+with:
+
+    {"error":"no router for requested model","src":"llama-swap"}
+
+The code handles that correctly — one log line, then keyword search, exactly as
+its "Degrading" section promises. So nothing was broken, nothing was logged
+twice, and the feature had never worked on this host. Measured on six queries
+that share no content word with the note that answers them ("where do we keep
+the caffeine" against "I take my coffee black"), keyword search returned
+**nothing at all**: recall@1 0%, recall@3 0%.
+
+With a CPU embedding service of its own: **100% and 100%**.
+
+Two things this hid, both worth naming:
+
+* **The graceful degrade is why nobody noticed.** A feature that falls back
+  silently is a feature that can be absent for months. The fallback is still
+  right — a search that errors is worse than a search that is dumber — but the
+  measurement that would have caught it did not exist until now, and that is
+  the actual defect.
+* **Had it worked, it would have been costing the voice path.** An embedding
+  request through llama-swap evicts KV cache: writing a note would have made
+  the next spoken sentence slower. That is the reason it is a separate CPU
+  service rather than a model name to pull.
+
+---
+
 ## The browser container could not open a page, and said it was healthy
 
 severity: critical
