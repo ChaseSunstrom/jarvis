@@ -50,6 +50,29 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the repository was green, which is the argument for M29.
 
 ### Added
+- M45 (the extension registry): skills, MCP servers and tool plugins each arrived by their own
+  road and described themselves differently, so nothing could answer "what is installed, what
+  may it reach, and is it working" — the answer lived in three shapes. One index now does,
+  built by READING those three rather than replacing them. Every extension carries a manifest
+  (id, version, description, author, declared permissions, tool allowlist, network and
+  filesystem needs) validated against a real JSON Schema document an author can read. A skill's
+  manifest is derived from its `SKILL.md` frontmatter — under `metadata:`, which the open Agent
+  Skills format leaves free-form — so a skill written here still loads in Claude Code and one
+  written there still loads here. The permission vocabulary is closed: a manifest naming a
+  permission nothing enforces is rejected rather than accepted as a declaration, and a manifest
+  listing `write_file` while declaring no `filesystem_write` is rejected too. Rejection means
+  rejection: an invalid skill leaves the store as well as the index, so the model never sees it
+  in its prompt.
+- M45: four skills now ship with Jarvis — research-report, note-taking, homelab-status and
+  diary — so a fresh install has a skills feature with something in it rather than an empty
+  folder. A skill of the same name in the operator's directory replaces the shipped one;
+  `skills: bundled: false` turns them all off.
+- M45: `metrics_query`, because homelab-status could not have been written honestly without it.
+  The measurements were already there — `metrics/sources/influx.py` has been feeding the
+  console's charts — but nothing could put one in a sentence, so "is the loft warmer than it
+  was this morning" was a question Jarvis could draw and could not answer. Read-only, Tier 1,
+  and it returns the summary (latest, min, max, mean, change, sample count) rather than the
+  points: a hundred samples is what makes a model invent a trend instead of reading one.
 - M44 (motion): durations, easings and stagger intervals are design tokens now, generated into
   the console's CSS and TypeScript and into `JarvisTokens.Motion` for Compose from the same
   `design/tokens.json` as colour and type — so a duration cannot drift from the design system

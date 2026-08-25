@@ -709,7 +709,7 @@ READ_ONLY_TOOLS = frozenset({
     # the house, observed
     "get_state", "list_entities", "get_user_context", "recent_events",
     "list_my_devices", "list_cameras", "look_at_camera", "describe_camera_change",
-    "get_automation_trace", "get_briefing", "list_scheduled",
+    "get_automation_trace", "get_briefing", "list_scheduled", "metrics_query",
     # what it knows
     "recall", "note_search", "use_skill",
     # what it is doing

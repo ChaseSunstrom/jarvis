@@ -267,10 +267,36 @@ async def test_reload_picks_up_a_folder_added_while_it_was_running(tmp_path):
     root.mkdir()
     jarvis = Jarvis(tmp_path / "config")
     jarvis.data["llm_tools"] = ToolRegistry(jarvis)
-    await skills_integration.async_setup(jarvis, {"path": str(root)})
+    # `bundled: False` because this is about the OPERATOR's directory. Four
+    # skills ship with Jarvis (M45) and counting them here would make the test
+    # fail every time somebody adds a fifth, while proving nothing about
+    # reloading.
+    await skills_integration.async_setup(jarvis, {"path": str(root), "bundled": False})
     store = jarvis.data["skills"]
     assert store.skills == {}
 
     write_skill(root, "roasting", GOOD)
     assert store.load() == 1
     assert store.get("roasting") is not None
+
+
+async def test_the_shipped_skills_are_there_on_a_fresh_install(tmp_path):
+    """An empty `skills/` is not an empty feature.
+
+    The first run used to have skills and nothing in them, which reads as
+    broken rather than as empty. Four ship; a skill of the same name in the
+    operator's directory replaces one, and turning them off is one key.
+    """
+    root = tmp_path / "skills"
+    root.mkdir()
+    jarvis = Jarvis(tmp_path / "config")
+    jarvis.data["llm_tools"] = ToolRegistry(jarvis)
+    await skills_integration.async_setup(jarvis, {"path": str(root)})
+    store = jarvis.data["skills"]
+    assert sorted(store.skills) == ["diary", "homelab-status", "note-taking", "research-report"]
+    assert store.errors == []
+
+    off = Jarvis(tmp_path / "config2")
+    off.data["llm_tools"] = ToolRegistry(off)
+    await skills_integration.async_setup(off, {"path": str(root), "bundled": False})
+    assert off.data["skills"].skills == {}

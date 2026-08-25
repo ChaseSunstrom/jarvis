@@ -777,6 +777,38 @@ skills:
   # A body longer than this is truncated when it is handed to the model.
   max_body_chars: 8000
   # enabled: [house-style]   # load only these; omit for all of them
+  # Four skills ship with Jarvis — research-report, note-taking, homelab-status
+  # and diary. A skill of the same name in `path` above REPLACES the shipped
+  # one, so overriding `diary` means writing `skills/diary/SKILL.md` and not
+  # finding where the shipped copy lives. `bundled: false` turns them all off.
+  # bundled: false
+
+# ---------------------------------------------------------------------------
+# Extensions — one index over skills, MCP servers and tool plugins.
+# ---------------------------------------------------------------------------
+# It owns nothing. Each of those three keeps loading its own things exactly as
+# it did; this reads all three and answers the four questions a management
+# surface asks — what is installed, what is enabled, what may it reach, and is
+# it working — in one shape rather than three.
+#
+# Each gets a manifest: id, version, description, author, declared permissions,
+# tool allowlist, and declared network and filesystem needs. A skill's comes
+# out of its `SKILL.md` frontmatter (under `metadata:`, which the Agent Skills
+# format leaves free-form) so a skill stays portable; an MCP server's and a
+# plugin's are derived from what they already declare.
+#
+# Permissions are a CLOSED vocabulary — read_state, act, memory_read,
+# memory_write, network, filesystem_read, filesystem_write, run_process. A
+# manifest naming anything else is rejected rather than ignored, because a
+# manifest must not be able to invent a permission nothing enforces. A rejected
+# manifest is not loaded at all: an invalid skill is dropped from the store, so
+# the model never sees it in the prompt.
+#
+#   jarvis.services.call("extensions", "list")        what is installed
+#   jarvis.services.call("extensions", "permissions") who holds each permission
+#   jarvis.services.call("extensions", "health")      is each one working
+#   jarvis.services.call("extensions", "schema")      the manifest schema
+extensions:
 
 # ---------------------------------------------------------------------------
 # MCP — anybody else's tools, inside Jarvis.

@@ -632,7 +632,7 @@ Built on the existing SKILL.md loader and MCP client — organised, curated and 
 duplicated. It comes after the platform capabilities and after M43, because a catalog that can
 install code is the marketplace attack surface that class of tool actually got burned by.
 
-- [ ] **M45 — One registry over skills, MCP servers and plugins** · size L · deps M13, M14, M43
+- [x] **M45 — One registry over skills, MCP servers and plugins** · size L · deps M13, M14, M43
   - Scope: a single model over everything extensible — `SKILL.md` skills (the open Agent Skills
     format, so they move to and from Claude Code unchanged), MCP servers, and integration/tool
     plugins — each with a manifest: id, version, description, author, declared permissions and
@@ -641,7 +641,16 @@ install code is the marketplace attack surface that class of tool actually got b
     manifests validate against, and a malformed manifest is rejected rather than half-loaded.
     First-party skills that exercise the system: a research-report skill, a note-taking skill,
     a homelab-status skill reading the existing InfluxDB, and a calendar skill.
-  - Verify: `bash scripts/verify/m45-registry.sh`
+  - Verify: `bash scripts/verify/m45-registry.sh` — 15 checks.
+  - The registry READS the three subsystems rather than owning them, and indexes on
+    `EVENT_JARVIS_START` rather than declaring them as `DEPENDENCIES`: a dependency would have
+    forced them to set up, so an install with no `mcp:` block would have grown an MCP
+    integration because something wanted to list it. Enforcement today is real for skills (an
+    invalid manifest drops the skill from the store, so it leaves the system prompt) and for
+    MCP (the server is disabled); a third party's manifest arrives with the catalog in M47 and
+    goes through the same call. The four shipped skills needed a fifth thing built: nothing
+    could put a recorded measurement in a sentence, so `metrics_query` (read-only, Tier 1) now
+    reads the series the dashboards draw.
 
 - [ ] **M46 — The management surface** · size L · deps M45, M05
   - Scope: a Skills & Plugins section in the console on the design system with real loading,

@@ -218,8 +218,17 @@ class SkillStore:
         root: Path,
         max_body_chars: int = DEFAULT_MAX_BODY,
         enabled: list[str] | None = None,
+        bundled_root: Path | None = None,
     ) -> None:
         self.root = Path(root)
+        #: Skills that ship with Jarvis, read BEFORE the operator's directory.
+        #:
+        #: A same-named skill in `root` replaces the bundled one rather than
+        #: colliding with it, which is the whole point: overriding
+        #: `note-taking` should mean editing one file, not finding where the
+        #: shipped copy lives and deleting it. The registry reports which is
+        #: which, so an operator can see that they have overridden something.
+        self.bundled_root = Path(bundled_root) if bundled_root else None
         self.max_body_chars = int(max_body_chars)
         self.enabled = [str(name) for name in (enabled or [])]
         self.skills: dict[str, Skill] = {}
@@ -232,10 +241,16 @@ class SkillStore:
     def load(self) -> int:
         self.skills.clear()
         self.errors.clear()
+        loaded = 0
+        if self.bundled_root and self.bundled_root.is_dir():
+            loaded += self._load_root(self.bundled_root, bundled=True)
         if not self.root.is_dir():
-            _LOGGER.debug("skills: %s does not exist; nothing loaded", self.root)
-            return 0
-        for skill_md in sorted(self.root.glob(f"*/{SKILL_FILE}")):
+            _LOGGER.debug("skills: %s does not exist; %d bundled loaded", self.root, loaded)
+            return loaded
+        return self._load_root(self.root, bundled=False)
+
+    def _load_root(self, root: Path, *, bundled: bool) -> int:
+        for skill_md in sorted(root.glob(f"*/{SKILL_FILE}")):
             if len(self.skills) >= MAX_SKILLS:
                 self.errors.append(
                     {"path": str(skill_md), "error": f"more than {MAX_SKILLS} skills"}
@@ -249,18 +264,31 @@ class SkillStore:
                 continue
             if self.enabled and skill.name not in self.enabled:
                 continue
-            if skill.name in self.skills:
-                self.errors.append(
-                    {"path": str(skill_md), "error": f"another skill is already called {skill.name!r}"}
-                )
-                continue
+            existing = self.skills.get(skill.name)
+            if existing is not None:
+                # Two in the SAME root is a mistake and is reported. The
+                # operator's copy silently replacing a bundled one is the
+                # documented override, and is not.
+                if bundled or (self.bundled_root is None) or not str(
+                    existing.path
+                ).startswith(str(self.bundled_root)):
+                    self.errors.append(
+                        {
+                            "path": str(skill_md),
+                            "error": f"another skill is already called {skill.name!r}",
+                        }
+                    )
+                    continue
+                _LOGGER.info("skills: %s overrides the bundled skill", skill_md)
             self.skills[skill.name] = skill
-        _LOGGER.info(
-            "skills: %d loaded from %s%s",
-            len(self.skills),
-            self.root,
-            f" ({len(self.errors)} could not be read)" if self.errors else "",
-        )
+        if not bundled:
+            _LOGGER.info(
+                "skills: %d loaded from %s%s%s",
+                len(self.skills),
+                self.root,
+                f" (+ bundled from {self.bundled_root})" if self.bundled_root else "",
+                f" ({len(self.errors)} could not be read)" if self.errors else "",
+            )
         return len(self.skills)
 
     # --- reading ----------------------------------------------------------
@@ -375,10 +403,17 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     root = Path(str(cfg.get("path") or DEFAULT_PATH))
     if not root.is_absolute():
         root = Path(jarvis.config_dir) / root
+    # Shipped skills live in the package, so they are present on a fresh
+    # install with an empty `config/skills/` — the alternative was a first run
+    # where the feature exists and has nothing in it.
+    bundled = Path(__file__).with_name("bundled")
+    if cfg.get("bundled") is False:
+        bundled = None
     store = SkillStore(
         root,
         max_body_chars=int(cfg.get("max_body_chars") or DEFAULT_MAX_BODY),
         enabled=list(cfg.get("enabled") or []),
+        bundled_root=bundled,
     )
     store.load()
     jarvis.data[DATA_STORE] = store

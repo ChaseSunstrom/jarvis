@@ -550,6 +550,27 @@ house's summary is a fraction of a real one's.
 | No hard-coded colour, size or type value left in the app's Kotlin | Automated | `python3 scripts/verify/token_lint.py --require-clean android-app/app/src/main/kotlin` — 132 hits to zero, which needed two new spacing steps, a `Size` scale and thirteen derived alpha constants in `design/tokens.json` |
 | The whole design-system gate | Automated | `bash scripts/verify/m01-design-tokens.sh` — 46 checks, measured 2026-08-24 |
 
+### Skills, MCP servers and plugins, as one thing (M45)
+
+`bash scripts/verify/m45-registry.sh` — 15 checks.
+
+| Claim | Level | Proof |
+|---|---|---|
+| Every extensible thing carries a manifest: id, version, description, author, declared permissions, tool allowlist, network and filesystem needs | Automated | `jarvis/integrations/extensions/manifest.py`; derived from each subsystem rather than stored beside it, so a skill stays a portable Agent Skill |
+| The manifest is validated against a JSON Schema an author can read | Automated | `manifest.schema.json` — a real draft 2020-12 document. Enforced by a hand-written validator rather than a dependency (this package installs from wheels with no compiler) |
+| …and the validator implements every keyword the schema uses | Automated | `test_the_validator_knows_every_keyword_the_schema_uses` — the real failure mode of a hand-rolled validator is a schema that grows a keyword nothing enforces, so the document describes a stricter manifest than the one being accepted |
+| A malformed manifest is rejected rather than half-loaded | Automated | `test_an_invalid_skill_manifest_leaves_the_system_prompt_too` — out of the index, out of the store, and out of `index_block()`. Dropping only the bad keys is how a `tools` list with one unparseable entry becomes a shorter allowlist than the author wrote and a wider one than they meant |
+| A manifest cannot invent a permission | Automated | the vocabulary is a closed enum of 8. An accepted-but-unenforced permission is worse than a rejected one: it reads as a declaration in a management surface and constrains nothing |
+| A manifest cannot list a tool it has not asked permission for | Automated | `TOOL_PERMISSIONS` + `under_declared()` — `write_file` without `filesystem_write`, `web_search` without `network`, `remember` without `memory_write` |
+| A plugin's `act` permission cannot disagree with the taint gate | Automated | derived from `PluginTool.read_only`, which is the same field M43's escalation reads — not declared separately |
+| The registry can say who holds each permission, not just what each item may do | Automated | `permission_scope()` — everything in the house that can write to memory, or start a process, in one list |
+| Health never raises when something is down | Automated | `test_health_never_raises_when_something_is_broken` — a registry that throws when one server is down shows nothing at the moment somebody opened it |
+| Indexing does not force MCP to exist | Automated | the gate asserts an empty install grows nothing but `extensions`. `DEPENDENCIES` would have set up MCP for an install that never configured one |
+| Four skills ship and all four validate | Automated | research-report, note-taking, homelab-status, diary — 1,405 words, four `SKILL.md` files and nothing executable beside them |
+| A skill in the operator's directory replaces a shipped one, without reading as a collision | Automated | `test_a_users_skill_overrides_a_bundled_one_of_the_same_name`; two of the same name in ONE root is still an error |
+| A recorded measurement can reach a sentence | Automated | `metrics_query` (read-only, in `READ_ONLY_TOOLS`) over the same sources the dashboards draw; the gate asserts the skill names it |
+| A third party's manifest, from a catalog | **Not yet** | M47. The gate for it is the same `Manifest.from_raw` call; what does not exist yet is anything that installs code from off this machine |
+
 ### Motion (M44)
 
 `bash scripts/verify/m44-motion.sh` — 12 checks. Measured in a real headless

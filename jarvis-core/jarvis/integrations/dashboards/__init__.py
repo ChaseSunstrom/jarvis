@@ -293,6 +293,8 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         store.load_shipped(Path(shipped) / str(options.get("shipped") or "dashboards"))
     jarvis.data[DOMAIN] = store
 
+    _register_metrics_tool(jarvis)
+
     _LOGGER.info(
         "dashboards ready: %d source(s), %d saved, %d shipped",
         len(sources),
@@ -300,3 +302,111 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         len(store.shipped),
     )
     return True
+
+
+#: How far back `metrics_query` will look without being asked to.
+DEFAULT_METRICS_HOURS = 6
+#: And the furthest it will go. A month of one-minute samples is not an answer
+#: anybody wanted spoken aloud, and it is a query that can hurt an InfluxDB.
+MAX_METRICS_HOURS = 24 * 14
+
+
+def _register_metrics_tool(jarvis: "Jarvis") -> None:
+    """Let the model read the same numbers the dashboards draw.
+
+    The measurements were already here — `metrics/sources/influx.py` has been
+    feeding the console's charts — but nothing could put one in a sentence.
+    "Is the loft warmer than it was this morning" was a question Jarvis could
+    draw and could not answer.
+
+    Read-only and Tier 1: it queries a time series and returns numbers. The
+    summary rather than the points, because a spoken answer needs "18.4°C,
+    down 2 degrees since midnight" and a hundred samples is what makes a model
+    invent a trend rather than read one.
+    """
+    registry = jarvis.data.get("llm_tools")
+    if registry is None or not hasattr(registry, "register"):
+        return
+    from ...llm.tools import schema_object
+
+    async def tool_metrics_query(args: dict[str, Any], context: Any = None) -> Any:
+        source = str(args.get("source") or "internal")
+        keys = args.get("keys") or args.get("key") or []
+        if isinstance(keys, str):
+            keys = [keys]
+        keys = [str(k) for k in list(keys)[:8] if str(k).strip()]
+        if not keys:
+            available = await async_sources(jarvis)
+            return {
+                "status": "error",
+                "error": "name at least one series in `keys`",
+                "sources": available,
+            }
+        try:
+            hours = float(args.get("hours") or DEFAULT_METRICS_HOURS)
+        except (TypeError, ValueError):
+            hours = float(DEFAULT_METRICS_HOURS)
+        hours = max(0.05, min(hours, float(MAX_METRICS_HOURS)))
+        rows = await async_query(
+            jarvis,
+            source,
+            keys,
+            Window.last(hours * 3600.0),
+            str(args.get("aggregate") or ""),
+        )
+        out = []
+        for row in rows:
+            values = [v for _, v in row.get("points", []) if v is not None]
+            summary: dict[str, Any] = {
+                "key": row.get("key"),
+                "label": row.get("label"),
+                "unit": row.get("unit"),
+                "error": row.get("error", ""),
+                "samples": len(values),
+            }
+            if values:
+                summary.update(
+                    {
+                        "latest": round(values[-1], 4),
+                        "first": round(values[0], 4),
+                        "min": round(min(values), 4),
+                        "max": round(max(values), 4),
+                        "mean": round(sum(values) / len(values), 4),
+                        "change": round(values[-1] - values[0], 4),
+                    }
+                )
+            out.append(summary)
+        return {"status": "ok", "source": source, "hours": round(hours, 3), "series": out}
+
+    registry.register(
+        name="metrics_query",
+        description=(
+            "Read recorded measurements — temperatures, power, model throughput, "
+            "anything the dashboards graph. Returns a summary per series (latest, "
+            "min, max, mean, change over the window), not the raw samples. Call "
+            "with no `keys` to find out what this house records."
+        ),
+        parameters=schema_object(
+            {
+                "keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Series keys, e.g. sensor.office_temperature.",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Which store: 'internal' (default) or 'influx'.",
+                },
+                "hours": {
+                    "type": "number",
+                    "description": f"How far back (default {DEFAULT_METRICS_HOURS}).",
+                },
+                "aggregate": {
+                    "type": "string",
+                    "description": "mean, min, max, sum or last. The series' own default if unset.",
+                },
+            },
+        ),
+        handler=tool_metrics_query,
+        domain=DOMAIN,
+    )
