@@ -26,14 +26,22 @@ long it would take. Move an item into `MILESTONES.md` to make it work.
    note is the operator's call — a note is a document, and deleting documents
    on a spoken instruction is exactly what the approval gate exists for.
 
+4. **A deep link to a conversation, so the rig (and a person) can reopen a
+   thread.** The console keeps its open conversation in page state and has
+   no URL for one; the rig's browser transport opens a fresh page per turn,
+   so a browser-driven scenario cannot have a second turn (`ISSUES.md`). A
+   `?conversation=<id>` on the voice screen plus the id exposed on the page
+   would make multi-turn console scenarios real — and give the history
+   sidebar something to link to.
+
 ## Lower value
 
-4. **The graph's labels could be measured, not estimated.** Collision
+5. **The graph's labels could be measured, not estimated.** Collision
    avoidance uses a per-character width; a `getBBox()` pass after first
    paint would let two long labels sit closer without flipping.
-5. **The phone's voice screen through the rig.** ADT-031…035 record what only
+6. **The phone's voice screen through the rig.** ADT-031…035 record what only
    a handset can confirm; an emulator in CI could carry the instrument's
    goldens at more than one density.
-6. **Retire the `--no-browser` flag's second meaning.** It both skips the
+7. **Retire the `--no-browser` flag's second meaning.** It both skips the
    console build and, now, skips the browser variants; two flags would read
    better once the browser variants are routine.

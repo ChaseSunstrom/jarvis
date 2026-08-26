@@ -369,6 +369,29 @@ Five tabs is the cap M48's verify script set, and VOICE uses the fifth. On the p
 screen is native, so `console_parity_test.py` binds the phone's strip to the four console
 front doors (`nav && !hud`) rather than to all five.
 
+## 15. Forgetting takes the words out of the transcript; a reminder is a moment first
+
+Two calls the live suite forced on the night of 26 August, neither in the
+original spec.
+
+**Forgetting.** "Forget what I told you about the shed key" removed the
+memory entry and left the sentence in the conversation, and the model read
+it back a turn later — truthfully: it *was* still there. The spec says a
+forgotten fact is gone; a transcript that still carries it is a second store
+the user did not ask for. So the agent now blanks the user turn that stated
+the fact and the assistant turn that acknowledged it, in the live history
+and in the archive the console redraws, leaving a placeholder that says a
+fact was forgotten there. The request to forget stays: it names the subject,
+not the fact. The cost is a transcript with a hole in it; the alternative is
+a Jarvis that "forgets" and then quotes you.
+
+**Reminders.** The schedule delivered a fired reminder through the phone
+channel only. In a house with no phone paired it became a task result and a
+log line, which is not a reminder. A reminder now lands in the notifications
+inbox — kind `reminder`, kept until read, on every console — and goes to the
+phone second. Someone with a phone gets it twice, in two places that both
+show it as read once it is read; someone without gets it at all.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

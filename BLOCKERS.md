@@ -38,8 +38,14 @@ which ~11 s is streaming and recognising the audio and ~6 s is the model. The
 model is `qwen3.8-27b` on a remote llama-swap; there is no GPU on this box and
 faster-whisper runs on four shared vCPUs.
 
-This is not a code defect and no change in this repository will fix it. It
-needs one of:
+Corrected on 26 August with the operator's numbers: the chat model is
+`qwen3.8-27b` at ≈75 tok/s with a 256k context, which is fast enough — the
+model's generation is not the wait. What is: recognising the audio on four
+shared vCPUs (~11 s), prefilling a large system prompt into a 256k window on
+every turn, and starting synthesis. M60 (`docs/OVERHAUL_PLAN.md`) takes the
+parts of that this repository can change: a cached prompt prefix, a leaner
+prompt, sentence-streamed speech, whisper sized to the CPU. What remains after
+that is hardware, and still needs one of:
 
 * a small model (3–8 B class) served at the same endpoint for the voice path,
   with the large one kept for research and coding; or
