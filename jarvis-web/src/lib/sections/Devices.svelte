@@ -185,6 +185,45 @@
 		}
 	}
 
+	/**
+	 * Take the entity being edited out of the house (M69).
+	 *
+	 * Two presses, like discarding edits: the first arms and says so, the
+	 * second removes. There is no undo — the registry entry, the state and the
+	 * live object all go — so a single press on a row that sits under the
+	 * pointer between MANAGE and SAVE is not enough to mean it. The row itself
+	 * leaves when the `state_changed` with no new state arrives, the same way it
+	 * would if the assistant had removed it after a spoken yes.
+	 */
+	let armedRemove = $state('');
+	let removing = $state(false);
+
+	async function remove(): Promise<void> {
+		if (!conn || !editing) return;
+		const entityId = editing;
+		const label = labelFor(entityId);
+		if (armedRemove !== entityId) {
+			armedRemove = entityId;
+			toasts.info(`Remove ${label}?`, 'Press REMOVE again to take it out of the house for good.');
+			return;
+		}
+		removing = true;
+		err = '';
+		try {
+			await conn.client.removeEntity(entityId);
+			editing = '';
+			armedRemove = '';
+			discard.reset();
+			entries = (await conn.client.listEntities()) ?? entries.filter((e) => e.entity_id !== entityId);
+			toasts.success(`Removed ${label}`, entityId);
+		} catch (e) {
+			err = describeError(e);
+			toasts.error(`Could not remove ${label}`, describeError(e));
+		} finally {
+			removing = false;
+		}
+	}
+
 	async function load(connection: Connection): Promise<void> {
 		const client = connection.client;
 		const fresh = await client.getStates();
@@ -270,6 +309,28 @@
 					if (applyStateChanged(stateMap, event)) publish();
 				}, 'state_changed')
 			);
+			// The registries, kept live (M69): an entity the assistant removed
+			// after a spoken yes leaves the rows through `state_changed`, but
+			// its entry — and the device it hung off — would otherwise stay in
+			// `entries` and `devices` until a reload, grouping ghosts by area.
+			for (const type of ['entity_registry_updated', 'device_registry_updated']) {
+				try {
+					subs.push(
+						await connection.client.subscribeEvents(() => {
+							void (async () => {
+								try {
+									entries = (await connection.client.listEntities()) ?? entries;
+									devices = (await connection.client.listDevices()) ?? devices;
+								} catch {
+									// The rows are still right; only the grouping is stale.
+								}
+							})();
+						}, type)
+					);
+				} catch {
+					// An older jarvis-core does not fire them.
+				}
+			}
 			// A phone that registers while this page is open must appear on
 			// it. Loading the list once at mount meant somebody who opened
 			// the console, then set up the app, saw an empty panel telling
@@ -505,6 +566,12 @@
 										<span class="summary" data-testid="summary-{state.entity_id}">
 											{summary || 'No changes yet.'}
 										</span>
+										<Button variant="danger" testid="remove-{state.entity_id}"
+											disabled={removing}
+											title="Take this entity out of the house for good"
+											onclick={remove}>
+											{removing ? 'Removing…' : armedRemove === state.entity_id ? 'REMOVE — SURE?' : 'REMOVE'}
+										</Button>
 									</div>
 								</div>
 							{/if}

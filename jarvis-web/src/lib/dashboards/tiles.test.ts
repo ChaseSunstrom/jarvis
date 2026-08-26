@@ -64,6 +64,18 @@ describe('an entity tile', () => {
 		expect(out).toContain('light.nowhere');
 		expect(out).not.toContain('<button');
 	});
+
+	it('says the entity was removed when the board saw it go (M69)', () => {
+		// Not "add the device": the tile was right until a minute ago, and the
+		// remedy is a different one.
+		const out = html(EntityTile, { entityId: 'light.old_lamp', state: undefined, removed: true });
+		expect(out).toContain('data-testid="tile-why"');
+		expect(out).toContain('data-removed="true"');
+		expect(out).toContain('was removed from this Jarvis');
+		expect(out).toContain('light.old_lamp');
+		expect(out).not.toContain('No entity called');
+		expect(out).not.toContain('<button');
+	});
 });
 
 describe('readings', () => {

@@ -134,6 +134,15 @@ export interface PendingApproval {
 	 * the field's name to the tier contract.
 	 */
 	summary?: string;
+	 * The clock this request is on, in seconds: `llm.question_ttl` for a
+	 * question, `llm.approval_ttl` for an action (M66). Count THIS down, so the
+	 * bar and the voice — which says "expired after 30 minutes" — agree.
+	 */
+	ttl?: number;
+	/** Which conversation raised it; the next thing said there can answer it. */
+	conversation_id?: string | null;
+	/** Its reply is read aloud, so a phone shows the question and does not say it. */
+	spoken?: boolean;
 }
 
 /** A row in the chat sidebar: enough to list a conversation, not to read it. */
@@ -784,6 +793,21 @@ export class JarvisClient {
 		});
 	}
 
+	/**
+	 * Take an entity out of the house for good (M69): its registry entry, its
+	 * state and its live object, through the same path the assistant's
+	 * `remove_entities` runs after its approval. The row disappears on the
+	 * `state_changed` that follows, not on this reply.
+	 */
+	removeEntity(entityId: string): Promise<{
+		entity_id: string;
+		removed: boolean;
+		had_state: boolean;
+		had_registry_entry: boolean;
+	}> {
+		return this.command({ type: 'config/entity_registry/remove', entity_id: entityId });
+	}
+
 	/** The manageable view of tools, with `editable` and the service block. */
 	listToolRows(): Promise<ToolRow[]> {
 		return this.command<ToolRow[]>({ type: 'config/tool/list' });
@@ -1251,6 +1275,16 @@ export class JarvisClient {
 
 	updateDevice(deviceId: string, changes: Record<string, any>): Promise<any> {
 		return this.command({ type: 'config/device_registry/update', device_id: deviceId, ...changes });
+	}
+
+	/** Forget a device and every entity on it (M69); answers with the entity ids that went. */
+	removeDevice(deviceId: string): Promise<{
+		device_id: string;
+		name?: string;
+		removed: boolean;
+		entities: string[];
+	}> {
+		return this.command({ type: 'config/device_registry/remove', device_id: deviceId });
 	}
 
 	// --- voice / llm -------------------------------------------------------

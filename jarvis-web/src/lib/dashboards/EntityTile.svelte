@@ -30,8 +30,19 @@ has never seen says so and how to fix it, rather than showing `—` forever.
 		error?: string;
 		/** For the "changed … ago" line; a test pins the clock. */
 		now?: number;
+		/** The entity was removed from the house while this board was open (M69). */
+		removed?: boolean;
 	}
-	let { entityId, state, live = false, busy = false, onswitch, error = '', now }: Props = $props();
+	let {
+		entityId,
+		state,
+		live = false,
+		busy = false,
+		onswitch,
+		error = '',
+		now,
+		removed = false
+	}: Props = $props();
 
 	const on = $derived(isOn(state));
 	const control = $derived(state ? switchFor(state) : null);
@@ -46,8 +57,12 @@ has never seen says so and how to fix it, rather than showing `—` forever.
 </script>
 
 {#if !state}
-	<p class="why" data-testid="tile-why">
-		No entity called <code>{entityId}</code> on this Jarvis. Add the device, or point this tile at one of yours.
+	<p class="why" data-testid="tile-why" data-removed={removed ? 'true' : undefined}>
+		{#if removed}
+			<code>{entityId}</code> was removed from this Jarvis. Point this tile at another entity, or take it off the board.
+		{:else}
+			No entity called <code>{entityId}</code> on this Jarvis. Add the device, or point this tile at one of yours.
+		{/if}
 	</p>
 {:else}
 	<div class="tile" data-testid="tile-{entityId}">

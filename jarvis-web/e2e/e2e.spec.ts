@@ -1486,6 +1486,133 @@ test("Jarvis can ask a question and the answer reaches the server", async ({
   await expect(page.getByTestId("error")).toHaveCount(0);
 });
 
+test("a question that runs out of time says it lapsed, and does not vanish", async ({
+  page,
+}) => {
+  // The operator came back to answer after the clock and found nothing where
+  // the question had been (M66). The card used to be dropped at 0 s. Now it
+  // stays, says what happened and after how long — the sentence the voice
+  // says to a late answer — and offers CLEAR; and a late press on it is told
+  // the same by the server rather than "unknown, expired or already-used".
+  await page.goto("/house/devices");
+  await expect(page.getByTestId("entity-light.lab_lights")).toBeVisible({
+    timeout: 15_000,
+  });
+  const ask = async (payload: Record<string, unknown>) =>
+    page.evaluate(
+      (body) =>
+        new Promise((resolve) => {
+          const ws = new WebSocket(
+            `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+          );
+          ws.onopen = () => ws.send(JSON.stringify({ id: 94, ...body }));
+          ws.onmessage = () => {
+            ws.close();
+            resolve(null);
+          };
+        }),
+      payload,
+    );
+
+  // A long clock reads as minutes, not "1789s".
+  await ask({
+    type: "jarvis/test/ask_user",
+    request_id: "ask-long",
+    question: "Which lamp did you mean?",
+  });
+  await expect(page.getByTestId("question-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("approval-expiry-ask_user")).toHaveText(/^\d+:\d\d$/);
+  await page.getByTestId("answer-dismiss").click();
+  await expect(page.getByTestId("question-ask_user")).toHaveCount(0, {
+    timeout: 10_000,
+  });
+
+  // A two-second clock, watched run out.
+  await ask({
+    type: "jarvis/test/ask_user",
+    request_id: "ask-lapse",
+    question: "What is the printer's URL?",
+    ttl: 2,
+  });
+  await expect(page.getByTestId("question-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("lapsed-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("question-ask_user")).toHaveCount(0);
+  await expect(page.getByTestId("lapsed-text")).toHaveText(
+    "This question lapsed after 2 seconds — ask again and Jarvis will wait.",
+  );
+  await expect(page.getByTestId("approvals-head")).toContainText("1 lapsed");
+  // Still there after a moment: it does not vanish on its own.
+  await page.waitForTimeout(1500);
+  await expect(page.getByTestId("lapsed-ask_user")).toBeVisible();
+  await page.getByTestId("lapsed-clear").click();
+  await expect(page.getByTestId("approvals")).toHaveCount(0, { timeout: 10_000 });
+
+  // A late answer, sent anyway: the server says the same thing in words.
+  await ask({
+    type: "jarvis/test/ask_user",
+    request_id: "ask-late",
+    question: "Which one?",
+    ttl: 60,
+  });
+  await expect(page.getByTestId("question-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  const late = await page.evaluate(
+    () =>
+      new Promise<Record<string, unknown>>((resolve) => {
+        const ws = new WebSocket(
+          `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
+        );
+        ws.onopen = () => {
+          // Age the request past its clock on the mock, then answer it.
+          ws.send(
+            JSON.stringify({
+              id: 93,
+              type: "jarvis/test/expire_approval",
+              request_id: "ask-late",
+            }),
+          );
+        };
+        let sent = false;
+        ws.onmessage = (ev) => {
+          const frame = JSON.parse(ev.data as string);
+          if (frame.id === 93 && !sent) {
+            sent = true;
+            ws.send(
+              JSON.stringify({
+                id: 92,
+                type: "jarvis/approve",
+                request_id: "ask-late",
+                approved: true,
+                answer: "the corner one",
+              }),
+            );
+          } else if (frame.id === 92) {
+            ws.close();
+            resolve(frame.result);
+          }
+        };
+      }),
+  );
+  expect(late.expired).toBe(true);
+  expect(late.error).toBe(
+    "That question expired after 60 seconds; ask again and I'll wait.",
+  );
+  // ...and the bar, told by the server, shows it lapsed rather than dropping it.
+  await expect(page.getByTestId("lapsed-ask_user")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("lapsed-clear").click();
+  await expect(page.getByTestId("approvals")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByTestId("error")).toHaveCount(0);
+});
+
 /** What the console's own password is set to, once, by the first test to need it. */
 const CONSOLE_PASSWORD = "e2e-console-password";
 /** Mirrors JARVIS_PAIRING_SECRET on the mock backend (see mock-ha.mjs). */

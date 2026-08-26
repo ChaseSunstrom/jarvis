@@ -100,6 +100,15 @@
 	// tiles of the same light are one light.
 	let data = $state<Record<string, SeriesData[]>>({});
 	let states = $state<Record<string, EntityState>>({});
+	/**
+	 * Entities this board saw leave the house (M69), by id.
+	 *
+	 * A `state_changed` with no new state is the one signal a removal gives, and
+	 * without remembering it the tile reads "No entity called X on this Jarvis.
+	 * Add the device…" — the wording for a tile that was never right, shown for
+	 * one that was right until a minute ago.
+	 */
+	let removed = $state<Record<string, true>>({});
 	let readingsBy = $state<Record<string, ReadingsPayload>>({});
 	let stills = $state<Record<string, Still | null>>({});
 	let sky = $state<SkySummary | null>(null);
@@ -174,8 +183,13 @@
 					const entityId = String(event.data?.entity_id ?? '');
 					const next = event.data?.new_state as EntityState | undefined;
 					if (!entityId) return;
-					if (next) states[entityId] = next;
-					else delete states[entityId];
+					if (next) {
+						states[entityId] = next;
+						delete removed[entityId];
+					} else {
+						delete states[entityId];
+						removed[entityId] = true;
+					}
 					for (const id of Object.keys(readingsBy)) {
 						readingsBy[id] = {
 							...readingsBy[id],
@@ -619,6 +633,7 @@
 							<EntityTile
 								entityId={widget.entity}
 								state={states[widget.entity]}
+								removed={Boolean(removed[widget.entity])}
 								live={hero}
 								busy={busyTile === widget.entity}
 								error={tileErrors[widget.entity] ?? ''}

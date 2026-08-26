@@ -69,6 +69,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const nowIso = () => new Date().toISOString();
 
 /** A state object in the wire shape both backends use. */
+/**
+ * What jarvis-core says to an answer that arrives after the clock (M66) —
+ * `expired_sentence` in jarvis/llm/tools.py, word for word, so the bar shows
+ * what the voice would say.
+ */
+function expiredSentence(req) {
+	const seconds = Number(req.ttl) || 0;
+	const minutes = Math.round(seconds / 60);
+	const clock =
+		seconds < 120 ? `${Math.round(seconds)} seconds` : `${minutes} minute${minutes === 1 ? '' : 's'}`;
+	return req.answerable
+		? `That question expired after ${clock}; ask again and I'll wait.`
+		: `That request to ${req.tool} expired after ${clock}; ask again and I'll hold it for you.`;
+}
+
 function mkState(entity_id, state, attributes = {}) {
 	return {
 		entity_id,
@@ -2377,6 +2392,22 @@ index 1234567..89abcde 100644
 						});
 						break;
 					}
+					// Lapsed on its clock (M66). jarvis-core purges on the next
+					// call and answers in words — the same sentence the voice
+					// says — with `expired` so the bar keeps the card as lapsed.
+					if (world.approvals[index].expires_at <= Date.now() / 1000) {
+						const [gone] = world.approvals.splice(index, 1);
+						broadcast('jarvis_approval_expired', { ...gone, expired: true });
+						ok(msg.id, {
+							status: 'error',
+							request_id: gone.request_id,
+							tool: gone.tool,
+							expired: true,
+							waited_seconds: gone.ttl,
+							error: expiredSentence(gone)
+						});
+						break;
+					}
 					const [req] = world.approvals.splice(index, 1);
 					if (req.tool === 'change_setting' && msg.approved) {
 						// The real tool writes through `config/settings/set`, so
@@ -2424,6 +2455,7 @@ index 1234567..89abcde 100644
 				// way the assistant would. Not a jarvis-core command — the real
 				// event is fired by the tool registry when a gate holds an action.
 				case 'test/raise_approval': {
+					const ttl = Number(msg.ttl) > 0 ? Number(msg.ttl) : 300;
 					const req = {
 						request_id: msg.request_id ?? `req-${world.approvals.length + 1}`,
 						tool: msg.tool ?? 'lock_control',
@@ -2437,7 +2469,13 @@ index 1234567..89abcde 100644
 						tainted: Boolean(msg.tainted),
 						tier: 3,
 						created: Date.now() / 1000,
-						expires_at: Date.now() / 1000 + 300
+						expires_at: Date.now() / 1000 + ttl,
+						// The clock it is on, and where it came from (M66): an
+						// action waits `approval_ttl`; a request raised by a test
+						// belongs to no conversation and is not spoken.
+						ttl,
+						conversation_id: null,
+						spoken: false
 					};
 					// The same request id is the same request, as on the real
 					// server (a tool held once has one id). The HUD test re-raises
@@ -2464,6 +2502,15 @@ index 1234567..89abcde 100644
 					ok(msg.id, { answer: world.lastAnswer ?? null });
 					break;
 
+				// Test hook: age a held request past its clock without waiting
+				// for it, so the late-answer path can be driven in a second.
+				case 'jarvis/test/expire_approval': {
+					const aged = world.approvals.find((a) => a.request_id === msg.request_id);
+					if (aged) aged.expires_at = Date.now() / 1000 - 1;
+					ok(msg.id, { expired: Boolean(aged) });
+					break;
+				}
+
 				case 'jarvis/test/ask_user': {
 					const req = {
 						request_id: msg.request_id ?? `ask-${world.approvals.length + 1}`,
@@ -2479,7 +2526,12 @@ index 1234567..89abcde 100644
 						tainted: Boolean(msg.tainted),
 						tier: 3,
 						created: Date.now() / 1000,
-						expires_at: Date.now() / 1000 + 300
+						// A question's own clock: thirty minutes, unless the test
+						// wants to watch one lapse (M66).
+						expires_at: Date.now() / 1000 + (Number(msg.ttl) > 0 ? Number(msg.ttl) : 1800),
+						ttl: Number(msg.ttl) > 0 ? Number(msg.ttl) : 1800,
+						conversation_id: msg.conversation_id ?? null,
+						spoken: Boolean(msg.spoken)
 					};
 					const dupAsk = world.approvals.findIndex((a) => a.request_id === req.request_id);
 					if (dupAsk >= 0) world.approvals.splice(dupAsk, 1, req);
@@ -4588,6 +4640,64 @@ index 1234567..89abcde 100644
 					}
 					broadcast('entity_registry_updated', { action: 'update', entity_id: entry.entity_id });
 					ok(msg.id, result);
+					break;
+				}
+
+				// Taking things out of the house (M69). Mirrors jarvis-core's one
+				// delete path: the entry, the state (a `state_changed` with no
+				// `new_state`, which is what drops the row and marks the tile),
+				// and the registry event.
+				case 'config/entity_registry/remove': {
+					const entityId = String(msg.entity_id || '').trim().toLowerCase();
+					if (!entityId) {
+						fail(msg.id, 'invalid_format', 'entity_id is required');
+						break;
+					}
+					const at = world.entities.findIndex((e) => e.entity_id === entityId);
+					const state = world.states.get(entityId);
+					if (at < 0 && !state) {
+						fail(msg.id, 'not_found', `unknown entity ${entityId}`);
+						break;
+					}
+					if (at >= 0) world.entities.splice(at, 1);
+					if (state) {
+						world.states.delete(entityId);
+						broadcast('state_changed', { entity_id: entityId, old_state: state, new_state: null });
+					}
+					broadcast('entity_registry_updated', { action: 'remove', entity_id: entityId });
+					ok(msg.id, {
+						entity_id: entityId,
+						removed: true,
+						had_state: Boolean(state),
+						had_registry_entry: at >= 0
+					});
+					break;
+				}
+
+				case 'config/device_registry/remove': {
+					const deviceId = String(msg.device_id || '').trim();
+					if (!deviceId) {
+						fail(msg.id, 'invalid_format', 'device_id is required');
+						break;
+					}
+					const at = world.devices.findIndex((d) => d.id === deviceId);
+					if (at < 0) {
+						fail(msg.id, 'not_found', `unknown device ${deviceId}`);
+						break;
+					}
+					const gone = world.entities.filter((e) => e.device_id === deviceId).map((e) => e.entity_id).sort();
+					for (const entityId of gone) {
+						const state = world.states.get(entityId);
+						world.entities.splice(world.entities.findIndex((e) => e.entity_id === entityId), 1);
+						if (state) {
+							world.states.delete(entityId);
+							broadcast('state_changed', { entity_id: entityId, old_state: state, new_state: null });
+						}
+						broadcast('entity_registry_updated', { action: 'remove', entity_id: entityId });
+					}
+					const [device] = world.devices.splice(at, 1);
+					broadcast('device_registry_updated', { action: 'remove', device_id: deviceId });
+					ok(msg.id, { device_id: deviceId, name: device.name, removed: true, entities: gone });
 					break;
 				}
 
