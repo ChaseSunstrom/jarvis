@@ -582,3 +582,7 @@ is quiet. Done since:
   time behind the measurement chains. Queued after M61/M64: the memory scenarios with the
   core's forget log lines, then a second rebuild measuring the forget and guard-reference
   fixes.
+- 19:05 — M64 64/64 on the rebuilt stack; the rebuild chain is done. CI on ca6c57c: one
+  flake in home.spec — the bar's underline placed against the fallback face before the web
+  font swapped in on a slow runner — fixed structurally with a ResizeObserver on the strip
+  and its tabs (9b8fe2b). The memory rerun is up, then the second rebuild.
