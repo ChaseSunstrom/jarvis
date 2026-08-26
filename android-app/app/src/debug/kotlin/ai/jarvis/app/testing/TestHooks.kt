@@ -61,8 +61,12 @@ import java.io.File
  *  * There is no hook that answers an [ai.jarvis.app.ApprovalActivity] prompt.
  *    A test approves or denies by tapping the real button on the real screen,
  *    which is the only thing `ApprovalBridge.deliver` accepts an answer from.
- *  * There is no hook that writes the policy store. [policyDecisions] and
- *    [userPolicies] are strictly read-only.
+ *  * One hook writes ONE thing to the policy store: [enableAutomation] turns
+ *    the master switch on, which is the user's single tap in Automations and
+ *    the precondition of every dispatch (M22 made the default OFF on purpose,
+ *    and [resetState] returns it there). It cannot set a tier, `allow_always`
+ *    or any per-action policy; [policyDecisions] and [userPolicies] stay
+ *    strictly read-only.
  *  * There is no hook that changes a tier, sets `allow_always`, disables the
  *    keyguard gate, or shortens `ConsentGate.ARM_MS`.
  *  * [resetState] deletes local state to isolate tests. It can only make the
@@ -422,6 +426,22 @@ object TestHooks {
      * The one-shot first-run TOUR is the exception, and [markFirstRunSeen]
      * explains why it has to be.
      */
+    /**
+     * Turn the automation master switch on — what the user does in one tap in
+     * Automations, and the precondition of every dispatch.
+     *
+     * Without it every KNOWN action is denied by the standing ban before the
+     * tier logic runs (`ActionRegistry.dispatch`), which is correct for a
+     * phone nobody has switched on and useless for a test of what happens
+     * after: five instrumented tests — the Tier-1 command and every Tier-3
+     * prompt — failed on CI for exactly that, while the unknown-action test
+     * passed because it is refused earlier still. NOT a relaxation of a gate:
+     * Tier 3 still asks every time, and ConsentGateTest is the proof of it.
+     */
+    fun enableAutomation(context: Context) {
+        PolicyStore(context.applicationContext).automationEnabled = true
+    }
+
     fun resetState(context: Context) {
         val app = context.applicationContext
         stopChannel(app)
