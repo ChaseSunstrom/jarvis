@@ -694,7 +694,7 @@ person-shaped probe asks; what the suite found, written up.
 
 ### Settings under approval (M67)
 
-`bash scripts/verify/m67-settings-tool.sh`. Server: `jarvis-core/tests/test_settings_tool.py` (19) with
+`bash scripts/verify/m67-settings-tool.sh` — 25 checks, 25 green on the branch on 26 Aug (from a worktree with `.venv` linked in; the script has no live-stack check). Server: `jarvis-core/tests/test_settings_tool.py` (19) with
 `test_tool_tiers_contract.py` (the `held_summary` half), `test_settings_api.py`, `test_llm_tools.py` and
 `test_ask_user.py`; harness: the two M67 tests in `testing/e2e/test_harness_selftest.py`, against a real
 jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test.ts`.
