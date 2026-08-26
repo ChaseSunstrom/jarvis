@@ -135,7 +135,12 @@ for (const row of ROWS) {
 
 		// One primary at rest.
 		const primaries = page.locator(`${main} .btn.primary`).filter({ visible: true });
-		expect(await primaries.count(), 'primary controls at rest').toBeLessThanOrEqual(1);
+		// The failure names the controls: on CI (01bfb30) four screens showed two
+		// with no web file changed, and a count alone said nothing about which.
+		const primaryNames = await primaries.evaluateAll((els) =>
+			els.map((el) => el.getAttribute('data-testid') || (el.textContent || '').trim().slice(0, 40))
+		);
+		expect(primaryNames.length, `primary controls at rest: ${JSON.stringify(primaryNames)}`).toBeLessThanOrEqual(1);
 		if (row.primary) {
 			await expect(page.getByTestId(row.primary)).toBeVisible();
 			expect(await page.getByTestId(row.primary).evaluate((el) => el.classList.contains('primary'))).toBe(true);

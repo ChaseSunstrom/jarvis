@@ -74,9 +74,14 @@ for (const screen of SHOTS) {
 					glow,
 					offPalette: [...new Set(offPalette)],
 					underline: !!document.querySelector('[data-testid="nav-underline"]'),
-					accentButtons: [...document.querySelectorAll('button')].filter(
-						(b) => (b as HTMLElement).offsetParent !== null && getComputedStyle(b).backgroundColor === accent
-					).length
+					// Named, not counted: a second filled control on CI (01bfb30, six
+					// screens at once, no web file changed) could not be told from
+					// here without the name of the thing that was filled.
+					accentButtons: [...document.querySelectorAll('button')]
+						.filter(
+							(b) => (b as HTMLElement).offsetParent !== null && getComputedStyle(b).backgroundColor === accent
+						)
+						.map((b) => b.getAttribute('data-testid') || (b.textContent || '').trim().slice(0, 40))
 				};
 			},
 			{ panel: rgb(hex('--jv-panel')), bg: rgb(hex('--jv-bg')), accent: rgb(hex('--jv-accent')) }
@@ -93,7 +98,10 @@ for (const screen of SHOTS) {
 		// Panels are the panel colour or the ground; nothing tints itself.
 		expect(facts.offPalette, `panel backgrounds off the palette: ${JSON.stringify(facts.offPalette)}`).toEqual([]);
 		// The accent is spent, not spread: at most one filled primary control at a time.
-		expect(facts.accentButtons, 'more than one filled accent control').toBeLessThanOrEqual(1);
+		expect(
+			facts.accentButtons.length,
+			`more than one filled accent control: ${JSON.stringify(facts.accentButtons)}`
+		).toBeLessThanOrEqual(1);
 	});
 }
 
