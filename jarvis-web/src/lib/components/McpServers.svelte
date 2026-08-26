@@ -42,7 +42,10 @@
 		type McpServer
 	} from '$lib/mcpDraft';
 
-	let { conn, count = $bindable(0), query = '', matches = $bindable(0) }: { conn: Connection | null; count?: number; query?: string; matches?: number } = $props();
+	// `adding` is bindable so the catalogue above the folds (M65) can open
+	// this form from its "add by URL" line: the fold is closed at rest, and a
+	// pointer to a form nobody can see is not a way in.
+	let { conn, count = $bindable(0), query = '', matches = $bindable(0), adding = $bindable(false) }: { conn: Connection | null; count?: number; query?: string; matches?: number; adding?: boolean } = $props();
 	/** The tools page's one search (M55): a row matches when any of its words do. */
 	function matchesQuery(row: object, q: string): boolean {
 		const needle = q.trim().toLowerCase();
@@ -65,7 +68,6 @@
 	let loaded = $state(false);
 	let busy = $state('');
 	let err = $state('');
-	let adding = $state(false);
 	let form = $state<McpForm>(blankMcpForm());
 	let expanded = $state('');
 	/** name -> the inspect payload, once it has been asked for. */

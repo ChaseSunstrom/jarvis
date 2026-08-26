@@ -838,3 +838,248 @@ def test_the_catalog_field_is_not_the_protocols_message_id() -> None:
     assert _entry_id({"id": 42, "entry": "bin-day"}) == "bin-day"
     assert _entry_id({"id": 42}) == "", "the message id was read as an entry id"
     assert _entry_id({"entry_id": "bin-day"}) == "bin-day"
+
+
+# --- the shipped catalogue (M65) ---------------------------------------------
+#
+# "I can't browse the tools from the settings": the catalogue had no source
+# by default, so there was nothing to browse. The one source that ships is
+# this package's own skill folders — not a URL, not a default remote list —
+# and these hold the index honest against the SKILL.md files beside it.
+
+
+def _shipped_index() -> list[dict]:
+    import json
+
+    raw = json.loads((BUNDLED / "index.json").read_text(encoding="utf-8"))
+    assert isinstance(raw, dict) and isinstance(raw.get("entries"), list)
+    return raw["entries"]
+
+
+def test_the_shipped_catalogue_is_the_package_folder_wherever_the_package_is() -> None:
+    """Resolved from the skills package, so /srv/jarvis and a checkout both work.
+
+    A path typed into the source would be right in exactly one of the two
+    places the package lives, and the wrong one is the deployed image.
+    """
+    from jarvis.integrations.extensions.catalog import (
+        BUNDLED_SOURCE,
+        DEFAULT_SOURCES,
+        bundled_source,
+    )
+    from jarvis.integrations.skills import BUNDLED_ROOT
+
+    source = bundled_source()
+    assert source.name == BUNDLED_SOURCE == "bundled"
+    assert source.kind == "skill" and source.enabled
+    assert source.url == BUNDLED_ROOT.as_uri() == BUNDLED.as_uri()
+    assert source.url.startswith("file://")
+    # The M47 refusal stands: nothing REMOTE is trusted by default.
+    assert DEFAULT_SOURCES == ()
+
+
+def test_every_shipped_entry_parses_and_names_a_shipped_folder() -> None:
+    """Every entry goes through the same hostile-input parser a stranger's does."""
+    from jarvis.integrations.extensions.catalog import bundled_source, entry_from_raw
+
+    source = bundled_source()
+    folders = sorted(p.name for p in BUNDLED.iterdir() if (p / "SKILL.md").is_file())
+    raws = _shipped_index()
+    assert raws, "the shipped index is empty"
+    ids = []
+    for raw in raws:
+        entry = entry_from_raw(raw, source)  # raises CatalogError if not
+        assert entry.kind == "skill"
+        assert entry.source == "bundled"
+        assert entry.ref and entry.ref.lower() != "latest", f"{entry.id} is unpinned"
+        assert entry.permissions, f"{entry.id} declares no permission at all"
+        ids.append(entry.id)
+    assert sorted(ids) == folders, "the index and the folders beside it disagree"
+
+
+def test_every_shipped_entry_points_inside_the_catalogue() -> None:
+    """A relative url resolves against the index and stays under it."""
+    from jarvis.integrations.extensions.catalog import bundled_source, read_local_catalog
+
+    entries = read_local_catalog(BUNDLED, bundled_source())
+    assert len(entries) == len(_shipped_index()), "an entry was skipped on the way in"
+    for entry in entries:
+        assert entry.url == (BUNDLED / entry.id).as_uri(), entry.url
+        assert (BUNDLED / entry.id / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("raw", _shipped_index(), ids=lambda r: r["id"])
+def test_the_shipped_index_agrees_with_the_skill_md_beside_it(raw: dict) -> None:
+    """Description, version, author and permissions copied, and held equal.
+
+    The index is what a person reads before installing; the SKILL.md is what
+    the model reads after. A description that flatters, or a permission list
+    shorter than the manifest's, is the catalogue lying about its own code.
+    """
+    from jarvis.integrations.skills import parse_skill_md
+
+    path = BUNDLED / raw["id"] / "SKILL.md"
+    skill = parse_skill_md(path.read_text(encoding="utf-8"), path)
+    manifest = skill_manifest(skill)
+    assert raw["description"] == skill.description
+    assert raw["version"] == skill.version
+    assert raw.get("author") == skill.metadata.get("author")
+    assert sorted(raw["permissions"]) == sorted(manifest.permissions)
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_install_browses_the_shipped_skills_with_no_error(tmp_path: Path) -> None:
+    """The operator's complaint, as a test: browse answers something, at once.
+
+    No configuration, no URL — and every shipped skill is already loaded, so
+    the answer says INSTALLED rather than offering to install what is in the
+    prompt already.
+    """
+    jarvis = await _install(tmp_path)
+    out = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert "error" not in out, out
+    assert out["sources"] == ["bundled"]
+    assert out["errors"] == []
+    ids = sorted(e["id"] for e in out["entries"])
+    assert ids == sorted(r["id"] for r in _shipped_index())
+    assert all(e["installed"] is True for e in out["entries"]), out["entries"]
+    assert all(e["source"] == "bundled" for e in out["entries"])
+
+    sources = await jarvis.services.async_call(
+        "extensions", "sources", {}, blocking=True, return_response=True
+    )
+    assert [s["name"] for s in sources["sources"]] == ["bundled"]
+    assert "own skills" in sources["note"] and "no default remote source" in sources["note"]
+
+
+@pytest.mark.asyncio
+async def test_the_catalogue_says_which_shipped_skills_are_not_loaded(tmp_path: Path) -> None:
+    """`skills: bundled: false` turns the skills off; the catalogue still offers them.
+
+    `installed` is the difference, and installing one from here lands a copy
+    in the operator's folder — which is what "use the shipped diary skill
+    after turning the bundle off" actually means.
+    """
+    from jarvis.llm.tools import ToolRegistry
+
+    jarvis = Jarvis(config_dir=str(tmp_path))
+    jarvis.data["llm_tools"] = ToolRegistry(jarvis)
+    store = SkillStore(tmp_path / "skills", bundled_root=None)
+    store.load()
+    jarvis.data["skills"] = store
+    assert await extensions_setup(jarvis, None) is True
+
+    out = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert "error" not in out
+    assert {e["id"]: e["installed"] for e in out["entries"]}["diary"] is False
+
+    proposal = await jarvis.services.async_call(
+        "extensions", "plan", {"source": "bundled", "id": "diary"},
+        blocking=True, return_response=True,
+    )
+    assert proposal["plan"]["ref"] == "v1"
+    assert proposal["plan"]["hooks"] == [], "a shipped skill ships no program"
+    assert proposal["plan"]["permissions"] == ["read_state", "act"]
+    done = await jarvis.services.async_call(
+        "extensions", "install",
+        {"source": "bundled", "id": "diary", "approved": proposal["plan"]},
+        blocking=True, return_response=True,
+    )
+    assert done["installed"] == "diary"
+    assert (tmp_path / "skills" / "diary" / "SKILL.md").is_file()
+
+    again = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert {e["id"]: e["installed"] for e in again["entries"]}["diary"] is True
+
+
+@pytest.mark.asyncio
+async def test_installing_a_shipped_skill_lands_the_copy_that_overrides_it(tmp_path: Path) -> None:
+    """With the bundle on, INSTALL is still a real action: the operator's copy wins."""
+    from jarvis.integrations.extensions.install import apply, fetch_local, plan, prepare
+
+    jarvis = await _install(tmp_path)
+    catalog = jarvis.data["extension_catalog"]
+    entry = prepare(catalog, "bundled", "note-taking")
+    files = fetch_local(entry)
+    assert set(files) == {"SKILL.md"}
+    result = apply(jarvis, entry, files, plan(entry, files))
+    assert result["installed"] == "note-taking"
+    store = jarvis.data["skills"]
+    assert str(store.get("note-taking").path).startswith(str(tmp_path)), "the shipped copy still wins"
+    registry = jarvis.data["extensions"]
+    registry.index()
+    assert registry.get("skill:note-taking").origin == "user"
+
+
+def test_the_operator_can_turn_the_bundled_source_off_or_replace_it() -> None:
+    """A source called `bundled` in configuration.yaml is theirs, not ours.
+
+    No second key: `enabled: false` on that line is the off switch, and a
+    different url on it is a replacement. The built-in never overrides a
+    person's line.
+    """
+    from jarvis.integrations.extensions import _build_catalog
+
+    default = _build_catalog(None)
+    assert list(default.sources) == ["bundled"] and default.sources["bundled"].enabled
+
+    off = _build_catalog(
+        {"sources": [{"name": "bundled", "url": "file:///nowhere", "enabled": False}]}
+    )
+    assert off.sources["bundled"].enabled is False
+    assert off.sources["bundled"].url == "file:///nowhere", "the built-in overrode the operator"
+
+    theirs = _build_catalog({"sources": [{"name": "mine", "url": "file:///home/x/skills"}]})
+    assert sorted(theirs.sources) == ["bundled", "mine"], "their source did not keep the bundle"
+
+
+@pytest.mark.asyncio
+async def test_browse_with_the_bundle_off_says_nothing_is_configured(tmp_path: Path) -> None:
+    from jarvis.integrations.extensions.catalog import Catalog, Source
+
+    jarvis = await _install(tmp_path)
+    catalog = Catalog()
+    catalog.add(Source(name="bundled", url="file:///nowhere", enabled=False))
+    jarvis.data["extension_catalog"] = catalog
+    out = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert out["error"] == "no catalog source is configured"
+    assert out["entries"] == [] and out["sources"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_cannot_be_read_is_reported_not_swallowed(tmp_path: Path) -> None:
+    """The console draws the reason, never "nothing matched", for a broken source."""
+    from jarvis.integrations.extensions.catalog import Catalog, Source
+
+    jarvis = await _install(tmp_path)
+    catalog = Catalog()
+    catalog.add(Source(name="gone", url=(tmp_path / "missing").as_uri()))
+    jarvis.data["extension_catalog"] = catalog
+    entries, errors = catalog.read()
+    assert entries == []
+    assert errors and errors[0]["source"] == "gone" and "no catalog index" in errors[0]["error"]
+
+    out = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert out["entries"] == [] and out["sources"] == ["gone"]
+    assert out["errors"] == errors
+    assert "gone:" in out["error"] and "no catalog index" in out["error"]
+
+    # One broken source beside a working one is a warning, not an error.
+    catalog.add(_catalog_source())
+    both = await jarvis.services.async_call(
+        "extensions", "browse", {}, blocking=True, return_response=True
+    )
+    assert "error" not in both
+    assert [err["source"] for err in both["errors"]] == ["gone"]
+    assert {e["id"] for e in both["entries"]} >= {"bin-day", "friendly-helper"}
+    assert all(e["installed"] is False for e in both["entries"])

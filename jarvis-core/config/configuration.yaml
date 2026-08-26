@@ -925,9 +925,18 @@ skills:
 #   jarvis.services.call("extensions", "health")      is each one working
 #   jarvis.services.call("extensions", "schema")      the manifest schema
 #
-# The catalog is where things are installed FROM, and it is empty by default.
-# There is no shipped source list on purpose: one would hand the supply chain
-# to whoever owns those URLs, for every install, without anybody choosing it.
+# The catalog is where things are installed FROM. One source is always there
+# without being listed below: `bundled`, which is THIS REPOSITORY'S OWN CODE —
+# the four shipped skills, read from the package on this machine
+# (jarvis/integrations/skills/bundled/index.json, /srv/jarvis/... in the
+# image) through the same file:// path an operator's folder uses. It is not a
+# URL and nothing is fetched for it; it exists so a fresh install has
+# something to browse. To turn it off, name it here with `enabled: false`;
+# a source you list with the same name replaces it.
+#
+# There is no shipped list of REMOTE sources on purpose: one would hand the
+# supply chain to whoever owns those URLs, for every install, without anybody
+# choosing it.
 #
 # Only two things can be installed, and neither is code this machine runs — a
 # skill (a document; nothing in a skill folder is ever executed) and an http
@@ -943,6 +952,10 @@ skills:
 extensions:
   catalog:
     sources: []
+      # - name: bundled                    # the shipped skills; this line
+      #   url: file:///srv/jarvis/integrations/skills/bundled
+      #   kind: skill                      # only to turn them off:
+      #   enabled: false
       # - name: my-skills
       #   url: file:///home/you/skills     # a folder on this machine
       #   kind: skill

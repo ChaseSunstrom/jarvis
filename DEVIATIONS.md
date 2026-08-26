@@ -460,6 +460,27 @@ a seventh, the phone's strip still mirrors the bar exactly, and the four M48
 destinations are unchanged. What was given up is the round number, not the
 reason for it.
 
+## 21. The catalogue ships one source, and it is not a URL (M65)
+
+M47 decided there would be no default catalogue source: "shipping one would
+mean every install trusts whoever owns those URLs, forever, without anybody
+choosing to." That held, and the result was a browse button that opened on
+nothing — the operator's report was "no way to browse". M65 adds one source
+by code, named `bundled`, and it is the package's own skill folders
+(`jarvis/integrations/skills/bundled/index.json`, read as `file://` from
+wherever the package is — `/srv/jarvis` in the image, the checkout on a bare
+host). Nothing is fetched for it and nobody's server is trusted: every entry
+is code that is already in this repository and already running, which whoever
+runs Jarvis has trusted by running it. `DEFAULT_SOURCES` stays empty, the M47
+gate still asserts it, and the refusal it stands for is unchanged as written —
+there is no shipped list of *remote* origins. The built-in goes through the
+same index reader, the same "stay inside the catalogue" rule, the same
+quarantine and the same plan-then-approve install as a stranger's folder, so
+it is not a special case downstream; and it never overrides a person: a
+source called `bundled` in `configuration.yaml` replaces it, and
+`enabled: false` on that line turns it off. What was given up is the letter of
+"nothing by default"; what was kept is the reason for it.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

@@ -69,7 +69,7 @@ all of this by construction.
 | `/notes` | `/knowledge/notes` | KNOWLEDGE's default section, beside the graph. |
 | `/memory` | `/knowledge/memory` | A section, beside the graph. |
 | `/settings` | `/settings/assistant` | SETTINGS' default section. |
-| `/tools` | `/settings/tools` | A section: callables, exposure, extensions, catalog — behind expanders. |
+| `/tools` | `/settings/tools` | A section: the catalogue first, open, above the folds (M65 — it was a button inside the Extensions fold, and it opened on nothing); then extensions, callables, the test runner, MCP servers, skills and exposure behind expanders. |
 | `/desktop` | `/settings/console` | Two panels on the Console section (M54); `/settings/desktop` redirects there too. |
 | `/styleguide` | `/styleguide` | Not in the nav. The library, every state, every token. |
 
@@ -296,7 +296,7 @@ primary, a fourth row control or a second search box fails it.
 | SETTINGS › Voice | `/settings/voice` | `plain-` | 3 | — | 0 | as Assistant, plus the FORGET on the voice identity panel |
 | SETTINGS › House | `/settings/house` | `plain-` | 3 | — | 0 | as Assistant; Rooms is a link to HOUSE › Areas |
 | SETTINGS › Console | `/settings/console` | `token-` | 1 | — | 0 | a paired phone or computer is a row with REVOKE; text size is a segmented row; the event stream is a fold; its settings rows are behind EVERYTHING |
-| SETTINGS › Tools | `/settings/tools` | `tool-` | 2 | — | 1 | USE and EDIT; the one search filters every fold |
+| SETTINGS › Tools | `/settings/tools` | `tool-` | 2 | — | 1 | USE and EDIT; the catalogue above the folds (M65) is a row per entry with one control at rest — INSTALL, or an INSTALLED tag that is not one — and one ADD BY URL on its MCP line; NEW SKILL in the Extensions fold stays the one lit control, because the shipped entries are installed already and writing a skill is what the page is for; the one search filters the catalogue and every fold |
 
 ## 4. What "clean" means here
 

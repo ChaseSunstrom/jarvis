@@ -16,6 +16,11 @@ the permission scope, where it came from — is behind the row's own expander,
 which is the difference between a page you can read and a page you have to
 study. It draws no panel of its own: the tools page puts it behind a
 disclosure whose header carries the count this reports through `count`.
+
+The catalogue is NOT here any more (M65). Browsing lived behind a button in
+this fold, and the operator could not find it; it is `Catalogue.svelte` now,
+above the folds, and it tells this list to re-read through `epoch` when
+something lands.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -53,39 +58,15 @@ disclosure whose header carries the count this reports through `count`.
 		last_used: number | null;
 	}
 
-	interface CatalogEntry {
-		id: string;
-		kind: string;
-		source: string;
-		url: string;
-		version: string;
-		description: string;
-		author: string;
-		permissions: string[];
-		ref: string;
-		sha256: string;
-	}
-
-	interface InstallPlan {
-		id: string;
-		kind: string;
-		source: string;
-		ref: string;
-		sha256: string;
-		permissions: string[];
-		files: string[];
-		hooks: string[];
-		warning: string;
-		description?: string;
-	}
-
 	interface Props {
 		/** The page's connection. Null while it is dialling. */
 		conn: Connection | null;
 		/** How many are installed, for the disclosure header above. */
 		count?: number;
+		/** Ticks when the catalogue installs something: re-read. */
+		epoch?: number;
 	}
-	let { conn, count = $bindable(0), query = '', matches = $bindable(0) }: Props & { query?: string; matches?: number } = $props();
+	let { conn, count = $bindable(0), query = '', matches = $bindable(0), epoch = 0 }: Props & { query?: string; matches?: number } = $props();
 	/** The tools page's one search (M55): a row matches when any of its words do. */
 	function matchesQuery(row: object, q: string): boolean {
 		const needle = q.trim().toLowerCase();
@@ -106,12 +87,6 @@ disclosure whose header carries the count this reports through `count`.
 	let busy = $state('');
 	let opened = $state<string | null>(null);
 	let creating = $state(false);
-	let browsing = $state(false);
-	let catalogQuery = $state('');
-	let catalogEntries = $state<CatalogEntry[]>([]);
-	let catalogSources = $state<string[]>([]);
-	let catalogError = $state('');
-	let proposal = $state<InstallPlan | null>(null);
 	let newName = $state('');
 	let newDescription = $state('');
 	let newTools = $state('');
@@ -145,6 +120,7 @@ disclosure whose header carries the count this reports through `count`.
 
 	onMount(load);
 	$effect(() => {
+		void epoch;
 		if (conn) void load();
 	});
 
@@ -190,63 +166,6 @@ disclosure whose header carries the count this reports through `count`.
 			await load();
 		} catch (e) {
 			createError = e instanceof Error ? e.message : String(e);
-		} finally {
-			busy = '';
-		}
-	}
-
-	async function browse(): Promise<void> {
-		if (!conn) return;
-		catalogError = '';
-		try {
-			const answer = await conn.client.command<{ entries: CatalogEntry[]; sources: string[]; error?: string }>(
-				{ type: 'jarvis/extensions/browse', query: catalogQuery.trim() }
-			);
-			catalogEntries = answer.entries ?? [];
-			catalogSources = answer.sources ?? [];
-			if (answer.error) catalogError = answer.error;
-		} catch (e) {
-			catalogError = e instanceof Error ? e.message : String(e);
-		}
-	}
-
-	/** Ask what would happen. Fetches and hashes; installs nothing. */
-	async function propose(entry: CatalogEntry): Promise<void> {
-		if (!conn) return;
-		catalogError = '';
-		busy = entry.id;
-		try {
-			const answer = await conn.client.command<{ plan?: InstallPlan; error?: string }>({
-				type: 'jarvis/extensions/plan',
-				source: entry.source,
-				// `entry`, not `id`: `id` is the websocket envelope's message id.
-				entry: entry.id
-			});
-			if (answer.error) catalogError = answer.error;
-			else proposal = answer.plan ?? null;
-		} catch (e) {
-			catalogError = e instanceof Error ? e.message : String(e);
-		} finally {
-			busy = '';
-		}
-	}
-
-	/** Install exactly what is on screen: the plan goes back as approved. */
-	async function confirmInstall(): Promise<void> {
-		if (!conn || !proposal) return;
-		busy = proposal.id;
-		try {
-			await conn.client.command({
-				type: 'jarvis/extensions/install',
-				source: proposal.source,
-				entry: proposal.id,
-				approved: proposal
-			});
-			proposal = null;
-			browsing = false;
-			await load();
-		} catch (e) {
-			catalogError = e instanceof Error ? e.message : String(e);
 		} finally {
 			busy = '';
 		}
@@ -298,18 +217,10 @@ disclosure whose header carries the count this reports through `count`.
 				takes its tools off the model, not just off this page.
 			</p>
 			<div class="actions">
-				<Button
-					testid="extensions-browse"
-					title="Search the configured catalog sources"
-					onclick={() => {
-						browsing = true;
-						void browse();
-					}}
-				>
-					BROWSE CATALOG
-				</Button>
 				<!-- The one lit control on the tools page: writing a skill is the
-				     thing this surface is for. -->
+				     thing this surface is for. The catalogue above the folds
+				     (M65) installs with ghost row controls, so this stays the
+				     primary. -->
 				<Button variant="primary" testid="extensions-new" onclick={() => (creating = true)}>
 					NEW SKILL
 				</Button>
@@ -440,104 +351,6 @@ disclosure whose header carries the count this reports through `count`.
 	{/if}
 </div>
 
-<!--
-  The catalog. Two dialogs on purpose: browsing is reading, installing is a
-  decision, and the second one shows what the first cannot — the exact ref, the
-  hash, every file, and every program in the payload.
--->
-<Dialog open={browsing} title="Catalog" onclose={() => (browsing = false)}>
-	{#if catalogSources.length === 0 && !catalogError}
-		<EmptyState
-			title="No catalog source is configured"
-			body="Nothing installs from an origin nobody named. Add one under `extensions: catalog: sources:` in configuration.yaml — https or a folder on this machine."
-			testid="catalog-no-sources"
-		/>
-	{:else}
-		<div class="search">
-			<Input
-				bind:value={catalogQuery}
-				testid="catalog-query"
-				placeholder="Search {catalogSources.join(', ')}"
-			/>
-			<Button testid="catalog-search" onclick={browse}>SEARCH</Button>
-		</div>
-		{#if catalogError}
-			<p class="bad" role="alert" data-testid="catalog-error">{catalogError}</p>
-		{/if}
-		{#each catalogEntries as entry (entry.source + entry.id)}
-			<div class="ext" data-testid={`catalog-${entry.id}`}>
-				<div class="ext-line">
-					<span class="name plain">
-						<span class="id">{entry.id}</span>
-						<span class="what">{entry.description}</span>
-					</span>
-					<div class="marks">
-						<Pill>{entry.source}</Pill>
-						{#if entry.ref}<Pill>{entry.ref}</Pill>{/if}
-						<Button
-							testid={`catalog-install-${entry.id}`}
-							disabled={busy === entry.id}
-							title={busy === entry.id ? 'Fetching and hashing' : 'See exactly what installing it would do'}
-							onclick={() => propose(entry)}
-						>
-							REVIEW
-						</Button>
-					</div>
-				</div>
-				{#if entry.permissions.length}
-					<p class="note small" data-testid={`catalog-perms-${entry.id}`}>
-						Asks for: {entry.permissions.join(', ')}
-					</p>
-				{/if}
-			</div>
-		{/each}
-		{#if catalogEntries.length === 0 && !catalogError}
-			<EmptyState title="Nothing matched" body="Try a different word, or a different source." />
-		{/if}
-	{/if}
-</Dialog>
-
-<Dialog
-	open={Boolean(proposal)}
-	title={`Install ${proposal?.id ?? ''}?`}
-	onclose={() => (proposal = null)}
->
-	{#if proposal}
-		<dl data-testid="install-plan">
-			<dt>From</dt>
-			<dd>{proposal.source} at {proposal.ref || 'no ref'}</dd>
-			<dt>Checksum</dt>
-			<dd class="hash">{proposal.sha256}</dd>
-			<dt>Asks for</dt>
-			<dd data-testid="install-permissions">
-				{proposal.permissions.length ? proposal.permissions.join(', ') : 'nothing'}
-			</dd>
-			<dt>Files</dt>
-			<dd>{proposal.files.join(', ')}</dd>
-		</dl>
-		{#if proposal.hooks.length}
-			<p class="warn" role="alert" data-testid="install-hooks">{proposal.warning}</p>
-		{/if}
-		<p class="note small">
-			Nothing in this payload is run — a skill folder is read, never executed. What it can do
-			is tell the model things, and every action it suggests still goes through that action's
-			own approval.
-		</p>
-	{/if}
-	{#snippet actions()}
-		<Button onclick={() => (proposal = null)}>CANCEL</Button>
-		<Button
-			variant="primary"
-			testid="install-confirm"
-			disabled={busy === proposal?.id}
-			title={busy === proposal?.id ? 'Installing' : 'Install exactly what is on screen'}
-			onclick={confirmInstall}
-		>
-			INSTALL
-		</Button>
-	{/snippet}
-</Dialog>
-
 <Dialog open={creating} title="New skill" onclose={() => (creating = false)}>
 	<Field label="Name" hint="Lowercase, hyphens. It becomes the folder.">
 		<Input bind:value={newName} testid="new-skill-name" placeholder="bin-day" mono />
@@ -605,12 +418,6 @@ disclosure whose header carries the count this reports through `count`.
 		padding: var(--jv-space-2) 0;
 		font-size: var(--jv-fs-xs);
 		color: var(--jv-danger-text);
-	}
-	.warn {
-		margin: 0;
-		padding: var(--jv-space-2) 0;
-		font-size: var(--jv-fs-xs);
-		color: var(--jv-warn);
 	}
 	.group {
 		margin: var(--jv-space-4) 0 0;
@@ -722,19 +529,5 @@ disclosure whose header carries the count this reports through `count`.
 		display: flex;
 		gap: var(--jv-space-2);
 		flex-shrink: 0;
-	}
-	.search {
-		display: flex;
-		gap: var(--jv-space-2);
-		align-items: flex-end;
-		margin-bottom: var(--jv-space-3);
-	}
-	.search :global(.in) {
-		flex: 1 1 auto;
-	}
-	.hash {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		word-break: break-all;
 	}
 </style>

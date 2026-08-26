@@ -30,10 +30,14 @@ by there being nothing to run: a document does not execute, and an http server
 is somebody else's process on somebody else's machine, reached over a tool call
 that goes through the same tier gate as any other.
 
-**Where it may come from.** An explicit operator allowlist. There is no default
-source, so a fresh install can reach nothing at all — the alternative was
-shipping a list of URLs that every install trusts, which is the supply chain
-being handed to whoever owns those URLs.
+**Where it may come from.** An explicit operator allowlist, plus one source
+that is not an origin at all: [bundled_source], the package's own skill
+folders, read from this machine. There is no default list of *remote* sources
+— the alternative was shipping a list of URLs that every install trusts, which
+is the supply chain being handed to whoever owns those URLs. The bundled
+source hands nothing to anybody: every entry in it is code that is already in
+this repository and already running, and it goes through the same `file://`
+reader, the same quarantine and the same two-step install as a stranger's.
 
 **What is pinned.** A ref and a sha256, both recorded. `latest` resolves at
 install time to a concrete ref, and the hash of what was fetched is stored, so
@@ -82,11 +86,19 @@ REFUSED_KINDS: dict[str, str] = {
 #: fixtures and for an operator's own directory; both are on this machine.
 ALLOWED_SCHEMES = ("https", "file")
 
-#: A source that has not been named in configuration.yaml is not a source.
+#: A remote source that has not been named in configuration.yaml is not a source.
 #:
 #: There is deliberately NO default list. Shipping one would mean every install
-#: trusts whoever owns those URLs, forever, without anybody choosing to.
+#: trusts whoever owns those URLs, forever, without anybody choosing to. The
+#: one source that does ship — [BUNDLED_SOURCE] — is not in this tuple because
+#: it is not a URL: it is this package's own folder (see [bundled_source]).
 DEFAULT_SOURCES: tuple[str, ...] = ()
+
+#: The name of the source that ships with Jarvis: the package's own skills.
+#: An operator who lists a source called this in configuration.yaml replaces
+#: it, and `enabled: false` on that line is the off switch — so there is no
+#: second key to learn, and no way for the built-in to override a person.
+BUNDLED_SOURCE = "bundled"
 
 MAX_ENTRIES = 500
 MAX_FIELD = 600
@@ -175,6 +187,28 @@ class Entry:
 
 def _clean(raw: Any, limit: int = MAX_FIELD) -> str:
     return " ".join(str(raw or "").split())[:limit]
+
+
+def bundled_source() -> Source:
+    """The catalogue that ships: the skills package's own folders, as `file://`.
+
+    Resolved from the skills package rather than written down, because the
+    same package sits at `/srv/jarvis` in the image and under the checkout on
+    a bare host, and a path typed here would be right in exactly one of them.
+    Being `file://` it takes the path an operator's own folder takes — the
+    same index reader, the same "stay inside the catalogue" rule, the same
+    quarantine — so nothing about it is a special case downstream.
+
+    What this is NOT: a default remote list. `DEFAULT_SOURCES` stays empty and
+    the M47 refusal stands; every entry here points at code that is already in
+    this repository, which whoever runs it has already trusted. What it does
+    not guarantee: that the entries are LOADED — `skills: bundled: false`
+    turns the shipped skills off while this still offers them, and `installed`
+    on a browse answer is what says which.
+    """
+    from ..skills import BUNDLED_ROOT
+
+    return Source(name=BUNDLED_SOURCE, url=BUNDLED_ROOT.as_uri(), kind=KIND_SKILL)
 
 
 def entry_from_raw(raw: Any, source: Source) -> Entry:
@@ -348,9 +382,18 @@ class Catalog:
             raise CatalogError(f"the source {name!r} is turned off")
         return source
 
-    def search(self, query: str = "", kind: str = "") -> list[Entry]:
+    def read(
+        self, query: str = "", kind: str = ""
+    ) -> tuple[list[Entry], list[dict[str, str]]]:
+        """Every matching entry, and every source that could not be read.
+
+        The failures come back rather than only being logged: a console
+        showing an empty catalogue has to be able to say "the folder is not
+        there" instead of "nothing matched", which are different afternoons.
+        """
         needle = str(query or "").strip().lower()
         out: list[Entry] = []
+        errors: list[dict[str, str]] = []
         for source in self.sources.values():
             if not source.enabled or (kind and source.kind != kind):
                 continue
@@ -364,9 +407,13 @@ class Catalog:
                 entries = read_local_catalog(Path(parsed.path), source)
             except CatalogError as err:
                 _LOGGER.warning("catalog %s unreadable: %s", source.name, err)
+                errors.append({"source": source.name, "error": str(err)})
                 continue
             for entry in entries:
                 haystack = f"{entry.id} {entry.description}".lower()
                 if not needle or needle in haystack:
                     out.append(entry)
-        return sorted(out, key=lambda e: (e.source, e.id))
+        return sorted(out, key=lambda e: (e.source, e.id)), errors
+
+    def search(self, query: str = "", kind: str = "") -> list[Entry]:
+        return self.read(query, kind)[0]

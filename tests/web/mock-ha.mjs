@@ -1502,28 +1502,62 @@ index 1234567..89abcde 100644
 	// Every extensible thing, as `jarvis/extensions/list` returns it (M46).
 	// One of each kind, one disabled, one unhealthy and one that never ran —
 	// the console has a different row for each and a fixture with three happy
-	// rows tests none of them.
-	const extensions = [
+	// rows tests none of them. The four shipped skills are all here, as they
+	// are on a real install, so the catalogue (M65) shows them INSTALLED.
+	//
+	// A factory, so `jarvis/test/extensions_reset` can put the list back: an
+	// install pushes a row, and a spec that installs `bin-day` after another
+	// spec scaffolded it would find the catalogue already saying INSTALLED.
+	const bundledSkill = (id, description, permissions, tools, network) => ({
+		id,
+		kind: 'skill',
+		key: `skill:${id}`,
+		version: '1',
+		description,
+		author: 'Jarvis',
+		source_url: '',
+		permissions,
+		granted: permissions,
+		revoked: [],
+		tools,
+		network: network ?? { needs: false, hosts: [] },
+		filesystem: { read: [], write: [] },
+		origin: 'bundled',
+		enabled: true,
+		location: `/srv/jarvis/integrations/skills/bundled/${id}/SKILL.md`,
+		health: { ok: true, detail: 'loaded' },
+		last_used: null
+	});
+	const extensionsSeed = () => [
 		{
-			id: 'research-report',
-			kind: 'skill',
-			key: 'skill:research-report',
-			version: '1',
-			description: 'Answering a question that needs sources.',
-			author: 'Jarvis',
-			source_url: '',
-			permissions: ['read_state', 'network', 'memory_write'],
-			granted: ['read_state', 'network', 'memory_write'],
-			revoked: [],
-			tools: ['deep_research', 'web_search', 'web_fetch', 'note_create'],
-			network: { needs: true, hosts: ['*'] },
-			filesystem: { read: [], write: [] },
-			origin: 'bundled',
-			enabled: true,
+			...bundledSkill(
+				'research-report',
+				'Answering a question that needs sources.',
+				['read_state', 'network', 'memory_write'],
+				['deep_research', 'web_search', 'web_fetch', 'note_create'],
+				{ needs: true, hosts: ['*'] }
+			),
 			location: '/app/jarvis/integrations/skills/bundled/research-report/SKILL.md',
-			health: { ok: true, detail: 'loaded' },
 			last_used: Math.floor(Date.now() / 1000) - 900
 		},
+		bundledSkill(
+			'diary',
+			'Reading and changing the calendar — what to check before booking, and what to say when the diary is full.',
+			['read_state', 'act'],
+			['calendar_list', 'calendar_availability', 'calendar_create', 'calendar_delete', 'get_user_context']
+		),
+		bundledSkill(
+			'homelab-status',
+			'Answering "how is the homelab doing" from the recorded measurements rather than from a guess.',
+			['read_state'],
+			['metrics_query', 'get_state', 'list_entities', 'recent_events']
+		),
+		bundledSkill(
+			'note-taking',
+			'When something belongs in a note rather than in memory or in the conversation, and how to write one worth reading later.',
+			['read_state', 'memory_read', 'memory_write'],
+			['note_create', 'note_append', 'note_search']
+		),
 		{
 			id: 'house-style',
 			kind: 'skill',
@@ -1585,10 +1619,45 @@ index 1234567..89abcde 100644
 			last_used: null
 		}
 	];
+	let extensions = extensionsSeed();
 
-	// The fixture catalog, as `jarvis/extensions/browse` returns it. One benign
-	// entry and one written the way a hostile package is written.
+	// The catalogue, as `jarvis/extensions/browse` returns it (M47, M65): the
+	// shipped source `bundled` — the package's own four skills, installed on a
+	// fresh box — and a `fixture` with one benign entry and one written the
+	// way a hostile package is written.
+	const bundledEntry = (id, description, permissions) => ({
+		id,
+		kind: 'skill',
+		source: 'bundled',
+		url: `file:///srv/jarvis/integrations/skills/bundled/${id}`,
+		version: '1',
+		ref: 'v1',
+		author: 'Jarvis',
+		description,
+		permissions,
+		sha256: ''
+	});
 	const catalogEntries = [
+		bundledEntry(
+			'diary',
+			'Reading and changing the calendar — what to check before booking, and what to say when the diary is full.',
+			['read_state', 'act']
+		),
+		bundledEntry(
+			'homelab-status',
+			'Answering "how is the homelab doing" from the recorded measurements rather than from a guess.',
+			['read_state']
+		),
+		bundledEntry(
+			'note-taking',
+			'When something belongs in a note rather than in memory or in the conversation, and how to write one worth reading later.',
+			['read_state', 'memory_read', 'memory_write']
+		),
+		bundledEntry(
+			'research-report',
+			'Answering a question that needs sources — how deep to go, what to read, and how to write the answer down.',
+			['read_state', 'network', 'memory_write']
+		),
 		{
 			id: 'bin-day',
 			kind: 'skill',
@@ -1615,6 +1684,11 @@ index 1234567..89abcde 100644
 			sha256: ''
 		}
 	];
+	// Test hook (`jarvis/test/catalog_mode`): `ok`, `broken` (the shipped
+	// source cannot be read — the console must show the reason, not "nothing
+	// matched") or `none` (no source at all, which is only reachable by
+	// turning `bundled` off in configuration.yaml).
+	let catalogMode = 'ok';
 
 	const extensionErrors = [
 		{
@@ -2774,13 +2848,57 @@ index 1234567..89abcde 100644
 					break;
 				}
 
-				case 'jarvis/extensions/browse':
+				case 'jarvis/extensions/browse': {
+					// As jarvis-core answers since M65: `installed` is whether the
+					// registry holds something of that kind and id, `sources` are
+					// the enabled sources, `errors` the ones that could not be
+					// read, and `error` only when there is nothing to show.
+					if (catalogMode === 'none') {
+						ok(msg.id, {
+							entries: [],
+							sources: [],
+							errors: [],
+							error: 'no catalog source is configured'
+						});
+						break;
+					}
+					if (catalogMode === 'broken') {
+						const problem = {
+							source: 'bundled',
+							error: 'no catalog index at /srv/jarvis/integrations/skills/bundled/index.json'
+						};
+						ok(msg.id, {
+							entries: [],
+							sources: ['bundled'],
+							errors: [problem],
+							error: `${problem.source}: ${problem.error}`
+						});
+						break;
+					}
 					ok(msg.id, {
-						entries: catalogEntries.filter(
-							(e) => !msg.query || `${e.id} ${e.description}`.toLowerCase().includes(String(msg.query).toLowerCase())
-						),
-						sources: ['fixture']
+						entries: catalogEntries
+							.filter(
+								(e) => !msg.query || `${e.id} ${e.description}`.toLowerCase().includes(String(msg.query).toLowerCase())
+							)
+							.map((e) => ({
+								...e,
+								installed: extensions.some((x) => x.key === `${e.kind}:${e.id}`)
+							})),
+						sources: ['bundled', 'fixture'],
+						errors: []
 					});
+					break;
+				}
+
+				case 'jarvis/test/catalog_mode':
+					catalogMode = ['ok', 'broken', 'none'].includes(String(msg.mode)) ? String(msg.mode) : 'ok';
+					ok(msg.id, { mode: catalogMode });
+					break;
+
+				case 'jarvis/test/extensions_reset':
+					extensions = extensionsSeed();
+					catalogMode = 'ok';
+					ok(msg.id, extensionsListing());
 					break;
 
 				case 'jarvis/extensions/plan': {

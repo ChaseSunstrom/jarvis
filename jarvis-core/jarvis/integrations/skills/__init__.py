@@ -99,6 +99,14 @@ DATA_STORE = "skills"
 #: The one file that makes a directory a skill.
 SKILL_FILE = "SKILL.md"
 
+#: Where the shipped skills live: inside the package, so the path is right
+#: wherever the package is — `/srv/jarvis/...` in the image, the checkout on a
+#: bare host. Named here rather than computed twice: the extension catalogue
+#: (M65) offers this same folder as its built-in source, and two places
+#: spelling the path is how the catalogue would offer one folder while the
+#: store loaded another.
+BUNDLED_ROOT = Path(__file__).with_name("bundled")
+
 
 @dataclass
 class Skill:
@@ -406,7 +414,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # Shipped skills live in the package, so they are present on a fresh
     # install with an empty `config/skills/` — the alternative was a first run
     # where the feature exists and has nothing in it.
-    bundled = Path(__file__).with_name("bundled")
+    bundled: Path | None = BUNDLED_ROOT
     if cfg.get("bundled") is False:
         bundled = None
     store = SkillStore(

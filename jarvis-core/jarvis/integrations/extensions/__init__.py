@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .catalog import Catalog, CatalogError, Source
+from .catalog import BUNDLED_SOURCE, Catalog, CatalogError, Source, bundled_source
 from .install import InstallError
 from .manifest import KINDS, PERMISSIONS, Manifest, ManifestError, schema
 from .registry import ExtensionRegistry, get_registry
@@ -132,24 +132,47 @@ def _register_services(
         catalog = _catalog()
         return {
             "sources": [s.as_dict() for s in catalog.sources.values()],
-            # Said out loud rather than left as an empty list: an operator
-            # looking at nothing should learn that nothing is the default.
+            # Said out loud rather than left as a list: an operator should
+            # learn that the one source they did not write is the package's
+            # own folder, and that no remote origin is trusted by default.
             "note": (
-                "There is no default source. Nothing installs from an origin "
-                "nobody named, so a fresh install can reach nothing at all."
+                f"'{BUNDLED_SOURCE}' is this repository's own skills, read from "
+                "the package on this machine. There is no default remote source: "
+                "nothing installs from an origin nobody named."
             ),
         }
 
     async def service_browse(call: Any) -> Any:
         data = call.data or {}
         catalog = _catalog()
-        if not catalog.sources:
-            return {"entries": [], "sources": [], "error": "no catalog source is configured"}
-        entries = catalog.search(str(data.get("query") or ""), str(data.get("kind") or ""))
-        return {
-            "entries": [e.as_dict() for e in entries],
-            "sources": sorted(catalog.sources),
-        }
+        live = sorted(name for name, source in catalog.sources.items() if source.enabled)
+        if not live:
+            return {
+                "entries": [],
+                "sources": [],
+                "errors": [],
+                "error": "no catalog source is configured",
+            }
+        entries, errors = catalog.read(
+            str(data.get("query") or ""), str(data.get("kind") or "")
+        )
+        rows = []
+        for entry in entries:
+            row = entry.as_dict()
+            # Whether something of that kind and id is in the registry NOW.
+            # The shipped skills are, on a fresh install, and a catalogue that
+            # offered to install what is already in the prompt would be
+            # offering a second copy in the operator's folder — which is a
+            # real action (it overrides the shipped one) but not the one a
+            # button called INSTALL means.
+            row["installed"] = registry.get(f"{entry.kind}:{entry.id}") is not None
+            rows.append(row)
+        out: dict[str, Any] = {"entries": rows, "sources": live, "errors": errors}
+        if not rows and errors:
+            # Nothing to show AND a reason: the console draws the reason, not
+            # "nothing matched", which is what an empty list would have said.
+            out["error"] = "; ".join(f"{err['source']}: {err['error']}" for err in errors)
+        return out
 
     async def service_plan(call: Any) -> Any:
         """What would happen, and what it would cost. Fetches; installs nothing."""
@@ -257,6 +280,18 @@ def _build_catalog(raw: Any) -> Catalog:
             )
         except CatalogError as err:
             _LOGGER.warning("extensions: catalog source ignored: %s", err)
+    # The package's own skills, unless the operator has named a source called
+    # `bundled` themselves — their line wins, and `enabled: false` on it is
+    # the off switch. Added by code rather than listed in configuration.yaml
+    # so a fresh install has something to browse without anybody writing a
+    # URL, and so M47's rule still holds as written: no shipped list of remote
+    # origins. This source is this machine's own package, not somebody's
+    # server (DEVIATIONS.md §21).
+    if BUNDLED_SOURCE not in catalog.sources:
+        try:
+            catalog.add(bundled_source())
+        except CatalogError as err:
+            _LOGGER.warning("extensions: the bundled catalogue is unavailable: %s", err)
     if catalog.sources:
         _LOGGER.info(
             "extensions: %d catalog source(s): %s",

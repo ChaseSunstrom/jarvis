@@ -8,6 +8,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M65 — something to browse.** Settings › Tools opens on a **Catalogue** — above the folds,
+  filtered by the page's one search — instead of hiding BROWSE CATALOG inside the Extensions
+  fold, where it opened on nothing. It is not empty any more: one source ships, `bundled`, the
+  four skills that are already in the package (`diary`, `homelab-status`, `note-taking`,
+  `research-report`), read from this machine as `file://` and never from a URL, so nobody's
+  server is trusted by default and M47's refusal stands (`DEVIATIONS.md` §21). Each entry says
+  what it asks for and whether it is INSTALLED — the shipped ones are, on a fresh box — and an
+  INSTALL goes through the same plan-then-approve dialog as before, with the ref, the hash, every
+  file and every program named. A source that cannot be read shows its reason instead of
+  "nothing matched". MCP servers: one line says they are added by URL in the MCP fold, and its
+  control opens that form; a program this machine starts (stdio) is still only
+  `configuration.yaml`'s `allow_stdio`, and a catalogue cannot offer one. To turn the shipped
+  source off, list `bundled` under `extensions: catalog: sources:` with `enabled: false`.
 - **M63 — the dashboard shows the house.** A widget has a kind now, not only a chart type: a
   graph (every layout saved before this still loads as one), one entity's state with its switch
   — the same `call_service` the HOUSE › Devices row sends, changing only when the backend says

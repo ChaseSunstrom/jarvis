@@ -88,10 +88,14 @@ is *disclosure*, not defence: "this skill ships a shell script" is a sentence
 an operator can act on before approving, rather than a discovery afterwards.
 
 **Nothing installs from an origin nobody named.** There is no default source
-list. Shipping one would hand the supply chain to whoever owns those URLs, for
-every install, without anybody choosing it. Sources are https or `file://`
-only, and each declares which kind it offers, so a source cannot surprise an
-operator with a kind they did not allow.
+list of URLs. Shipping one would hand the supply chain to whoever owns those
+URLs, for every install, without anybody choosing it. Sources are https or
+`file://` only, and each declares which kind it offers, so a source cannot
+surprise an operator with a kind they did not allow. The one source that does
+ship (`bundled`, M65) is not an origin: it is the package's own skill folders,
+read from this machine — code whoever runs Jarvis has already trusted by
+running it — and it takes the same reader, the same quarantine and the same
+two-step install as a stranger's folder. `DEVIATIONS.md` §21 argues it.
 
 **What was approved is what lands.** A ref is resolved to something concrete —
 never a blind `latest`, which makes the approved thing and the landed thing two
@@ -155,7 +159,8 @@ Written down because a threat model that lists only wins is marketing.
     tailnet           ✓ console, API, model server, browser, n8n
     loopback          ✓ everything else
     the sandbox       ✗ no network at all  (network_mode: none, pinned by tests)
-    a catalog source  ✗ nothing by default (no default list; https or file:// only)
+    a catalog source  ✗ nothing remote by default (no default list of URLs; https or
+                        file:// only; `bundled` is the package's own folder on this machine)
 
 The one deliberate weakening is `jarvis-browser`'s `seccomp:unconfined`, which
 buys back the syscall Chromium's own renderer sandbox needs. `DEVIATIONS.md`

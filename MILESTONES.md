@@ -1015,6 +1015,21 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 18:08: gate 64/64 from the main checkout on the rebuilt stack, live smoke slice
     included; goldens re-recorded on the merged tree (console-frame with DASHBOARDS first
     under M64's bar) and looked at. What only a phone shows is ADT-047…051, Unproven.
+- [ ] **M65 — Something to browse** · size M · deps M47, M55 · parallel-ok M64
+  - Scope: the operator's "I can't browse the tools/mcp servers from the settings, no way to
+    browse". Two things were true: BROWSE CATALOG sat inside the Extensions fold, and
+    `jarvis/extensions/browse` answered "no catalog source is configured" because M47 ships no
+    source. Now one source ships by code — `bundled`, the package's own four skills, read as
+    `file://` from wherever the package is (`/srv/jarvis` in the image), never a URL, so M47's
+    "no default remote list" holds as written (`DEVIATIONS.md` §21); an `index.json` beside the
+    skills, held equal to each SKILL.md by test; `installed` on every browse entry, drawn as
+    INSTALLED rather than an install control; the source's read error reported, not swallowed.
+    On the tools page a Catalogue section sits above the folds, filtered by the page's ONE
+    search, one control per row through the existing plan-then-approve flow, and one MCP line:
+    servers are added by URL in the MCP fold (its control opens that form), a stdio program only
+    in `configuration.yaml` with `allow_stdio` — a catalogue cannot offer one, by design. NEW
+    SKILL stays the page's one lit control. Loading, empty, error and offline as real states.
+  - Verify: `bash scripts/verify/m65-catalogue.sh`
 
 ## Final
 

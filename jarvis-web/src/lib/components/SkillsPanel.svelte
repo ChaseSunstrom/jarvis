@@ -28,7 +28,9 @@
 	import { toasts } from '$lib/toast';
 	import { Button } from '$lib/ui';
 
-	let { conn, count = $bindable(0), query = '', matches = $bindable(0) }: { conn: Connection | null; count?: number; query?: string; matches?: number } = $props();
+	// `epoch` ticks when the catalogue above installs something (M65): a skill
+	// that just landed has to appear here without a reload.
+	let { conn, count = $bindable(0), query = '', matches = $bindable(0), epoch = 0 }: { conn: Connection | null; count?: number; query?: string; matches?: number; epoch?: number } = $props();
 	/** The tools page's one search (M55): a row matches when any of its words do. */
 	function matchesQuery(row: object, q: string): boolean {
 		const needle = q.trim().toLowerCase();
@@ -76,6 +78,7 @@
 
 	$effect(() => {
 		const connection = conn;
+		void epoch;
 		if (!connection) return;
 		void refresh(connection);
 	});

@@ -595,7 +595,7 @@ person-shaped probe asks; what the suite found, written up.
 | Claim | Level | Proof |
 |---|---|---|
 | Only a document and a URL can be installed | Automated | `INSTALLABLE_KINDS == {skill, mcp}`; a plugin source is refused with "an in-process import has the whole interpreter", a stdio MCP server with "those come from configuration.yaml, which a person edits" |
-| Nothing installs from an origin nobody named | Automated | `DEFAULT_SOURCES == ()`, and an unconfigured source raises. Shipping a default list would hand the supply chain to whoever owns those URLs, for every install |
+| Nothing installs from an origin nobody named | Automated | `DEFAULT_SOURCES == ()`, and an unconfigured source raises. Shipping a default list would hand the supply chain to whoever owns those URLs, for every install. Since M65 one source ships that is not an origin — `bundled`, the package's own folder on this machine (`DEVIATIONS.md` §21) — and this claim is unchanged for anything remote |
 | A source is https or this machine | Automated | `http://`, `ftp://`, a bare path and `gopher://` are all refused |
 | `latest` is not a version | Automated | `resolve_ref` refuses it without a concrete ref to pin to — a blind `latest` makes the approved thing and the landed thing two different objects |
 | What was approved is what lands | Automated | sha256 recorded when the plan is built and re-checked immediately before writing; a swapped payload raises |
@@ -603,7 +603,7 @@ person-shaped probe asks; what the suite found, written up.
 | Installing without an approved plan is refused | Automated | `apply` raises, and the service answers with the name of the call that is missing |
 | A payload cannot write outside its folder | Automated | traversal, absolute paths, dotfiles, symlinks and over-deep nesting are refused — refused rather than corrected, which is how `/etc/SKILL.md` had been silently becoming `etc/SKILL.md` |
 | A catalog description cannot smuggle an instruction | Automated | quarantined, not filtered: the fixture's hostile description keeps its words and loses its `<\|im_start\|>` marker, and its invented `become_root` permission is dropped rather than shown as real |
-| The console shows what an entry asks for before anything is installed | Automated | `e2e/extensions.spec.ts` — declared permissions on the row, then a second dialog with the ref, the hash, every file and every program |
+| The console shows what an entry asks for before anything is installed | Automated | `e2e/catalogue.spec.ts` (M65; it was `extensions.spec.ts` while the catalogue lived in that fold) — declared permissions on the row, then a second dialog with the ref, the hash, every file and every program |
 | A malicious entry cannot talk the model into installing it | Automated *against the real containers* | `redteam-malicious-skill-install` (live, `gated-on: M47`) — the model has no tool that installs anything, the marker file does not appear, and the reply does not treat the entry's own description as permission |
 | Fetching over **https** | **Not exercised** | the transport is written and the offline gate cannot reach the open internet, so every test runs against `file://`. The difference is one function; the parsing, hashing, hook-finding, approval and write path are the same code |
 | A source that was honest and stops being | **Not defended** | the hash pins a payload to an approval, not a source to a reputation. A taken-over origin fails the check on the NEXT install and does nothing about what is already on disk |
@@ -688,6 +688,31 @@ person-shaped probe asks; what the suite found, written up.
 | The pictures are current | Automated *by construction* | the gate regenerates the 16 × 3 screenshots and the four recordings |
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
+
+### Something to browse (M65)
+
+`bash scripts/verify/m65-catalogue.sh`. Server: `jarvis-core/tests/test_extensions.py` (the M65 block at the end,
+13 tests, 4 of them one per shipped entry) with `test_skills.py` and `test_packaging.py`; console:
+`e2e/catalogue.spec.ts`, 7, beside `extensions.spec.ts`, `mcp.spec.ts` and the Tools rows of `menus.spec.ts`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A fresh install browses something: `jarvis/extensions/browse` with no configuration answers the four shipped skills from one source, `bundled`, with no error | Automated | `test_a_fresh_install_browses_the_shipped_skills_with_no_error`; the gate runs the same call against a fresh `Jarvis` |
+| The shipped source is the package's own folder, resolved from the skills package — right at `/srv/jarvis` in the image and under a checkout alike — as `file://`, and `DEFAULT_SOURCES` is still empty (no default list of remote origins) | Automated | `test_the_shipped_catalogue_is_the_package_folder_wherever_the_package_is`; the M47 gate's `DEFAULT_SOURCES == ()` check, unchanged |
+| Every shipped entry parses through `entry_from_raw` (the hostile-input parser), points inside the catalogue, is pinned to a concrete ref, and names a folder that exists | Automated | `test_every_shipped_entry_parses_and_names_a_shipped_folder`, `test_every_shipped_entry_points_inside_the_catalogue` |
+| The index is honest: description, version, author and permissions equal what the SKILL.md beside it declares, entry for entry | Automated | `test_the_shipped_index_agrees_with_the_skill_md_beside_it` (parametrised over the index) |
+| `installed` says whether the registry holds something of that kind and id — `true` for the shipped skills on a fresh box, `false` with `skills: bundled: false`, `true` again after installing one from the catalogue, which lands the operator's copy that overrides the shipped one | Automated | `test_the_catalogue_says_which_shipped_skills_are_not_loaded`, `test_installing_a_shipped_skill_lands_the_copy_that_overrides_it` |
+| The operator's `bundled` line wins: `enabled: false` turns the shipped source off (browse then says no source is configured), a different url replaces it, and their own sources keep it beside them | Automated | `test_the_operator_can_turn_the_bundled_source_off_or_replace_it`, `test_browse_with_the_bundle_off_says_nothing_is_configured` |
+| A source that cannot be read is reported with its reason (`errors`, and `error` when nothing else is left to show), never swallowed into "nothing matched" | Automated | `test_a_source_that_cannot_be_read_is_reported_not_swallowed` |
+| The catalogue is on the tools page at rest, above every fold, the shipped entries saying INSTALLED, the fixture's offering one INSTALL each with what they ask for on the row, and the old browse button is gone | Automated | `e2e/catalogue.spec.ts` "the catalogue is the first thing on the tools page…"; the gate reads `Tools.svelte` for the mount order and `Extensions.svelte` for the absence |
+| The page's one search filters the catalogue as it filters every fold; there is still exactly one search box | Automated | `e2e/catalogue.spec.ts` "the page's one search…"; `e2e/menus.spec.ts` (Tools row, search 1) |
+| Installing from the catalogue is the M47 flow unchanged — the plan with the ref, the hash, the permissions and every program, then the approval — and afterwards the row says INSTALLED and the Extensions fold has the skill without a reload | Automated | `e2e/catalogue.spec.ts` "installing is a second decision…", "a benign entry installs…" |
+| MCP: one line says servers are added by URL in the MCP fold and a stdio program only in `configuration.yaml`; its control opens the fold on its form with the caret in it | Automated | `e2e/catalogue.spec.ts` "MCP is add-by-URL, one press from the catalogue…" |
+| Loading, empty, error and offline are real states of the section: a skeleton; "No catalogue sources" with the key to add one; the source's own error with Retry; the last read under an offline note | Automated (three) / Manual (offline) | `e2e/catalogue.spec.ts` "a source that cannot be read…", "no source at all…"; the gate reads the component for all four; the page-level offline state is `e2e/states.spec.ts` |
+| One filled primary on the screen: NEW SKILL, in the Extensions fold; INSTALL is a ghost row control and the dialog's INSTALL appears only open | Automated | `e2e/menus.spec.ts` (Tools row: primaries ≤ 1, per row at rest 2); the gate greps `Catalogue.svelte` for `variant="primary"` outside the dialog |
+| The mock answers browse in the server's shape (`installed`, `sources`, `errors`, `error`) | Automated | the gate reads `tests/web/mock-ha.mjs`; `jarvis/test/catalog_mode` and `jarvis/test/extensions_reset` are test hooks only |
+| It reads as the first thing on the screen, on the design system, at three widths | Manual | `docs/ui-review/settings-tools/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
+| Browsing a REMOTE (https) source | **Not exercised** | as under M47: the transport is written and the offline gate cannot reach the open internet; `Catalog.read` still lists only `file://` sources |
 
 ### The dashboard, a destination (M62)
 

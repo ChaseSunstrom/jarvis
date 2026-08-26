@@ -178,6 +178,44 @@ is above the floor, lit by the sun, and the sun at the house is below −6°;
 
 Worked example, with the notes: `examples/sky.yaml`.
 
+## `extensions:`
+
+```yaml
+extensions:
+  catalog:
+    sources: []                   # where things may be installed FROM
+      # - name: my-skills
+      #   url: file:///home/you/skills    # a folder on this machine
+      #   kind: skill
+      # - name: some-list
+      #   url: https://example.org/skills # https only; never http
+      #   kind: skill
+      # - name: bundled                   # the shipped skills; list it only
+      #   url: file:///srv/jarvis/integrations/skills/bundled
+      #   kind: skill                     # to turn them off:
+      #   enabled: false
+```
+
+One index over skills, MCP servers and tool plugins (`extensions.list`), and
+the catalogue things are installed from (`extensions.browse`, `.plan`,
+`.install` — two steps on purpose: nothing installs without the plan a person
+approved, and the payload's hash is re-checked before it lands). Only a skill
+(a document) or an http MCP server (a URL and a tier) can be installed; a
+plugin and a stdio MCP server are refused with the reason.
+
+`sources` is the operator's allowlist of origins, and there is no shipped
+list of remote ones. One source is always present without being listed:
+**`bundled`** (M65) — the four skills that ship inside the package
+(`jarvis/integrations/skills/bundled/index.json`; `/srv/jarvis/…` in the
+image), read as `file://` from this machine through the same path an
+operator's folder takes. It is not a URL and nothing is fetched for it; it
+exists so a fresh install has something to browse. A source you list with the
+same name replaces it; `enabled: false` on that line turns it off. Entries the
+registry already holds come back with `installed: true` — the shipped skills
+do, unless `skills: bundled: false` — and the console shows INSTALLED rather
+than offering to install them. `DEVIATIONS.md` §21 and
+`docs/THREAT_MODEL.md` carry the argument.
+
 ## `voice:`
 
 ```yaml

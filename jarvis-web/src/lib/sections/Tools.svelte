@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { onMount, type Snippet } from 'svelte';
+	import { onMount, tick, type Snippet } from 'svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
-	import { staggerStyle } from '$lib/motion';
+	import { prefersReducedMotion, staggerStyle } from '$lib/motion';
+	import Catalogue from '$lib/components/Catalogue.svelte';
 	import Extensions from '$lib/components/Extensions.svelte';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
 	import McpServers from '$lib/components/McpServers.svelte';
@@ -74,6 +75,25 @@
 		skills: false,
 		exposure: false
 	});
+
+	/** Ticks when the catalogue installs something, so the folds re-read. */
+	let installEpoch = $state(0);
+	/** The MCP fold's add form, opened from the catalogue's one MCP line. */
+	let mcpAdding = $state(false);
+
+	/**
+	 * The catalogue's "add by URL": open the MCP fold ON its form and put the
+	 * caret in it. The fold is closed at rest, so a sentence saying "below"
+	 * with nothing to press would be a pointer to a form nobody can see.
+	 */
+	async function addMcp(): Promise<void> {
+		folds.mcp = true;
+		mcpAdding = true;
+		await tick();
+		const name = document.querySelector<HTMLElement>('[data-testid="mcp-name"]');
+		name?.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+		name?.focus({ preventScroll: true });
+	}
 
 	/**
 	 * The manageable view: which tools the console created, and their service
@@ -504,7 +524,7 @@
 {/snippet}
 
 {#snippet extensionsBody()}
-	<Extensions {conn} {query} bind:count={extCount} bind:matches={extMatches} />
+	<Extensions {conn} {query} epoch={installEpoch} bind:count={extCount} bind:matches={extMatches} />
 {/snippet}
 
 {#snippet callablesBody()}
@@ -604,11 +624,11 @@
 {/snippet}
 
 {#snippet mcpBody()}
-	<McpServers {conn} {query} bind:count={mcpCount} bind:matches={mcpMatches} />
+	<McpServers {conn} {query} bind:count={mcpCount} bind:matches={mcpMatches} bind:adding={mcpAdding} />
 {/snippet}
 
 {#snippet skillsBody()}
-	<SkillsPanel {conn} {query} bind:count={skillCount} bind:matches={skillMatches} />
+	<SkillsPanel {conn} {query} epoch={installEpoch} bind:count={skillCount} bind:matches={skillMatches} />
 {/snippet}
 
 {#snippet exposureBody()}
@@ -656,12 +676,12 @@
 
 	{#if hint}<p class="line warn" data-testid="hint">{hint}</p>{/if}
 
-	<!-- One search over everything below (M55): extensions, callables, MCP
-	     servers, skills and exposure all read `query`; each fold's header says
-	     how many of its rows match. -->
+	<!-- One search over everything below (M55): the catalogue, extensions,
+	     callables, MCP servers, skills and exposure all read `query`; each
+	     header says how many of its rows match. -->
 	<div class="bar search">
 		<div class="grow">
-			<label class="jv-sr-only" for="tool-filter">Search extensions, tools, servers, skills and entities</label>
+			<label class="jv-sr-only" for="tool-filter">Search the catalogue, extensions, tools, servers, skills and entities</label>
 			<input
 				id="tool-filter"
 				class="filter"
@@ -673,6 +693,21 @@
 			/>
 		</div>
 	</div>
+
+	<!-- The catalogue, above the folds (M65): what can be added is the first
+	     thing on the screen, because "I can't browse the tools" was the
+	     operator's report and the browse button was inside a fold. It installs
+	     with ghost row controls; NEW SKILL, in the Extensions fold, stays the
+	     page's one filled primary — the shipped entries are already installed
+	     on a fresh box, so lighting INSTALL would light nothing most days, and
+	     writing a skill is still what this page is for. -->
+	<Catalogue
+		{conn}
+		{query}
+		offline={screen === 'offline'}
+		onaddmcp={addMcp}
+		oninstalled={() => (installEpoch += 1)}
+	/>
 
 	<!-- Above the toolbox, because it is the thing that DECIDES the toolbox: what
 	     is installed and what it holds is the cause, and the tool list below is
