@@ -32,7 +32,15 @@ const props: Record<string, Record<string, unknown>> = {
 	ScreenState: { status: 'loading', children: undefined },
 	Reactor: { size: 120 },
 	TopBar: { tabs: [{ href: '/', label: 'VOICE', testid: 'nav-voice' }], isCurrent: () => false },
-	StatusReadout: { items: [{ label: 'link', tone: 'live' }] }
+	StatusReadout: { items: [{ label: 'link', tone: 'live' }] },
+	SectionStrip: { sections: [] },
+	ScreenTitle: { title: 'House', lede: 'What is on.' },
+	StagesBar: { stages: [{ key: 'stt', label: 'transcribe', ms: 412 }] },
+	CallLine: { name: 'light.turn_on', args: 'kitchen_lamp', state: 'ok', ms: 84 },
+	DayStrip: { nodes: [{ at: '07:00', label: 'briefing', state: 'done' }] },
+	ProgressRing: { size: 200, done: 1, running: 1, total: 3, percent: 40, title: 'A task' },
+	Figure: { value: 31.4, unit: 'tok/s', decimals: 1 },
+	Graph: { nodes: [{ id: 'note:a', label: 'A', kind: 'note' }], edges: [] }
 };
 
 /** A snippet that renders a word, for the components that take children. */

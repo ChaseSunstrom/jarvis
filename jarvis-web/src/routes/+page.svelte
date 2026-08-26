@@ -5,7 +5,7 @@
 	import { Player } from '$lib/audio/playback';
 	import { EnergyVAD } from '$lib/wake';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
-	import { Panel, Reactor, ScreenState } from '$lib/ui';
+	import { CallLine, Panel, Reactor, ScreenState, StagesBar } from '$lib/ui';
 	import { setHudStatus } from '$lib/hudStatus.svelte';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 	import {
@@ -159,7 +159,6 @@
 	]);
 	const turnTotalMs = $derived(between('run-start', 'run-end'));
 	const turnLive = $derived(turnStartedAt !== null && stamps['run-end'] === undefined);
-	const fmtMs = (ms: number | null): string => (ms === null ? '—' : `${Math.round(ms)} ms`);
 	const fmtS = (ms: number | null): string => (ms === null ? '' : `${(ms / 1000).toFixed(2)} s`);
 
 	function fmtLat(): string {
@@ -851,11 +850,14 @@
 			{#if turnTools.length}
 				<ul class="calls" data-testid="turn-calls" aria-label="Tools this turn used">
 					{#each turnTools as tool (tool.key)}
-						<li class={tool.state}>
-							<i aria-hidden="true"></i><b>{tool.name}</b>
-							<span class="args">{Object.values(tool.arguments ?? {}).join(' · ')}</span>
-							{#if tool.state === 'ok'}<em class="ok">ok</em>{:else if tool.state === 'failed'}<em class="bad">{tool.error ?? 'failed'}</em>{/if}
-							{#if tool.durationMs}<span class="ms">· {tool.durationMs} ms</span>{/if}
+						<li>
+							<CallLine
+								name={tool.name}
+								args={Object.values(tool.arguments ?? {}).join(' · ')}
+								state={tool.state}
+								error={tool.error ?? ''}
+								ms={tool.durationMs ?? null}
+							/>
 						</li>
 					{/each}
 				</ul>
@@ -898,20 +900,16 @@
 		<aside class="side turn-panel">
 			<Panel title="This turn" meta={turnTotalMs !== null ? fmtS(turnTotalMs) : turnLive ? 'live' : '—'} live={turnLive || turnTotalMs !== null} testid="turn-panel">
 				{#snippet children()}
-					<div class="stages" aria-hidden="true">
-						{#each stages as stage (stage.key)}
-							<i style:flex={Math.max(1, stage.ms ?? 1)} class:live={stage.ms === null && turnLive} class:done={stage.ms !== null}></i>
-						{/each}
-					</div>
-					<dl class="k" data-testid="latency" aria-label="Pipeline latency">
-						{#each stages as stage (stage.key)}
-							<div><dt>{stage.label}</dt><dd class:live={stage.ms === null && turnLive}>{fmtMs(stage.ms)}</dd></div>
-						{/each}
-					</dl>
+					<StagesBar
+						stages={stages.map((stage) => ({ ...stage, live: stage.ms === null && turnLive }))}
+						testid="latency"
+					/>
 					{#if turnTools.length}
 						<ul class="calls small" aria-label="Tool calls">
 							{#each turnTools as tool (tool.key)}
-								<li class={tool.state}><i aria-hidden="true"></i><b>{tool.name}</b>{#if tool.state === 'ok'}<em class="ok">ok</em>{/if}{#if tool.durationMs}<span class="ms">{tool.durationMs} ms</span>{/if}</li>
+								<li>
+									<CallLine name={tool.name} state={tool.state} error={tool.error ?? ''} ms={tool.durationMs ?? null} compact />
+								</li>
 							{/each}
 						</ul>
 					{/if}
@@ -1130,67 +1128,15 @@
 		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
 	}
 
-	/* The tool-call line: dot, name, arguments, verdict, time. */
 	.calls {
 		list-style: none;
 		margin: var(--jv-space-1) 0 0;
 		padding: 0;
 		display: grid;
 		gap: var(--jv-space-1);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		line-height: 1.9;
-		color: var(--jv-text-faint);
 	}
 	.calls li {
-		display: flex;
-		align-items: baseline;
-		gap: var(--jv-space-2);
 		min-width: 0;
-		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
-	}
-	.calls i {
-		flex: none;
-		width: var(--jv-space-1);
-		height: var(--jv-space-1);
-		border-radius: 50%;
-		background: var(--jv-ok);
-		align-self: center;
-	}
-	.calls li.running i {
-		background: var(--jv-accent);
-		box-shadow: 0 0 var(--jv-radius-md) var(--jv-glow);
-		animation: jv-blink var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
-	}
-	.calls li.failed i {
-		background: var(--jv-danger);
-	}
-	.calls b {
-		font-weight: var(--jv-weight-body);
-		color: var(--jv-text-dim);
-	}
-	.calls .args {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		min-width: 0;
-	}
-	.calls em {
-		font-style: normal;
-	}
-	.calls .ok {
-		color: var(--jv-ok);
-	}
-	.calls .bad {
-		color: var(--jv-danger-text);
-	}
-	.calls .ms {
-		font-variant-numeric: tabular-nums;
-	}
-	.calls.small li {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 
 	/* --- the side panels --- */
@@ -1237,50 +1183,6 @@
 		padding: var(--jv-space-4);
 		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-faint);
-	}
-	.stages {
-		display: flex;
-		gap: var(--jv-rule-live);
-		height: var(--jv-space-1);
-		margin: var(--jv-space-4) var(--jv-space-4) var(--jv-space-2);
-	}
-	.stages i {
-		background: var(--jv-line);
-		border-radius: var(--jv-radius-sm);
-		transform-origin: left;
-		transition: flex var(--jv-dur-base) var(--jv-ease-out);
-	}
-	.stages i.done {
-		background: var(--jv-text-dim);
-	}
-	.stages i.live {
-		background: var(--jv-accent);
-		box-shadow: 0 0 var(--jv-radius-md) var(--jv-glow);
-		animation: jv-blink var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
-	}
-	.k {
-		margin: 0;
-	}
-	.k div {
-		display: flex;
-		justify-content: space-between;
-		gap: var(--jv-space-3);
-		padding: var(--jv-space-2) var(--jv-space-4);
-		font-size: var(--jv-fs-xs);
-		color: var(--jv-text-dim);
-		border-bottom: 1px solid var(--jv-line-hair);
-	}
-	.k dt {
-		margin: 0;
-	}
-	.k dd {
-		margin: 0;
-		font-family: var(--jv-font-chrome);
-		color: var(--jv-text);
-		font-variant-numeric: tabular-nums;
-	}
-	.k dd.live {
-		color: var(--jv-accent);
 	}
 	.turn-panel .calls {
 		padding: var(--jv-space-2) var(--jv-space-4) var(--jv-space-3);

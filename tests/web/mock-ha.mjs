@@ -1633,7 +1633,7 @@ index 1234567..89abcde 100644
 			);
 		const findArea = (areaId) => world.areas.find((a) => a.id === areaId);
 
-		const event = (id, type, data = {}) =>
+		const event = (id, type, data = {}) => {
 			socket.send(
 				JSON.stringify({
 					id,
@@ -1641,6 +1641,11 @@ index 1234567..89abcde 100644
 					event: { type, data, timestamp: new Date().toISOString() }
 				})
 			);
+			// Mirrored onto the bus as jarvis-core does (`voice_pipeline_event`,
+			// `voice/pipeline.py:_emit`), so a page on ANOTHER socket — the
+			// knowledge graph lighting the memory a turn read — sees the turn.
+			broadcast('voice_pipeline_event', { run_id: id, type, data, pipeline: 'pipe-jarvis', device_id: null });
+		};
 
 		/**
 		 * The intent stage, in the order a real turn produces it: the model

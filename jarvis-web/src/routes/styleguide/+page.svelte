@@ -35,8 +35,18 @@
 		ScreenState,
 		Reactor,
 		TopBar,
-		StatusReadout
+		StatusReadout,
+		SectionStrip,
+		ScreenTitle,
+		StagesBar,
+		CallLine,
+		DayStrip,
+		ProgressRing,
+		Figure,
+		Graph
 	} from '$lib/ui';
+	import { buildGraph } from '$lib/knowledge/graph';
+	import { sectionsOf } from '$lib/screens';
 
 	type Row = { name: TokenName; value: string };
 	const all = Object.entries(TOKENS) as [TokenName, string][];
@@ -56,6 +66,7 @@
 	const durations = rows((n) => n.startsWith('--jv-dur-') || n.startsWith('--jv-stagger-'));
 	const eases = rows((n) => n.startsWith('--jv-ease-'));
 	const reactor = rows((n) => n.startsWith('--jv-rx-'));
+	const chromeTokens = rows((n) => /^--jv-(measure|focus|rule)-/.test(n));
 
 	// WCAG contrast of a hex text colour on the ground, so the page says which
 	// text colours may carry words (>= 4.5) and which are marks only.
@@ -90,6 +101,18 @@
 	let demoDialog = $state(false);
 	let demoStatus = $state<'loading' | 'ready' | 'empty' | 'error' | 'offline'>('ready');
 	let demoBarTab = $state('#voice');
+	const demoGraph = buildGraph(
+		[
+			{ id: 'boiler', title: 'Boiler serviced', tags: ['house'], links: ['heating'] },
+			{ id: 'heating', title: 'Heating', tags: ['house'] },
+			{ id: 'heat-pumps', title: 'Research — heat pumps', tags: ['research'] }
+		],
+		[
+			{ id: 'm1', text: 'I take my coffee black', tags: ['preference'] },
+			{ id: 'm2', text: 'The spare key is in the blue tin', tags: ['house'] }
+		]
+	);
+	let demoPulses = $state<{ id: string; at: number }[]>([]);
 	const STATUSES = ['loading', 'ready', 'empty', 'error', 'offline'] as const;
 </script>
 
@@ -195,18 +218,15 @@
 		</ul>
 	</section>
 
-	<section data-tokens="chrome" aria-labelledby="h-chrome" class="chrome-demo">
+	<section data-tokens="chrome" aria-labelledby="h-chrome">
 		<h2 id="h-chrome">Chrome</h2>
 		<p class="sg-note">
-			The grid, the brackets and the focus ring the console frame draws, on the same tokens.
+			The measures the frame is built to — how wide a dialog gets, how large the reactor may grow,
+			the focus ring — and the one live rule. Reactor II draws no grid and no corner brackets.
 		</p>
-		<div class="sg-toolbar">
-			<button class="btn" type="button" onclick={press('Ghost')}>Ghost</button>
-			<button class="btn primary" type="button" onclick={press('Primary')}>Primary</button>
-			<span class="pill">pill</span>
-			<span class="pill on">on</span>
-			<span class="sw-value" aria-live="polite">{pressed}</span>
-		</div>
+		<ul class="pairs">
+			{#each chromeTokens as c (c.name)}<li><span class="sw-name">{short(c.name)}</span><span class="sw-value">{c.value}</span></li>{/each}
+		</ul>
 	</section>
 
 	<section data-components aria-labelledby="h-components">
@@ -214,10 +234,76 @@
 		<p class="sg-note">
 			Every export of <code>$lib/ui</code>, live. Each one is documented in
 			<code>src/lib/ui/README.md</code> and refuses a typed value — the token lint keeps this
-			directory clean.
+			directory clean. There is no console furniture in <code>chrome.css</code> any more: a page is
+			built from these, or it is not built.
 		</p>
 
 		<div class="gallery">
+			<article class="demo wide">
+				<h3>ScreenTitle · SectionStrip</h3>
+				<ScreenTitle title="House" lede="What is on, where it is, what it has been doing, and the rules that run themselves.">
+					{#snippet end()}<Button variant="primary" onclick={press('Primary')}>+ Widget</Button>{/snippet}
+				</ScreenTitle>
+				<SectionStrip sections={sectionsOf('/house')} />
+			</article>
+
+			<article class="demo">
+				<h3>StagesBar · CallLine</h3>
+				<StagesBar
+					stages={[
+						{ key: 'listen', label: 'listen · vad', ms: 1400 },
+						{ key: 'stt', label: 'transcribe · whisper', ms: 412 },
+						{ key: 'llm', label: 'first token · model', ms: null, live: true },
+						{ key: 'tts', label: 'speak · piper', ms: null }
+					]}
+				/>
+				<div class="stack-v">
+					<CallLine name="light.turn_on" args="kitchen_lamp · 40 %" state="ok" ms={84} />
+					<CallLine name="run_check" args="npm run check" state="running" />
+					<CallLine name="lock_control" args="front_door" state="failed" error="needs approval" />
+				</div>
+			</article>
+
+			<article class="demo">
+				<h3>Figure · DayStrip</h3>
+				<div class="stack-h">
+					<Figure value={31.4} unit="tok/s" decimals={1} live />
+					<Figure value={412} unit="ms p50" small />
+				</div>
+				<DayStrip
+					nodes={[
+						{ at: '06:00', label: 'dentist', state: 'done' },
+						{ at: '07:00', label: 'briefing', state: 'done' },
+						{ at: '13:10', label: 'pairing', state: 'error' },
+						{ at: '02:39', label: 'offline', state: 'running' },
+						{ at: '03:00', label: 'purge', state: 'pending' }
+					]}
+				/>
+			</article>
+
+			<article class="demo">
+				<h3>ProgressRing</h3>
+				<ProgressRing
+					size={260}
+					done={2}
+					running={1}
+					total={5}
+					percent={61}
+					step="step 3 of 5 · wiring"
+					title="Add an OFFLINE state to the settings screen"
+					elapsed="code · 02:14 elapsed"
+					state="listening"
+				/>
+			</article>
+
+			<article class="demo wide">
+				<h3>Graph</h3>
+				<p class="sw-value">Notes and memory as one graph; a touched node lights for one blink.</p>
+				{#if demoGraph}
+					<Graph nodes={demoGraph.nodes} edges={demoGraph.edges} selected="note:heating" pulses={demoPulses} onselect={(id) => (demoPulses = [{ id, at: performance.now() }])} height={220} testid="sg-graph" />
+				{/if}
+			</article>
+
 			<article class="demo">
 				<h3>Button · IconButton</h3>
 				<div class="stack-h">
@@ -451,13 +537,6 @@
 	@keyframes sweep { from { transform: scaleX(0.08); } to { transform: scaleX(1); } }
 	@media (prefers-reduced-motion: reduce) { .motion .sweep { animation: none; transform: none; } }
 	.sg-toolbar { display: flex; align-items: center; gap: var(--jv-space-3); margin-bottom: var(--jv-space-4); }
-	.sg-panel { border: 1px solid var(--jv-line-hair); border-radius: var(--jv-radius-md); background: var(--jv-panel); }
-	.sg-panel-head { display: flex; justify-content: space-between; align-items: baseline; padding: var(--jv-space-3) var(--jv-space-4); border-bottom: 1px solid var(--jv-line-hair); }
-	.sg-panel-head h3 { margin: 0; }
-	.sg-row { display: flex; justify-content: space-between; padding: var(--jv-space-3) var(--jv-space-4); border-bottom: 1px solid var(--jv-line-hair); }
-	.sg-field { display: grid; gap: var(--jv-space-1); padding: var(--jv-space-3) var(--jv-space-4); }
-	.sg-field span { font-family: var(--jv-font-chrome); font-size: var(--jv-fs-2xs); letter-spacing: var(--jv-track-chrome); text-transform: uppercase; color: var(--jv-text-faint); }
-	.sg-field input { font: inherit; color: var(--jv-text-bright); background: var(--jv-field); border: 1px solid var(--jv-line-soft); border-radius: var(--jv-radius-sm); padding: var(--jv-space-2) var(--jv-space-3); }
 	.gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: var(--jv-space-4); }
 	.demo { display: grid; gap: var(--jv-space-3); align-content: start; padding: var(--jv-space-4); border: 1px solid var(--jv-line-hair); border-radius: var(--jv-radius-md); background: var(--jv-bg-raised); }
 	.demo.wide { grid-column: 1 / -1; }

@@ -144,3 +144,57 @@ follows; `status` renders as `data-status`.
 ```svelte
 <StatusReadout items={[{ label: 'link', tone: 'live' }, { label: '1 held', tone: 'warn' }]} />
 ```
+
+## SectionStrip
+
+The section strip inside one destination: Reactor II's segmented control — a
+hairline box, one segment per section, the current one raised on
+`--jv-surface-2`. Lives in the destination's layout and persists while the
+section under it changes; every segment is a real link.
+
+```svelte
+<SectionStrip sections={sectionsOf('/house')} />
+```
+
+## ScreenTitle
+
+A destination's head: the title in the display face, one sentence under it in
+the body face, and an `end` snippet for what sits beside them (the one
+primary action, a range control). `testid` goes on the lede, where a
+destination's probe lives.
+
+## StagesBar
+
+The stages of one turn or one job: a segmented bar whose segments are as long
+as each stage took, and the stages listed with their cost. A stage with no
+number yet is a dash; the one happening now is lit. Every width is a measured
+duration, never a timer.
+
+## CallLine
+
+One tool call as one line: dot, mono name, arguments, verdict, time — under a
+reply, in THIS TURN, in a task's tool calls. `compact` ellipsises to one line.
+
+## DayStrip
+
+The day as a strip of nodes — done, running, failed, still to come — with a
+time and a word each. WORK draws it above the task list.
+
+## ProgressRing
+
+A task as a reactor: the blades grouped into the plan's steps, the level arc at
+the progress, and in the lens the step, the percentage (a `Figure`) and the
+title. `bare` draws only the ring, for a card.
+
+## Figure
+
+A big number that counts up to its value in the display face with a mono
+unit; tweens from where it was to where it is over `--jv-dur-enter`. Under
+reduced motion it simply is the value.
+
+## Graph
+
+The knowledge graph: notes and memory entries as nodes, `[[links]]` and shared
+tags as edges, laid out by `$lib/knowledge/graph` (seeded, so reproducible)
+and drawn in with the stagger. `pulses` lights the nodes something touched for
+one `--jv-dur-blink`; `onselect` says what selecting means.

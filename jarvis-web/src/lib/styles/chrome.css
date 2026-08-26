@@ -1,70 +1,18 @@
 /*
- * The Jarvis chrome: the visual language both the voice HUD and the management
- * console are built from.
+ * The Jarvis chrome: what the root layout draws around every screen, and the
+ * motion primitives every page's entrance comes from.
  *
- * Two families live here.
- *
- *  - `.jv-*` utilities — the technical grid, the corner brackets, panels,
- *    skeletons, stagger, pulse. Anything either surface may want.
- *  - `.console .thing` furniture — the management pages' shared vocabulary
- *    (`.panel`, `.row`, `.pill`, `.btn`). Scoped under `.console` so it can use
- *    short, readable names without leaking into the HUD, which has its own.
+ * This file used to hold two families — `.jv-*` utilities (a technical grid,
+ * corner brackets, skeletons) and `.console .thing` furniture (`.panel`,
+ * `.row`, `.pill`, `.btn`) that every management page hand-assembled. Both
+ * were the previous direction, and the furniture was how a page on the tokens
+ * could still look nothing like Reactor II (M50). What remains is layout and
+ * motion: the console frame, the route transition, the stagger, the toasts and
+ * the palette. Every component draws itself from `src/lib/ui`.
  *
  * Every value comes from a token. If you are about to type a hex code, add it
- * to tokens.css instead.
+ * to design/tokens.json instead.
  */
-
-/* ===================================================================== *
- * Backdrops
- * ===================================================================== */
-
-/* The faint technical grid, masked so it dissolves at the edges. */
-.jv-grid {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	opacity: 0.45;
-	background-image:
-		linear-gradient(var(--jv-line-soft) 1px, transparent 1px),
-		linear-gradient(90deg, var(--jv-line-soft) 1px, transparent 1px);
-	background-size: var(--jv-grid-size) var(--jv-grid-size);
-	mask-image: var(--jv-grid-mask);
-	-webkit-mask-image: var(--jv-grid-mask);
-}
-
-/* Corner framing brackets. Size and inset are overridable per surface. */
-.jv-bracket {
-	position: absolute;
-	width: var(--jv-bracket-size);
-	height: var(--jv-bracket-size);
-	pointer-events: none;
-	border: 2px solid var(--jv-line);
-	transition: border-color var(--jv-dur-slow) var(--jv-ease-out);
-}
-.jv-bracket.tl {
-	top: var(--jv-bracket-inset);
-	left: var(--jv-bracket-inset);
-	border-right: 0;
-	border-bottom: 0;
-}
-.jv-bracket.tr {
-	top: var(--jv-bracket-inset);
-	right: var(--jv-bracket-inset);
-	border-left: 0;
-	border-bottom: 0;
-}
-.jv-bracket.bl {
-	bottom: var(--jv-bracket-inset);
-	left: var(--jv-bracket-inset);
-	border-right: 0;
-	border-top: 0;
-}
-.jv-bracket.br {
-	bottom: var(--jv-bracket-inset);
-	right: var(--jv-bracket-inset);
-	border-left: 0;
-	border-top: 0;
-}
 
 /* ===================================================================== *
  * Motion primitives
@@ -157,130 +105,33 @@
 }
 
 /* ===================================================================== *
- * Skeletons and empty states
+ * The console frame — under the bar, on the ground
  * ===================================================================== */
 
-.jv-skeleton {
+.console {
 	position: relative;
-	overflow: hidden;
-	height: var(--jv-space-3);
-	border-radius: var(--jv-radius-sm);
-	background: var(--jv-line-hair);
-}
-.jv-skeleton::after {
-	content: '';
-	position: absolute;
-	inset: 0;
-	background: linear-gradient(90deg, transparent, var(--jv-line-soft), transparent);
-	animation: jv-sweep var(--jv-dur-sweep) var(--jv-ease-in-out) infinite;
-}
-.jv-skeleton-row {
-	display: flex;
-	align-items: center;
-	gap: var(--jv-space-3);
-	padding: var(--jv-space-2) 0;
-	border-bottom: 1px dashed var(--jv-line-hair);
-}
-.jv-skeleton-row:last-child {
-	border-bottom: 0;
-}
-.jv-skeleton.wide {
-	flex: 1 1 12rem;
-}
-.jv-skeleton.pill {
-	width: var(--jv-space-7);
-	border-radius: var(--jv-radius-pill);
-}
-.jv-skeleton.btn {
-	width: calc(var(--jv-space-7) * 1.66667);
-	height: var(--jv-space-5);
+	min-height: calc(100vh - var(--jv-space-7) - var(--jv-space-2));
+	min-height: calc(100dvh - var(--jv-space-7) - var(--jv-space-2));
+	/*
+	 * `minmax(0, 1fr)`, not `1fr`: a grid item's automatic minimum size is its
+	 * max-content width, so a wide table inside would otherwise stretch this
+	 * column past the viewport and take the whole page with it.
+	 */
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	padding: var(--jv-space-5) var(--jv-space-6) var(--jv-space-7);
+	color: var(--jv-text);
+	font-family: var(--jv-font-body);
+	background: radial-gradient(ellipse 90% 70% at 50% 110%, var(--jv-bg-raised), transparent 70%), var(--jv-bg);
 }
 
-.jv-empty {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: var(--jv-space-2);
-	padding: var(--jv-space-5) var(--jv-space-4);
-	text-align: center;
-	border: 1px dashed var(--jv-line-soft);
-	border-radius: var(--jv-radius-md);
-	background: var(--jv-panel);
-	animation: jv-fade var(--jv-dur-base) var(--jv-ease-out) both;
-}
-.jv-empty .jv-empty-mark {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-lg);
-	letter-spacing: var(--jv-track-wide);
-	color: var(--jv-accent);
-	opacity: 0.7;
-}
-.jv-empty .jv-empty-title {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-sm);
-	letter-spacing: var(--jv-track-chrome);
-	text-transform: uppercase;
-	color: var(--jv-text-bright);
-}
-.jv-empty .jv-empty-body {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
-	color: var(--jv-text-dim);
-	max-width: calc(var(--jv-space-7) * 11.3333);
-	line-height: 1.7;
-}
-
-/* ===================================================================== *
- * Connection indicator
- * ===================================================================== */
-
-.jv-link {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--jv-space-2);
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-wide);
-	text-transform: uppercase;
-	color: var(--jv-text-dim);
-	border: 1px solid var(--jv-line-soft);
-	border-radius: var(--jv-radius-pill);
-	padding: var(--jv-space-1) var(--jv-space-3);
-	white-space: nowrap;
-}
-.jv-link .jv-link-text {
+.console-body {
+	position: relative;
+	z-index: 1;
 	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.jv-link .jv-link-dot {
-	width: var(--jv-space-2);
-	height: var(--jv-space-2);
-	border-radius: 50%;
-	background: currentColor;
-	flex: none;
-}
-.jv-link[data-status='connected'] {
-	color: var(--jv-accent);
-	border-color: var(--jv-line);
-}
-.jv-link[data-status='connected'] .jv-link-dot {
-	box-shadow: var(--jv-glow-sm);
-	animation: jv-blink var(--jv-amb-blink-slow) var(--jv-ease-in-out) infinite;
-}
-.jv-link[data-status='connecting'],
-.jv-link[data-status='reconnecting'] {
-	color: var(--jv-gold);
-	border-color: color-mix(in srgb, var(--jv-gold) 32%, transparent);
-}
-.jv-link[data-status='connecting'] .jv-link-dot,
-.jv-link[data-status='reconnecting'] .jv-link-dot {
-	animation: jv-blink var(--jv-dur-enter) var(--jv-ease-in-out) infinite;
-}
-.jv-link[data-status='offline'] {
-	color: var(--jv-danger-text);
-	border-color: color-mix(in srgb, var(--jv-danger) 32%, transparent);
+	width: 100%;
+	max-width: calc(var(--jv-space-7) * 30);
+	margin: 0 auto;
 }
 
 /* ===================================================================== *
@@ -303,31 +154,26 @@
 	display: flex;
 	align-items: flex-start;
 	gap: var(--jv-space-3);
-	padding: var(--jv-space-3) var(--jv-space-3);
-	border: 1px solid var(--jv-line-soft);
-	border-left-width: 3px;
-	border-radius: var(--jv-radius-sm);
-	background: var(--jv-panel-solid);
-	box-shadow: var(--jv-elev-float);
+	padding: var(--jv-space-3) var(--jv-space-4);
+	border: 1px solid var(--jv-line-hair);
+	border-radius: var(--jv-radius-md);
+	background: var(--jv-panel);
+	box-shadow: var(--jv-elev-float), inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 }
-.jv-toast[data-kind='success'] {
-	border-left-color: var(--jv-accent);
-}
 .jv-toast[data-kind='error'] {
-	border-left-color: var(--jv-danger);
+	box-shadow: var(--jv-elev-float), inset var(--jv-rule-live) 0 0 var(--jv-danger);
 }
 .jv-toast[data-kind='info'] {
-	border-left-color: var(--jv-gold);
+	box-shadow: var(--jv-elev-float), inset var(--jv-rule-live) 0 0 var(--jv-warn);
 }
 .jv-toast-body {
 	flex: 1 1 auto;
 	min-width: 0;
 }
 .jv-toast-text {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
+	margin: 0;
+	font-size: var(--jv-fs-sm);
 	line-height: 1.5;
 	color: var(--jv-text-bright);
 	overflow-wrap: anywhere;
@@ -337,10 +183,8 @@
 }
 .jv-toast-detail {
 	display: block;
-	margin-top: 0.2rem;
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-tight);
+	margin-top: var(--jv-space-1);
+	font-size: var(--jv-fs-xs);
 	line-height: 1.6;
 	color: var(--jv-text-dim);
 	overflow-wrap: anywhere;
@@ -362,7 +206,7 @@
 }
 .jv-toast-close:hover {
 	color: var(--jv-text-bright);
-	border-color: var(--jv-line-soft);
+	border-color: var(--jv-line-hair);
 }
 
 /* ===================================================================== *
@@ -374,7 +218,6 @@
 	inset: 0;
 	z-index: 70;
 	background: color-mix(in srgb, var(--jv-bg) 72%, transparent);
-	backdrop-filter: blur(3px);
 	animation: jv-fade var(--jv-dur-fast) var(--jv-ease-out) both;
 }
 .jv-palette {
@@ -389,8 +232,8 @@
 	max-height: min(calc(var(--jv-space-7) * 10), 74vh);
 	border: 1px solid var(--jv-line);
 	border-radius: var(--jv-radius-md);
-	background: var(--jv-panel-solid);
-	box-shadow: var(--jv-elev-float), var(--jv-glow-sm);
+	background: var(--jv-panel);
+	box-shadow: var(--jv-elev-float);
 	overflow: hidden;
 	/*
 	 * Its own keyframes, not the shared `jv-rise`: this element is centred with
@@ -415,7 +258,7 @@
 	align-items: center;
 	gap: var(--jv-space-3);
 	padding: var(--jv-space-3) var(--jv-space-4);
-	border-bottom: 1px solid var(--jv-line-soft);
+	border-bottom: 1px solid var(--jv-line-hair);
 }
 .jv-palette-prompt {
 	font-family: var(--jv-font-chrome);
@@ -426,9 +269,8 @@
 .jv-palette-input {
 	flex: 1 1 auto;
 	min-width: 0;
-	font-family: var(--jv-font-chrome);
+	font-family: var(--jv-font-body);
 	font-size: var(--jv-fs-md);
-	letter-spacing: var(--jv-track-tight);
 	color: var(--jv-text-bright);
 	background: transparent;
 	border: 0;
@@ -445,11 +287,9 @@
 }
 .jv-palette:has(.jv-palette-input:focus) {
 	border-color: var(--jv-accent);
-	box-shadow: var(--jv-elev-float), var(--jv-glow-md);
 }
 .jv-palette-input::placeholder {
-	color: var(--jv-text-dim);
-	opacity: 0.75;
+	color: var(--jv-text-faint);
 }
 .jv-palette-list {
 	list-style: none;
@@ -464,21 +304,21 @@
 	gap: var(--jv-space-3);
 	padding: var(--jv-space-2) var(--jv-space-4);
 	cursor: pointer;
-	border-left: 2px solid transparent;
+	box-shadow: inset 0 0 0 transparent;
 }
 .jv-palette-item[aria-selected='true'] {
 	background: var(--jv-wash);
-	border-left-color: var(--jv-accent);
+	box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 }
 .jv-palette-kind {
 	flex: none;
 	width: calc(var(--jv-space-7) * 1.73333);
-	font-family: var(--jv-font-chrome);
+	font-family: var(--jv-font-body);
+	font-weight: var(--jv-weight-label);
 	font-size: var(--jv-fs-2xs);
 	letter-spacing: var(--jv-track-chrome);
 	text-transform: uppercase;
-	color: var(--jv-accent);
-	opacity: 0.8;
+	color: var(--jv-text-faint);
 }
 .jv-palette-label {
 	flex: 1 1 auto;
@@ -488,7 +328,7 @@
 	display: block;
 	font-family: var(--jv-font-body);
 	font-size: var(--jv-fs-md);
-	font-weight: 500;
+	font-weight: var(--jv-weight-label);
 	color: var(--jv-text-bright);
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -496,9 +336,7 @@
 }
 .jv-palette-label span {
 	display: block;
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-tight);
+	font-size: var(--jv-fs-xs);
 	color: var(--jv-text-dim);
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -508,7 +346,7 @@
 	flex: none;
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-chrome);
+	letter-spacing: var(--jv-track-tight);
 	text-transform: uppercase;
 	color: var(--jv-text-dim);
 }
@@ -518,578 +356,26 @@
 	justify-content: space-between;
 	gap: var(--jv-space-3);
 	padding: var(--jv-space-2) var(--jv-space-4);
-	border-top: 1px solid var(--jv-line-soft);
+	border-top: 1px solid var(--jv-line-hair);
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-2xs);
 	letter-spacing: var(--jv-track-tight);
-	color: var(--jv-text-dim);
+	color: var(--jv-text-faint);
 }
 .jv-palette-none {
 	padding: var(--jv-space-5) var(--jv-space-4);
 	text-align: center;
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
+	font-size: var(--jv-fs-sm);
 	color: var(--jv-text-dim);
 }
 
 /* ===================================================================== *
- * Console furniture — the management pages' shared vocabulary
- * ===================================================================== */
-
-.console {
-	position: relative;
-	min-height: 100vh;
-	min-height: 100dvh;
-	display: grid;
-	grid-template-rows: auto 1fr;
-	/*
-	 * `minmax(0, 1fr)`, not `1fr`: a grid item's automatic minimum size is its
-	 * max-content width, so the horizontally-scrolling nav below would otherwise
-	 * stretch this column past the viewport and take the whole page with it.
-	 */
-	grid-template-columns: minmax(0, 1fr);
-	padding: clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6));
-	gap: clamp(var(--jv-space-3), 2vh, var(--jv-space-5));
-	color: var(--jv-text);
-	font-family: var(--jv-font-body);
-	background:
-		radial-gradient(ellipse 80% 50% at 50% 0%, color-mix(in srgb, var(--jv-accent) 10%, transparent), transparent 70%),
-		var(--jv-bg);
-}
-
-.console-top {
-	position: sticky;
-	top: 0;
-	z-index: 20;
-	min-width: 0;
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	justify-content: space-between;
-	gap: var(--jv-space-2) var(--jv-space-5);
-	margin: calc(-1 * clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6))) calc(-1 * clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6))) 0;
-	padding: clamp(var(--jv-space-2), 1.4vw, var(--jv-space-4)) clamp(var(--jv-space-3), 2.2vw, var(--jv-space-6));
-	border-bottom: 1px solid var(--jv-line-soft);
-	background: color-mix(in srgb, var(--jv-bg) 86%, transparent);
-	backdrop-filter: blur(8px);
-}
-
-.console-body {
-	position: relative;
-	z-index: 1;
-	min-width: 0;
-	padding-bottom: 2.5rem;
-}
-
-.console h1 {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xl);
-	font-weight: 500;
-	letter-spacing: var(--jv-track-wide);
-	color: var(--jv-accent);
-	margin: 0 0 var(--jv-space-1);
-}
-.console .lede {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
-	color: var(--jv-text-dim);
-	margin: 0 0 var(--jv-space-4);
-}
-.console .panel {
-	position: relative;
-	border: 1px solid var(--jv-line-soft);
-	/*
-	 * A panel, not a rectangle with a border.
-	 *
-	 * Three things do the work, and none of them is a colour change big enough
-	 * to notice on its own: a vertical wash so the surface has a top and a
-	 * bottom, a one-pixel inset highlight along the top edge so it reads as
-	 * something with a lip, and the existing drop shadow underneath. Together
-	 * they lift the card off the page; separately they each look like nothing,
-	 * which is why the flat version never looked wrong either.
-	 */
-	background:
-		linear-gradient(180deg, color-mix(in srgb, var(--jv-accent) 4.5%, transparent), transparent 42%),
-		var(--jv-panel);
-	border-radius: var(--jv-radius-sm);
-	padding: var(--jv-space-4) var(--jv-space-4);
-	margin-bottom: var(--jv-space-3);
-	box-shadow: var(--jv-elev-panel),
-		inset 0 1px 0 color-mix(in srgb, var(--jv-accent) 12%, transparent);
-}
-/*
- * The corner tick. A HUD panel is bolted to something; a two-line mark at the
- * top-left is the cheapest way to say so, and it is drawn rather than added to
- * the DOM so no page has to know about it.
- */
-.console .panel::before {
-	content: '';
-	position: absolute;
-	top: -1px;
-	left: -1px;
-	width: calc(var(--jv-space-1) * 3.5);
-	height: calc(var(--jv-space-1) * 3.5);
-	border-top: 1px solid var(--jv-line);
-	border-left: 1px solid var(--jv-line);
-	border-top-left-radius: var(--jv-radius-sm);
-	pointer-events: none;
-}
-.console .panel-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: var(--jv-space-3);
-	flex-wrap: wrap;
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-wide);
-	color: var(--jv-accent);
-	text-transform: uppercase;
-	margin-bottom: var(--jv-space-3);
-	padding-bottom: var(--jv-space-2);
-	border-bottom: 1px solid var(--jv-line-soft);
-}
-.console .row {
-	display: flex;
-	align-items: center;
-	gap: var(--jv-space-3);
-	flex-wrap: wrap;
-	/*
-	 * Padded and negatively margined by the same amount, so the hover wash below
-	 * reaches the panel's inner edge instead of stopping short of it and drawing
-	 * a stripe with two gaps in it.
-	 */
-	padding: var(--jv-space-2);
-	margin: 0 calc(-1 * var(--jv-space-2));
-	border-radius: var(--jv-radius-sm);
-	border-bottom: 1px dashed var(--jv-line-hair);
-	transition: background var(--jv-dur-fast) var(--jv-ease-out);
-}
-/* Which row the pointer is on, for a page that is mostly rows of controls. */
-.console .row:hover {
-	background: var(--jv-wash);
-}
-.console .row:last-child {
-	border-bottom: 0;
-}
-
-/*
- * A row with something bolted to the end of it — on Devices, the MANAGE button
- * that opens the editor underneath.
- *
- * This had no styling at all, so it was a plain block: the row laid itself out
- * flex and full-width, and the button went UNDER it. Every entity was two
- * lines tall with a chunky ghost button on the second, which made a column of
- * nine identical buttons down the left of the page and doubled its height.
- *
- * The wrapper owns the separator and the hover wash now, and the row inside
- * gives both up — otherwise the dashed line stops where the row ends and the
- * button hangs off the end of it.
- */
-.console .row-wrap {
-	display: flex;
-	align-items: center;
-	gap: var(--jv-space-2);
-	flex-wrap: wrap;
-	padding: 0 var(--jv-space-2);
-	margin: 0 calc(-1 * var(--jv-space-2));
-	border-radius: var(--jv-radius-sm);
-	border-bottom: 1px dashed var(--jv-line-hair);
-	transition: background var(--jv-dur-fast) var(--jv-ease-out);
-}
-.console .row-wrap:hover {
-	background: var(--jv-wash);
-}
-.console .row-wrap > .row {
-	flex: 1 1 20rem;
-	min-width: 0;
-	margin: 0;
-	border-bottom: 0;
-	border-radius: 0;
-}
-/* One wash, on the wrapper. Two would show as a brighter stripe under the row. */
-.console .row-wrap:hover > .row {
-	background: transparent;
-}
-.console .row-wrap > .btn {
-	flex: 0 0 auto;
-}
-/* The editor drops out of the row above it, so that row's separator would draw
-   a line between a control and the panel it just opened. */
-.console .row-wrap:has(+ .editor) {
-	border-bottom: 0;
-}
-.console .row .name {
-	flex: 1 1 12rem;
-	min-width: 0;
-}
-.console .row .name b {
-	font-weight: 500;
-	color: var(--jv-text-bright);
-}
-.console .eid {
-	display: block;
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	line-height: 1.6;
-	letter-spacing: var(--jv-track-tight);
-	color: var(--jv-text-dim);
-	overflow-wrap: anywhere;
-}
-.console .pill.warn {
-	color: var(--jv-warn);
-	border-color: var(--jv-warn);
-}
-.console .pill {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-chrome);
-	text-transform: uppercase;
-	color: var(--jv-text-dim);
-	border: 1px solid var(--jv-line-soft);
-	border-radius: var(--jv-radius-pill);
-	padding: var(--jv-space-1) var(--jv-space-2);
-	white-space: nowrap;
-}
-.console .pill.on {
-	color: var(--jv-accent);
-	border-color: var(--jv-line);
-	box-shadow: var(--jv-glow-sm);
-}
-
-/*
- * The approvals banner draws the library's own `<Button>`, on the voice screen
- * and in the console alike; these rules are the console furniture for the raw
- * `.btn` classes that remain on management pages (M50 removes them).
- */
-.console button.btn,
-.console .btn {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-chrome);
-	text-transform: uppercase;
-	color: var(--jv-accent);
-	background: var(--jv-wash);
-	border: 1px solid var(--jv-line);
-	border-radius: var(--jv-radius-sm);
-	padding: var(--jv-space-2) var(--jv-space-3);
-	min-height: var(--jv-space-6);
-	cursor: pointer;
-	text-decoration: none;
-	transition: background var(--jv-dur-fast) var(--jv-ease-out),
-		box-shadow var(--jv-dur-fast) var(--jv-ease-out),
-		color var(--jv-dur-fast) var(--jv-ease-out),
-		transform var(--jv-dur-instant) var(--jv-ease-out);
-}
-.console button.btn:hover,
-.console .btn:hover {
-	background: var(--jv-wash-strong);
-	box-shadow: var(--jv-glow-md);
-}
-/* A press you can feel. 60 ms of 2% is enough; more reads as a bug. */
-.console button.btn:active:not(:disabled),
-.console .btn:active {
-	transform: translateY(1px) scale(0.98);
-}
-.console button.btn:disabled {
-	opacity: 0.45;
-	cursor: not-allowed;
-	box-shadow: none;
-	transform: none;
-}
-.console button.btn.ghost {
-	color: var(--jv-text-dim);
-	background: transparent;
-	border-color: var(--jv-line-soft);
-}
-.console button.btn.ghost:hover:hover {
-	color: var(--jv-text-bright);
-	border-color: var(--jv-line);
-}
-.console button.btn.danger {
-	color: var(--jv-danger-text);
-	border-color: color-mix(in srgb, var(--jv-danger) 40%, transparent);
-	background: color-mix(in srgb, var(--jv-danger) 8%, transparent);
-}
-.console button.btn.danger:hover:hover {
-	background: color-mix(in srgb, var(--jv-danger) 18%, transparent);
-	box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-danger) 25%, transparent);
-}
-.console button.btn.on {
-	color: var(--jv-accent-ink);
-	/* Lit from above, like every other surface here. */
-	background: linear-gradient(180deg, var(--jv-accent-lift), var(--jv-accent));
-	border-color: var(--jv-accent);
-	box-shadow: var(--jv-glow-lg),
-		inset 0 1px 0 color-mix(in srgb, var(--jv-text-bright) 45%, transparent);
-}
-
-/* The strip above a panel holding the page's one primary action and a line of
-   explanation. Global rather than per-page: Devices, Automations and Tools all
-   have one, and two of them had it unstyled. */
-.console .toolbar {
-	display: flex;
-	align-items: center;
-	gap: var(--jv-space-3);
-	flex-wrap: wrap;
-	margin-bottom: var(--jv-space-3);
-}
-.console .toolbar input {
-	flex: 1 1 18rem;
-	max-width: calc(var(--jv-space-7) * 8.66667);
-}
-
-/* The editor panel that drops out of a row on Devices and Automations. It is
-   a full-width sibling of `.row`, not a cell inside it, so the row's flex
-   layout never has to accommodate a form. */
-.console .editor {
-	display: flex;
-	flex-direction: column;
-	gap: var(--jv-space-3);
-	width: 100%;
-	padding: var(--jv-space-3) var(--jv-space-3) var(--jv-space-4);
-	margin: 0 0 var(--jv-space-2);
-	border: 1px solid var(--jv-line-soft);
-	border-left: 2px solid var(--jv-accent);
-	border-radius: var(--jv-radius-sm);
-	background: var(--jv-field);
-}
-/* Was a read-only line above the editor; it is an INPUT now that an
-   entity_id can be changed. Same face and tracking either way — an id is a
-   key, and a proportional font makes `light.l1` and `light.11` the same
-   shape. */
-.console .editor .entity-id {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-tight);
-	color: var(--jv-text-dim);
-	margin: 0;
-	overflow-wrap: anywhere;
-}
-.console .editor input.entity-id {
-	/* An editable id reads as text you own, not as metadata. */
-	color: var(--jv-text);
-	font-size: var(--jv-fs-xs);
-	overflow-wrap: normal;
-}
-.console .field {
-	display: flex;
-	flex-direction: column;
-	gap: var(--jv-space-1);
-}
-.console .field > label {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-wide);
-	text-transform: uppercase;
-	color: var(--jv-text-dim);
-}
-.console .field textarea {
-	/* Structured JSON: a proportional font makes indentation unreadable. */
-	font-family: var(--jv-font-chrome);
-	line-height: 1.5;
-	resize: vertical;
-	min-height: calc(var(--jv-space-7) * 1.66667);
-	white-space: pre;
-	overflow-wrap: normal;
-	overflow-x: auto;
-}
-.console .field .hint {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	color: var(--jv-text-dim);
-}
-.console .toggles {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--jv-space-3);
-}
-.console .toggles label {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--jv-space-2);
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	color: var(--jv-text);
-}
-.console .editor .actions {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: var(--jv-space-3);
-}
-.console .editor .summary {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	color: var(--jv-text-dim);
-}
-
-.console input[type='text'],
-.console input[type='number'],
-.console input[type='search'],
-.console select,
-.console textarea {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-sm);
-	color: var(--jv-text-bright);
-	background: var(--jv-field);
-	border: 1px solid var(--jv-line-soft);
-	border-radius: var(--jv-radius-sm);
-	padding: var(--jv-space-2) var(--jv-space-2);
-	min-height: var(--jv-space-6);
-	transition: border-color var(--jv-dur-fast) var(--jv-ease-out),
-		box-shadow var(--jv-dur-fast) var(--jv-ease-out);
-}
-.console input::placeholder,
-.console textarea::placeholder {
-	color: var(--jv-text-dim);
-	opacity: 0.8;
-}
-.console input:hover,
-.console select:hover,
-.console textarea:hover {
-	border-color: var(--jv-line);
-}
-.console input[type='range'] {
-	accent-color: var(--jv-accent);
-	width: calc(var(--jv-space-7) * 2.66667);
-	min-height: 0;
-}
-.console .muted {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
-	color: var(--jv-text-dim);
-}
-/*
- * "There is nothing here yet", inside a panel that is still worth showing.
- *
- * Dimmer than .notice, which is a warning. This is the shape of an answer —
- * a panel that hides itself when empty cannot tell you the difference between
- * "nothing has connected" and "this console has no such feature".
- */
-.console .empty {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
-	line-height: 1.7;
-	color: var(--jv-text-dim);
-	padding: var(--jv-space-3);
-	margin: 0;
-}
-.console .empty b {
-	color: var(--jv-text);
-	font-weight: 600;
-}
-.console .notice {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
-	line-height: 1.6;
-	color: var(--jv-gold);
-	border: 1px solid color-mix(in srgb, var(--jv-gold) 30%, transparent);
-	background: color-mix(in srgb, var(--jv-gold) 7%, transparent);
-	border-radius: var(--jv-radius-sm);
-	padding: var(--jv-space-2) var(--jv-space-3);
-	margin-bottom: var(--jv-space-3);
-	animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
-}
-.console .err {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-tight);
-	line-height: 1.6;
-	color: var(--jv-danger-text);
-	border: 1px solid color-mix(in srgb, var(--jv-danger) 32%, transparent);
-	background: color-mix(in srgb, var(--jv-danger) 7%, transparent);
-	border-radius: var(--jv-radius-sm);
-	padding: var(--jv-space-2) var(--jv-space-3);
-	margin-bottom: var(--jv-space-3);
-	animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
-}
-.console pre {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	line-height: 1.55;
-	color: var(--jv-text);
-	background: var(--jv-field);
-	border: 1px solid var(--jv-line-soft);
-	border-radius: var(--jv-radius-sm);
-	padding: var(--jv-space-3);
-	margin: 0;
-	overflow-x: auto;
-	max-height: calc(var(--jv-space-7) * 7.33333);
-}
-.console code {
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-sm);
-	color: var(--jv-accent);
-}
-.console label.check {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--jv-space-2);
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-xs);
-	letter-spacing: var(--jv-track-chrome);
-	text-transform: uppercase;
-	color: var(--jv-text-dim);
-	cursor: pointer;
-	user-select: none;
-}
-.console label.check input {
-	appearance: none;
-	width: var(--jv-space-4);
-	height: var(--jv-space-4);
-	border: 1px solid var(--jv-line);
-	border-radius: var(--jv-radius-sm);
-	background: transparent;
-	cursor: pointer;
-}
-.console label.check input:checked {
-	background: var(--jv-accent);
-	box-shadow: var(--jv-glow-sm);
-}
-
-/* ===================================================================== *
- * Phone widths — the console has to work in the Android app's WebView
+ * Phone widths
  * ===================================================================== */
 
 @media (max-width: 640px) {
-	.console .panel {
-		padding: var(--jv-space-3);
-	}
-	.console .panel-head {
-		gap: var(--jv-space-2);
-	}
-	/* A filter that lives in a panel head gets its own line rather than
-	   pushing the heading off the right edge. */
-	.console .panel-head input {
-		flex: 1 1 100%;
-		min-width: 0;
-	}
-	/* The status cluster keeps the dot (which is the information) and drops
-	   the words; `aria-label` on the badge still reads the full state out. */
-	.jv-link .jv-link-text {
-		display: none;
-	}
-	.jv-link {
-		padding: var(--jv-space-1) var(--jv-space-2);
-	}
-	.console .row {
-		align-items: flex-start;
-		gap: var(--jv-space-2);
-	}
-	.console .row .name {
-		flex: 1 1 100%;
-	}
-	.console .row .ctl {
-		width: 100%;
-	}
-	.console input[type='range'] {
-		width: calc(var(--jv-space-7) * 2);
+	.console {
+		padding: var(--jv-space-4) var(--jv-space-3) var(--jv-space-6);
 	}
 	.jv-palette {
 		top: var(--jv-space-3);

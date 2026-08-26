@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import DestinationNav from '$lib/DestinationNav.svelte';
+	import { ScreenTitle, SectionStrip } from '$lib/ui';
 	import { sectionsOf } from '$lib/screens';
 
 	let { children }: { children: Snippet } = $props();
@@ -8,9 +8,8 @@
 
 <svelte:head><title>Jarvis · Work</title></svelte:head>
 
-<h1>WORK</h1>
-<p class="lede" data-testid="work-screen">What Jarvis is doing or has done for you.</p>
+<ScreenTitle title="Work" lede="What Jarvis is doing or has done for you: tasks, research, coding jobs." testid="work-screen" />
 
-<DestinationNav sections={sectionsOf('/work')} />
+<SectionStrip sections={sectionsOf('/work')} />
 
 {@render children()}

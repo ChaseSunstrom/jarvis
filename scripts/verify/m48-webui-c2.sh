@@ -9,7 +9,7 @@ verify_begin "M48" "the console: four destinations, on C2, in every state"
 use_venv
 
 require_file docs/UI_MIGRATION.md
-require_file jarvis-web/src/lib/DestinationNav.svelte
+require_file jarvis-web/src/lib/ui/SectionStrip.svelte
 
 # --- the structure -----------------------------------------------------------
 check "there are no more than five top-level destinations" python3 -c '

@@ -16,7 +16,8 @@ test('the style guide renders every token group', async ({ page }) => {
 	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
 	await page.goto('/styleguide');
 	await page.locator('[data-testid="boot"]').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Every token, rendered');
+	// `.first()`: the ScreenTitle demo further down renders a heading of its own.
+	await expect(page.getByRole('heading', { level: 1 }).first()).toHaveText('Every token, rendered');
 	for (const group of ['color', 'type', 'space', 'radius', 'elevation', 'motion', 'chrome']) {
 		const section = page.locator(`[data-tokens="${group}"]`);
 		await expect(section, group).toBeVisible();

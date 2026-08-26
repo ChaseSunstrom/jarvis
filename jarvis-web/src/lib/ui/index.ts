@@ -7,8 +7,8 @@
 // state on `/styleguide`.
 //
 // The rule this replaces: primitives used to be CSS classes in `chrome.css`
-// that every page hand-copied — `.jv-empty`'s markup appeared eight times, and
-// eight pages meant eight chances to write a different empty state.
+// that every page hand-copied — an empty state's markup appeared eight times,
+// and eight pages meant eight chances to write a different one.
 export { default as Button } from './Button.svelte';
 export { default as IconButton } from './IconButton.svelte';
 export { default as Input } from './Input.svelte';
@@ -29,5 +29,13 @@ export { default as ScreenState } from './ScreenState.svelte';
 export { default as Reactor } from './Reactor.svelte';
 export { default as TopBar } from './TopBar.svelte';
 export { default as StatusReadout } from './StatusReadout.svelte';
+export { default as SectionStrip } from './SectionStrip.svelte';
+export { default as ScreenTitle } from './ScreenTitle.svelte';
+export { default as StagesBar } from './StagesBar.svelte';
+export { default as CallLine } from './CallLine.svelte';
+export { default as DayStrip } from './DayStrip.svelte';
+export { default as ProgressRing } from './ProgressRing.svelte';
+export { default as Figure } from './Figure.svelte';
+export { default as Graph } from './Graph.svelte';
 
 export type { Status } from './ScreenState.svelte';

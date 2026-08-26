@@ -1,8 +1,10 @@
 <!--
 @component
-A small status word. `tone` carries the meaning — `ok` done, `warn` held,
-`danger` broke, `live` happening now — so the colour is never the only signal:
-the word says it too.
+A small status word, as a hairline tag. `tone` carries the meaning — `ok`
+done, `warn` held, `danger` broke, `live` happening now — so the colour is
+never the only signal: the word says it too. Reactor II has no pills: this is
+a square-cornered tag on a hairline, and it keeps its old name so nothing that
+used it has to change.
 
 ```svelte
 <Pill tone="warn">held</Pill>
@@ -18,17 +20,20 @@ the word says it too.
 	let { tone = 'neutral', testid = '', children }: Props = $props();
 </script>
 
-<span class="pill {tone}" data-testid={testid || undefined}>{@render children()}</span>
+<span class="tag {tone}" data-testid={testid || undefined}>{@render children()}</span>
 
 <style>
-	.pill {
+	.tag {
 		display: inline-block;
-		font-family: var(--jv-font-chrome);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-tight);
+		letter-spacing: var(--jv-track-chrome);
+		text-transform: uppercase;
+		line-height: 1.6;
 		color: var(--jv-text-dim);
 		border: 1px solid var(--jv-line-hair);
-		border-radius: var(--jv-radius-pill);
+		border-radius: var(--jv-radius-sm);
 		padding: 0 var(--jv-space-2);
 		white-space: nowrap;
 	}
