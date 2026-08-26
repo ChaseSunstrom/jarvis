@@ -1201,6 +1201,31 @@ callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
 **A test that cannot tell a slow machine from a slow app should not claim
 either.**
 
+## Known failures, as of 2026-08-26 18:32 (this host) — the report run
+
+`docs/LIVE_TEST_REPORT.md` is this run: the full suite with `--report`, on
+the stack rebuilt to `4c9fda3` with mosquitto and searxng up beside it (the
+rule and guard changes of the evening are measured by the run after this
+one). 51 of 58 scenario variants, 78 of 84 turns, intent 92.9 %, routing
+92.0 %, WER 5.9 %, median round trip **3.17 s**, p95 19.2 s. Intent and the
+median still miss their thresholds; both recorded. The seven failures:
+
+- `memory-forget` — the model called `forget` twice and said "Forgotten", and
+  the store still held the fact. A defect, under investigation, not a
+  model miss.
+- `interactions-proactive-moment` — the background sensor audit ended
+  `jarvis_task_failed` rather than completed; the task's error is being read.
+- `task-cancel-mid-run`, `delegation-across-backends` — routed to
+  `deep_research` (this image predates b4010d0's research/house boundary and
+  b7543dd's addresses); re-measured on the rebuilt stack.
+- `subagents-parallel-work` — the rig's HTTP client timed out waiting for the
+  turn; the specialists' lookups run through a SearXNG whose upstream engines
+  time out (the environment fault BLOCKERS records).
+- `resilience-core-restart` (voice) — the same claimed action after the
+  restart as at 17:40, now on the voice variant.
+- `vision-look-fixture` — gated on M56; the model server serves no vision
+  model (BLOCKERS §4), so "there is no camera" is the true answer.
+
 ## Known failures, as of 2026-08-26 17:40 (this host) — after the CI pass and the merges
 
 The full live suite in M25's gate against the stack rebuilt with everything to

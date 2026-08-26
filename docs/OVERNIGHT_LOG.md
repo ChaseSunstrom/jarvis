@@ -553,3 +553,8 @@ is quiet. Done since:
 - 18:13 — CI green on 570158b as well, End-to-end included: the emulator suite has now
   passed twice since the automation-switch fix. Pushed 49f39a7 (the M61 and M64 ticks, the
   guard and scorecard fixes, the 17:40 verification record, the House dashboard's pictures).
+- 18:32 — the report run (docs/LIVE_TEST_REPORT.md): 51/58 scenarios, 78/84 turns, intent
+  92.9 %, routing 92.0 %, WER 5.9 %, median 3.17 s, p95 19.2 s, on the pre-rebuild image with
+  the broker and searxng up. Seven failures, recorded in docs/verification.md; two are
+  defects to chase (memory-forget's store, a failed background sensor audit). The rebuild
+  chain — today's rule and guard changes — is measuring now.
