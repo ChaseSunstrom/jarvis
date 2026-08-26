@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	ENROLMENT_RATE,
 	MIN_SAMPLE_MS,
+	cleanLabel,
+	labelProblem,
+	verdictLine,
+	writeQuery,
 	beginSession,
 	durationMs,
 	joinChunks,
@@ -155,5 +159,49 @@ describe('the audio it sends', () => {
 	it('lets a real utterance through', () => {
 		const ok = new Int16Array(ENROLMENT_RATE * 2);
 		expect(rejectLocally(ok)).toBeNull();
+	});
+});
+
+describe('who is being enrolled (M71)', () => {
+	const status = { default_label: 'owner', max_label_chars: 40 };
+	it('cleans a name the way the server does, and falls back to the server\'s default person', () => {
+		expect(cleanLabel('  Ted  ', status)).toBe('Ted');
+		expect(cleanLabel('Ted\n Smith', status)).toBe('Ted Smith');
+		expect(cleanLabel('', status)).toBe('owner');
+		expect(cleanLabel('   ', null)).toBe('owner');
+	});
+	it('says why a name cannot be one, in the server\'s words', () => {
+		expect(labelProblem('Ted', status)).toBeNull();
+		expect(labelProblem('x'.repeat(41), status)).toBe('a name is at most 40 characters');
+		expect(labelProblem('x'.repeat(41), { max_label_chars: 60 })).toBeNull();
+		expect(labelProblem('Ted\u0000', status)).toBe('a name may not contain control characters');
+	});
+	it('puts the person on the wire beside the rate and width, encoded', () => {
+		expect(writeQuery('Ted')).toBe('?rate=16000&width=2&label=Ted');
+		expect(writeQuery('Ted & Co')).toBe('?rate=16000&width=2&label=Ted%20%26%20Co');
+		// No person: the sample is compared with everyone, which is what a test is.
+		expect(writeQuery()).toBe('?rate=16000&width=2');
+	});
+});
+
+describe('what TEST MY VOICE says', () => {
+	it('names who it was and that the turn would run', () => {
+		expect(verdictLine({ verdict: { accepted: true, label: 'Ted', score: 2.314, threshold: 8.831 }, would_block: false })).toBe(
+			'Recognised as Ted · 2.31 against 8.83 · this turn would be allowed'
+		);
+	});
+	it('a refusal says who was nearest and what enforcement would do', () => {
+		expect(
+			verdictLine({ verdict: { accepted: false, nearest: 'owner', score: 11.87, threshold: 9, reason: 'mismatch' }, would_block: true, mode: 'enforce' })
+		).toBe('Not recognised (nearest: owner) · 11.87 against 9.00 · with enforcement on, this turn would be refused');
+		expect(
+			verdictLine({ verdict: { accepted: false, nearest: 'owner', score: 11.87, threshold: 9, reason: 'mismatch' }, would_block: false, mode: 'observe' })
+		).toBe('Not recognised (nearest: owner) · 11.87 against 9.00 · the gate is not enforcing, so nothing would be blocked');
+	});
+	it('too short to judge is not "not you"', () => {
+		expect(verdictLine({ verdict: { accepted: false, reason: 'no-speech' } })).toMatch(/^Could not judge that one \(no-speech\)/);
+	});
+	it('survives a server that sent nothing useful', () => {
+		expect(verdictLine({})).toBe('Not recognised · ? against ? · the gate is not enforcing, so nothing would be blocked');
 	});
 });

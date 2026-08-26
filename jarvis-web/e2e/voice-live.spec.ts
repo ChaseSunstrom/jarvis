@@ -109,6 +109,26 @@ test('looking at a camera is said under the reactor while it lasts', async ({ pa
 	await expect(page.getByTestId('caption')).not.toContainText('looking');
 });
 
+test('a voice recognised, and a stranger refused, are rows too (M71)', async ({ page }) => {
+	await gotoVoice(page);
+	const heard = await untilRow(page, 'speaker', { type: 'jarvis/test/speaker_verdict', who: 'Ted' });
+	await expect(heard).toContainText('Ted');
+	await expect(heard).toContainText('2.31 / 8.83');
+	await expect(heard).toHaveAttribute('data-state', 'done');
+	// A stranger while enforcing: a failed row that says who they were nearest,
+	// so a false reject of the owner can be read for what it was.
+	await hook(page, { type: 'jarvis/test/speaker_verdict', deny: true });
+	const refused = page.getByTestId('activity-row-speaker').filter({ hasText: 'not recognised' });
+	await expect(refused).toHaveCount(1);
+	await expect(refused).toContainText('refused · nearest owner');
+	await expect(refused).toHaveAttribute('data-state', 'failed');
+	// Too short to judge is not a stranger.
+	await hook(page, { type: 'jarvis/test/speaker_verdict', unverifiable: true });
+	const unverified = page.getByTestId('activity-row-speaker').filter({ hasText: 'unverified' });
+	await expect(unverified).toHaveCount(1);
+	await expect(unverified).toHaveAttribute('data-state', 'done');
+});
+
 test('a fact remembered and a moment landing are rows too', async ({ page }) => {
 	await gotoVoice(page);
 	const memory = await untilRow(page, 'memory', {

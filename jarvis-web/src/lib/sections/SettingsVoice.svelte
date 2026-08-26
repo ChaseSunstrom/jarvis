@@ -13,7 +13,17 @@
 	import SettingsFold from '$lib/components/SettingsFold.svelte';
 	import { SectionLink } from '$lib/sectionLink.svelte';
 	import { SettingsStore } from '$lib/settingsStore.svelte';
-	import { Button, Panel, Pill, ScreenState, SkeletonRows } from '$lib/ui';
+	import type { SpeakerPerson, SpeakerStatus } from '$lib/enrolment';
+	import {
+		Button,
+		EmptyState,
+		ErrorState,
+		OfflineState,
+		Panel,
+		Pill,
+		ScreenState,
+		SkeletonRows
+	} from '$lib/ui';
 	import { featuredOf, sectionOfGroup } from './settingsPlan';
 
 	const store = new SettingsStore();
@@ -29,20 +39,50 @@
 	 * like". That is enforced on the server, not here. Enrolled here or from
 	 * the phone: both read one list of phrases from the server, so the two
 	 * surfaces cannot drift. See `docs/voice-identity.md`.
+	 *
+	 * Since M71 it lists PEOPLE: one row each, with a way to forget one. The
+	 * top level still describes the first person under the keys the panel has
+	 * always read, so nothing written for "the owner" changed meaning.
 	 */
-	let speaker = $state<Record<string, any> | null>(null);
+	let speaker = $state<SpeakerStatus | null>(null);
 	/** The same payload, never null: what the panel reads. A snippet does not carry the `{#if}`'s narrowing. */
-	const who = $derived<Record<string, any>>(speaker ?? {});
+	const who = $derived<SpeakerStatus>(speaker ?? {});
+	const people = $derived<SpeakerPerson[]>(who.people ?? []);
+	const totalSamples = $derived(people.reduce((sum, p) => sum + (p.samples ?? 0), 0));
+	/**
+	 * The panel's own four states. Its data is one HTTP read, independent of
+	 * the section's socket, so the section's `<ScreenState>` cannot speak for
+	 * it: a panel that vanished while loading, or on a 500, read as "this
+	 * Jarvis has no voice identity" — the one thing it must never say by
+	 * accident, because the remedy for that is "update jarvis-core".
+	 */
+	let speakerState = $state<'loading' | 'ready' | 'error' | 'offline'>('loading');
+	let speakerDetail = $state('');
 	let speakerBusy = $state(false);
 	let speakerError = $state('');
 
 	async function loadSpeaker(): Promise<void> {
+		if (speaker === null) speakerState = 'loading';
 		const res = await fetch('/api/voice/speaker').catch(() => null);
-		if (!res || !res.ok) {
-			speaker = null;
+		if (!res) {
+			// No answer at all — the console itself is unreachable. What is on
+			// screen is the last answer, and says so.
+			speakerState = 'offline';
 			return;
 		}
-		speaker = await res.json().catch(() => null);
+		if (!res.ok) {
+			speakerDetail = await failureText(res);
+			speakerState = 'error';
+			return;
+		}
+		const payload = await res.json().catch(() => null);
+		if (!payload || typeof payload !== 'object') {
+			speakerDetail = 'the console sent an unreadable answer';
+			speakerState = 'error';
+			return;
+		}
+		speaker = payload;
+		speakerState = 'ready';
 	}
 
 	async function failureText(res: Response): Promise<string> {
@@ -50,12 +90,14 @@
 		return (body && (body.message || body.detail)) || `the server answered ${res.status}`;
 	}
 
-	async function forgetVoice(): Promise<void> {
+	/** DELETE one person, or everyone when `label` is absent. */
+	async function forget(label?: string): Promise<void> {
 		if (speakerBusy) return;
 		speakerBusy = true;
 		speakerError = '';
 		try {
-			const res = await fetch('/api/voice/speaker', { method: 'DELETE' });
+			const url = label ? `/api/voice/speaker?label=${encodeURIComponent(label)}` : '/api/voice/speaker';
+			const res = await fetch(url, { method: 'DELETE' });
 			if (!res.ok) {
 				// 401 is the console lock, and it is the likely one — say what to
 				// do rather than showing a status code.
@@ -71,6 +113,8 @@
 		}
 	}
 
+	const slug = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
 	onMount(() => {
 		void loadSpeaker();
 		return link.mount();
@@ -83,7 +127,18 @@
 
 <div class="stack">
 	<p class="lede" data-testid="settings-voice-lede">
-		{who.supported ? (who.enrolled ? 'one voice enrolled' : 'answers any voice') : 'voice identity not supported'} · link {link.status}
+		{#if speakerState === 'loading'}
+			reading whose voice
+		{:else if who.supported === false}
+			voice identity not supported
+		{:else if people.length === 1}
+			one voice enrolled
+		{:else if people.length > 1}
+			{people.length} voices enrolled
+		{:else}
+			answers any voice
+		{/if}
+		· link {link.status}
 	</p>
 
 	<ScreenState
@@ -130,9 +185,44 @@
 	  out, and the only defence is being able to see the owner's own scores
 	  before enforcing.
 	-->
-	{#if who.supported}
-		<Panel title="Whose voice" meta={who.enrolled ? 'enrolled' : 'nobody enrolled'} testid="voice-identity">
-			{#snippet children()}
+	<Panel
+		title="Whose voice"
+		meta={speakerState === 'ready' && who.supported !== false
+			? people.length
+				? `${people.length} enrolled`
+				: 'nobody enrolled'
+			: '…'}
+		testid="voice-identity"
+	>
+		{#snippet children()}
+			{#if speakerState === 'loading'}
+				<div data-testid="speaker-loading">
+					<SkeletonRows rows={3} label="Loading whose voice Jarvis answers" />
+				</div>
+			{:else if speakerState === 'error'}
+				<ErrorState
+					title="Couldn't read whose voice Jarvis answers"
+					detail={`${speakerDetail}. Retry, or check docker compose logs jarvis-core.`}
+					onretry={loadSpeaker}
+					testid="speaker-error-state"
+				/>
+			{:else if speakerState === 'offline'}
+				<OfflineState
+					body={speaker
+						? 'Jarvis could not be reached, so nothing here is live; what is shown is the last answer.'
+						: 'Jarvis could not be reached, so nothing is known about whose voice it answers.'}
+					onreconnect={loadSpeaker}
+					busy={speakerBusy}
+					testid="speaker-offline"
+				/>
+			{/if}
+			{#if speakerState !== 'loading' && who.supported === false}
+				<EmptyState
+					title="This Jarvis has no voice identity"
+					body="The console reached the server and it has no /api/voice/speaker. Update jarvis-core; nothing on this page can add it."
+					testid="speaker-unsupported"
+				/>
+			{:else if speakerState === 'ready' || (speakerState === 'offline' && speaker)}
 				<div class="setting">
 					<div class="what"><b>Mode</b><span class="dim">whether other voices are refused</span></div>
 					<span class="value">
@@ -140,15 +230,59 @@
 					</span>
 				</div>
 				<div class="setting">
-					<div class="what"><b>Enrolled</b><span class="dim">samples of the owner's voice</span></div>
+					<div class="what"><b>Enrolled</b><span class="dim">whose samples the gate compares a voice with</span></div>
 					<span class="value" data-testid="speaker-samples">
-						{#if who.enrolled}
-							{who.samples} of {who.max_samples} samples
+						{#if people.length === 1}
+							{people[0].samples} of {people[0].max_samples ?? who.max_samples} samples
+						{:else if people.length > 1}
+							{people.length} people · {totalSamples} samples
 						{:else}
 							nobody — the gate is inert until somebody enrols
 						{/if}
 					</span>
 				</div>
+
+				<!--
+				  One row per person. `data-jv-row` so the menu inventory measures
+				  its one control at rest (REMOVE) as a row's, not the page's; the
+				  numbers are each person's own, because a threshold is per voice.
+				-->
+				{#if people.length}
+					<ol class="people" data-testid="speaker-people">
+						{#each people as person (person.label)}
+							<li class="person" data-jv-row data-testid="person-{slug(person.label)}">
+								<div class="what">
+									<b>{person.label}</b>
+									<span class="dim" data-testid="person-samples-{slug(person.label)}">
+										{person.samples} of {person.max_samples ?? who.max_samples} samples
+										{#if person.threshold != null}
+											· threshold {person.threshold}
+										{/if}
+										{#if person.threshold_measured !== false && person.worst_self_score != null}
+											· their worst sample scores {person.worst_self_score}
+										{:else}
+											· not measurable yet
+										{/if}
+										{#if !person.enrolled}
+											· needs {Math.max(0, (who.min_samples ?? 3) - (person.samples ?? 0))} more
+										{/if}
+									</span>
+								</div>
+								<div class="acts">
+									<Button
+										variant="danger"
+										testid="person-remove-{slug(person.label)}"
+										disabled={speakerBusy}
+										title={speakerBusy ? 'Deleting' : `Delete ${person.label}'s voiceprint; everyone else stays`}
+										onclick={() => forget(person.label)}
+									>
+										REMOVE
+									</Button>
+								</div>
+							</li>
+						{/each}
+					</ol>
+				{/if}
 
 				{#if who.enrolled}
 					<div class="setting">
@@ -157,7 +291,13 @@
 						</div>
 						<span class="value" data-testid="speaker-threshold">
 							{who.threshold}
-							{#if who.threshold_measured !== false && who.worst_self_score != null}
+							{#if who.configured_threshold != null}
+								<!-- `voice: speaker: threshold:` wins over every profile's own
+								     measurement; the screen has to say which number is live. -->
+								<span class="dim" data-testid="speaker-threshold-configured">
+									· set in configuration.yaml; enrolment suggests {who.suggested_threshold}
+								</span>
+							{:else if who.threshold_measured !== false && who.worst_self_score != null}
 								<span class="dim">
 									· their own worst sample scores {who.worst_self_score}, enrolment
 									suggests {who.suggested_threshold}
@@ -169,7 +309,7 @@
 								     measure with, and the row says so rather than printing Infinity. -->
 								<span class="dim">
 									· not measurable yet: scoring one sample needs {who.min_samples} others,
-									so this needs {who.measure_samples ?? who.min_samples + 1} in all.
+									so this needs {who.measure_samples ?? (who.min_samples ?? 3) + 1} in all.
 									{who.suggested_threshold} is the default, not a measurement.
 								</span>
 							{/if}
@@ -180,7 +320,10 @@
 				<EnrolVoice status={speaker} onDone={loadSpeaker} />
 
 				<div class="setting">
-					<div class="what"><b>Forget this voice</b><span class="dim">deletes the voiceprint</span></div>
+					<div class="what">
+						<b>{people.length > 1 ? 'Forget everyone' : 'Forget this voice'}</b>
+						<span class="dim">{people.length > 1 ? 'deletes every voiceprint' : 'deletes the voiceprint'}</span>
+					</div>
 					<div class="acts">
 						<Button
 							variant="danger"
@@ -190,8 +333,8 @@
 								? 'Nobody is enrolled'
 								: speakerBusy
 									? 'Deleting'
-									: 'Delete the voiceprint — Jarvis answers any voice again'}
-							onclick={forgetVoice}
+									: 'Delete every voiceprint — Jarvis answers any voice again'}
+							onclick={() => forget()}
 						>
 							{speakerBusy ? 'deleting…' : 'FORGET'}
 						</Button>
@@ -203,16 +346,18 @@
 
 				<p class="note">
 					Enrol here or from the phone; both read the same phrases from the server, and samples add
-					up rather than replacing each other. Whether Jarvis <i>refuses</i> other voices is
+					up rather than replacing each other. A new name is a new person — up to
+					{who.max_people ?? 8} — and a turn is compared with everyone, so Jarvis knows who is
+					speaking and the agent is told. Whether Jarvis <i>refuses</i> other voices is
 					<code>voice: speaker: mode</code> in <code>configuration.yaml</code>, and the honest order is
 					enrol, leave it in <code>observe</code> for a few days, read the scores, then
 					<code>enforce</code>. It stops a guest, a television and a stranger at the window; it does
 					not stop a recording, and it is not a second factor — the tier system still asks a human
 					before anything irreversible.
 				</p>
-			{/snippet}
-		</Panel>
-	{/if}
+			{/if}
+		{/snippet}
+	</Panel>
 
 	{#if store.supported && store.loaded}
 		<SettingsFold
@@ -286,6 +431,21 @@
 		justify-content: flex-end;
 		gap: var(--jv-space-2);
 		flex-wrap: wrap;
+	}
+	/* One hairline row per person, washed like the phrase being read. */
+	.people {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.person {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--jv-space-2) var(--jv-space-4);
+		padding: var(--jv-space-2) var(--jv-space-2);
+		border-bottom: 1px solid var(--jv-line-hair);
+		background: var(--jv-wash);
 	}
 	.note {
 		grid-column: 1 / -1;

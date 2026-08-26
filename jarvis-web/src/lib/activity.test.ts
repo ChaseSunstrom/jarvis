@@ -93,3 +93,37 @@ describe('the contract the phone mirrors', () => {
 		}
 	});
 });
+
+describe('who the voice gate heard (M71)', () => {
+	const contract = JSON.parse(readFileSync(new URL('../../../tests/contracts/speaker_verdict.json', import.meta.url), 'utf8'));
+	const verdict = (data: Record<string, unknown>) =>
+		activityFrom(ev(contract.event, { run_id: 'r1', pipeline: 'jarvis', device_id: null, at: 1, mode: 'enforce', confidence: 0.9, ...data }), at);
+
+	it('an accepted voice is a row named after the person, with the numbers', () => {
+		const row = verdict({ accepted: true, label: 'Ted', nearest: 'Ted', score: 2.314, threshold: 8.831, reason: 'match', enforced: false });
+		expect(row).toMatchObject({ kind: contract.row.kind, title: 'Ted', detail: '2.31 / 8.83', state: 'done', id: 'speaker:r1' });
+	});
+
+	it('a refusal names nobody as the speaker and says who they were nearest', () => {
+		const row = verdict({ accepted: false, label: null, nearest: 'owner', score: 11.87, threshold: 9.0, reason: 'mismatch', enforced: true });
+		expect(row).toMatchObject({ title: 'not recognised', detail: 'refused · nearest owner · 11.87 / 9.00', state: 'failed' });
+		// Observed, not enforced: the same verdict is not a failure of anything.
+		const seen = verdict({ accepted: false, label: null, nearest: 'owner', score: 11.87, threshold: 9.0, reason: 'mismatch', enforced: false });
+		expect(seen).toMatchObject({ title: 'not recognised', detail: 'observed · nearest owner · 11.87 / 9.00', state: 'done' });
+	});
+
+	it('every reason the contract calls unverifiable is drawn as unverified, never as a stranger', () => {
+		expect(contract.unverifiable_reasons.length).toBeGreaterThan(0);
+		for (const reason of contract.unverifiable_reasons as string[]) {
+			const row = verdict({ accepted: false, label: null, nearest: null, score: null, threshold: null, reason, enforced: false });
+			expect(row, reason).toMatchObject({ title: 'unverified', detail: reason, state: 'done' });
+		}
+	});
+
+	it('one turn is one row: the same run updates in place', () => {
+		let rows = applyActivity([], ev(contract.event, { run_id: 'r1', accepted: true, label: 'owner', score: 1, threshold: 9 }), at);
+		rows = applyActivity(rows, ev(contract.event, { run_id: 'r1', accepted: true, label: 'owner', score: 1.5, threshold: 9 }), at);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].detail).toBe('1.50 / 9.00');
+	});
+});

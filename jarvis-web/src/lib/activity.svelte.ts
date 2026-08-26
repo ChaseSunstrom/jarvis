@@ -4,7 +4,7 @@
  * One store, fed by the bus events the core already fires: a tool call as it
  * starts and finishes, a task as it steps, a sensor as it changes, a camera as
  * it is looked at, a fact remembered or forgotten, a moment landing, an
- * approval waiting, an error. The strip draws the rows; this file decides what
+ * approval waiting, a voice recognised or refused, an error. The strip draws the rows; this file decides what
  * a row is. Kept apart from the component so the phone can mirror the same
  * mapping (M61) and so it can be unit-tested without a browser.
  *
@@ -21,6 +21,7 @@ export type ActivityKind =
 	| 'memory'
 	| 'moment'
 	| 'approval'
+	| 'speaker'
 	| 'error';
 
 export type ActivityState = 'live' | 'done' | 'failed';
@@ -40,6 +41,13 @@ export interface ActivityRow {
 
 /** How many rows the strip keeps. Enough to see a turn's work, not a day's. */
 export const ACTIVITY_CAP = 12;
+
+/**
+ * The verifier's reasons that mean "could not judge" rather than "judged and
+ * it was not you" — `tests/contracts/speaker_verdict.json`. A strip that
+ * painted a half-second "stop" as a stranger would be lying about the owner.
+ */
+const UNVERIFIABLE = new Set(['no-speech', 'unverifiable-no-pitch', 'unverifiable-transcript']);
 
 /** Domains whose state changes are readings worth a row, not chatter. */
 const SENSOR_DOMAINS = new Set(['sensor', 'binary_sensor', 'climate', 'weather', 'number', 'event', 'device_tracker']);
@@ -214,6 +222,35 @@ export function activityFrom(event: BusEvent, now: () => number = Date.now): Act
 				state: data.decision === 'deny' ? 'failed' : 'done',
 				at
 			};
+		case 'jarvis_speaker_verdict': {
+			// Who the voice gate heard (M71), for a strip that did not run the
+			// turn. The row rule is the contract's: the name when accepted; then
+			// "unverified" for audio too short or too quiet to judge, which is
+			// never painted as a stranger; then "not recognised", failed only
+			// when the gate actually refused the turn, naming the nearest
+			// enrolled person so a false reject can be read for what it was.
+			const id = `speaker:${data.run_id ?? at}`;
+			const number = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '');
+			const score = number(data.score);
+			const threshold = number(data.threshold);
+			const numbers = score && threshold ? `${score} / ${threshold}` : score;
+			if (data.accepted === true) {
+				return { id, kind: 'speaker', title: String(data.label ?? 'recognised'), detail: numbers, state: 'done', at };
+			}
+			const reason = String(data.reason ?? '');
+			if (UNVERIFIABLE.has(reason)) {
+				return { id, kind: 'speaker', title: 'unverified', detail: reason, state: 'done', at };
+			}
+			const nearest = data.nearest ? `nearest ${data.nearest}` : '';
+			return {
+				id,
+				kind: 'speaker',
+				title: 'not recognised',
+				detail: [data.enforced ? 'refused' : 'observed', nearest, numbers].filter(Boolean).join(' · '),
+				state: data.enforced ? 'failed' : 'done',
+				at
+			};
+		}
 		default:
 			return null;
 	}
@@ -241,7 +278,8 @@ export const ACTIVITY_EVENTS = [
 	'memory_changed',
 	'jarvis_notification',
 	'jarvis_approval_required',
-	'jarvis_approval_resolved'
+	'jarvis_approval_resolved',
+	'jarvis_speaker_verdict'
 ] as const;
 
 /** What the voice tab shows under the reactor while a camera is being looked at. */

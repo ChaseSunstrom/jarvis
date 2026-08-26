@@ -293,7 +293,7 @@ primary, a fourth row control or a second search box fails it.
 | KNOWLEDGE › Notes | `/knowledge/notes` | `note-` | 2 | — | 1 | the note itself and Delete; the editor's Save is primary only with a note open |
 | KNOWLEDGE › Memory | `/knowledge/memory` | `memory-` | 2 | — | 1 | Pin and Forget are both what a memory is for |
 | SETTINGS › Assistant | `/settings/assistant` | `plain-` | 3 | — | 0 | the control, SAVE and RESET per plain row |
-| SETTINGS › Voice | `/settings/voice` | `plain-` | 3 | — | 0 | as Assistant, plus the FORGET on the voice identity panel |
+| SETTINGS › Voice | `/settings/voice` | `plain-` | 3 | — | 0 | as Assistant; on the voice identity panel one row per enrolled person (`person-`) with its REMOVE, and ENROL, TEST and FORGET (everyone) outside them (M71) |
 | SETTINGS › House | `/settings/house` | `plain-` | 3 | — | 0 | as Assistant; Rooms is a link to HOUSE › Areas |
 | SETTINGS › Console | `/settings/console` | `token-` | 1 | — | 0 | a paired phone or computer is a row with REVOKE; text size is a segmented row; the event stream is a fold; its settings rows are behind EVERYTHING |
 | SETTINGS › Tools | `/settings/tools` | `tool-` | 2 | — | 1 | USE and EDIT; the catalogue above the folds (M65) is a row per entry with one control at rest — INSTALL, or an INSTALLED tag that is not one — and one ADD BY URL on its MCP line; NEW SKILL in the Extensions fold stays the one lit control, because the shipped entries are installed already and writing a skill is what the page is for; the one search filters the catalogue and every fold |

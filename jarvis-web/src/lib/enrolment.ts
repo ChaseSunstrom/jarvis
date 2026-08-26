@@ -38,9 +38,35 @@ export const MIN_SAMPLE_MS = 400;
 /** Longer than any prompt, and a hard stop so a stuck recorder cannot run on. */
 export const MAX_SAMPLE_MS = 20000;
 
+/** One enrolled person, as the server summarises them. Never a vector. */
+export interface SpeakerPerson {
+	label: string;
+	enrolled?: boolean;
+	samples?: number;
+	anchor_samples?: number;
+	adapted_samples?: number;
+	max_samples?: number;
+	threshold?: number;
+	worst_self_score?: number | null;
+	suggested_threshold?: number | null;
+	threshold_measured?: boolean;
+}
+
 export interface SpeakerStatus {
 	supported?: boolean;
+	/** Whether ANYBODY is enrolled — what "does the gate do anything" means. */
 	enrolled?: boolean;
+	/** Whether the person the top level describes is. */
+	person_enrolled?: boolean;
+	/** The person the top level describes: `label` when asked for one, else the first. */
+	label?: string;
+	people?: SpeakerPerson[];
+	default_label?: string;
+	max_people?: number;
+	max_label_chars?: number;
+	/** `voice: speaker: threshold:` when the file names one; null when each profile keeps its own. */
+	configured_threshold?: number | null;
+	active?: boolean;
 	samples?: number;
 	anchor_samples?: number;
 	adapted_samples?: number;
@@ -205,4 +231,90 @@ export function rejectLocally(samples: Int16Array): string | null {
 		return `that was ${Math.round(ms)} ms of audio — say the whole phrase`;
 	}
 	return null;
+}
+
+// --- who (M71) ----------------------------------------------------------------
+
+/**
+ * The name a sample is enrolled under.
+ *
+ * Trimmed and collapsed the way jarvis-core's `normalise_label` does it, so
+ * "Ted " and "Ted" are one person here as they are there; nothing typed means
+ * the server's default person, which is who every enrolment before names
+ * existed went to. Length is NOT enforced here — `labelProblem` says so in
+ * words, and the server refuses it again regardless.
+ */
+export function cleanLabel(raw: string, status: SpeakerStatus | null): string {
+	const name = (raw ?? '').split(/\s+/).filter(Boolean).join(' ');
+	return name || String(status?.default_label ?? 'owner');
+}
+
+/** Why a name cannot be one, in the server's words, or null when it can. */
+export function labelProblem(raw: string, status: SpeakerStatus | null): string | null {
+	const name = cleanLabel(raw, status);
+	const max = Math.max(1, Number(status?.max_label_chars ?? 40));
+	if (name.length > max) return `a name is at most ${max} characters`;
+	// eslint-disable-next-line no-control-regex
+	if (/[\u0000-\u001f\u007f]/.test(name)) return 'a name may not contain control characters';
+	return null;
+}
+
+/**
+ * The query string for one write: the rate and width the samples are in, and
+ * the person when there is one. `verify` sends none, so the sample is compared
+ * with EVERYONE and the answer says who it was — the whole point of the test.
+ */
+export function writeQuery(label?: string): string {
+	const base = `?rate=${ENROLMENT_RATE}&width=${ENROLMENT_WIDTH}`;
+	return label ? `${base}&label=${encodeURIComponent(label)}` : base;
+}
+
+/** What the server answers to `POST /api/voice/speaker/verify`. */
+export interface VerifyResult {
+	verdict?: {
+		accepted?: boolean;
+		label?: string | null;
+		nearest?: string | null;
+		score?: number | null;
+		threshold?: number | null;
+		reason?: string;
+	};
+	would_block?: boolean;
+	mode?: string;
+}
+
+/**
+ * The verifier's reasons that mean "could not judge". Mirrors
+ * `tests/contracts/speaker_verdict.json`; a test line that read one of these
+ * as "you are not who this belongs to" would send the owner off to re-enrol
+ * over a sample that was merely too short.
+ */
+const UNVERIFIABLE = new Set(['no-speech', 'unverifiable-no-pitch', 'unverifiable-transcript']);
+
+function number(value: unknown): string {
+	return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '?';
+}
+
+/**
+ * One sentence about a TEST MY VOICE result: who it was, the numbers, and
+ * what enforcement would have done — the same three things the phone says.
+ */
+export function verdictLine(result: VerifyResult): string {
+	const verdict = result.verdict ?? {};
+	const numbers = `${number(verdict.score)} against ${number(verdict.threshold)}`;
+	if (verdict.accepted) {
+		const who = verdict.label ? `Recognised as ${verdict.label}` : 'Recognised';
+		return `${who} · ${numbers} · this turn would be allowed`;
+	}
+	const reason = String(verdict.reason ?? '');
+	if (UNVERIFIABLE.has(reason)) {
+		return `Could not judge that one (${reason}) — say a whole sentence, at your ordinary volume`;
+	}
+	const nearest = verdict.nearest ? ` (nearest: ${verdict.nearest})` : '';
+	const outcome = result.would_block
+		? 'with enforcement on, this turn would be refused'
+		: result.mode === 'enforce'
+			? 'this turn would be allowed'
+			: 'the gate is not enforcing, so nothing would be blocked';
+	return `Not recognised${nearest} · ${numbers} · ${outcome}`;
 }

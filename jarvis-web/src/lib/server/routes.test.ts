@@ -41,9 +41,11 @@ const MAY_ATTACH_THE_TOKEN: Record<string, string> = {
 		'before it is used. It exists because a download is what "you can leave with your data" ' +
 		'means, and a browser cannot hold the token',
 	'api/voice/speaker/+server.ts':
-		'the upstream path is a constant — nothing from the caller reaches the URL — and the ' +
-		'payload it relays carries counts and scores, never the voiceprint. DELETE additionally ' +
-		'needs a console-password session, because it disables the gate that refuses strangers'
+		'the upstream path is a constant and the one thing from the caller that reaches the URL ' +
+		'is `label`, a person\'s name checked to jarvis-core\'s own rule (printable, at most forty ' +
+		'characters) and URL-encoded; the payload it relays carries counts and scores, never the ' +
+		'voiceprint. DELETE additionally needs a console-password session, because it disables ' +
+		'the gate that refuses strangers'
 };
 
 /**

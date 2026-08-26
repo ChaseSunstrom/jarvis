@@ -714,9 +714,12 @@ export function makeWorld() {
 		// Pairing: a counter for readable code names and the live set, so the
 		// single-use rule is exercised rather than assumed.
 		pairingCodes: 0, livePairingCodes: new Set(),
-		// Flipped by DELETE /api/voice/speaker, so the panel's "FORGET" can be
-		// asserted on its effect rather than on the request having been sent.
-		voiceprintDeleted: false,
+		// Whose voice Jarvis answers (M71): one person at rest, so every panel
+		// assertion written for "the owner" still reads the first person, and a
+		// household on request (`jarvis/test/speaker_household`). DELETE removes
+		// one or all, so the panel's FORGET and REMOVE can be asserted on their
+		// effect rather than on the request having been sent.
+		people: [ownerPerson()],
 		// One connected and one not: "connected now" is the fact the panel
 		// exists to show before somebody revokes the wrong row.
 		tokens: [
@@ -725,6 +728,68 @@ export function makeWorld() {
 		]
 	};
 	return world;
+}
+
+// One enrolled person, as jarvis-core's `VoiceProfile.summary` describes one:
+// counts, scores and a threshold, never the vectors. `measure_samples` is what
+// it takes to MEASURE a threshold rather than inherit one — scoring a sample
+// means rebuilding the profile from the others, and that rebuilt profile needs
+// min_samples itself, so five is measurable and three is not; the console draws
+// two different sentences for the two cases.
+function ownerPerson() {
+	return {
+		label: 'owner',
+		enrolled: true,
+		samples: 5,
+		anchor_samples: 5,
+		adapted_samples: 0,
+		min_samples: 3,
+		measure_samples: 4,
+		max_samples: 20,
+		threshold: 8.831,
+		self_score: 2.527,
+		self_scores: [2.1, 2.527, 3.3, 7.065, 4.2],
+		worst_self_score: 7.065,
+		suggested_threshold: 8.831,
+		threshold_measured: true,
+		embedder: 'jarvis-mfcc-v1'
+	};
+}
+function tedPerson() {
+	return { ...ownerPerson(), label: 'Ted', samples: 4, anchor_samples: 4, threshold: 8.04, self_score: 1.9, self_scores: [1.9, 2.4, 6.43, 3.1], worst_self_score: 6.43, suggested_threshold: 8.04 };
+}
+function emptyPerson(label) {
+	return { label, enrolled: false, samples: 0, anchor_samples: 0, adapted_samples: 0, self_scores: [], self_score: null, worst_self_score: null, threshold_measured: false };
+}
+function findPerson(world, label) {
+	const wanted = String(label || '').toLowerCase();
+	return world.people.find((p) => p.label.toLowerCase() === wanted) || null;
+}
+// What GET /api/voice/speaker answers: the gate's settings and the phrase
+// list, then ONE person's summary at the top level under the keys the
+// screens have always read (the named one, else the first), and `people`.
+function speakerStatus(world, label) {
+	const first = label ? findPerson(world, label) : world.people[0] || null;
+	const person = first || emptyPerson(label || 'owner');
+	return {
+		mode: 'observe',
+		modes: ['off', 'observe', 'enforce'],
+		active: world.people.length > 0,
+		on_reject: 'speak',
+		allow_unverifiable: true,
+		adapt: false,
+		min_samples: 3,
+		max_samples: 20,
+		max_people: 8,
+		max_label_chars: 40,
+		default_label: 'owner',
+		configured_threshold: null,
+		prompts: PROMPTS,
+		...person,
+		enrolled: world.people.length > 0,
+		person_enrolled: !!first && !!first.enrolled,
+		people: world.people.map((p) => ({ ...p }))
+	};
 }
 
 // The enrolment phrases jarvis-core serves, kept here so the console panel has
@@ -1942,18 +2007,60 @@ index 1234567..89abcde 100644
 					);
 					return;
 				}
-				world.enrolledSamples = (world.enrolledSamples ?? 0) + 1;
-				world.voiceprintDeleted = false;
+				// `label` names the person (M71); nothing typed is the default
+				// person, exactly as jarvis-core resolves it.
+				const label = String(url.searchParams.get('label') || '').trim() || 'owner';
+				let person = findPerson(world, label);
+				if (!person) {
+					person = { ...emptyPerson(label), threshold: 4.0, suggested_threshold: 4.0 };
+					world.people.push(person);
+				}
+				person.samples += 1;
+				person.anchor_samples += 1;
+				person.enrolled = person.samples >= 3;
 				res.writeHead(200, { 'content-type': 'application/json' });
 				res.end(
 					JSON.stringify({
-						enrolled: true,
-						samples: 5 + world.enrolledSamples,
-						min_samples: 3,
-						max_samples: 20,
-						prompts: PROMPTS
+						...speakerStatus(world, label),
+						accepted: true,
+						sample: { speech_ms: received / 32, voiced_frames: 40, has_pitch: true, vector: null }
 					})
 				);
+			});
+			return;
+		}
+
+		// Score a sample without enrolling it: who it was, and what enforcement
+		// would have done. The relay in front of this carries the caller's own
+		// credential, so an unlocked console reaches here and a locked one is
+		// refused before it does.
+		if (url.pathname === '/api/voice/speaker/verify' && req.method === 'POST') {
+			if (req.headers.authorization !== `Bearer ${token}`) {
+				res.writeHead(401, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ detail: 'unauthorized' }));
+				return;
+			}
+			let received = 0;
+			req.on('data', (chunk) => (received += chunk.length));
+			req.on('end', () => {
+				if (!world.people.length) {
+					res.writeHead(409, { 'content-type': 'application/json' });
+					res.end(JSON.stringify({ detail: 'nobody is enrolled yet' }));
+					return;
+				}
+				const label = url.searchParams.get('label');
+				const against = label ? findPerson(world, label) : world.people[0];
+				if (label && !against) {
+					res.writeHead(404, { 'content-type': 'application/json' });
+					res.end(JSON.stringify({ detail: `'${label}' is not enrolled` }));
+					return;
+				}
+				const verdict =
+					received < 6400
+						? { accepted: false, score: null, threshold: against.threshold, confidence: 0, reason: 'no-speech', blocks: {}, label: null, nearest: null }
+						: { accepted: true, score: 2.314, threshold: against.threshold, confidence: 0.9, reason: 'match', blocks: {}, label: against.label, nearest: against.label };
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ verdict, would_block: false, mode: 'observe', enforced: false }));
 			});
 			return;
 		}
@@ -1964,49 +2071,33 @@ index 1234567..89abcde 100644
 				res.end('unauthorized');
 				return;
 			}
+			const label = url.searchParams.get('label');
 			if (req.method === 'DELETE') {
-				world.voiceprintDeleted = true;
+				// One person, or everyone — jarvis-core's DELETE, including its
+				// 404 for a name nobody is enrolled under.
+				if (label) {
+					const gone = findPerson(world, label);
+					if (!gone) {
+						res.writeHead(404, { 'content-type': 'application/json' });
+						res.end(JSON.stringify({ detail: `'${label}' is not enrolled` }));
+						return;
+					}
+					world.people = world.people.filter((p) => p !== gone);
+				} else {
+					world.people = [];
+				}
 				res.writeHead(200, { 'content-type': 'application/json' });
-				res.end(JSON.stringify({ enrolled: false, samples: 0, mode: 'observe', active: false }));
+				res.end(JSON.stringify(speakerStatus(world, null)));
 				return;
 			}
+			// jarvis-core's own ENROLMENT_PROMPTS ride on every answer, not an
+			// abbreviation of them. The console's enrolment panel renders this
+			// list rather than carrying a copy, which is the entire argument for
+			// letting a browser enrol at all — two surfaces, one list, no drift.
+			// Shortening them here would let a panel that DID hard-code its own
+			// phrases pass.
 			res.writeHead(200, { 'content-type': 'application/json' });
-			res.end(
-				JSON.stringify(
-					world.voiceprintDeleted
-						? { enrolled: false, samples: 0, mode: 'observe', active: false,
-							min_samples: 3, max_samples: 20, prompts: PROMPTS }
-						: {
-								enrolled: true,
-								samples: 5,
-								min_samples: 3,
-								// What it takes to MEASURE a threshold rather than
-								// inherit one: scoring a sample means rebuilding the
-								// profile from the others, and that rebuilt profile
-								// needs min_samples itself. So five samples is
-								// measurable and three is not — and the console draws
-								// two different sentences for the two cases.
-								measure_samples: 4,
-								max_samples: 20,
-								mode: 'observe',
-								active: true,
-								threshold: 8.831,
-								self_score: 2.527,
-								worst_self_score: 7.065,
-								suggested_threshold: 8.831,
-								threshold_measured: true,
-								label: 'owner',
-								embedder: 'jarvis-mfcc-v1',
-								// jarvis-core's own ENROLMENT_PROMPTS, not an abbreviation of
-								// them. The console's enrolment panel renders this list
-								// rather than carrying a copy, which is the entire argument
-								// for letting a browser enrol at all — two surfaces, one
-								// list, no drift. Shortening them here would let a panel
-								// that DID hard-code its own phrases pass.
-								prompts: PROMPTS
-							}
-				)
-			);
+			res.end(JSON.stringify(speakerStatus(world, label)));
 			return;
 		}
 
@@ -2505,6 +2596,39 @@ index 1234567..89abcde 100644
 					}
 					broadcast('vision_look_started', record);
 					setTimeout(() => broadcast('vision_look_finished', { ...record, duration_ms: 620 }), Number(msg.after_ms) || 900);
+					break;
+				}
+				case 'jarvis/test/speaker_household': {
+					// Two people enrolled, for the panel's people list; and back to
+					// one, so the assertions written for "the owner" hold again.
+					world.people = [ownerPerson(), tedPerson()];
+					ok(msg.id, { people: world.people.map((p) => p.label) });
+					break;
+				}
+				case 'jarvis/test/speaker_reset': {
+					world.people = [ownerPerson()];
+					ok(msg.id, { people: ['owner'] });
+					break;
+				}
+				case 'jarvis/test/speaker_verdict': {
+					// Who the voice gate heard (M71), as the pipeline fires it for the
+					// surfaces that did not run the turn: the contract's fields, no
+					// audio, no vector. `who` names an accepted voice; `deny` is a
+					// refusal nearest the owner; `unverifiable` is a turn too short
+					// to judge, which a strip must not paint as a stranger.
+					const runId = `run-${Date.now()}`;
+					const base = { run_id: runId, pipeline: 'jarvis', device_id: null, at: Date.now() / 1000, mode: msg.mode || 'enforce', confidence: 0.9 };
+					ok(msg.id, { run_id: runId });
+					if (msg.unverifiable) {
+						broadcast('jarvis_speaker_verdict', { ...base, accepted: false, reason: 'no-speech', label: null, nearest: null, score: null, threshold: null, enforced: false });
+						break;
+					}
+					if (msg.deny) {
+						broadcast('jarvis_speaker_verdict', { ...base, accepted: false, reason: 'mismatch', label: null, nearest: 'owner', score: 11.87, threshold: 8.831, enforced: base.mode === 'enforce' });
+						break;
+					}
+					const who = String(msg.who || 'owner');
+					broadcast('jarvis_speaker_verdict', { ...base, accepted: true, reason: 'match', label: who, nearest: who, score: 2.314, threshold: 8.831, enforced: false });
 					break;
 				}
 				case 'jarvis/test/moment': {
