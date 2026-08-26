@@ -1632,6 +1632,44 @@ def test_compose_piper_voice_matches_the_default_pipeline() -> None:
     )
 
 
+def test_compose_piper_length_scale_matches_the_example_env() -> None:
+    """The voice's pace is one number in two places, and they agree.
+
+    `--length-scale` is Piper's duration multiplier, taken at start; the
+    compose default and the documented `.env.example` value are the same
+    number so a fresh install and a documented one speak at the same pace
+    (0.9 — "slightly faster", the operator's ask of 26 Aug), and it stays in
+    the range a person can follow.
+    """
+    loaded = _compose_default("PIPER_LENGTH_SCALE")
+    example = re.search(r"^PIPER_LENGTH_SCALE=(.+)$", (ROOT / ".env.example").read_text(encoding="utf-8"), re.M)
+    assert example, ".env.example does not document PIPER_LENGTH_SCALE"
+    assert loaded == example.group(1).strip()
+    assert 0.5 <= float(loaded) <= 1.5, loaded
+
+
+def test_the_coding_workspace_is_the_mounted_crossover() -> None:
+    """A coding job can make a repository where the config says.
+
+    In the image `~` is `/`, so `~/jarvis/workspaces` was `/jarvis/workspaces`
+    and the first coding job the operator asked for died on "Permission
+    denied: '/jarvis'". The config names `/workspace`; compose mounts
+    ../jarvis-workspace there on jarvis-core AND hands it to the config-init
+    one-shot, which chowns it for uid 10003 — the bind mount masks the
+    image's ownership exactly as it does for /config.
+    """
+    workspace = str(load_config(CONFIG)["code"]["workspace"])
+    assert workspace == "/workspace", workspace
+    compose = COMPOSE.read_text(encoding="utf-8")
+    core = compose.split("  jarvis-core:", 1)[1].split("\n  wyoming-", 1)[0]
+    assert "- ../jarvis-workspace:/workspace" in core, "jarvis-core does not mount the workspace"
+    init = compose.split("  jarvis-config-init:", 1)[1].split("\n  jarvis-core:", 1)[0]
+    assert "- ../jarvis-workspace:/workspace" in init and "/workspace" in init.split("chown", 1)[1].split("&&", 1)[0], (
+        "jarvis-config-init does not chown /workspace"
+    )
+    assert (ROOT.parent / "jarvis-workspace").is_dir(), "../jarvis-workspace is not in the checkout"
+
+
 def test_compose_wake_word_matches_the_voice_config() -> None:
     config_wake = load_config(CONFIG)["voice"]["wake"]["model"]
     assert _compose_default("WAKE_WORD") == config_wake

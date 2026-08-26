@@ -151,6 +151,10 @@ voice:
     # serving and offers them as a dropdown, so this is one you can pick rather
     # than one you have to spell.
     voice: en_GB-alan-medium
+    # How fast it speaks is PIPER_LENGTH_SCALE in .env (a duration multiplier;
+    # 0.9 is a tenth quicker) — Piper takes it at start, so it is the
+    # container's, not a per-request knob. With `engine: openai` (Kokoro) it is
+    # `speed:` here instead, 1.0 being the voice's own pace.
   wake:
     host: 127.0.0.1
     port: 10400
@@ -1116,9 +1120,12 @@ code:
 
   # WHERE JARVIS MAY CREATE REPOSITORIES.
   #
-  # `~/jarvis/workspaces` unless you name somewhere else. It is created on
-  # first use, so a fresh install can answer "write me a Snake game" instead
-  # of "there is nowhere to put it".
+  # `/workspace` in the container — the bind mount of ../jarvis-workspace that
+  # docker-compose.yml gives jarvis-core, the sandbox and the orchestrator, and
+  # that jarvis-config-init makes writable by uid 10003. Outside a container
+  # `~/jarvis/workspaces` is the code's own default. It is created on first
+  # use, so a fresh install can answer "write me a Snake game" instead of
+  # "there is nowhere to put it".
   #
   # What that grants is narrow: make a directory under this one root, `git
   # init` it, write a README. RUNNING anything still needs an `environment:`
@@ -1132,7 +1139,7 @@ code:
   # files; removing them is one `rm` away for a human who means it. A creation
   # that fails partway does clean up after itself, so a name is never left
   # unusable by a half-made directory.
-  workspace: ~/jarvis/workspaces
+  workspace: /workspace
 
   # ENVIRONMENTS — where a job is allowed to run things.
   #

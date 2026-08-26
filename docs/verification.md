@@ -715,6 +715,29 @@ person-shaped probe asks; what the suite found, written up.
 | It reads as the first thing on the screen, on the design system, at three widths | Manual | `docs/ui-review/settings-tools/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
 | Browsing a REMOTE (https) source | **Not exercised** | as under M47: the transport is written and the offline gate cannot reach the open internet; `Catalog.read` still lists only `file://` sources |
 
+### A writable coding workspace (M72)
+
+`bash scripts/verify/m72-workspace.sh` (26 Aug 20:31: 7/7 on the rebuilt stack). Server: `test_packaging.py`
+(`test_the_coding_workspace_is_the_mounted_crossover`), `test_code_workspace.py`, `test_code_repos.py`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The deployed config names `/workspace`, not `~/jarvis/workspaces` (which is `/jarvis/workspaces` in the image and unwritable) | Automated | the packaging test reads `configuration.yaml`; the gate loads it through `load_config` |
+| The core and the config-init one-shot both mount `../jarvis-workspace` at `/workspace`, and the one-shot chowns it for uid 10003 | Automated | the packaging test reads both services' volumes and the chown line |
+| Inside the running core, uid 10003 can create and remove a folder under `/workspace` | Containerised | the gate's `docker compose exec` probe |
+| A coding job's `create_repository` lands in `/workspace/<name>` | Manual | the operator's own "simple-react-app" request, re-issued on the rebuilt stack; the live rig has no repository-creating scenario yet |
+
+### A faster voice (M70, in progress)
+
+`bash scripts/verify/m70-voice-speed.sh` (26 Aug 20:31: 6/6). Server: `test_packaging.py`
+(`test_compose_piper_length_scale_matches_the_example_env`).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Piper is started at `--length-scale ${PIPER_LENGTH_SCALE:-0.9}` (1.1×), and the example env carries the same number | Automated | the packaging test parses both; the gate inspects the running `wyoming-piper`'s args |
+| The faster voice is still understood: the smoke set's WER stays under the 10 % threshold | Scripted | the gate reads `.verify/live/results.json` — 26 Aug 20:31 smoke set 7/7, WER 0.0 over 4 spoken samples, median 2.40 s |
+| Settings › Voice shows the pace | Unproven | waits for M67's change to the settings registry |
+
 ### The dashboard, a destination (M62)
 
 `bash scripts/verify/m62-dashboard-main.sh` — 17 checks.

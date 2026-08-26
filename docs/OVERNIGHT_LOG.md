@@ -677,3 +677,12 @@ is quiet. Done since:
   engine, entities removable by voice, a faster voice, enrolment complete, a writable coding
   workspace); their new goal is to implement and verify all of them. Three go to agents in
   worktrees now; search, speed and the workspace are done here.
+- 20:55 — the eighth rebuild carried M70 and M72: Piper at `--length-scale 0.9`, the
+  `jarvis-workspace/` crossover mounted at `/workspace` on the core and chowned by config-init.
+  Smoke set 7/7 (8/8 turns, WER 0.0 over 4 spoken samples, median 2.40 s); M72's gate 7/7 with
+  uid 10003 writing under `/workspace` inside the running core — ticked. M70 6/6 but held open:
+  the Settings › Voice line waits for M67's settings-registry change. M68 built here meanwhile:
+  the web client tells "could not search" (timeout, unreachable, every engine unresponsive) from
+  "nothing matched", asks the stack's own SearXNG after a configured one that could not, and the
+  result says which instance answered; research shows the note and names the cause. Eight new
+  tests; the gate is running.

@@ -1073,18 +1073,27 @@ web and of Tasker. Local only. Each row here is planned in that document.
     and Kokoro's `speed` as one `voice: tts: speed:` knob the Settings › Voice screen shows;
     the deployed house at 1.1×, measured by the rig's WER staying under its threshold.
   - Verify: `bash scripts/verify/m70-voice-speed.sh`
+  - 26 Aug 20:31, in progress: Piper runs at `--length-scale 0.9` (1.1×) from `PIPER_LENGTH_SCALE`
+    in compose, pinned to `.env.example` by packaging and noted beside `voice: tts:`; the smoke
+    set on the rebuilt stack is 7/7 with WER 0.0 over 4 spoken samples (median 2.40 s); gate 6/6.
+    Not ticked: the Settings › Voice line that shows the pace waits for M67's change to the
+    settings registry, so the two do not collide in `settings.py`.
 - [ ] **M71 — Enrolment, complete** · size M · deps M35 · parallel-ok M66
   - Scope: "make sure enrolment is completely implemented and complete" — an audit of voice
     enrolment end to end (the console's EnrolVoice, the phone's flow, the server's speaker
     store and verification, re-enrolment, removal, what the rig can prove) with every gap
     closed and the unprovable ones named in `docs/ANDROID_DEVICE_TESTS.md`.
   - Verify: `bash scripts/verify/m71-enrolment.sh`
-- [ ] **M72 — A coding job can create a repository** · size S · deps M19 · parallel-ok M66
+- [x] **M72 — A coding job can create a repository** · size S · deps M19 · parallel-ok M66
   - Scope: "Could not create the workspace /jarvis/workspaces: Permission denied": in the image
     `~/jarvis/workspaces` is `/jarvis/workspaces`, which nothing may write. The core mounts the
     `./jarvis-workspace:/workspace` crossover the sandbox shares, the config-init one-shot makes
     it writable by uid 10003, the deployed config names `/workspace`, packaging pins the three.
   - Verify: `bash scripts/verify/m72-workspace.sh`
+  - 26 Aug 20:31: on the rebuilt stack the gate is 7/7 — `code.workspace` is `/workspace`, both
+    services mount `../jarvis-workspace` there, config-init chowns it, and uid 10003 inside the
+    running core wrote and removed a probe under it; packaging (99) and the code workspace and
+    repository suites pass. The crossover's `.gitkeep` is tracked so a fresh clone has the folder.
 
 ## Final
 

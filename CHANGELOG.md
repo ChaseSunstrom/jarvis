@@ -8,6 +8,12 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M72 — a coding job can create a repository.** "Could not create the workspace
+  /jarvis/workspaces: Permission denied" is gone: the coding workspace is `/workspace`, the
+  `jarvis-workspace/` crossover the sandbox already shares, mounted on the core and made writable
+  for its uid by the config-init one-shot; packaging pins the config, both mounts and the chown.
+- **M70 (in progress) — a faster voice.** Piper speaks at 1.1× (`PIPER_LENGTH_SCALE=0.9`, one
+  knob in compose and `.env.example`, pinned equal by packaging); the rig still hears it at WER 0.
 - **M65 — something to browse.** Settings › Tools opens on a **Catalogue** — above the folds,
   filtered by the page's one search — instead of hiding BROWSE CATALOG inside the Extensions
   fold, where it opened on nothing. It is not empty any more: one source ships, `bundled`, the

@@ -90,11 +90,15 @@ services:
     container_name: jarvis-config-init
     user: "0:0"
     command: >
-      sh -c "mkdir -p /config/.storage &&
-             chown -R ${JARVIS_UID:-10003}:${JARVIS_GID:-10003} /config &&
-             echo 'config dir ready for uid ${JARVIS_UID:-10003}'"
+      sh -c "mkdir -p /config/.storage /workspace &&
+             chown -R ${JARVIS_UID:-10003}:${JARVIS_GID:-10003} /config /workspace &&
+             echo 'config and workspace ready for uid ${JARVIS_UID:-10003}'"
     volumes:
       - ./config:/config
+      # The coding workspace, chowned here for the same reason /config is: the
+      # bind mount masks the image's ownership, and uid 10003 could not make
+      # a repository ("Permission denied: '/jarvis'", 26 Aug).
+      - ../jarvis-workspace:/workspace
     restart: "no"
 
   jarvis-core:
@@ -200,6 +204,13 @@ services:
       # (entity/device/area registries, access tokens) plus the recorder
       # database back out. Back this directory up; nothing else here is state.
       - ./config:/config
+      # Where coding jobs make repositories (`code: workspace: /workspace` in
+      # configuration.yaml): the one directory the sandbox and the
+      # orchestrator share (the root compose mounts the same ../jarvis-workspace
+      # as /workspace on both). Inside the image `~` is `/`, so the old default
+      # of `~/jarvis/workspaces` was `/jarvis/workspaces` and nothing could
+      # write it — the first coding job the operator asked for failed there.
+      - ../jarvis-workspace:/workspace
       # Lets glibc resolve the named zone even when the image's best-effort
       # tzdata install was skipped (blocked apt mirror at build time).
       - /etc/localtime:/etc/localtime:ro
@@ -322,6 +333,7 @@ services:
     command: >
       --uri tcp://0.0.0.0:10200
       --voice ${PIPER_VOICE:-en_GB-alan-medium}
+      --length-scale ${PIPER_LENGTH_SCALE:-0.9}
       --data-dir /data
       --download-dir /data
     volumes:
