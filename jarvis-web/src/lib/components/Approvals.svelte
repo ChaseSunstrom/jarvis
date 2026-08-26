@@ -19,6 +19,7 @@
 	 */
 	import { Button } from '$lib/ui';
 	import { onMount } from 'svelte';
+	import { argumentsOf, headlineOf, summaryOf } from '$lib/approvals';
 	import { describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import type { BusEvent, PendingApproval, Subscription } from '$lib/jarvisClient';
@@ -57,15 +58,6 @@
 		if (!req.expires_at) return null;
 		// `expires_at` is epoch SECONDS from Python's time.time().
 		return Math.max(0, Math.round(req.expires_at - now / 1000));
-	}
-
-	/** The arguments, rendered compactly — this is what the human is agreeing to. */
-	function summarise(req: PendingApproval): string {
-		const args = req.arguments ?? {};
-		const parts = Object.entries(args)
-			.filter(([, v]) => v !== null && v !== undefined && v !== '')
-			.map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : JSON.stringify(v)}`);
-		return parts.join(' · ') || 'no arguments';
 	}
 
 	/**
@@ -107,7 +99,11 @@
 			} else if (isQuestion(req)) {
 				toasts.success(approved ? 'Answer sent' : `Dismissed ${req.tool}`);
 			} else {
-				toasts.success(approved ? `Approved ${req.tool}` : `Denied ${req.tool}`);
+				// The sentence when the server gave one: "Approved Change
+				// Temperature… from 0.7 to 0.2" is a receipt; "Approved
+				// change_setting" is not.
+				const what = headlineOf(req);
+				toasts.success(approved ? `Approved ${what}` : `Denied ${what}`);
 			}
 		} catch (e) {
 			err = describeError(e);
@@ -258,14 +254,32 @@
 			{:else}
 				<div class="req" class:tainted={req.tainted} data-testid="approval-{req.tool}">
 					<div class="what">
-						<b>{req.tool}</b>
+						<!--
+						  The headline is the server's sentence when it composed
+						  one — "Change Wake word (voice.wake_word) from hey_jarvis
+						  to ok_nabu" — and the tool's name otherwise. The sentence
+						  was made from the pinned arguments on the server, never
+						  from the model's words, so it is as trustworthy as the
+						  entity ids a `lock_control` card shows. With a sentence
+						  the raw `key: value` line is dropped: it would repeat the
+						  same facts in the one form a person cannot read at a
+						  glance, and the tool's name moves to the line below so
+						  the card still says WHICH tool is about to run.
+						-->
+						<b data-testid={summaryOf(req) ? `approval-summary-${req.tool}` : `approval-name-${req.tool}`}>
+							{headlineOf(req)}
+						</b>
 						{#if req.tainted}
 							<span class="desc warn" data-testid="approval-tainted">
 								Raised by a turn that read something from outside your house.
 							</span>
 						{/if}
-						{#if req.description}<span class="desc">{req.description}</span>{/if}
-						<span class="args" data-testid="approval-args-{req.tool}">{summarise(req)}</span>
+						{#if summaryOf(req)}
+							<span class="args" data-testid="approval-tool-{req.tool}">{req.tool}</span>
+						{:else}
+							{#if req.description}<span class="desc">{req.description}</span>{/if}
+							<span class="args" data-testid="approval-args-{req.tool}">{argumentsOf(req)}</span>
+						{/if}
 					</div>
 					{#if left !== null}
 						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>

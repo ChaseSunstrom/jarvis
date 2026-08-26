@@ -1176,6 +1176,28 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				},
 				tier: 2,
 				domain: null
+			},
+			// M67: the settings registry, offered to the model. `list_settings`
+			// reads `world.settings` — the same rows `config/settings/list`
+			// serves — and `change_setting` is held with the sentence the real
+			// registry composes from the pinned key, value and previous value.
+			{
+				name: 'list_settings',
+				description: 'The settings a person can change on the console.',
+				parameters: { type: 'object', properties: { query: { type: 'string' } } },
+				tier: 1,
+				domain: null
+			},
+			{
+				name: 'change_setting',
+				description: 'Change one console setting. Needs the user\'s approval.',
+				parameters: {
+					type: 'object',
+					properties: { key: { type: 'string' }, value: {} },
+					required: ['key', 'value']
+				},
+				tier: 3,
+				domain: null
 			}
 		];
 		const held = new Set(world.tools.map((t) => t.name));
@@ -2249,6 +2271,28 @@ index 1234567..89abcde 100644
 						break;
 					}
 					const [req] = world.approvals.splice(index, 1);
+					if (req.tool === 'change_setting' && msg.approved) {
+						// The real tool writes through `config/settings/set`, so
+						// the settings page reads the change at once and the
+						// bus says so. Same here, or an e2e could approve a
+						// change and never see it land.
+						const row = world.settings.find((s) => s.key === req.arguments?.key);
+						if (row) {
+							const previous = row.value;
+							row.value = req.arguments.value;
+							row.source = 'overlay';
+							broadcast('jarvis_setting_changed', {
+								key: row.key,
+								label: row.label,
+								previous,
+								value: row.value,
+								applied: row.apply === 'live',
+								restart_required: row.apply !== 'live',
+								origin: 'llm',
+								action: 'set'
+							});
+						}
+					}
 					broadcast('jarvis_approval_resolved', {
 						...req,
 						approved: Boolean(msg.approved)
@@ -2276,8 +2320,14 @@ index 1234567..89abcde 100644
 					const req = {
 						request_id: msg.request_id ?? `req-${world.approvals.length + 1}`,
 						tool: msg.tool ?? 'lock_control',
-						description: 'Lock or unlock a door.',
+						description: msg.description ?? 'Lock or unlock a door.',
 						arguments: msg.arguments ?? { action: 'unlock', entity_id: ['lock.front_door'] },
+						// The server's sentence for a tool that has one (M67):
+						// composed from the pinned arguments, "" for every tool
+						// that has none — which is what the console must then
+						// render as name-and-arguments.
+						summary: typeof msg.summary === 'string' ? msg.summary : '',
+						tainted: Boolean(msg.tainted),
 						tier: 3,
 						created: Date.now() / 1000,
 						expires_at: Date.now() / 1000 + 300
@@ -3960,14 +4010,54 @@ index 1234567..89abcde 100644
 						fail(msg.id, 'not_found', `unknown tool '${wanted}'`);
 						break;
 					}
+					if (tool.name === 'list_settings') {
+						// The console's registry, never a second list.
+						const q = String(msg.arguments?.query ?? '').toLowerCase();
+						const rows = world.settings.filter(
+							(s) => !q || `${s.key} ${s.label} ${s.note ?? ''}`.toLowerCase().includes(q)
+						);
+						ok(msg.id, {
+							tool: tool.name,
+							result: {
+								status: 'ok',
+								count: rows.length,
+								settings: rows.map((s) => ({ key: s.key, label: s.label, type: s.type, value: s.value }))
+							}
+						});
+						break;
+					}
 					if (tool.needs_approval) {
 						// What the real registry answers: held, with a request
 						// id, and a card raised. NOT run.
+						let args = msg.arguments ?? {};
+						let summary = '';
+						if (tool.name === 'change_setting') {
+							// Pinned before anything is held, as jarvis-core's
+							// `_pin_setting` does: an unknown key is the tool's
+							// error with the nearest real names, not a card.
+							const row = world.settings.find((s) => s.key === args.key);
+							if (!row) {
+								ok(msg.id, {
+									tool: tool.name,
+									result: {
+										status: 'error',
+										error: `no setting called '${args.key}'; the nearest are ${world.settings
+											.slice(0, 5)
+											.map((s) => s.key)
+											.join(', ')}. Call list_settings to see them, and use the exact key.`
+									}
+								});
+								break;
+							}
+							args = { key: row.key, value: args.value, previous: row.value, label: row.label };
+							summary = `Change ${row.label} (${row.key}) from ${row.value} to ${args.value}`;
+						}
 						const requestId = `req-${++approvalSeq}`;
 						broadcast('jarvis_approval_required', {
 							request_id: requestId,
 							tool: tool.name,
-							arguments: msg.arguments ?? {},
+							arguments: args,
+							summary,
 							tier: tool.tier
 						});
 						ok(msg.id, {
@@ -4111,6 +4201,7 @@ index 1234567..89abcde 100644
 						fail(msg.id, 'invalid_format', `packages/${row.package}.yaml sets this`);
 						break;
 					}
+					let next;
 					if (row.type === 'number' || row.type === 'integer') {
 						const n = Number(msg.value);
 						if (!Number.isFinite(n)) {
@@ -4121,18 +4212,25 @@ index 1234567..89abcde 100644
 							fail(msg.id, 'invalid_format', 'Must be between 0.0 and 2.0.');
 							break;
 						}
-						row.value = n;
+						next = n;
 					} else {
 						if (!String(msg.value ?? '').trim()) {
 							fail(msg.id, 'invalid_format', 'This cannot be empty.');
 							break;
 						}
-						row.value = msg.value;
+						next = msg.value;
 					}
+					const previous = row.value;
+					row.value = next;
 					row.source = 'overlay';
 					ok(msg.id, {
 						key: row.key,
+						label: row.label,
 						value: row.value,
+						// What it was before this write (M67): a reply can say
+						// "from X to Y", and a person who did not ask for the
+						// change knows what to put back.
+						previous,
 						applied: row.apply === 'live',
 						apply: row.apply,
 						restart_required: row.apply !== 'live',
@@ -4147,11 +4245,14 @@ index 1234567..89abcde 100644
 						fail(msg.id, 'not_found', `${msg.key} is not an editable setting`);
 						break;
 					}
+					const previous = row.value;
 					row.value = row.yaml_value;
 					row.source = row.yaml_value == null ? 'default' : 'yaml';
 					ok(msg.id, {
 						key: row.key,
+						label: row.label,
 						value: row.value,
+						previous,
 						applied: row.apply === 'live',
 						apply: row.apply,
 						restart_required: row.apply !== 'live',

@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { SUMMARY_FIELD, argumentsOf, headlineOf } from './approvals';
 
 const CONTRACT = JSON.parse(
 	readFileSync(
@@ -51,5 +52,30 @@ describe('the tier contract', () => {
 	it('records what an MCP server’s tools default to', () => {
 		expect(CONTRACT.default_for_mcp.value).toBe(2);
 		expect(asksFirst(CONTRACT.default_for_mcp.value)).toBe(false);
+	});
+
+	it('reads the held sentence off the field the contract names, and falls back to the name', () => {
+		// M67: the server composes "Change Wake word (voice.wake_word) from
+		// hey_jarvis to ok_nabu" from the pinned arguments. The console must
+		// read it from the field the contract names — a rename on either side
+		// would leave the card on raw JSON with nothing failing — and must
+		// still draw a request that has none the way it always did.
+		const rule = CONTRACT.rules.held_summary;
+		expect(rule.field).toBe(SUMMARY_FIELD);
+		expect(rule.means).toContain('PINNED');
+
+		const sentence = 'Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu';
+		const held = {
+			tool: 'change_setting',
+			arguments: { key: 'voice.wake_word', value: 'ok_nabu', previous: 'hey_jarvis' },
+			[rule.field]: sentence
+		};
+		expect(headlineOf(held)).toBe(sentence);
+
+		const plain = { tool: 'lock_control', arguments: { entity_id: ['lock.front_door'] } };
+		expect(headlineOf(plain)).toBe('lock_control');
+		expect(argumentsOf(plain)).toBe('entity_id: lock.front_door');
+		// Whitespace-only is "none": a surface must not draw an empty headline.
+		expect(headlineOf({ ...plain, summary: '   ' })).toBe('lock_control');
 	});
 });

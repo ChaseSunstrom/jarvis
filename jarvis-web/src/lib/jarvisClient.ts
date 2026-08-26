@@ -125,6 +125,15 @@ export interface PendingApproval {
 	 * write that sentence.
 	 */
 	tainted?: boolean;
+	/**
+	 * One sentence for the card, composed by jarvis-core from the PINNED
+	 * arguments — "Change Temperature (llm.options.temperature) from 0.7 to
+	 * 0.2" — for a tool that has one (`Tool.summarise`, M67). Empty or absent
+	 * for every other tool, and the card then shows the name and the
+	 * arguments as it always did. Read through `$lib/approvals`, which binds
+	 * the field's name to the tier contract.
+	 */
+	summary?: string;
 }
 
 /** A row in the chat sidebar: enough to list a conversation, not to read it. */
