@@ -12,6 +12,7 @@ hands the bytes on; :mod:`.fence` is what makes them safe to show a model.
 from __future__ import annotations
 
 import logging
+import time
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -330,6 +331,12 @@ def parse_results(payload: Any, limit: int) -> list[dict[str, str]]:
 #: engines configured and no outbound route lists all sixty.
 MAX_ENGINES_NAMED = 8
 
+#: How long a configured instance that could not search is skipped in
+#: favour of the fallback. Ten minutes: long enough to carry a research run
+#: and the follow-up questions, short enough that a fixed instance is back
+#: within the hour without a restart.
+FALLBACK_FIRST_SECONDS = 600.0
+
 
 def parse_unresponsive(payload: Any) -> tuple[tuple[str, str], ...]:
     """SearXNG's ``unresponsive_engines`` -> ``((engine, reason), …)``.
@@ -396,6 +403,15 @@ class SearxngClient:
     def __init__(self, config: WebConfig, client: httpx.AsyncClient) -> None:
         self.config = config
         self.client = client
+        #: Until when the fallback is asked FIRST. An instance that could not
+        #: search (timed out, or answered with every engine unresponsive) is
+        #: not asked again for `FALLBACK_FIRST_SECONDS`: a research run makes
+        #: four searches in a row, and paying the dead instance's timeout on
+        #: each put twenty seconds of nothing in front of every answer on
+        #: 26 Aug 2026. It is still asked afterwards, and one answer restores
+        #: the configured order — the operator's instance stays the first
+        #: choice, it just stops being the first wait.
+        self._fallback_first_until = 0.0
 
     def params(self, query: str) -> dict[str, str]:
         cfg = self.config
@@ -435,18 +451,25 @@ class SearxngClient:
         if limit == 0:
             return SearchAnswer(cfg.searxng_url, [])
 
-        instances = cfg.search_instances
+        instances = list(cfg.search_instances)
         notes: list[str] = []
+        if len(instances) == 2 and time.monotonic() < self._fallback_first_until:
+            instances.reverse()
+            notes.append(
+                f"asking {instances[0]} first: {instances[1]} could not search a moment ago"
+            )
         for position, base in enumerate(instances):
             last = position == len(instances) - 1
             try:
                 answer = await self._ask(base, query, limit)
             except SearchFailed as exc:
+                self._could_not_search(base)
                 if last:
                     raise SearchFailed("; then ".join([*notes, str(exc)])) from exc
                 notes.append(str(exc))
                 continue
             if answer.answered_nothing:
+                self._could_not_search(base)
                 nothing = (
                     f"the search engine at {base} answered nothing — every engine failed "
                     f"({engines_line(answer.unresponsive)})"
@@ -459,6 +482,8 @@ class SearxngClient:
                     )
                 notes.append(nothing)
                 continue
+            if base == cfg.searxng_url:
+                self._fallback_first_until = 0.0
             if notes:
                 _LOGGER.warning(
                     "web.search: %s; %s answered %d result(s)", "; then ".join(notes),
@@ -467,6 +492,10 @@ class SearxngClient:
                 notes.append(f"{base} answered {len(answer.results)} result(s) instead")
             return SearchAnswer(base, answer.results, answer.unresponsive, tuple(notes))
         raise SearchFailed(SEARXNG_NOT_CONFIGURED)  # pragma: no cover - instances is never empty here
+
+    def _could_not_search(self, base: str) -> None:
+        if base == self.config.searxng_url and self.config.searxng_fallback_url:
+            self._fallback_first_until = time.monotonic() + FALLBACK_FIRST_SECONDS
 
     async def _ask(self, base: str, query: str, limit: int) -> SearchAnswer:
         cfg = self.config

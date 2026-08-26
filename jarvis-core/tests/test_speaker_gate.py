@@ -1012,5 +1012,26 @@ async def test_no_tool_and_no_websocket_command_can_enrol(tmp_path):
     for command in WebSocketHandler._HANDLERS:
         assert "speaker" not in command and "enrol" not in command, command
     gated = {route.path for route in api_router.routes if "/voice/speaker" in route.path}
-    assert gated == {"/api/voice/speaker", "/api/voice/speaker/enrol", "/api/voice/speaker/verify"}
+    # `/enrolling` (M79) is a heartbeat, not a door: it stores nothing but a
+    # timestamp, and sits on the token-gated router like the others.
+    assert gated == {"/api/voice/speaker", "/api/voice/speaker/enrol", "/api/voice/speaker/verify", "/api/voice/speaker/enrolling"}
     assert not [route for route in open_router.routes if "speaker" in route.path]
+
+
+# --- M79: an enrolment in progress is a state of the house ------------------------
+async def test_a_sample_a_test_and_the_heartbeat_all_mark_an_enrolment_in_progress(jarvis):
+    from jarvis.api import speaker as speaker_api
+
+    assert not speaker_api.enrolling(jarvis)
+    speaker_api.mark_enrolling(jarvis)
+    assert speaker_api.enrolling(jarvis)
+    # The window is short: a person who walks away is listened to again.
+    assert 5.0 <= speaker_api.ENROLLING_WINDOW <= 60.0
+    jarvis.data[speaker_api.DATA_ENROLLING_UNTIL] = 0.0
+    assert not speaker_api.enrolling(jarvis)
+    # `async_enrol` and `async_verify` refresh it on the way in — pinned by
+    # reading the source, since a sample here would need a real embedding.
+    import inspect
+
+    assert "mark_enrolling(jarvis)" in inspect.getsource(speaker_api.async_enrol)
+    assert "mark_enrolling(jarvis)" in inspect.getsource(speaker_api.async_verify)

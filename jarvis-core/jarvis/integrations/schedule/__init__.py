@@ -95,6 +95,10 @@ QUEUED_KINDS = frozenset({"research", "code"})
 
 MODEL_KINDS = (KIND_NOTIFY, KIND_RESEARCH)
 
+#: Two identical jobs inside this many seconds are one request heard twice
+#: (a phone and a console both listening), not two alarms.
+DUPLICATE_WINDOW_SECONDS = 60.0
+
 MAX_JOBS = 200
 MAX_TITLE = 200
 MAX_MESSAGE = 2000
@@ -646,6 +650,32 @@ class ScheduleManager:
         if not job.when.recurring and upcoming <= self.now():
             return {"status": "error", "error": "that time has already passed"}
         job.next_at = upcoming.timestamp()
+
+        # The same job twice inside a minute is one request heard twice (M78):
+        # "Wake up" and "Wake-up alarm", both weekdays at 07:30, both `notify`,
+        # forty seconds apart, from the phone and the console. Refused and
+        # named, so the model can say which one already exists rather than
+        # promise a second alarm.
+        if held is None:
+            same = [
+                other
+                for other in self.jobs.values()
+                if other.kind == job.kind
+                and other.next_at == job.next_at
+                and other.when.as_dict() == job.when.as_dict()
+                and (job.created - other.created) <= DUPLICATE_WINDOW_SECONDS
+            ]
+            if same:
+                twin = same[0]
+                return {
+                    "status": "error",
+                    "error": (
+                        f"already scheduled a moment ago as {twin.title!r} ({twin.id}), "
+                        f"{describe_when(twin.when)}; nothing was added. Tell the user "
+                        "the one that exists."
+                    ),
+                    "job": twin.as_dict(),
+                }
 
         self.jobs[job.id] = job
         await self.async_save()

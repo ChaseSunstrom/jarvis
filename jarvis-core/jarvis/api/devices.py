@@ -44,6 +44,9 @@ break the connection.
 
 from __future__ import annotations
 
+import re
+from collections import deque
+
 import asyncio
 import logging
 import math
@@ -754,6 +757,60 @@ def get_turn_utterances(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> TurnUtt
     store = jarvis.data.get(DATA_UTTERANCE)
     if not isinstance(store, TurnUtterances):
         store = jarvis.data.setdefault(DATA_UTTERANCE, TurnUtterances(ttl))
+    return store
+
+
+#: How long two listeners' copies of one sentence count as the same turn.
+#: Four seconds: the phone's wake word and the console's VAD end a sentence
+#: within a second of each other; a person repeating themselves takes longer.
+RECENT_LISTENER_WINDOW = 4.0
+
+
+def _listener_words(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower()).split())
+
+
+class RecentListeners:
+    """The last few seconds of utterances, by the device that brought them (M78).
+
+    "I asked it to set an alarm, why did it do it twice? and why did I hear
+    jarvis twice": the phone's wake word and the console's always-on
+    microphone each heard the sentence and each ran a turn. One sentence in a
+    room with two listeners is one turn: the second device bringing the same
+    words inside the window yields to the first.
+    """
+
+    def __init__(self, window: float = RECENT_LISTENER_WINDOW) -> None:
+        self.window = window
+        self._recent: deque[tuple[float, str, str]] = deque(maxlen=32)
+
+    def already_heard_from(self, text: str, device: str, now: float | None = None) -> str | None:
+        """The OTHER device that brought these words inside the window, or None.
+
+        The same device repeating itself is not a duplicate — a person may say
+        a thing twice on purpose — so only another device's copy yields.
+        """
+        words = _listener_words(text)
+        if not words:
+            return None
+        now = time.monotonic() if now is None else now
+        for at, who, said in reversed(self._recent):
+            if now - at > self.window:
+                break
+            if said == words and who != device:
+                return who
+        return None
+
+    def heard(self, text: str, device: str, now: float | None = None) -> None:
+        words = _listener_words(text)
+        if words:
+            self._recent.append((time.monotonic() if now is None else now, device, words))
+
+
+def get_recent_listeners(jarvis: "Jarvis") -> RecentListeners:
+    store = jarvis.data.get("recent_listeners")
+    if store is None:
+        store = jarvis.data["recent_listeners"] = RecentListeners()
     return store
 
 

@@ -461,6 +461,49 @@ async def _document_payload(url: str, s: Settings) -> dict | None:
     }
 
 
+async def _plain_page(app, url: str, s: Settings) -> dict | None:
+    """The page over plain HTTP, extracted — or None, and the browser does it.
+
+    None for anything that is not a 200 HTML answer within `plain_timeout_s`,
+    for a redirect chain that fails the SSRF check on any hop, and for a page
+    whose extracted text is shorter than `plain_min_chars` — the last is what
+    a JavaScript-rendered page looks like without JavaScript, and the browser
+    exists for exactly that page. The browser is also the fallback when this
+    raises: a text-first fetch is a shortcut, never a way to fail a read.
+    """
+    factory = getattr(app.state, "plain_client_factory", None)
+    try:
+        client_cm = (
+            factory()
+            if factory is not None
+            else httpx.AsyncClient(
+                timeout=s.plain_timeout_s,
+                follow_redirects=False,  # every hop is re-checked by hand
+                headers={"User-Agent": s.user_agent, "Accept": "text/html,*/*;q=0.5"},
+            )
+        )
+        async with client_cm as client:
+            resp = await get_with_checked_redirects(client, url, allowlist=s.lan_allowlist)
+    except Exception as exc:  # noqa: BLE001 - the browser is the fallback for every failure here
+        log.debug("plain fetch of %s failed (%s); the browser will try", url, type(exc).__name__)
+        return None
+    if resp is None:
+        return None
+    content_type = resp.headers.get("content-type", "")
+    if "html" not in content_type.lower() and "xml" not in content_type.lower():
+        return None
+    html = resp.text[: s.max_page_bytes]
+    final = _guard_final_url(app, url, str(resp.url) or url)
+    parsed = extract(html, base_url=final, max_chars=s.max_text_chars, max_links=s.max_links)
+    if len(parsed.text.strip()) < s.plain_min_chars:
+        return None
+    payload = _page_payload(html, final, s)
+    payload["status"] = resp.status_code
+    payload["requested_url"] = url
+    payload["fetched"] = "plain"
+    return payload
+
+
 def _page_payload(page_html: str, final_url: str, s: Settings) -> dict:
     """Extract + fence. The single place read content becomes a response."""
     parsed = extract(
@@ -536,6 +579,10 @@ def _register_routes(app: FastAPI) -> None:
         if document is not None:
             audit.info("fetch document url=%s kind=%s", url, document["kind"])
             return document
+        plain = await _plain_page(app, url, s) if s.plain_fetch else None
+        if plain is not None:
+            audit.info("fetch url=%s plain=1 status=%s", url, plain["status"])
+            return plain
         result = await app.state.backend.fetch(
             url, render=body.render, javascript=s.javascript_enabled
         )

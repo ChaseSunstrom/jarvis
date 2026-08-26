@@ -126,6 +126,10 @@ class ResearchConfig:
     model: str = ""
     #: Results per search. More than a handful mostly adds near-duplicates.
     search_limit: int = 8
+    #: Pages read at once (M75). Three: enough that two slow sites overlap
+    #: with a fast one, few enough that jarvis-browser is not asked for eight
+    #: rendered pages in the same second.
+    parallel_reads: int = 3
     #: How many rounds of lead-following. One level, not a crawl: a page that
     #: answers half the question usually names the thing that answers the other
     #: half, and following that once is what separates research from a list of
@@ -180,6 +184,7 @@ class ResearchConfig:
             per_domain=_int("per_domain", PER_DOMAIN, 5),
             model=str(data.get("model") or "").strip(),
             search_limit=_int("search_limit", 8, 20),
+            parallel_reads=_int("parallel_reads", 3, 6),
             rerank_url=str(data.get("rerank_url") or "").strip(),
             rerank_model=str(data.get("rerank_model") or "").strip(),
         )
@@ -570,36 +575,43 @@ async def _run(
     )
 
     # --- read -------------------------------------------------------------
-    notes: list[Note] = []
-    for offset, source in enumerate(chosen):
-        _check(jarvis, task_id)
-        index = read_from + offset
-        await registry.async_update(task_id, step=index, step_status=STATUS_RUNNING)
-        started = time.monotonic()
-        call_id = registry.tool_started(
-            task_id, name="web_fetch", arguments={"url": source.url},
-            index=offset + 1, total=len(chosen),
-        )
-        note = await _read_one(jarvis, cfg, question, source)
-        registry.tool_finished(
-            task_id,
-            name="web_fetch",
-            call_id=call_id,
-            ok=note.ok,
-            error=(note.error or "")[:200],
-            duration_ms=int((time.monotonic() - started) * 1000),
-        )
-        notes.append(note)
-        if note.text:
-            # Findings accumulate on screen instead of appearing all at once in
-            # the report: this is the sentence the page contributed.
-            registry.output(task_id, f"{source.url}\n  {note.text[:400]}", stream="note")
-        await registry.async_update(
-            task_id,
-            step=index,
-            step_status=STATUS_DONE if note.ok else STATUS_ERROR,
-            step_detail=(note.error or "nothing relevant" if not note.text else "")[:200],
-        )
+    # A bounded few at once (M75). Read one after another, eight pages that
+    # each time out at twenty seconds are nearly three minutes of nothing in
+    # front of the write-up; three at a time, the slow ones overlap. The notes
+    # keep `chosen`'s order, so citations number as they did.
+    async def read(offset: int, source: Any) -> Note:
+        async with read_slots:
+            _check(jarvis, task_id)
+            index = read_from + offset
+            await registry.async_update(task_id, step=index, step_status=STATUS_RUNNING)
+            started = time.monotonic()
+            call_id = registry.tool_started(
+                task_id, name="web_fetch", arguments={"url": source.url},
+                index=offset + 1, total=len(chosen),
+            )
+            note = await _read_one(jarvis, cfg, question, source)
+            registry.tool_finished(
+                task_id,
+                name="web_fetch",
+                call_id=call_id,
+                ok=note.ok,
+                error=(note.error or "")[:200],
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            if note.text:
+                # Findings accumulate on screen instead of appearing all at
+                # once in the report: this is the sentence the page contributed.
+                registry.output(task_id, f"{source.url}\n  {note.text[:400]}", stream="note")
+            await registry.async_update(
+                task_id,
+                step=index,
+                step_status=STATUS_DONE if note.ok else STATUS_ERROR,
+                step_detail=(note.error or note.text or "")[:120],
+            )
+            return note
+
+    read_slots = asyncio.Semaphore(max(1, int(cfg.parallel_reads)))
+    notes: list[Note] = list(await asyncio.gather(*(read(i, src) for i, src in enumerate(chosen))))
 
     # --- follow the leads -------------------------------------------------
     #

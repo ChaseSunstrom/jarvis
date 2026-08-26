@@ -108,6 +108,9 @@ def _stage_latencies(events: list[dict[str, Any]], started: float) -> dict[str, 
         "intent-end": "intent",
         "tts-start": "tts_request",
         "tts-end": "tts",
+        # The first sentence's audio (M60 early speech; M74 after tools too):
+        # what a person hears as the wait, when the client plays chunks.
+        "tts-chunk": "first_audio",
         "run-end": "total",
     }
     for event in events:

@@ -234,7 +234,9 @@
 	<div class="jv-alerts" data-testid="hud-alerts">
 		<Approvals conn={approvalConn} />
 		<ToolActivity conn={approvalConn} />
-		<TaskDock conn={approvalConn} />
+		<!-- The task dock is the voice page's own here (M76): under the
+		     instrument, where the operator asked for it, not over it. A held
+		     action and the tool strip stay up here, where an approval must be. -->
 	</div>
 {:else}
 	<div class="console">

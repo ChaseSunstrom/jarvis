@@ -1160,6 +1160,111 @@ web and of Tasker. Local only. Each row here is planned in that document.
     `POST /api/services/code/create_repository` lands `/workspace/m72-probe` with a `.git` on the
     host side of the crossover. The probe repository stays (nothing removes one).
 
+- [x] **M73 — Said, not shown** · size S · deps M35 · parallel-ok M74
+  - Scope: "can you have it pronounce characters correctly? not just say what it says?" — the
+    Bitcoin briefing's `**Price:** ~$78,721`, `0.15%`, `40 GB`, `49/100` reached Piper verbatim.
+    `jarvis/voice/speech_text.py` turns markdown and the symbols the model writes for a screen
+    into words at the pipeline's one door to the synthesiser (`speakable`); the transcript keeps
+    the reply as written. A table of named expansions, not a grammar.
+  - Verify: `bash scripts/verify/m73-spoken-form.sh`
+  - 26 Aug 23:14: gate 6/6 — the operator's own line comes out as words; speech-text suite 15,
+    voice suite 84. Heard on the house after the next rebuild.
+- [ ] **M74 — Speak after tools, sentence by sentence** · size S · deps M60 · parallel-ok M73
+  - Scope: "it took forever after it spit out text for piper to do the TTS" — M60's early speech
+    switches itself off for the turn once any tool has run, so every research answer is
+    synthesised whole after the last word. It resumes for the text after the last tool call (a
+    new segment per tool), the tail goes out as the last `tts-chunk` instead of waiting behind
+    the whole-reply clip, and the rig records `first_audio`.
+  - Verify: `bash scripts/verify/m74-speak-after-tools.sh`
+  - 26 Aug 23:14, built, not ticked: the after-tools test and the M60 cases pass (voice suite 84); the
+    gate's last check needs the rebuilt house and a spoken research turn for `first_audio`.
+- [ ] **M75 — Research that reads in time** · size M · deps M68 · parallel-ok M73
+  - Scope: two research runs at 22:3x: every page read ended "jarvis-browser timed out after 20s
+    on /fetch" and each search paid the tailnet instance's timeout before the fallback answered.
+    The search client asks the fallback first for ten minutes after the configured instance
+    could not search (and says so in the note); jarvis-browser fetches a page as text first —
+    plain HTTP, the same SSRF checks, extracted — and renders it only when that text is too short
+    to be the page; research reads a bounded few pages at once instead of one after another.
+  - Verify: `bash scripts/verify/m75-research-in-time.sh`
+  - 26 Aug 23:14, built, not ticked: web suite 121 (fallback first after a failure), browser suite
+    349 (text first, JavaScript pages fall back, a LAN redirect refused on the shortcut), research
+    suite 32; the gate's last check reads a real news page through the rebuilt jarvis-browser.
+- [ ] **M76 — Jarvis in the middle, the tasks below** · size S · deps M49 · parallel-ok M73
+  - Scope: "can we have the tasks popups show below jarvis on the voice page? … move jarvis to be
+    in the middle of the page instead of kind of near the top" — the reactor centred in the
+    stage; the task dock rendered by the voice page under the instrument rather than over it
+    from the layout; held actions and the tool strip stay at the top, where an approval must be.
+  - Verify: `bash scripts/verify/m76-voice-layout.sh`
+  - 26 Aug 23:14, built, not ticked: look/HUD/tasks/states 63/63 with the new grid; a browser
+    measurement of the instrument's centre reads 38 % in one run and 20 % in the spec's — being
+    pinned down before the tick.
+- [ ] **M77 — n8n: the house's workflows** · size M · deps M47 · parallel-ok M75
+  - Scope: "allow jarvis to create/manage my n8n stuff … talk to the AI assistant on n8n to
+    create/manage/run workflows" (https://n8n.tail05d9af.ts.net/assistant). An `n8n` integration
+    over n8n's REST API (`N8N_URL`, `N8N_API_KEY`): `n8n_list_workflows` and `n8n_executions`
+    (Tier 1), `n8n_run_workflow` and `n8n_activate_workflow` (Tier 3 — a run acts on the world),
+    `n8n_create_workflow` / `n8n_update_workflow` (Tier 3, the sentence on the card naming the
+    workflow and its trigger), and `n8n_ask_assistant`, which puts a request to the n8n
+    assistant endpoint and returns its reply as untrusted content — anything the assistant
+    proposes is created only through the held tools. Settings › Tools shows n8n as a
+    connection with its state. Blockers to record: the API key, and what `/assistant` is on the
+    operator's server (n8n's Chat Trigger webhook, or the editor's assistant) — its URL, auth
+    and message shape decide the last tool.
+  - Verify: `bash scripts/verify/m77-n8n.sh`
+
+- [x] **M78 — One utterance, one turn** · size M · deps M43, M52 · parallel-ok M73
+  - Scope: "I asked it to set an alarm, why did it do it twice? and why did I hear jarvis twice" —
+    two schedules ("Wake up", "Wake-up alarm") and two replies: the phone's wake word and the
+    console's always-on microphone each heard the sentence and ran a turn of their own. The
+    house keeps the last few seconds of utterances by device; a second device bringing the same
+    words within that window yields — no tools, no reply, an `intent-end` that names the device
+    already answering — so one sentence in a room with two listeners is one turn and one voice.
+    And in depth: `schedule` refuses an identical job made within the last minute, naming it.
+  - Verify: `bash scripts/verify/m78-one-utterance.sh`
+  - 26 Aug 23:14: gate 7/7 — the second listener yields (voice suite), the duplicate alarm is refused
+    and named (schedule suite 34). The room test — a phone and a console — is the operator's, after
+    the rebuild.
+- [ ] **M79 — Not listening while you enrol** · size S · deps M71, M78 · parallel-ok M73
+  - Scope: "during enrolment jarvis is listening and tries to respond" — the phrases read aloud
+    for a voiceprint reach a listener as commands. An enrolment in progress is a state of the
+    house: fetching the phrases or uploading a sample marks it for a short window, and any
+    pipeline turn that starts inside that window yields — no model, no tools, nothing said, an
+    `intent-end` that says why — so the console and the phone can show "enrolling, not
+    listening" instead of an answer to a sentence nobody addressed to Jarvis.
+  - Verify: `bash scripts/verify/m79-enrolling-not-listening.sh`
+  - 26 Aug 23:14, built, not ticked: the server marks an enrolment on a sample, a test or the
+    console's heartbeat before it records; a pipeline turn inside the window yields (voice 85,
+    speaker gate 64, console server tests 74). The phone's heartbeat and the gate are next.
+- [ ] **M80 — Demo mode is a setting** · size S · deps M67, M69 · parallel-ok M81
+  - Scope: "I can't unset the demo mode still, so it still has a bunch of default stuff that
+    doesn't exist" — the fixture house (`packages/demo-house.yaml`, the `demo` integration) has
+    no switch. `demo.enabled` in the settings registry (Settings › House, "Demo mode"), applied
+    live: off removes every demo entity through the one delete path and stops the integration
+    creating them; on brings them back. So "turn off demo mode" by voice is a held setting
+    change (M67) and the operator's first question of the evening has an answer.
+  - Verify: `bash scripts/verify/m80-demo-mode.sh`
+- [ ] **M81 — It knows what it can do** · size S · deps M19, M43 · parallel-ok M80
+  - Scope: "you make me a react app" → "I'm a butler, not a developer" while another turn was
+    already asking which repository to put it in; and "ma'am" for a house that says "Sir". The
+    rules tell the model that building software is a coding job; a reply that denies a
+    capability a tool provides is caught and sent back for the call, like a claimed action; the
+    form of address is pinned in the persona and never inferred from who is speaking.
+  - Verify: `bash scripts/verify/m81-knows-what-it-can-do.sh`
+- [ ] **M82 — A coding job says when nobody can run it** · size S · deps M19 · parallel-ok M80
+  - Scope: "this just gets stuck in queued" — the orchestrator and the sandbox are behind
+    `--profile agents` on purpose and were not running; the job queued for ever, silently. A
+    queued job with no worker says so on the card within seconds and names the command; the
+    Code screen shows the worker's state; this house runs the profile.
+  - Verify: `bash scripts/verify/m82-coding-worker.sh`
+- [ ] **M83 — Pull things up** · size L · deps M63, M76 · parallel-ok M77
+  - Scope: "have jarvis able to pull things up and display them on the voice screen, kind of
+    like iron man, and able to move things around" — a `show` tool (Tier 1) puts a thing on the
+    voice screen's surface: an entity card, a camera, a sensor's chart, a note, a page's text,
+    a dashboard widget; the surface draws them as panels around the instrument in the Reactor II
+    look — entering with the stagger, draggable, resizable, dismissable by hand or by voice
+    ("clear the screen", "put the camera on the left") — and remembers where you left them.
+  - Verify: `bash scripts/verify/m83-pull-things-up.sh`
+
 ## Final
 
 - [ ] **M23 — Final integration** · size M · deps M00–M72

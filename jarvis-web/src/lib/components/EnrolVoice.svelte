@@ -130,6 +130,10 @@
 		if (!session || busy) return;
 		error = '';
 		session = startRecording(session, index);
+		// Not listening while you enrol (M79): the phrase about to be read
+		// aloud is not a command. Told before the microphone opens, so the
+		// house's own listeners yield for the window; the sample refreshes it.
+		void fetch('/api/voice/speaker/enrolling', { method: 'POST' }).catch(() => {});
 		const refused = await openMic();
 		if (refused) {
 			session = withRejected(session, index, refused);

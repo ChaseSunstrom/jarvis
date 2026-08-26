@@ -530,6 +530,53 @@ async def test_a_disabled_fallback_stays_disabled(tmp_path):
     assert_no_cloud_calls(stack)
 
 
+async def test_after_the_configured_instance_could_not_search_the_fallback_is_asked_first(tmp_path):
+    """M75. A research run makes four searches in a row; paying the dead
+    instance's timeout on each put twenty seconds of nothing in front of
+    every answer. After one failure the fallback is asked first for a while,
+    the note says so, and one answer from the configured instance restores
+    the configured order."""
+    from jarvis.integrations.web.client import FALLBACK_FIRST_SECONDS
+
+    stack = FakeStack()
+    stack.remote_payload = ENGINES_OUT
+    stack.search_payload = ONE_HIT
+    jarvis = await remote_jarvis(tmp_path, stack)
+    try:
+        first = await call(jarvis, "search", query="bitcoin news")
+        assert first["status"] == "ok" and first["instance"] == SEARXNG
+        assert [r.url.host for r in stack.requests] == ["searx.remote.test", "127.0.0.1"]
+
+        # The next search does not wait on the remote at all.
+        stack.requests.clear()
+        second = await call(jarvis, "search", query="bitcoin etf flows")
+        assert second["status"] == "ok" and second["instance"] == SEARXNG
+        assert [r.url.host for r in stack.requests] == ["127.0.0.1"], "it waited on the dead instance again"
+        assert any("first" in n and REMOTE in n for n in second["notes"]), second["notes"]
+
+        # When the window has passed and the remote answers, it is first again.
+        searcher = jarvis.data["web"]["searcher"] if "searcher" in jarvis.data.get("web", {}) else None
+        client = searcher or _searcher_of(jarvis)
+        client._fallback_first_until = 0.0
+        stack.remote_payload = ONE_HIT
+        stack.requests.clear()
+        third = await call(jarvis, "search", query="bitcoin outlook")
+        assert third["status"] == "ok" and third["instance"] == REMOTE and third["notes"] == []
+        assert [r.url.host for r in stack.requests] == ["searx.remote.test"]
+        assert FALLBACK_FIRST_SECONDS >= 60
+    finally:
+        await jarvis.async_stop()
+
+
+def _searcher_of(jarvis: Jarvis):
+    """The web integration's one SearxngClient, wherever it keeps it."""
+    web = jarvis.data.get("web") or {}
+    for value in web.values() if isinstance(web, dict) else []:
+        if hasattr(value, "_fallback_first_until"):
+            return value
+    raise AssertionError(f"no SearxngClient under jarvis.data['web']: {list(web) if isinstance(web, dict) else web}")
+
+
 def test_unresponsive_engines_parse_from_both_shapes_and_cap_the_list():
     from jarvis.integrations.web.client import (
         MAX_ENGINES_NAMED,

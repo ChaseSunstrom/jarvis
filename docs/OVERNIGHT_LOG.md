@@ -734,3 +734,15 @@ is quiet. Done since:
   present then absent) and settings-by-voice (the operator's "demo mode", then a held setting
   change confirmed by voice). CI on 2257937: the python red was the table row; the web red a HUD
   short-screen test that passes 4/4 here.
+- 23:14 — the operator's reports of the last hour, from live use: Piper reading markdown and symbols
+  (M73, ticked: the reply becomes words at the one door to TTS); audio starting only after a long
+  research answer was fully written (M74: early speech resumes after each tool call, the tail as
+  the last chunk); every page read timing out at 20 s and every search paying the dead tailnet
+  instance first (M75: text-first fetch in jarvis-browser, fallback-first for ten minutes, three
+  reads at once); Jarvis near the top and the task cards floating over it (M76: the instrument
+  centred, the dock the page's own under it); an alarm made twice and heard twice (M78, ticked:
+  a second listener's copy of the words yields; `schedule` refuses the twin); Jarvis answering
+  the enrolment phrases (M79: an enrolment in progress makes a turn yield). Planned from the
+  same hour: n8n (M77), demo mode as a setting (M80), a capability denied though a tool has it
+  and "ma'am" (M81), a coding job stuck in "queued" because the agents profile was not running
+  (M82), and "pull things up" — panels around the instrument, movable (M83).

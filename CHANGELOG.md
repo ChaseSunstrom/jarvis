@@ -8,6 +8,26 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M73 — said, not shown.** The reply the synthesiser gets is words: `**Price:** ~$78,721, up
+  0.15% over 24 hours` is spoken as "Price: about 78,721 dollars, up 0.15 percent over 24 hours";
+  bullets, headings, links, code, currency, percent, units (GB, kW, °C…), ratios and arrows are
+  a table of named expansions at the pipeline's one door to TTS. The transcript keeps the reply
+  as written.
+- **M74 — speak after tools, sentence by sentence.** Early speech no longer switches off for the
+  turn once a tool has run: a tool call opens a new segment, the guess written before it is
+  never spoken after it, and a research answer is spoken as it is written. The last sentence
+  goes out as the last chunk instead of waiting behind the whole-reply clip; the rig records
+  `first_audio`.
+- **M75 — research that reads in time.** After the configured SearXNG could not search, the
+  fallback is asked first for ten minutes (the note says so); jarvis-browser fetches a page as
+  text over plain HTTP — the same SSRF checks on every hop — and renders it only when that text
+  is too short to be the page; research reads three pages at once (`research: parallel_reads:`).
+- **M76 — Jarvis in the middle, the tasks below.** On the voice page the instrument sits in the
+  middle band of the screen and a running task's dock draws under it, as the page's own, instead
+  of floating over the top with the approvals (which stay up there, where an approval must be).
+- **M78 — one utterance, one turn.** A phone's wake word and the console's microphone hearing the
+  same sentence no longer run two turns: the second device inside four seconds yields — no model,
+  no tools, nothing said — and `schedule` refuses an identical job made a moment ago, naming it.
 - **M69 (built, awaiting the live rig) — the house is editable by voice.** "Can you remove all of
   the elements of the house?" no longer gets "I have no tool for deleting entities":
   `remove_entities` and `remove_device` exist, Tier 3 with the entity ids (or the device and every

@@ -11,6 +11,7 @@
 	import { applyActivity, lookingCaption, type ActivityRow } from '$lib/activity.svelte';
 	import { tokenMs } from '$lib/tokens';
 	import type { Connection } from '$lib/connection';
+	import TaskDock from '$lib/components/TaskDock.svelte';
 	import { setHudStatus } from '$lib/hudStatus.svelte';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 	import {
@@ -961,6 +962,14 @@
 			<p class="cap" data-testid="caption">{caption}</p>
 		</section>
 
+		<!-- What Jarvis is doing, under the instrument (M76). The layout used
+		     to float this over the top of the page with the approvals; the
+		     operator asked for it below Jarvis, and a running research task is
+		     part of the conversation rather than an alert. -->
+		<section class="tasks" aria-label="Running tasks" data-testid="voice-tasks">
+			<TaskDock {conn} />
+		</section>
+
 		<section class="exchange" aria-label="Conversation">
 			{#if transcript}
 				<span class="who" aria-hidden="true">you · {turnAt}</span>
@@ -1146,9 +1155,16 @@
 		position: relative;
 		display: grid;
 		grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
-		grid-template-rows: auto minmax(0, 1fr) auto;
+		/*
+		 * The stage takes what the exchange does not (M76): at rest the
+		 * exchange is empty and the instrument sits in the middle of the page;
+		 * a long answer grows the exchange and lifts it. Before, the stage was
+		 * `auto` and Jarvis sat near the top with the room below it empty.
+		 */
+		grid-template-rows: minmax(0, 1fr) auto auto auto;
 		grid-template-areas:
 			'transcript stage turn'
+			'transcript tasks turn'
 			'transcript exchange turn'
 			'dock dock dock';
 		gap: var(--jv-space-4) var(--jv-space-6);
@@ -1174,15 +1190,23 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		justify-content: flex-start;
+		justify-content: center;
 		gap: var(--jv-space-4);
 		padding-top: var(--jv-space-2);
 		z-index: 1;
 	}
+	.tasks {
+		grid-area: tasks;
+		justify-self: center;
+		width: min(100%, calc(var(--jv-space-7) * 15.3333));
+	}
+	.tasks:empty {
+		display: none;
+	}
 	.field {
 		position: absolute;
 		left: 50%;
-		top: calc(var(--jv-measure-boot) / 2);
+		top: 50%;
 		width: calc(var(--jv-measure-orb) * 2.7);
 		height: calc(var(--jv-measure-orb) * 2.7);
 		transform: translate(-50%, -50%);
@@ -1535,9 +1559,10 @@
 		}
 		.voice {
 			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-			grid-template-rows: auto auto auto auto;
+			grid-template-rows: minmax(0, 1fr) auto auto auto auto;
 			grid-template-areas:
 				'stage stage'
+				'tasks tasks'
 				'exchange exchange'
 				'transcript turn'
 				'dock dock';
@@ -1561,6 +1586,7 @@
 			grid-template-columns: minmax(0, 1fr);
 			grid-template-areas:
 				'stage'
+				'tasks'
 				'exchange'
 				'dock'
 				'turn'

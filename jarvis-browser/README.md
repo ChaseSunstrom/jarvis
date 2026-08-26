@@ -314,6 +314,9 @@ Closes the context and wipes the profile directory.
 | `BROWSER_RESPECT_ROBOTS` | `true` | honour robots.txt |
 | `BROWSER_JAVASCRIPT` | `true` | default `java_script_enabled` |
 | `BROWSER_NAV_TIMEOUT_MS` | `20000` | navigation/step timeout |
+| `BROWSER_PLAIN_FETCH` | `true` | fetch a page as text over plain HTTP first (same SSRF checks on every hop) and render it in the browser only when that text is shorter than `BROWSER_PLAIN_MIN_CHARS` — the JavaScript-only page. On 26 Aug 2026 every read in two research runs hit the 20 s navigation timeout on news sites that answer plain HTTP in under a second (M75) |
+| `BROWSER_PLAIN_TIMEOUT_S` | `8` | the plain fetch's whole budget |
+| `BROWSER_PLAIN_MIN_CHARS` | `500` | extracted text shorter than this is not the page; the browser renders it |
 | `BROWSER_VIEWPORT_WIDTH/HEIGHT` | `1280`/`800` | viewport |
 | `BROWSER_MAX_SCREENSHOT_BYTES` | `3000000` | PNG cap |
 | `BROWSER_CHROMIUM_NO_SANDBOX` | `false` | see below |

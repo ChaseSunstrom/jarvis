@@ -1015,6 +1015,22 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"bad rate/width: {err}") from err
 
 
+@api_router.post("/voice/speaker/enrolling")
+async def speaker_enrolling(request: Request) -> dict[str, Any]:
+    """A client is about to record an enrolment phrase (M79).
+
+    The phrases read aloud for a voiceprint reach the house's listeners as
+    sentences, and a sentence is a command. This marks an enrolment in
+    progress for `ENROLLING_WINDOW` seconds — every pipeline turn that starts
+    inside it yields — and a sample or a test refreshes the mark, so a client
+    calls it once per phrase, before it records.
+    """
+    from . import speaker as speaker_api
+
+    speaker_api.mark_enrolling(get_jarvis(request))
+    return {"enrolling": True, "window_seconds": speaker_api.ENROLLING_WINDOW}
+
+
 @api_router.post("/voice/speaker/verify")
 async def speaker_verify(request: Request) -> dict[str, Any]:
     """Score a sample without enrolling it — how you find your threshold.

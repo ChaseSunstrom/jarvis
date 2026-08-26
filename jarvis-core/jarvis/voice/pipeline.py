@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..const import EVENT_VOICE_PIPELINE as _EVENT_VOICE_PIPELINE
 from ..const import VOICE_WAKE_END as _VOICE_WAKE_END
+from .speech_text import spoken_form
 from .audio import DEFAULT_CHANNELS, DEFAULT_RATE, DEFAULT_WIDTH, rms, wav_bytes
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -257,7 +258,10 @@ def speakable(text: str) -> str:
     letter or digit dropped. Returns "" when nothing is left to say, which the
     caller treats as "do not speak", never as an error.
     """
-    collapsed = " ".join(str(text or "").split())
+    # Said, not shown (M73): the markdown and the symbols the model writes for
+    # a screen become words here, and only here — the transcript, the console
+    # and the archive keep the reply as written.
+    collapsed = " ".join(spoken_form(str(text or "")).split())
     if not collapsed:
         return ""
     parts = [part for part in re.split(r"(?<=[.!?])\s+", collapsed) if part]
@@ -406,6 +410,15 @@ class PipelineRun:
         self.early_speech = early_speech
         self._spoken_upto = 0
         self.spoken_chunks: list[str] = []
+        #: The sentences already synthesised, in order — what `_unspoken_tail`
+        #: subtracts from the reply by TEXT, since after a tool call the
+        #: authoritative reply is the last segment of the stream and a
+        #: character index into the stream means nothing in it (M74).
+        self._spoken_texts: list[str] = []
+        #: Set when a tool starts: the next delta opens a new segment, and the
+        #: cursor moves to its start so what the model wrote BEFORE the tool —
+        #: its guess — is never spoken after it (M74).
+        self._segment_reset = False
         self._tools_ran = False
         #: The turn's audio, kept only while a gate is active and only up to
         #: :data:`MAX_VERIFY_BYTES`. Nothing is written to disk and it is
@@ -827,6 +840,40 @@ class PipelineRun:
             EVENT_INTENT_START, {"engine": self.conversation_engine, "language": self.language}
         )
         reply = ""
+        # One utterance, one turn (M78). A phone's wake word and the console's
+        # microphone both heard the sentence; the copy that arrives second
+        # yields — no model, no tools, nothing said — and the surface is told
+        # which listener is answering. The console has no device id and
+        # counts as one listener of its own.
+        if self.jarvis is not None:
+            from ..api.devices import get_recent_listeners
+
+            listeners = get_recent_listeners(self.jarvis)
+            me = self.device_id or "console"
+            other = listeners.already_heard_from(text, me)
+            if other:
+                _LOGGER.info(
+                    "Pipeline %s: %r already heard from %s; this turn yields", self.run_id, text, other
+                )
+                await self._emit(
+                    EVENT_INTENT_END,
+                    {"chat_log": [], "duplicate_of": other, "conversation_id": self.conversation_id},
+                )
+                return ""
+            listeners.heard(text, me)
+            # Not listening while you enrol (M79): the phrases read aloud for
+            # a voiceprint are sentences, and every listener in the room hears
+            # them as commands. A client marks the enrolment before it records;
+            # a turn that starts inside the window yields the same way.
+            from ..api.speaker import enrolling
+
+            if enrolling(self.jarvis):
+                _LOGGER.info("Pipeline %s: an enrolment is in progress; this turn yields", self.run_id)
+                await self._emit(
+                    EVENT_INTENT_END,
+                    {"chat_log": [], "enrolling": True, "conversation_id": self.conversation_id},
+                )
+                return ""
         # Drained by a task of its own, NOT off the back of the delta loop.
         #
         # The loop below used to carry the drain, with a comment claiming it
@@ -861,7 +908,7 @@ class PipelineRun:
                     EVENT_INTENT_PROGRESS,
                     {"chat_log_delta": {"role": "assistant", "content": delta}},
                 )
-                await self._speak_early(reply)
+                await self._speak_early(reply, delta)
         except PipelineError:
             raise
         except Exception as err:
@@ -900,7 +947,7 @@ class PipelineRun:
         )
         return reply
 
-    async def _speak_early(self, reply_so_far: str) -> None:
+    async def _speak_early(self, reply_so_far: str, delta: str = "") -> None:
         """Synthesise each finished sentence while the model writes the next (M60).
 
         The wait a person notices on a voice turn is from the end of their
@@ -909,13 +956,22 @@ class PipelineRun:
         the first word; this puts only the first sentence there. Each chunk is
         stored like the whole reply and announced as `tts-chunk`.
 
-        Only while no tool has run this turn: text before a tool call is the
-        model guessing at what the tool will find, and `_authoritative_answer`
-        drops it — speaking it would say something the reply then contradicts.
-        Off when the run has no synthesiser, and off by `early_speech: false`.
+        Per segment (M74). Text before a tool call is the model guessing at
+        what the tool will find, and `_authoritative_answer` drops it; M60
+        therefore switched early speech off for the whole turn once a tool had
+        run — which put a research answer's entire generation, twelve
+        sentences, in front of its first word ("it took forever after it spit
+        out text"). Now a tool call opens a new segment: the cursor moves to
+        the first delta after it, the pending guess is never spoken, and the
+        answer the tool made possible is spoken as it is written like any
+        other. Off when the run has no synthesiser, and off by
+        `early_speech: false`.
         """
-        if not self.early_speech or self.tts is None or self._tools_ran:
+        if not self.early_speech or self.tts is None:
             return
+        if self._segment_reset:
+            self._segment_reset = False
+            self._spoken_upto = len(reply_so_far) - len(delta)
         pending = reply_so_far[self._spoken_upto :]
         # A sentence is finished when its end mark is followed by more text;
         # the last one is left for `tts-end`, which speaks what remains.
@@ -934,6 +990,7 @@ class PipelineRun:
                 self.jarvis, wav_bytes(pcm, rate, width, channels), TTS_MIME_TYPE, cache=self._tts_cache
             )
             self.spoken_chunks.append(url)
+            self._spoken_texts.append(sentence)
             await self._emit(
                 EVENT_TTS_CHUNK,
                 {
@@ -942,6 +999,23 @@ class PipelineRun:
                     "tts_output": {"url": url, "mime_type": TTS_MIME_TYPE},
                 },
             )
+
+    def _unspoken_tail(self, spoken_text: str) -> str:
+        """What the chunks did not cover, found by text rather than by index.
+
+        Walks the sentences already said through the reply in order; the tail
+        is what follows the last one found. A sentence that is not in the
+        reply (the model's guess before a tool, dropped by
+        `_authoritative_answer`) stops the walk where it is, so the tail can
+        only ever be too long — said twice — never cut in the middle.
+        """
+        cursor = 0
+        for said in self._spoken_texts:
+            at = spoken_text.find(said, cursor)
+            if at < 0:
+                break
+            cursor = at + len(said)
+        return spoken_text[cursor:].strip()
 
     async def _run_tts(self, text: str) -> str:
         if self.tts is None:
@@ -964,6 +1038,11 @@ class PipelineRun:
                 "tts_input": text,
             },
         )
+        if self.spoken_chunks:
+            # The last sentence first (M74): a client playing the chunks is
+            # waiting for exactly this, and behind the whole-reply clip it
+            # waited for every sentence to be synthesised again.
+            await self._speak_tail(text)
         try:
             result = await self._synthesize(text)
             pcm, rate, width, channels = result
@@ -983,23 +1062,37 @@ class PipelineRun:
             # reply above stays for a client that plays only `tts-end`. Two
             # syntheses of the early sentences until every client chunks.
             output["chunks"] = len(self.spoken_chunks)
-            output["remainder_url"] = await self._remainder_clip(text)
+            # The tail was already sent as the last `tts-chunk` (M74), before
+            # the whole-reply clip above was even asked for; a client that
+            # played the chunks has nothing left to play. Kept in the payload,
+            # as None, so a client written against M60's shape still reads it.
+            output["remainder_url"] = None
         await self._emit(EVENT_TTS_END, {"tts_output": output})
         return self.tts_url
 
-    async def _remainder_clip(self, spoken_text: str) -> str | None:
-        """The part of the reply after the last early sentence, stored, or None."""
-        tail = speakable(self.response_text[self._spoken_upto :]) if self.response_text else ""
+    async def _speak_tail(self, spoken_text: str) -> None:
+        """The part of the reply after the last early sentence, as the last chunk."""
+        tail = self._unspoken_tail(spoken_text)
         if not tail:
-            return None
+            return
         try:
             pcm, rate, width, channels = await self._synthesize(tail)
-        except Exception:  # noqa: BLE001 - the whole reply is already there
-            return None
+        except Exception:  # noqa: BLE001 - the whole reply follows anyway
+            _LOGGER.debug("Pipeline %s: the tail failed; the whole reply follows", self.run_id)
+            return
         _token, url = store_tts_audio(
             self.jarvis, wav_bytes(pcm, rate, width, channels), TTS_MIME_TYPE, cache=self._tts_cache
         )
-        return url
+        self.spoken_chunks.append(url)
+        self._spoken_texts.append(tail)
+        await self._emit(
+            EVENT_TTS_CHUNK,
+            {
+                "index": len(self.spoken_chunks) - 1,
+                "text": tail,
+                "tts_output": {"url": url, "mime_type": TTS_MIME_TYPE},
+            },
+        )
 
     async def _synthesize(self, text: str) -> tuple[bytes, int, int, int]:
         try:
@@ -1246,6 +1339,7 @@ class PipelineRun:
             name, data = self._turn_events.popleft()
             if name == EVENT_INTENT_TOOL_START:
                 self._tools_ran = True
+                self._segment_reset = True
             if name == EVENT_INTENT_THINKING:
                 pending += str(data.get("delta") or "")
                 if len(pending) < MAX_THINKING_FRAME_CHARS:

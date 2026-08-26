@@ -738,3 +738,37 @@ async def test_a_reminder_lands_in_the_inbox_whether_or_not_a_phone_is_paired(ja
     await settle(jarvis)
     assert inbox and inbox[0]["kind"] == "reminder" and inbox[0]["title"] == "check the oven"
     assert inbox[0]["source"] == "schedule"
+
+
+async def test_the_same_alarm_asked_for_twice_in_a_minute_is_one_alarm(jarvis):
+    """M78. "I asked it to set an alarm, why did it do it twice?" — the phone
+    and the console both heard the sentence, and the model scheduled "Wake
+    up" and "Wake-up alarm", both weekdays at 07:30, forty seconds apart. The
+    second is refused and the first is named; a different time is a
+    different alarm; the same alarm after the window is a deliberate one."""
+    clock = FrozenClock("2026-01-01T06:00")
+    Recorder(jarvis)
+    manager = await manager_for(jarvis, clock)
+    first = await manager.async_add(
+        {"kind": "notify", "title": "Wake up", "message": "Wake up",
+         "when": {"mode": "daily", "at": "07:30"}},
+        allow_service=False,
+    )
+    assert first["status"] == "ok"
+    clock.advance(seconds=40)
+    second = await manager.async_add(
+        {"kind": "notify", "title": "Wake-up alarm", "message": "Time to get up",
+         "when": {"mode": "daily", "at": "07:30"}},
+        allow_service=False,
+    )
+    assert second["status"] == "error", second
+    assert "already scheduled" in second["error"] and "Wake up" in second["error"]
+    assert second["job"]["id"] == first["job"]["id"]
+    assert len(manager.jobs) == 1
+
+    other = await manager.async_add(
+        {"kind": "notify", "title": "Lunch", "message": "Lunch",
+         "when": {"mode": "daily", "at": "12:30"}},
+        allow_service=False,
+    )
+    assert other["status"] == "ok" and len(manager.jobs) == 2

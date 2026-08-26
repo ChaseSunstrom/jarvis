@@ -787,6 +787,65 @@ jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test
 | Against the house's real instances the client reports the tailnet SearXNG answering nothing and the stack's own answering | Scripted | the gate's last check runs the branch's client from the host with `jarvis-core/.env`'s `SEARXNG_URL` — 26 Aug: five engines timed out there, 5 results from `127.0.0.1:8888` in 4.5 s |
 | A research run on the deployed house reaches a report instead of "nothing was found" | Manual | the live rig's `research-*` scenarios after the next rebuild; recorded in `docs/OVERNIGHT_LOG.md` when run |
 
+### Said, not shown (M73)
+
+`bash scripts/verify/m73-spoken-form.sh`. Server: `jarvis-core/tests/test_speech_text.py` (the operator's own
+line and fourteen more), `test_voice.py` (`speakable` on every path).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Markdown carries no sound: bold, headings, bullets, links (text kept), bare URLs (the host, "dot"), code, tables | Automated | `test_the_spoken_form_of_what_was_written` |
+| Symbols become words: `$`, `£`, `€` with k/M/B suffixes, `%`, `~` before a number, units (TB…KB, kW/kWh, °C/°F, km/h, mph…), `a/b` ratios, `&`, `→`, `2x` | Automated | the same table; a symbol not in the table is left alone (`test_what_is_left_alone`) |
+| It happens at the one door to the synthesiser (`speakable`) — chunks, the whole reply and the tail alike — and the transcript keeps the reply as written | Automated | `test_speakable_says_it_rather_than_shows_it`; the gate greps the pipeline |
+| Heard right on the house: the Bitcoin briefing spoken as words | Manual | the operator's next research turn after the rebuild |
+
+### Speak after tools, sentence by sentence (M74)
+
+`bash scripts/verify/m74-speak-after-tools.sh`. Server: `test_voice.py` (`test_early_speech_resumes_after_a_tool_for_the_answer_the_tool_made_possible`, the M60 cases updated to the tail-as-chunk shape).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A tool call opens a new segment: the guess written before it is never spoken after it; the answer after it is spoken sentence by sentence before `intent-end` | Automated | the M74 test: chunks are the three answer sentences, "Let me look that up." never reaches the synthesiser |
+| The tail is the last `tts-chunk`, synthesised before the whole-reply clip; `tts-end` still carries the whole reply with `remainder_url: null` | Automated | `test_the_first_sentence_is_spoken_before_the_reply_is_finished` (updated) |
+| The rig records `first_audio` (the first chunk's arrival) beside `tts` | Automated | `testing/live/transport.py`; the gate's last check reads it off a spoken research turn |
+| On the house, a spoken research answer's first audio comes before its whole clip | Scripted | the gate's last check, after the rebuild and `LIVE_ONLY=research-quick-lookup` |
+
+### Research that reads in time (M75)
+
+`bash scripts/verify/m75-research-in-time.sh`. Server: `test_web_integration.py`
+(`test_after_the_configured_instance_could_not_search_the_fallback_is_asked_first`), `test_research.py`;
+jarvis-browser: `tests/test_api.py` (the three text-first cases).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| After the configured SearXNG could not search, the fallback is asked first for ten minutes, the note says so, and one answer from the configured instance restores the order | Automated | the web test above |
+| jarvis-browser reads a page as text over plain HTTP first, re-checking every redirect hop; a page with no text without JavaScript falls back to the browser; a redirect to the LAN is refused on the shortcut | Automated | the three browser tests |
+| Research reads a bounded few pages at once (`research: parallel_reads:`, 3), keeping the citation order | Automated | `test_research.py` (unchanged counts through a semaphore) |
+| The running jarvis-browser reads a real news page as text in under ten seconds | Scripted | the gate's last check, after the rebuild |
+
+### Jarvis in the middle, the tasks below (M76)
+
+`bash scripts/verify/m76-voice-layout.sh`. Console: `e2e/voice-layout.spec.ts` (two viewports), `look.spec.ts`,
+`hud.spec.ts`, `tasks.spec.ts`, `states.spec.ts`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| At rest the instrument's centre is in the middle band of the viewport (28–72 % of its height) at 1440×900 and 390×844 | Automated | `voice-layout.spec.ts` |
+| A running task's dock draws under the instrument, as the voice page's own section, and not in the layout's floating alerts | Automated | the same spec; the gate reads the layout for the absence |
+| Held actions and the tool strip stay at the top | Automated | `hud.spec.ts` (unchanged) |
+
+### One utterance, one turn (M78)
+
+`bash scripts/verify/m78-one-utterance.sh`. Server: `test_voice.py` (`test_a_second_listener_bringing_the_same_words_yields_to_the_first`,
+`test_the_listener_window_is_seconds_not_minutes`), `test_schedule.py` (`test_the_same_alarm_asked_for_twice_in_a_minute_is_one_alarm`).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A second device bringing the same words within four seconds yields: no model, no tools, nothing spoken, `intent-end` names the listener already answering | Automated | the first voice test |
+| The same device repeating itself is not a duplicate; different words from the other device are a new turn | Automated | the same test |
+| `schedule` refuses an identical job (same kind, same time, same schedule) made within a minute and names the one that exists | Automated | the schedule test |
+| Two listeners in one room on the deployed house: one alarm, one voice | Manual | the operator's phone and console, after the rebuild |
+
 ### A writable coding workspace (M72)
 
 `bash scripts/verify/m72-workspace.sh` (26 Aug 21:06: 10/10 on the ninth rebuild). Server: `test_packaging.py`

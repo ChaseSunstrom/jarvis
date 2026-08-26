@@ -51,6 +51,8 @@ settle as it goes.
 
 from __future__ import annotations
 
+import time
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
@@ -193,6 +195,28 @@ async def _embed(body: bytes, content_type: str, rate: int, width: int) -> Any:
     return embedding
 
 
+#: How long after a sample, a test, or a client saying "recording now" the
+#: house counts an enrolment as in progress. Twenty seconds: a phrase is read,
+#: uploaded and judged well inside it, and the client refreshes the mark on
+#: the next one; a person who walks away is listened to again half a minute
+#: later without touching anything.
+ENROLLING_WINDOW = 20.0
+DATA_ENROLLING_UNTIL = "voice_enrolling_until"
+
+
+def mark_enrolling(jarvis: "Jarvis", window: float = ENROLLING_WINDOW) -> float:
+    """An enrolment is in progress (M79): the phrases read aloud for a
+    voiceprint are not commands. Every pipeline turn that starts inside the
+    window yields — see `PipelineRun._run_intent`."""
+    until = time.monotonic() + window
+    jarvis.data[DATA_ENROLLING_UNTIL] = until
+    return until
+
+
+def enrolling(jarvis: "Jarvis") -> bool:
+    return time.monotonic() < float(jarvis.data.get(DATA_ENROLLING_UNTIL) or 0.0)
+
+
 async def async_enrol(
     jarvis: "Jarvis",
     body: bytes,
@@ -202,6 +226,7 @@ async def async_enrol(
     label: str | None = None,
 ) -> dict[str, Any]:
     """Add one sample to a person's profile and report where enrolment stands."""
+    mark_enrolling(jarvis)
     from ..integrations.voice import async_save_profiles
 
     gate = _gate(jarvis)
@@ -258,6 +283,7 @@ async def async_verify(
     the sample is compared with everyone and the verdict names who it was; with
     one it is compared with that person only.
     """
+    mark_enrolling(jarvis)
     gate = _gate(jarvis)
     if not gate.enrolled:
         raise EnrolError("nobody is enrolled yet", 409)
