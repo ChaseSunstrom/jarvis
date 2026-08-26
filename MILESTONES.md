@@ -1046,7 +1046,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     thirty minutes; an expired one says so and how to ask again; the banner's clock and the
     voice agree.
   - Verify: `bash scripts/verify/m66-ask-and-answer.sh`
-- [ ] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66
+- [x] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66
   - Scope: "how can I ask it to be able to edit settings with permission" — a `list_settings`
     tool (Tier 1, read-only) over the console's settings registry, compact for the whole list and
     detailed for a filtered one, and a `change_setting` tool (Tier 3) with the exact key, the
@@ -1057,6 +1057,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     guess, and nothing is held for it; the banner reads "Change Wake word (voice.wake_word) from
     hey_jarvis to ok_nabu"; a tainted turn is held and marked, not refused.
   - Verify: `bash scripts/verify/m67-settings-tool.sh`
+  - 26 Aug 22:05: built by an agent in a worktree (killed once at 20:37, respawned on the same
+    worktree), its four commits cherry-picked (38cd915, 5c90790, 3901700, f622e03) and verified on
+    the branch — gate 25/25, settings-tool suite 29, tier contract with its Android mirrors 6/6.
+    The operator's own case: asked for "demo mode" the model is told no such setting exists, with
+    the nearest real names, and holds nothing.
 - [x] **M68 — Search that works** · size S · deps M31 · parallel-ok M66
   - Scope: "Latest news on Bitcoin — nothing was found for 4 searches": the configured SearXNG
     (the operator's, over the tailnet) times out on every engine while the local one answers.
