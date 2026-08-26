@@ -630,6 +630,24 @@ house's summary is a fraction of a real one's.
 | What is still a raw `<button>` | **Deliberate, and listed** | a mic, a disclosure triangle, a clickable row and five other one-offs — `docs/UI_MIGRATION.md` names each with its reason. All on tokens; none is a button in this library's sense |
 | Whether it is *good* | **Needs eyes** | 48 screenshots in `docs/ui-review/`, 16 screens at three widths. The harness can prove structure, states and spacing; "would a first-time user understand this" is not a test |
 
+### The console on Reactor II (M50)
+
+`bash scripts/verify/m50-webui-c2-look.sh`. The look, measured.
+
+| Claim | Level | Proof |
+|---|---|---|
+| Every row in `docs/UI_MIGRATION.md` §3's M50 list is ticked, and the gate refuses an unticked one | Automated | the gate reads the section and fails on any `- [ ]` |
+| The nine components the pages needed exist, are exported, documented, SSR-tested and on the style guide | Automated | the gate checks each of `TopBar`, `SectionStrip`, `StatusReadout`, `StagesBar`, `CallLine`, `DayStrip`, `ProgressRing`, `Figure`, `Graph` in `index.ts`, `README.md`, `ssr.test.ts` and `/styleguide` |
+| No console furniture, grid or brackets survive | Automated | the gate greps `chrome.css` and every `.svelte/.css/.ts` under `src` |
+| A pill radius only where a thing is round | Automated | the gate lists every `--jv-radius-pill` outside the dots, rings and the toggle track |
+| Body prose is never mono, no text glows | Automated | the gate reads `base.css`/`chrome.css` for the ground face and greps `text-shadow`; `look.spec.ts` measures the computed face of every visible paragraph |
+| The render matches the direction on every screen | Automated | `e2e/look.spec.ts`: Barlow ground, `--jv-bg` body, no `.jv-grid`/`.jv-bracket`/`<canvas>`, no pill-shaped control, panels only on palette colours, the bar's underline present, at most one filled accent control |
+| The knowledge graph draws every note and memory entry and lights on use | Automated | `e2e/knowledge.spec.ts`: a node per note and entry, the mock's `[[heating]]` link as an edge, a node click opens the note, `jarvis/test/memory_used` lights and settles, `note_search` lights the match, reduced motion still reports `data-lit` |
+| Every screen still renders, handles its four states, holds at five widths, every control works | Automated | `states.spec.ts`, `responsive.spec.ts`, `controls.spec.ts`, then the whole suite |
+| The pictures are current | Automated *by construction* | the gate regenerates the 16 × 3 screenshots and the four recordings |
+| Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
+| Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
+
 ### The voice screen (M49)
 
 `bash scripts/verify/m49-home-reactor.sh`. The signature surface, on Reactor II.

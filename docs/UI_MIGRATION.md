@@ -141,50 +141,50 @@ Chrome, drawn on every destination:
 - [x] `CommandPalette` · **migrated** · Barlow labels, mono only for the kind and the keys, the selected row washed with the inset rule.
 - [x] `Approvals` · **migrated** · C2's held bar: inset warn rule, the tool bright, args mono, APPROVE the one primary.
 - [x] `Notifications` / `Moment` · **migrated** · a flat panel whose head is the disclosure; each moment a hairline row with the kind as a tag.
-- [ ] `TaskDock` / `TaskBar` / `TaskCard` · **partial**
+- [x] `TaskDock` / `TaskBar` / `TaskCard` · **migrated** · flat panels, the bar a thin accent rule, steps behind a disclosure, quiet CANCEL/FORGET.
 - [x] `Toasts` · **migrated** · flat panel, inset rule by kind, Barlow.
-- [ ] `ToolActivity` · **partial** → the `.calls` line: dot, mono name, args, `ok`, ms.
+- [x] `ToolActivity` · **migrated** · CallLine-shaped rows on a flat panel with a real progress rule (its own rows, because the spec reads the error text by testid).
 - [x] `+error.svelte` · **migrated** · `ErrorState` and two `Button`s, nothing else.
 
 Destinations and sections:
 
-- [ ] HOUSE shell · **partial**
-- [ ] HOUSE · Devices · **partial** · pill controls, mono names → hairline rows, Barlow names, one control per row lit.
-- [ ] HOUSE · Areas · **partial**
-- [ ] HOUSE · Dashboards · **partial** → C2 dashboard: title in Space Grotesk, range segmented control, `+ WIDGET` primary, cards with count-up figures, area charts with gradient fills that draw in, bars, sparkline tables, a hero with the mini reactor.
-- [ ] HOUSE · Automations · **partial**
-- [ ] WORK shell · **partial**
-- [ ] WORK · Tasks · **partial** → the day strip (C2 `.strip`) over the list.
-- [ ] WORK · Task detail · **partial** → C2 task view: progress ring (blades as plan steps), plan panel with the current step washed, tool calls live, output pane, approval bar, CANCEL / DIFF.
-- [ ] WORK · Code · **partial**
-- [ ] KNOWLEDGE shell · **partial** → the graph is the hero: notes and memory entries as nodes, `[[links]]` and back-links as edges, force-laid, drawn in with the stagger; a node lights and its edges pulse when a turn's `memory_used` names it or a note tool touches it (`jarvis_tool_*` events), and settles again on `--jv-dur-slow`.
-- [ ] KNOWLEDGE · Notes · **partial** → list + editor beside the graph, selected node ↔ open note.
-- [ ] KNOWLEDGE · Memory · **partial** → entries as the graph's other node kind; edit / pin / forget in a side panel.
-- [ ] SETTINGS shell · **partial**
-- [ ] SETTINGS · Assistant · **partial**
-- [ ] SETTINGS · Tools · **partial** · seven panels stacked, `EXPOSED` pills on every row → sections behind expanders (Callables · Exposure · Extensions · MCP · Skills · Catalog), one primary action.
-- [ ] SETTINGS · Extensions and catalog (`Extensions` + its three dialogs) · **partial**
-- [ ] SETTINGS · Desktop · **partial**
-- [ ] SETTINGS · Pairing (`Pairing`) and `EnrolVoice` · **partial**
-- [ ] `/styleguide` · **partial** · every primitive and every state re-rendered on the new look; the reactor's states and the graph documented.
+- [x] HOUSE shell · **migrated** · `ScreenTitle` + `SectionStrip`.
+- [x] HOUSE · Devices · **migrated** · a panel per area, hairline rows, one control lit, MANAGE a quiet disclosure, the editor inset.
+- [x] HOUSE · Areas · **migrated** · rooms as panels, CREATE the one primary.
+- [x] HOUSE · Dashboards · **migrated** · C2's dashboard: the range as a segmented control, `+ WIDGET` the primary, flat cards with mono sources, `Figure` count-ups, gradient fills that draw in, bars that grow, the first widget the hero with a mini `Reactor`.
+- [x] HOUSE · Automations · **migrated** · rows with mono last-trigger, pressed ENABLE/DISABLE, quiet RUN NOW, the editor inset.
+- [x] WORK shell · **migrated** · `ScreenTitle` + `SectionStrip`.
+- [x] WORK · Tasks · **migrated** · a `DayStrip` of today's tasks and the next firings over RUNNING / FINISHED, scheduled jobs as a panel.
+- [x] WORK · Task detail · **migrated** · C2's task view: `ProgressRing` centre, PLAN and TOOL CALLS left, OUTPUT right, the rest in a two-column grid, the held bar with the warn rule, CANCEL / BACK quiet.
+- [x] WORK · Code · **migrated** · panels, START the one primary, diffs sunken.
+- [x] KNOWLEDGE shell · **migrated** · the graph is the hero: notes and memory as nodes, links and shared tags as edges, seeded force layout drawn in with the stagger; a node lights for one blink when a turn's `memory_used` names it or a note tool touches it; the URL is the selection.
+- [x] KNOWLEDGE · Notes · **migrated** · hairline rows, the editor a flat panel with the markdown sunken, SAVE the one primary; `?open=<id>` ↔ the lit node.
+- [x] KNOWLEDGE · Memory · **migrated** · hairline rows, quiet PIN/FORGET, FORGET EVERYTHING behind a confirm; `?entry=<id>` scrolls to and marks the picked node.
+- [x] SETTINGS shell · **migrated** · `ScreenTitle` + `SectionStrip`.
+- [x] SETTINGS · Assistant · **migrated** · a flat panel per settings group, hairline rows, SAVE primary only when dirty, restart as a warn tag.
+- [x] SETTINGS · Tools · **migrated** · six expanders (Extensions, Callables and Test run open; MCP, Skills, Exposure closed) with counts, NEW SKILL the one primary, exposure as a `Toggle`.
+- [x] SETTINGS · Extensions and catalog (`Extensions` + its three dialogs) · **migrated** · headerless rows inside the expander, tags for state, dialogs on `Dialog` with one primary each.
+- [x] SETTINGS · Desktop · **migrated** · hairline device rows, `Pill` tones for online/offline.
+- [x] SETTINGS · Pairing (`Pairing`) and `EnrolVoice` · **migrated** · two panels each, the QR on `--jv-paper`, one primary at a time.
+- [x] `/styleguide` · **migrated** · every export live — the reactor's five states, the bar, the strip, the stages, the calls, the day strip, the ring, the figure, the graph — and no console furniture.
 
 Views that are not routes:
 
-- [ ] `EntityRow` · **partial**
-- [ ] `TaskTimeline` / `TaskOutput` · **partial**
-- [ ] `CodeDiff` · **partial**
-- [ ] `ScheduledJobs` · **partial**
-- [ ] `SkillsPanel` · **partial**
-- [ ] `McpServers` · **partial**
-- [ ] `Chart` (dashboards) · **partial** → area fill, draw-in, tabular axis.
+- [x] `EntityRow` · **migrated** · hairline row, state tag, ghost buttons with `pressed` for on; the slider labels stay mono (they are data).
+- [x] `TaskTimeline` / `TaskOutput` · **migrated** · dot marks and Barlow text; the output sunken with a live caret.
+- [x] `CodeDiff` · **migrated** · sunken, mono, on the tokens.
+- [x] `ScheduledJobs` · **migrated** · a panel of hairline rows, `+ SCHEDULE SOMETHING` the primary.
+- [x] `SkillsPanel` · **migrated** · a headerless body inside its expander.
+- [x] `McpServers` · **migrated** · a headerless body inside its expander, `Field`/`Input` editors.
+- [x] `Chart` (dashboards) · **migrated** · gradient under the line, stroke draw-in on `--jv-dur-sweep`, bars that grow with a stagger, a tick on the last point, `Figure` for a stat.
 
 The library (`src/lib/ui`), re-skinned once so the pages inherit:
 
-- [ ] `Button` (default · primary · quiet · approve · danger · pressed) · **partial** → C2 `.btn`: uppercase Barlow, hairline, 6px, primary is the one filled control.
+- [x] `Button` (ghost · primary · danger · approve · pressed) · **migrated** · C2's `.btn`: uppercase Barlow on a hairline, `md` radius, the primary the one filled control, `pressed` an accent outline.
 - [x] `Pill` · **migrated** · a hairline tag (radius `sm`, Barlow uppercase); status dots stay round.
-- [ ] `Tabs` · **partial** → the C2 sliding underline, shared with the top bar.
-- [ ] `Toggle`, `Input`, `Select`, `Field`, `Toolbar`, `Panel`, `Row`, `Dialog`, `IconButton` · **partial**
-- [ ] `SkeletonRows`, `EmptyState`, `ErrorState`, `OfflineState`, `ScreenState` · **partial**
+- [x] `Tabs` · **migrated** · uppercase Barlow on a hairline with the accent underline.
+- [x] `Toggle`, `Input`, `Select`, `Field`, `Toolbar`, `Panel`, `Row`, `Dialog`, `IconButton` · **migrated** · Barlow, `--jv-field` grounds, `md` radii, hairlines; the toggle's track is the one round control.
+- [x] `SkeletonRows`, `EmptyState`, `ErrorState`, `OfflineState`, `ScreenState` · **migrated** · the four states on flat panels in the body face; mono only for an error's detail.
 - [x] New: `TopBar`, `SectionStrip`, `ScreenTitle`, `StatusReadout`, `StagesBar`, `CallLine`, `DayStrip`, `ProgressRing` (a `Reactor` preset), `Graph` (knowledge, with `$lib/knowledge/graph`'s seeded layout), `Figure` (count-up) — each with a `@component` block, a README section, SSR/unit tests, and a style-guide entry.
 - [x] `chrome.css` · **migrated** · the grid, the brackets, the skeleton classes and every `.console .thing` deleted; what remains is the frame, the motion primitives, the toasts and the palette.
 

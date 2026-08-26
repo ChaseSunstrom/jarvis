@@ -473,6 +473,26 @@ memory:
   # `research:` below DOES use it, on the same host, for the same money.
 
 # ---------------------------------------------------------------------------
+# Notes — documents, as opposed to facts.
+# ---------------------------------------------------------------------------
+# "Note that the boiler was serviced today" is a note: a markdown file under
+# `<config>/notes/<slug>.md` with frontmatter, a full-text index, `[[links]]`
+# resolved both ways, and the tools `note_create` / `note_append` /
+# `note_search`. Memory (above) is one line about the user, read on every
+# turn; a note is read when somebody asks for it.
+#
+# THIS TOO WAS WRITTEN AND NOT SWITCHED ON. M16 shipped the integration, the
+# console page, the voice intent and a live scenario, and verified all of it
+# against the harness's generated config — never against this file, which
+# had no key for it. Every "note that…" said to the deployed Jarvis went to
+# `remember` (the only place left) and no note was ever written. The live
+# suite's `notes-write-and-find` found it the first time it was selected.
+notes:
+  path: notes             # under the config directory; the files are yours
+  max_bytes: 200000       # one note's ceiling; a report is pages, not a book
+
+
+# ---------------------------------------------------------------------------
 # Calendar and mail — the two things a diary assistant is actually for. OFF.
 # ---------------------------------------------------------------------------
 # Both are plugins on the drop-in tool interface (`integrations/plugins/`), and

@@ -136,10 +136,6 @@
 	--jv-amb-drift: 18s;
 	--jv-amb-drift-slow: 40s;
 	/* chrome */
-	--jv-grid-size: 46px;
-	--jv-grid-mask: radial-gradient(ellipse 85% 70% at 50% 30%, #000 30%, transparent 90%);
-	--jv-bracket-size: clamp(20px, 3vw, 38px);
-	--jv-bracket-inset: 10px;
 	--jv-focus-outline: 2px solid #4fe3ff;
 	--jv-focus-offset: 2px;
 	--jv-rule-live: 2px;
