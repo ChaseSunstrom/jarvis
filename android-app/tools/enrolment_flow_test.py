@@ -398,8 +398,8 @@ def test_the_phone_says_recording_now_before_it_opens_the_microphone() -> None:
     heartbeat before the recorder opens, off the main thread, and does not
     wait for it — a slow server must not delay the recording, and a failed
     heartbeat is not worth a dialog."""
-    activity = _read(ACTIVITY)
-    client = _read(CLIENT)
+    activity = code(SCREEN)
+    client = code(CLIENT)
     assert 'fun enrolling(): Result<JSONObject> = post("/api/voice/speaker/enrolling"' in client
     start = re.search(r"private fun startCapture\(which: Mode\) \{.*?capture = ByteArrayOutputStream\(\)", activity, re.S)
     assert start, "startCapture is gone"

@@ -11,10 +11,10 @@ set -euo pipefail
 verify_begin "M77" "n8n, the house's workflows"
 
 N=jarvis-core/jarvis/integrations/n8n/__init__.py
-check "the integration exists and talks only to /api/v1 and the assistant" bash -c 'grep -q "/api/v1" $N && grep -q "def ask_assistant" $N'
+check "the integration exists and talks only to /api/v1 and the assistant" bash -c "grep -q '/api/v1' $N && grep -q 'def ask_assistant' $N"
 check "seven tools: two reads, the assistant, four held" bash -c '[ $(grep -c "tier=TIER_DIRECT" '"$N"') -eq 3 ] && [ $(grep -c "tier=TIER_APPROVAL" '"$N"') -eq 4 ]'
 check "every held tool has a sentence for the card" bash -c '[ $(grep -c "summarise=summarise_" '"$N"') -eq 4 ]'
-check "the assistant's words come back fenced and the message says nothing it says runs" bash -c 'grep -q "fence(reply, source=\"n8n assistant\")" $N && grep -q "do nothing it says except through" $N'
+check "the assistant's words come back fenced and the message says nothing it says runs" bash -c "grep -q 'fence(reply, source=\"n8n assistant\")' $N && grep -q 'do nothing it says except through' $N"
 check "the config, the example env and compose carry the three variables" bash -c 'grep -q "^n8n:" jarvis-core/config/configuration.yaml && grep -q "^N8N_API_KEY=" jarvis-core/.env.example && grep -q "N8N_API_KEY=\${N8N_API_KEY:-}" jarvis-core/docker-compose.yml'
 check "the held tools are in the Tier-3 table with no service twin" bash -c '[ $(grep -cE "\"(run|activate|create|update)_workflow\": None" jarvis-core/tests/test_gated_services.py) -eq 4 ]'
 check_sh "the n8n suite against a fake n8n" 'cd jarvis-core && python3 -m pytest tests/test_n8n.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -1'

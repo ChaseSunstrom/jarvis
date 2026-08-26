@@ -88,6 +88,11 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/dashboards/list` | every dashboard this token may see: the ones it saved, plus the shared and shipped ones |
 | `jarvis/dashboards/save` | `dashboard`; create or replace one. The server stamps the owner from the token — a client cannot save a board as somebody else |
 | `jarvis/dashboards/delete` | `id`; refuses one this token does not own |
+| `jarvis/surface/list` | the panels Jarvis has put up on the voice screen (M83): `{panels: [{id, kind, title, entity, camera, area, note, url, text, limit, x, y, w, h}], max}` — one surface per house |
+| `jarvis/surface/place` | `panel` (kind, target, title; x/y optional — a free slot around the instrument otherwise). The same thing twice is one panel; past `max` the oldest makes room. Every change fires `jarvis_surface_changed` with the whole list |
+| `jarvis/surface/move` | `panel` (its id — never the frame's `id`), `x`, `y`, `w`, `h`: where a drag or a resize left it; clamped to the twelve-column grid |
+| `jarvis/surface/remove` | `panel`: take one down |
+| `jarvis/surface/clear` | take everything down |
 | `jarvis/metrics/sources` | what can be graphed, per source, with each source's health |
 | `jarvis/metrics/query` | `source`, `series`, and either `range` (`1h`…`7d`) or `start`/`end`/`step`; the points. A source that is down answers with an error per series rather than failing the request |
 | `jarvis/sensors/readings` | optional `area`, `limit`; every sensor's newest reading with its room and age, newest first — what the dashboard's readings widget draws (M63) |
