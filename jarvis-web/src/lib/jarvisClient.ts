@@ -256,6 +256,12 @@ export interface ModelRoleState {
 	source?: string | null;
 	/** Vision only: whether `vision:` is configured at all. */
 	configured?: boolean;
+	/** Vision only: the configured model is listed by a server. */
+	served?: boolean;
+	/** Vision only: vision-capable models a server lists, by id. */
+	served_vision?: string[];
+	/** Vision only: cameras named under `vision: cameras:`. */
+	cameras?: number;
 }
 
 export interface ModelServer {

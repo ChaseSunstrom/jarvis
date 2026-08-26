@@ -339,7 +339,27 @@ async def test_a_vision_model_is_a_role_of_its_own(jarvis, stack) -> None:
     assert vision["role"] == ROLE_VISION
     assert vision["in_use_for"] == ["vision"]
     assert vision["family"] == "Qwen 2.5 VL" and vision["parameters"] == "7B"
-    assert payload["roles"]["vision"] == {"setting": "vision.model", "value": "qwen2.5vl:7b", "model": "qwen2.5vl:7b", "configured": True}
+    # Named, roled, and NOT served: the Ollama at `elsewhere` answers nothing in
+    # this stack, so the model is listed as missing — which is exactly the
+    # "configured, not served" state the panel has to say out loud.
+    assert vision["missing"] is True
+    assert payload["roles"]["vision"] == {
+        "setting": "vision.model", "value": "qwen2.5vl:7b", "model": "qwen2.5vl:7b", "configured": True,
+        "served": False, "served_vision": [], "cameras": 0,
+    }
+
+
+async def test_a_vision_model_no_server_lists_is_configured_and_not_served(jarvis, stack) -> None:
+    """The deployed house: `vision.model: house-vision`, a server that lists
+    `house` and `house-fast`. The operator read the panel's "cameras are not
+    configured" and asked why the vision model was not set; it was set — and
+    not served, which is a different sentence with a different fix."""
+    jarvis.config["vision"] = {"model": "house-vision", "url": "http://127.0.0.1:4000/v1", "cameras": []}
+    payload = await common.async_llm_models_payload(jarvis)
+    role = payload["roles"]["vision"]
+    assert role["configured"] is True and role["value"] == "house-vision"
+    assert role["served"] is False and role["served_vision"] == [] and role["cameras"] == 0
+    assert by_id(payload)["house-vision"]["missing"] is True
 
 
 async def test_without_vision_configured_the_role_says_so(jarvis) -> None:

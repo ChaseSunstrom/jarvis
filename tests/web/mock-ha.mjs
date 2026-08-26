@@ -616,7 +616,15 @@ export function makeWorld() {
 			roles: {
 				chat: { setting: 'llm.model', value: chatValue, model: chatId },
 				fast: { setting: 'llm.fast_model', value: fastValue, model: fastId, source: fastValue ? 'setting' : 'gateway' },
-				vision: { setting: 'vision.model', value: visionValue, model: visionValue || null, configured: true }
+				vision: {
+					setting: 'vision.model',
+					value: visionValue,
+					model: visionValue || null,
+					configured: true,
+					served: rows.some((r) => r.id === visionValue && !r.missing),
+					served_vision: rows.filter((r) => r.role === 'vision' && !r.missing).map((r) => r.id),
+					cameras: 2
+				}
 			},
 			servers: [
 				{ url: 'http://127.0.0.1:4000', kind: 'litellm', role: 'chat', ok: true, error: '', models: 2 },

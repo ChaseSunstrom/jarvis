@@ -662,3 +662,11 @@ is quiet. Done since:
   second filled control on six screens with no web file changed; both specs name the
   control now (d47d443) and pass here 36/36. (Stamps from here on are `date` on this host;
   the five before were ahead of it.)
+- 20:15 — the operator: "why is the vision model not set in the settings?" It is set —
+  `vision.model: house-vision` — and the model server lists `house` and `house-fast` only, so
+  the catalogue marks it missing, the chooser hides missing models, and the panel's one
+  sentence blamed cameras. The catalogue now says served / served_vision / cameras for the
+  vision role and the panel tells the three cases apart: no block; a model no server lists
+  (load one under that alias in llama-swap, or choose a served one); served but no camera.
+  What the house needs is BLOCKERS §4: a GGUF vision model served as `house-vision`. M65
+  verified on the branch (gates 27/27, M55 21/21, M47 18/18, M46 15/15) and ticked.

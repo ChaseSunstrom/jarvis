@@ -136,6 +136,27 @@ not answer is named at the foot with why.
 		)
 	);
 	const visionConfigured = $derived(payload?.roles.vision.configured ?? false);
+	const visionServed = $derived(payload?.roles.vision.served ?? false);
+	const visionCameras = $derived(payload?.roles.vision.cameras ?? 0);
+	/**
+	 * What to say beside the vision chooser, in the order the fixes go: no
+	 * block, a model no server lists, no camera, all set. The operator read
+	 * "cameras are not configured" when the block was there and the model was
+	 * not served, and asked why the model was not set — it was; the wrong
+	 * sentence hid that.
+	 */
+	const visionWhy = $derived.by(() => {
+		if (!visionConfigured) return 'No vision: block in configuration.yaml yet — add one, naming the model and a camera.';
+		const value = payload?.roles.vision.value ?? '';
+		if (!visionServed) {
+			const served = payload?.roles.vision.served_vision ?? [];
+			return served.length
+				? `vision.model is "${value}", which no server lists; ${served.join(', ')} ${served.length === 1 ? 'is' : 'are'} served — choose one, or load a model under "${value}".`
+				: `vision.model is "${value}", and the model server serves no vision model at all — load a vision model under that name (llama-swap: a GGUF VLM as "${value}") and it appears here.`;
+		}
+		if (!visionCameras) return 'Served. No camera to point it at yet: add one under vision: cameras: in configuration.yaml.';
+		return 'Looks at a camera frame when asked. Named as the vision server names it.';
+	});
 
 	async function choose(role: 'chat' | 'fast' | 'vision', value: string): Promise<void> {
 		if (!conn || !payload) return;
@@ -256,9 +277,7 @@ not answer is named at the foot with why.
 					<div class="role">
 						<div class="what">
 							<b>Vision</b>
-							<span class="why">
-								{#if visionConfigured}Looks at a camera frame when asked. Named as the vision server names it.{:else}Cameras are not configured: add a <code>vision:</code> block to configuration.yaml first.{/if}
-							</span>
+							<span class="why" data-testid="role-vision-why">{visionWhy}</span>
 						</div>
 						<Select
 							value={payload?.roles.vision.value ?? ''}

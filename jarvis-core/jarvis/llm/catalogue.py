@@ -884,6 +884,15 @@ async def async_describe(
                     "value": vision_value,
                     "model": vision_value or None,
                     "configured": bool(vision),
+                    # The three things a panel has to tell apart, because they
+                    # have three different fixes: no vision block at all; a
+                    # block whose model no server lists (load one under that
+                    # alias, or choose a served one); a served model and no
+                    # camera to point it at. The operator read "cameras are
+                    # not configured" when the truth was the second (26 Aug).
+                    "served": any(m.id == vision_value and not m.missing for m in ordered) if vision_value else False,
+                    "served_vision": [m.id for m in ordered if m.role == ROLE_VISION and not m.missing],
+                    "cameras": len(vision.get("cameras") or []) if isinstance(vision, dict) else 0,
                 },
             },
             "servers": [s.as_dict() for s in servers],
