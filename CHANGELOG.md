@@ -8,6 +8,17 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M55 — simpler menus everywhere.** HOUSE, WORK, KNOWLEDGE and the tools page held to a menu
+  inventory in `docs/UI_MIGRATION.md` §4 that `e2e/menus.spec.ts` reads and enforces against the
+  mock: one primary control per screen at rest, no two visible controls outside rows with the same
+  name, a cap on what a list row shows at rest, the declared number of search boxes. The tools page
+  is one search over everything it lists (extensions, callables, MCP servers, skills, exposure),
+  each fold saying how many rows match; a tool row is USE and EDIT, DELETE lives in the editor. An
+  automation row is its switch and MORE (Run now, Edit, Delete inside). `+ Widget` is the one way
+  into a dashboard's layout editor. An area's Rename and Delete are one click in. An entity row
+  offers the one move it can make — OPEN or CLOSE, PLAY or PAUSE, LOCK or UNLOCK, START or DOCK —
+  not both. A running task card offers Cancel, a finished one Forget. Every list row carries
+  `data-jv-row`; the gate builds the console before any spec runs.
 - **M57 — any sensor.** MQTT discovery now takes every component Home Assistant has: a button
   press or a doorbell arriving as `event` is an entity and a bus event (`jarvis_mqtt_event`) on
   every press, a phone or a tag is a `device_tracker`. The birth is also said on

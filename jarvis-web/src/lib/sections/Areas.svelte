@@ -24,6 +24,8 @@
 	let loading = $state(true);
 	let newAreaName = $state('');
 	let renaming = $state<Record<string, string>>({});
+	/** The one area whose rename/delete line is open (M55). */
+	let editingArea = $state('');
 
 	let areas = $state<AreaEntry[]>([]);
 	let entries = $state<EntityRegistryEntry[]>([]);
@@ -213,32 +215,45 @@
 
 	{#each areas as area, ai (areaKey(area))}
 		{@const id = areaKey(area)}
-		<div class="jv-stagger" style={staggerStyle(ai)}>
+		<div class="jv-stagger" style={staggerStyle(ai)} data-jv-row data-testid="area-row-{id}">
 			<Panel title={area.name} meta={id} testid="area-{id}">
 				{#snippet children()}
+					<!-- One control at rest (M55): the room's name and what is in it
+					     are the row; renaming and deleting are one click in. -->
 					<div class="line rename">
-						<div class="grow">
-							<Input
-								value={renaming[id] ?? area.name}
-								testid="rename-{id}"
-								oninput={(e) => (renaming[id] = (e.currentTarget as HTMLInputElement).value)}
-							/>
-						</div>
-						<Button testid="save-{id}"
-							disabled={busy}
-							aria-label="Rename {area.name}"
-							onclick={() => renameArea(area)}
+						<Button testid="edit-{id}"
+							aria-expanded={editingArea === id}
+							aria-label="Edit {area.name}"
+							onclick={() => (editingArea = editingArea === id ? '' : id)}
 						>
-							Rename
-						</Button>
-						<Button variant="danger" testid="delete-{id}"
-							disabled={busy}
-							aria-label="Delete {area.name}"
-							onclick={() => deleteArea(area)}
-						>
-							Delete
+							{editingArea === id ? 'Close' : 'Edit'}
 						</Button>
 					</div>
+					{#if editingArea === id}
+						<div class="line rename" data-testid="area-editor-{id}">
+							<div class="grow">
+								<Input
+									value={renaming[id] ?? area.name}
+									testid="rename-{id}"
+									oninput={(e) => (renaming[id] = (e.currentTarget as HTMLInputElement).value)}
+								/>
+							</div>
+							<Button testid="save-{id}"
+								disabled={busy}
+								aria-label="Rename {area.name}"
+								onclick={() => renameArea(area)}
+							>
+								Rename
+							</Button>
+							<Button variant="danger" testid="delete-{id}"
+								disabled={busy}
+								aria-label="Delete {area.name}"
+								onclick={() => deleteArea(area)}
+							>
+								Delete
+							</Button>
+						</div>
+					{/if}
 
 					{#each assignments.get(id) ?? [] as entry (entry.entity_id)}
 						<div class="line">

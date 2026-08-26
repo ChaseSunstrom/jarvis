@@ -344,7 +344,7 @@
 		{#snippet children()}
 			<label class="jv-sr-only" for="device-filter">Filter devices</label>
 			<div class="filter">
-				<Input bind:value={filter} placeholder="Filter by name or entity_id  ( / )" testid="filter" />
+				<Input bind:value={filter} placeholder="Filter by name or entity_id  ( / )" testid="filter" filter />
 			</div>
 			{#if filter}
 				<Button testid="clear-filter" onclick={() => (filter = '')}>Clear</Button>
@@ -406,7 +406,7 @@
 				<Panel title={group.name} meta={String(group.items.length)} testid="area-{group.id}">
 					{#snippet children()}
 						{#each group.items as state, i (state.entity_id)}
-							<div class="row-wrap" class:open={editing === state.entity_id}>
+							<div class="row-wrap" class:open={editing === state.entity_id} data-jv-row data-testid="device-{state.entity_id}">
 								<EntityRow
 									{state}
 									index={i}

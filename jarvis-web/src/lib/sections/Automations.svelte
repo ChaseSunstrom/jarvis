@@ -432,7 +432,7 @@
 						class="line jv-stagger"
 						class:open={row && editing === row.id}
 						style={staggerStyle(i)}
-						data-testid="automation-{automation.entity_id}"
+						data-testid="automation-{automation.entity_id}" data-jv-row
 					>
 						<span class="who">
 							<b>{name}</b>
@@ -463,28 +463,34 @@
 							>
 								{on ? 'Disable' : 'Enable'}
 							</Button>
-							<Button testid="trigger-{automation.entity_id}"
-								aria-label="Run {name} now"
-								onclick={() => act(automation.entity_id, 'trigger', 'triggered')}
-							>
-								Run now
-							</Button>
-							{#if row?.editable}
-								<Button testid="edit-{automation.entity_id}"
-									aria-expanded={editing === row.id}
-									aria-label="Edit {row.alias}"
-									onclick={() => openEdit(row)}
+							<!-- One switch at rest (M55); what you do to an automation less often is one click in. -->
+							<details class="more" data-jv-more data-testid="more-{automation.entity_id}">
+								<summary aria-label="More for {name}">MORE</summary>
+								<span class="more-body">
+								<Button testid="trigger-{automation.entity_id}"
+									aria-label="Run {name} now"
+									onclick={() => act(automation.entity_id, 'trigger', 'triggered')}
 								>
-									{editing === row.id ? 'Close' : 'Edit'}
+									Run now
 								</Button>
-								<Button variant="danger" testid="delete-{automation.entity_id}"
-									disabled={removing === row.id}
-									aria-label="Delete {row.alias}"
-									onclick={() => remove(row)}
-								>
-									{removing === row.id ? 'DELETING…' : confirming === row.id ? 'CONFIRM?' : 'DELETE'}
-								</Button>
-							{/if}
+								{#if row?.editable}
+									<Button testid="edit-{automation.entity_id}"
+										aria-expanded={editing === row.id}
+										aria-label="Edit {row.alias}"
+										onclick={() => openEdit(row)}
+									>
+										{editing === row.id ? 'Close' : 'Edit'}
+									</Button>
+									<Button variant="danger" testid="delete-{automation.entity_id}"
+										disabled={removing === row.id}
+										aria-label="Delete {row.alias}"
+										onclick={() => remove(row)}
+									>
+										{removing === row.id ? 'DELETING…' : confirming === row.id ? 'CONFIRM?' : 'DELETE'}
+									</Button>
+								{/if}
+								</span>
+							</details>
 						</span>
 					</div>
 
@@ -697,5 +703,31 @@
 		.aside {
 			display: none;
 		}
+	}
+	/* MORE (M55): a hairline word that opens the row's less-used actions. */
+	.more {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--jv-space-2);
+	}
+	.more > summary {
+		list-style: none;
+		cursor: pointer;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		color: var(--jv-text-dim);
+		padding: 0 var(--jv-space-2);
+	}
+	.more > summary::-webkit-details-marker {
+		display: none;
+	}
+	.more[open] > summary {
+		color: var(--jv-accent);
+	}
+	.more-body {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--jv-space-2);
 	}
 </style>

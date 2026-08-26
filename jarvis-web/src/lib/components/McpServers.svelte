@@ -42,9 +42,24 @@
 		type McpServer
 	} from '$lib/mcpDraft';
 
-	let { conn, count = $bindable(0) }: { conn: Connection | null; count?: number } = $props();
+	let { conn, count = $bindable(0), query = '', matches = $bindable(0) }: { conn: Connection | null; count?: number; query?: string; matches?: number } = $props();
+	/** The tools page's one search (M55): a row matches when any of its words do. */
+	function matchesQuery(row: object, q: string): boolean {
+		const needle = q.trim().toLowerCase();
+		if (!needle) return true;
+		return Object.values(row as Record<string, unknown>)
+			.filter((v): v is string => typeof v === 'string')
+			.join(' ')
+			.toLowerCase()
+			.includes(needle);
+	}
+
 
 	let servers = $state<McpServer[]>([]);
+	const shown = $derived(servers.filter((s) => matchesQuery(s, query)));
+	$effect(() => {
+		matches = shown.length;
+	});
 	let allowStdio = $state(false);
 	let supported = $state(true);
 	let loaded = $state(false);
@@ -211,8 +226,8 @@
 		{/if}
 
 		<ul class="list">
-			{#each servers as server (server.name)}
-				<li data-testid="mcp-row-{server.name}" data-connected={server.connected}>
+			{#each shown as server (server.name)}
+				<li data-testid="mcp-row-{server.name}" data-connected={server.connected} data-jv-row>
 					<div class="server">
 						<div class="what">
 							<b class:down={!server.connected}>{server.name}</b>

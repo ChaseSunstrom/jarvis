@@ -28,7 +28,7 @@ same setting behind EVERYTHING, for the person who wants them.
 	const dirty = $derived(store.isDirty(row));
 </script>
 
-<div class="setting" data-testid="plain-{row.key}">
+<div class="setting" data-testid="plain-{row.key}" data-jv-row>
 	<div class="what">
 		<b>{label}</b>
 		<span class="why">{why}</span>

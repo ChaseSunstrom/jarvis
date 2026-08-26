@@ -243,10 +243,11 @@
 					</div>
 					<Button onclick={refresh} testid="dashboard-refresh">Refresh</Button>
 					{#if mine}
-						<Button onclick={() => (editing = !editing)} testid="dashboard-edit" pressed={editing}>
-							{editing ? 'Done' : 'Edit layout'}
-						</Button>
-						{#if !editing}
+						<!-- One way in (M55): + Widget opens the layout editor; DONE closes
+						     it. "Edit layout" beside it was a second door to the same room. -->
+						{#if editing}
+							<Button onclick={() => (editing = false)} testid="dashboard-edit" pressed={editing}>Done</Button>
+						{:else}
 							<!-- The one filled control on this screen. -->
 							<Button variant="primary" onclick={() => (editing = true)} testid="dashboard-add">+ Widget</Button>
 						{/if}
@@ -314,7 +315,7 @@
 						class="card jv-stagger"
 						class:hero
 						style="grid-column: span {widget.w}; grid-row: span {widget.h}; {staggerStyle(wi)}"
-						data-testid="widget-{widget.id}"
+						data-testid="widget-{widget.id}" data-jv-row
 						data-type={widget.type}
 						data-w={widget.w}
 						data-x={widget.x}

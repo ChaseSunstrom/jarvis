@@ -273,6 +273,7 @@
 			<ul class="notes" data-testid="memory-list">
 				{#each entries as entry (entry.id)}
 					<li
+						data-jv-row
 						data-testid="memory-entry-{entry.id}"
 						class:pinned={entry.pinned}
 						class:picked={picked === entry.id}

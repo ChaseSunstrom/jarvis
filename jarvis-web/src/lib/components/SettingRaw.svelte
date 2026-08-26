@@ -27,7 +27,7 @@ so nothing a person could once reach has gone anywhere.
 	const dirty = $derived(store.isDirty(row));
 </script>
 
-<div class="setting" data-testid="setting-{row.key}">
+<div class="setting" data-testid="setting-{row.key}" data-jv-row>
 	<div class="what">
 		<b>{row.label}</b>
 		<code>{row.key}</code>

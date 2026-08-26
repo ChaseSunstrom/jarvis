@@ -304,6 +304,7 @@
 			bind:value={filter}
 			placeholder="filter by title, kind or status  ( / )"
 			testid="filter"
+			filter
 		/>
 	</div>
 	{#if filter}
@@ -332,8 +333,9 @@
 			<h2 id="tasks-live">Running</h2>
 			<div class="stack jv-stagger" data-testid="tasks-live">
 				{#each live as task, i (task.id)}
-					<div style={staggerStyle(i)}>
-						<TaskCard {task} busy={isBusy(task.id)} onCancel={cancel} onForget={forget} />
+					<div style={staggerStyle(i)} data-jv-row data-testid="task-{task.id}">
+						<!-- Cancel is what a running task offers; Forget is for one that ended (M55). -->
+						<TaskCard {task} busy={isBusy(task.id)} onCancel={cancel} />
 					</div>
 				{/each}
 			</div>
@@ -345,7 +347,7 @@
 			<h2 id="tasks-over">Finished</h2>
 			<div class="stack jv-stagger" data-testid="tasks-finished">
 				{#each over as task, i (task.id)}
-					<div style={staggerStyle(i)}>
+					<div style={staggerStyle(i)} data-jv-row data-testid="task-{task.id}">
 						<TaskCard {task} busy={isBusy(task.id)} onForget={forget} />
 					</div>
 				{/each}

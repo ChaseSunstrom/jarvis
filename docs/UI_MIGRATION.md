@@ -233,6 +233,55 @@ server sends to its section):
 - [x] Core · `jarvis/llm/models` and `GET /api/llm/models` (`jarvis/llm/catalogue.py`): LiteLLM `/model/info` → llama-swap `/v1/models` + `/running` → the backend's own `/v1/models` for models that are UP only (never through `/upstream/<id>/…` for one that is not, which would load it); Ollama `/api/tags` + `/api/ps`; TEI `/info` for the embedder and the reranker. `llm.fast_model` (empty = the chat model; held on the agent, read by nothing until M60 and the note says so) and `vision.model` (live, onto the analyser) join the allowlist; `llm.model`'s note stops calling it "the Ollama model".
 - [x] Mock · `jarvis/llm/models` and `/api/llm/models` with a 27-B chat behind `house`, a 4-B fast behind `house-fast`, a vision model, the embedder, the reranker; `jarvis/test/models_mode` (ok · empty · error); the settings rows the new sections feature (`llm.fast_model`, `vision.model`, `voice.wake_word`, `voice.language`, `jarvis.unit_system`, `jarvis.language`, `jarvis.log_level`); `llm.model` is `house` with the aliases as choices, the way the deployed stack has it.
 
+### M55 — simpler menus everywhere
+
+The operator's words again: *"clean up the other menus to make them more
+simple"*. M54 did SETTINGS. This pass holds HOUSE, WORK, KNOWLEDGE and the
+tools page to the four rules of §4 in a way a test can ask: the **menu
+inventory** below is read by `e2e/menus.spec.ts`, which opens every screen
+against the mock backend and checks it row by row. What was cut, ticked as it
+was done (`bash scripts/verify/m55-menus.sh`):
+
+- [x] SETTINGS › Tools · **one search over everything**: a single box at the top (`data-jv-filter`) filters the extensions, the callables, the MCP servers, the skills and the entity exposure at once; each fold's header says how many of its rows match; the callables' and the exposure's own filter boxes are gone. `Extensions`, `McpServers` and `SkillsPanel` take the page's `query`.
+- [x] SETTINGS › Tools · **tool rows**: USE and EDIT at rest; DELETE lives inside the editor a row opens, beside SAVE and CANCEL, so a row is not three buttons wide.
+- [x] HOUSE › Automations · **rows**: the enable/disable switch and one MORE (`data-jv-more`) at rest; Run now, Edit and Delete are inside it. The editor's SAVE stays the screen's primary.
+- [x] HOUSE › Dashboards · **one way into the layout editor**: `+ Widget` (the primary) opens it; `Edit layout` is gone from rest and the button reads DONE while editing. `dashboards.spec.ts` enters through `+ Widget`.
+- [x] HOUSE › Areas · **rows**: the area is its own expander at rest; Rename and Delete are inside it, Delete last and red.
+- [x] Every list row on the four destinations carries `data-jv-row`, which is what the per-row cap is measured on; the settings rows (`SettingPlain`, `SettingRaw`) carry it too so their SAVE/RESET pairs are rows, not duplicates.
+- [x] `e2e/menus.spec.ts` reads the inventory and, for every screen: at most one primary control at rest; no two visible controls outside rows with the same name; no row over its cap; exactly the declared number of search boxes; on the tools page the one search empties every fold on a nonsense query and finds `get_state` by name.
+- [x] HOUSE › Devices · **one control where one will do** on the entity rows (`EntityRow`): a cover offers OPEN or CLOSE (the move it can make from where it is) and STOP; a player PLAY or PAUSE beside previous and next; a lock LOCK or UNLOCK; a vacuum START or DOCK. The test ids follow the state (`open-…` while closed, `close-…` while open), so a spec presses what a person sees.
+- [x] WORK › Tasks · a running card offers Cancel, a finished one Forget — not both on every card; the two filter boxes (Devices, Tasks) are marked through `Input`'s `filter` prop.
+- [x] SETTINGS › Console · a paired phone or computer is a row (`token-…`, `paired-…`) so its REVOKE is the row's control, not a duplicate on the page.
+- [x] `scripts/verify/m55-menus.sh` builds the console before any spec (the e2e server serves the build; a spec against a stale bundle measures the last change).
+
+### The menu inventory
+
+One row per leaf screen. **Rows are** is the `data-testid` prefix of the
+list rows the screen draws (all carry `data-jv-row`); **per row at rest**
+is the most controls a collapsed row may show (— when the screen has no
+rows); **primary** is the one filled control on the screen, by `data-testid`
+(— when a screen has none, and the voice tab's push-to-talk ring, which is
+not a `<Button>`); **search** is how many search/filter boxes the screen
+shows. `e2e/menus.spec.ts` reads this table; a screen that grows a second
+primary, a fourth row control or a second search box fails it.
+
+| Screen | Route | Rows are | Per row at rest | Primary | Search | Notes |
+|---|---|---|---|---|---|---|
+| VOICE | `/` | — | — | — | 0 | the ring is the control; the strip's rows are not controls |
+| HOUSE › Devices | `/house/devices` | `device-` | 4 | — | 1 | the entity's own control and Edit — a switch; open/close and stop for a cover; lock/unlock as one; previous, play/pause and next for a player, which is the row that sets the cap; the editor's Save appears only open |
+| HOUSE › Areas | `/house/areas` | `area-` | 1 | `create-area` | 0 | the row is its expander; Rename and Delete inside |
+| HOUSE › Dashboards | `/house/dashboards` | `widget-` | 0 | — | 0 | on an owned dashboard `+ Widget` (`dashboard-add`) is the one primary and the one way into the layout editor; a shipped one has none; widgets show their remove control only while editing |
+| HOUSE › Automations | `/house/automations` | `automation-` | 2 | — | 0 | the switch and MORE; Save is primary only inside an open editor |
+| WORK › Tasks | `/work/tasks` | `task-` | 3 | — | 1 | the task's title (a link to its page), the steps fold, and Cancel (running) or Forget (finished); Clear finished is the page's one action |
+| WORK › Code | `/work/code` | `job-` | 3 | — | 0 | the steps fold, Cancel and the job's opener; Start is primary only inside the open form |
+| KNOWLEDGE › Notes | `/knowledge/notes` | `note-` | 2 | — | 1 | the note itself and Delete; the editor's Save is primary only with a note open |
+| KNOWLEDGE › Memory | `/knowledge/memory` | `memory-` | 2 | — | 1 | Pin and Forget are both what a memory is for |
+| SETTINGS › Assistant | `/settings/assistant` | `plain-` | 3 | — | 0 | the control, SAVE and RESET per plain row |
+| SETTINGS › Voice | `/settings/voice` | `plain-` | 3 | — | 0 | as Assistant, plus the FORGET on the voice identity panel |
+| SETTINGS › House | `/settings/house` | `plain-` | 3 | — | 0 | as Assistant; Rooms is a link to HOUSE › Areas |
+| SETTINGS › Console | `/settings/console` | `token-` | 1 | — | 0 | a paired phone or computer is a row with REVOKE; text size is a segmented row; the event stream is a fold; its settings rows are behind EVERYTHING |
+| SETTINGS › Tools | `/settings/tools` | `tool-` | 2 | — | 1 | USE and EDIT; the one search filters every fold |
+
 ## 4. What "clean" means here
 
 Not a mood. Four things a check can ask about:

@@ -271,7 +271,7 @@
 				{#snippet children()}
 					<ul class="list" data-testid="notes-list">
 						{#each notes as note (note.id)}
-							<li data-testid="note-row-{note.id}" class:open={open?.id === note.id}>
+							<li data-testid="note-row-{note.id}" class:open={open?.id === note.id} data-jv-row>
 								<button class="row" type="button" onclick={() => pick(note.id)}>
 									<span class="title">{note.title}</span>
 									{#if note.excerpt}<span class="excerpt">{note.excerpt}</span>{/if}

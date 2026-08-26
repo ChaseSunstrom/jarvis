@@ -85,7 +85,18 @@ disclosure whose header carries the count this reports through `count`.
 		/** How many are installed, for the disclosure header above. */
 		count?: number;
 	}
-	let { conn, count = $bindable(0) }: Props = $props();
+	let { conn, count = $bindable(0), query = '', matches = $bindable(0) }: Props & { query?: string; matches?: number } = $props();
+	/** The tools page's one search (M55): a row matches when any of its words do. */
+	function matchesQuery(row: object, q: string): boolean {
+		const needle = q.trim().toLowerCase();
+		if (!needle) return true;
+		return Object.values(row as Record<string, unknown>)
+			.filter((v): v is string => typeof v === 'string')
+			.join(' ')
+			.toLowerCase()
+			.includes(needle);
+	}
+
 
 	let extensions = $state<Extension[]>([]);
 	let errors = $state<{ kind: string; id: string; location: string; error: string }[]>([]);
@@ -255,9 +266,12 @@ disclosure whose header carries the count this reports through `count`.
 	const grouped = $derived(
 		(['skill', 'plugin', 'mcp'] as const).map((kind) => ({
 			kind,
-			rows: extensions.filter((e) => e.kind === kind)
+			rows: extensions.filter((e) => e.kind === kind && matchesQuery(e, query))
 		}))
 	);
+	$effect(() => {
+		matches = grouped.reduce((n, g) => n + g.rows.length, 0);
+	});
 </script>
 
 <div class="extensions" data-testid="extensions-panel">
@@ -306,7 +320,7 @@ disclosure whose header carries the count this reports through `count`.
 			{#if group.rows.length}
 				<h3 class="group">{KINDS[group.kind]}</h3>
 				{#each group.rows as row (row.key)}
-					<div class="ext" class:off={!row.enabled} data-testid={`ext-${row.key}`}>
+					<div class="ext" class:off={!row.enabled} data-testid={`ext-${row.key}`} data-jv-row>
 						<div class="ext-line">
 							<!-- The whole name is the expander; it has no button chrome. -->
 							<button

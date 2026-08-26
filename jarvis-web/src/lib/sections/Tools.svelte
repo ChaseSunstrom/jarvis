@@ -51,11 +51,14 @@
 	let source = $state<'tools' | 'services' | ''>('');
 	let entries = $state<EntityRegistryEntry[]>([]);
 	let states = $state<EntityState[]>([]);
-	let toolFilter = $state('');
-	let entityFilter = $state('');
+	/** The one search (M55): filters every fold on this page at once. */
+	let query = $state('');
 
 	/** What the three sources of callables report, for the disclosure headers. */
 	let extCount = $state(0);
+	let extMatches = $state(0);
+	let mcpMatches = $state(0);
+	let skillMatches = $state(0);
 	let mcpCount = $state(0);
 	let skillCount = $state(0);
 
@@ -246,12 +249,12 @@
 		]);
 	});
 	let visibleTools = $derived(
-		catalogue.filter((t) => t.name.toLowerCase().includes(toolFilter.trim().toLowerCase()))
+		catalogue.filter((t) => `${t.name} ${t.description ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
 	);
 	let visibleEntities = $derived(
 		entries
 			.filter((e) => {
-				const needle = entityFilter.trim().toLowerCase();
+				const needle = query.trim().toLowerCase();
 				if (!needle) return true;
 				return (
 					e.entity_id.toLowerCase().includes(needle) ||
@@ -462,6 +465,22 @@
 			{saving ? 'SAVING…' : editing === 'new' ? 'CREATE' : 'SAVE'}
 		</Button>
 		<Button testid="tool-cancel" title="Close the editor" onclick={closeEditor}>CANCEL</Button>
+		{#if editing !== 'new'}
+			{@const row = rowMap.get(editing)}
+			{#if row?.editable}
+				<!-- Deleting lives with editing (M55): a row is USE and EDIT at rest. -->
+				<Button
+					variant="danger"
+					testid="tool-delete-{editing}"
+					disabled={removing === editing}
+					title={removing === editing ? 'Deleting' : 'Delete it; press twice'}
+					aria-label="Delete {editing}"
+					onclick={() => removeTool(row)}
+				>
+					{removing === editing ? 'DELETING…' : confirming === editing ? 'CONFIRM?' : 'DELETE'}
+				</Button>
+			{/if}
+		{/if}
 	</div>
 {/snippet}
 
@@ -485,23 +504,11 @@
 {/snippet}
 
 {#snippet extensionsBody()}
-	<Extensions {conn} bind:count={extCount} />
+	<Extensions {conn} {query} bind:count={extCount} bind:matches={extMatches} />
 {/snippet}
 
 {#snippet callablesBody()}
 	<div class="bar">
-		<div class="grow">
-			<label class="jv-sr-only" for="tool-filter">Filter the tool catalogue</label>
-			<input
-				id="tool-filter"
-				class="filter"
-				type="text"
-				placeholder="filter  ( / )"
-				data-testid="tool-filter"
-				data-jv-filter
-				bind:value={toolFilter}
-			/>
-		</div>
 		{#if manageable}
 			<Button testid="tool-new" aria-expanded={editing === 'new'} title="An HTTP call the assistant may make" onclick={openNewTool}>
 				{editing === 'new' ? 'CANCEL' : '+ NEW TOOL'}
@@ -527,7 +534,7 @@
 		<ul class="rows">
 			{#each visibleTools as tool, i (tool.name)}
 				{@const row = rowMap.get(tool.name)}
-				<li class="tool jv-stagger" style={staggerStyle(i)} data-testid="tool-{tool.name}">
+				<li class="tool jv-stagger" style={staggerStyle(i)} data-testid="tool-{tool.name}" data-jv-row>
 					<div class="what">
 						<b>{tool.name}</b>
 						<span class="desc">{tool.description || 'no description'}</span>
@@ -542,16 +549,6 @@
 								onclick={() => openEditTool(row)}
 							>
 								{editing === tool.name ? 'CLOSE' : 'EDIT'}
-							</Button>
-							<Button
-								variant="danger"
-								testid="tool-delete-{tool.name}"
-								disabled={removing === tool.name}
-								title={removing === tool.name ? 'Deleting' : 'Delete it; press twice'}
-								aria-label="Delete {tool.name}"
-								onclick={() => removeTool(row)}
-							>
-								{removing === tool.name ? 'DELETING…' : confirming === tool.name ? 'CONFIRM?' : 'DELETE'}
 							</Button>
 						{:else if manageable}
 							<Pill testid="tool-builtin-{tool.name}">BUILT IN</Pill>
@@ -607,26 +604,21 @@
 {/snippet}
 
 {#snippet mcpBody()}
-	<McpServers {conn} bind:count={mcpCount} />
+	<McpServers {conn} {query} bind:count={mcpCount} bind:matches={mcpMatches} />
 {/snippet}
 
 {#snippet skillsBody()}
-	<SkillsPanel {conn} bind:count={skillCount} />
+	<SkillsPanel {conn} {query} bind:count={skillCount} bind:matches={skillMatches} />
 {/snippet}
 
 {#snippet exposureBody()}
-	<div class="bar">
-		<div class="grow">
-			<Input bind:value={entityFilter} testid="entity-filter" placeholder="filter" mono />
-		</div>
-	</div>
 	<p class="note">
 		Unexposed entities stay out of the LLM's prompt and cannot be targeted by voice.
 	</p>
 	<ul class="rows">
 		{#each visibleEntities as entry, i (entry.entity_id)}
 			{@const exposed = entry.exposed !== false}
-			<li class="entity jv-stagger" style={staggerStyle(i)} data-testid="expose-row-{entry.entity_id}">
+			<li class="entity jv-stagger" style={staggerStyle(i)} data-testid="expose-row-{entry.entity_id}" data-jv-row>
 				<div class="what">
 					<span class="friendly">{friendlyName(stateMap.get(entry.entity_id), entry)}</span>
 					<code>{entry.entity_id}</code>
@@ -664,21 +656,39 @@
 
 	{#if hint}<p class="line warn" data-testid="hint">{hint}</p>{/if}
 
+	<!-- One search over everything below (M55): extensions, callables, MCP
+	     servers, skills and exposure all read `query`; each fold's header says
+	     how many of its rows match. -->
+	<div class="bar search">
+		<div class="grow">
+			<label class="jv-sr-only" for="tool-filter">Search extensions, tools, servers, skills and entities</label>
+			<input
+				id="tool-filter"
+				class="filter"
+				type="text"
+				placeholder="search everything  ( / )"
+				data-testid="tool-filter"
+				data-jv-filter
+				bind:value={query}
+			/>
+		</div>
+	</div>
+
 	<!-- Above the toolbox, because it is the thing that DECIDES the toolbox: what
 	     is installed and what it holds is the cause, and the tool list below is
 	     the effect. -->
-	{@render fold('extensions', 'Extensions', `${extCount} installed`, extensionsBody)}
-	{@render fold('callables', 'Callables', `${catalogue.length}`, callablesBody)}
+	{@render fold('extensions', 'Extensions', query ? `${extMatches} of ${extCount} match` : `${extCount} installed`, extensionsBody)}
+	{@render fold('callables', 'Callables', query ? `${visibleTools.length} of ${catalogue.length} match` : `${catalogue.length}`, callablesBody)}
 	{@render fold('test-run', 'Test run', source === 'tools' ? 'jarvis/tools/call' : 'call_service', runnerBody)}
 	<!-- Beside the tool editor rather than on its own page: "a tool the assistant
 	     may call" is one idea, and an MCP server is the way you get a hundred of
 	     them at once. -->
-	{@render fold('mcp', 'MCP servers', `${mcpCount} configured`, mcpBody)}
+	{@render fold('mcp', 'MCP servers', query ? `${mcpMatches} of ${mcpCount} match` : `${mcpCount} configured`, mcpBody)}
 	<!-- And the other way a capability arrives: not a tool the assistant may call,
 	     but instructions this house has written down. Same page, because "what can
 	     it do" is one question. -->
-	{@render fold('skills', 'Skills', `${skillCount} loaded`, skillsBody)}
-	{@render fold('exposure', 'Entity exposure', `${exposedCount} of ${entries.length} exposed`, exposureBody)}
+	{@render fold('skills', 'Skills', query ? `${skillMatches} of ${skillCount} match` : `${skillCount} loaded`, skillsBody)}
+	{@render fold('exposure', 'Entity exposure', query ? `${visibleEntities.length} match · ${exposedCount} exposed` : `${exposedCount} of ${entries.length} exposed`, exposureBody)}
 </div>
 
 <style>

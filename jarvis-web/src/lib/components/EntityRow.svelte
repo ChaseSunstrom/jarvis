@@ -115,11 +115,15 @@
 				</label>
 			{/if}
 		{:else if domain === 'cover'}
-			<Button pressed={on} testid="open-{entityId}" aria-label="Open {name}" onclick={() => call('open_cover')}>OPEN</Button>
+			<!-- One control where one will do (M55): a cover offers the move it can
+			     make from where it is, and STOP. OPEN and CLOSE side by side were
+			     two buttons for one decision. -->
+			{#if on}
+				<Button testid="close-{entityId}" aria-label="Close {name}" onclick={() => call('close_cover')}>CLOSE</Button>
+			{:else}
+				<Button testid="open-{entityId}" aria-label="Open {name}" onclick={() => call('open_cover')}>OPEN</Button>
+			{/if}
 			<Button aria-label="Stop {name}" onclick={() => call('stop_cover')}>STOP</Button>
-			<Button pressed={!on && !unavailable} testid="close-{entityId}" aria-label="Close {name}" onclick={() => call('close_cover')}>
-				CLOSE
-			</Button>
 			<label class="slider">
 				<span class="slabel">POS</span>
 				<input
@@ -166,10 +170,12 @@
 			>
 				<span aria-hidden="true">‹‹</span>
 			</Button>
-			<Button pressed={state.state === 'playing'} testid="play-{entityId}" aria-label="Play {name}" onclick={() => call('media_play')}>PLAY</Button>
-			<Button pressed={state.state === 'paused'} testid="pause-{entityId}" aria-label="Pause {name}" onclick={() => call('media_pause')}>
-				PAUSE
-			</Button>
+			<!-- Play and pause are one control (M55): the one the player can take now. -->
+			{#if state.state === 'playing'}
+				<Button pressed testid="pause-{entityId}" aria-label="Pause {name}" onclick={() => call('media_pause')}>PAUSE</Button>
+			{:else}
+				<Button testid="play-{entityId}" aria-label="Play {name}" onclick={() => call('media_play')}>PLAY</Button>
+			{/if}
 			<Button testid="next-{entityId}"
 				aria-label="Next track on {name}"
 				onclick={() => call('media_next_track')}
@@ -189,10 +195,12 @@
 				/>
 			</label>
 		{:else if domain === 'lock'}
-			<Button pressed={state.state === 'locked'} testid="lock-{entityId}" aria-label="Lock {name}" onclick={() => call('lock')}>LOCK</Button>
-			<Button testid="unlock-{entityId}" aria-label="Unlock {name}" onclick={() => call('unlock')}>
-				UNLOCK
-			</Button>
+			<!-- One control (M55): the move the lock can make from where it is. -->
+			{#if state.state === 'locked'}
+				<Button testid="unlock-{entityId}" aria-label="Unlock {name}" onclick={() => call('unlock')}>UNLOCK</Button>
+			{:else}
+				<Button testid="lock-{entityId}" aria-label="Lock {name}" onclick={() => call('lock')}>LOCK</Button>
+			{/if}
 		{:else if domain === 'button' || domain === 'scene' || domain === 'script'}
 			<Button testid="press-{entityId}"
 				aria-label="Run {name}"
@@ -226,8 +234,12 @@
 				onchange={(e) => call('set_value', { value: num(target(e).value) })}
 			/>
 		{:else if domain === 'vacuum'}
-			<Button pressed={state.state === 'cleaning'} aria-label="Start {name}" onclick={() => call('start')}>START</Button>
-			<Button aria-label="Send {name} to its dock" onclick={() => call('return_to_base')}>DOCK</Button>
+			<!-- One control (M55): a cleaning vacuum offers DOCK, an idle one START. -->
+			{#if state.state === 'cleaning'}
+				<Button pressed aria-label="Send {name} to its dock" onclick={() => call('return_to_base')}>DOCK</Button>
+			{:else}
+				<Button aria-label="Start {name}" onclick={() => call('start')}>START</Button>
+			{/if}
 		{:else if attrs.unit_of_measurement}
 			<span class="reading">{attrs.unit_of_measurement}</span>
 		{/if}

@@ -28,9 +28,24 @@
 	import { toasts } from '$lib/toast';
 	import { Button } from '$lib/ui';
 
-	let { conn, count = $bindable(0) }: { conn: Connection | null; count?: number } = $props();
+	let { conn, count = $bindable(0), query = '', matches = $bindable(0) }: { conn: Connection | null; count?: number; query?: string; matches?: number } = $props();
+	/** The tools page's one search (M55): a row matches when any of its words do. */
+	function matchesQuery(row: object, q: string): boolean {
+		const needle = q.trim().toLowerCase();
+		if (!needle) return true;
+		return Object.values(row as Record<string, unknown>)
+			.filter((v): v is string => typeof v === 'string')
+			.join(' ')
+			.toLowerCase()
+			.includes(needle);
+	}
+
 
 	let skills = $state<Skill[]>([]);
+	const shown = $derived(skills.filter((s) => matchesQuery(s, query)));
+	$effect(() => {
+		matches = shown.length;
+	});
 	let errors = $state<{ path: string; error: string }[]>([]);
 	let supported = $state(true);
 	let loaded = $state(false);
@@ -123,8 +138,8 @@
 			</p>
 		{:else}
 			<ul class="skills">
-				{#each skills as skill (skill.name)}
-					<li data-testid="skill-{skill.name}">
+				{#each shown as skill (skill.name)}
+					<li data-testid="skill-{skill.name}" data-jv-row>
 						<button class="skill" onclick={() => show(skill)} aria-expanded={open === skill.name}>
 							<span class="name">{skill.name}</span>
 							<span class="desc">{skill.description}</span>

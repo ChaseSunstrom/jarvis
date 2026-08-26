@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 /**
  * Dashboards a person arranges, and the promise that the arrangement sticks.
@@ -15,6 +15,12 @@ const open = async (page: import('@playwright/test').Page) => {
 	await expect(page.getByTestId('dashboards-screen')).toBeVisible({ timeout: 15_000 });
 	await expect(page.getByTestId('dashboard-grid')).toBeVisible({ timeout: 15_000 });
 };
+/** Into the layout editor and out (M55): + Widget opens it, DONE closes it. */
+async function toggleEdit(page: Page) {
+	const add = page.getByTestId('dashboard-add');
+	if (await add.isVisible()) await add.click();
+	else await toggleEdit(page);
+}
 
 test('every chart type draws something, and a gap stays a gap', async ({ page }) => {
 	await open(page);
@@ -42,7 +48,7 @@ test('a widget can be added, resized, moved and removed — and it stays that wa
 	await page.getByTestId('dashboard-picker').selectOption('mine');
 	await expect(page.getByTestId('widget-w1')).toBeVisible({ timeout: 10_000 });
 
-	await page.getByTestId('dashboard-edit').click();
+	await toggleEdit(page);
 
 	// Add.
 	await page.getByTestId('new-series').fill('jarvis.turns');
@@ -69,7 +75,7 @@ test('a widget can be added, resized, moved and removed — and it stays that wa
 	await expect(again).toHaveAttribute('data-w', String(before + 1));
 
 	// Remove.
-	await page.getByTestId('dashboard-edit').click();
+	await toggleEdit(page);
 	await page.getByTestId('remove-w3').click();
 	await expect(again).toHaveCount(0, { timeout: 10_000 });
 });
@@ -77,7 +83,7 @@ test('a widget can be added, resized, moved and removed — and it stays that wa
 test('reordering swaps two widgets, so nothing is left in a gap', async ({ page }) => {
 	await open(page);
 	await page.getByTestId('dashboard-picker').selectOption('mine');
-	await page.getByTestId('dashboard-edit').click();
+	await toggleEdit(page);
 
 	const first = page.getByTestId('widget-w1');
 	const second = page.getByTestId('widget-w2');

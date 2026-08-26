@@ -18,6 +18,8 @@ A single-line input, or a textarea when `rows` is set. Bind the value:
 		disabled?: boolean;
 		invalid?: boolean;
 		testid?: string;
+		/** This box filters a list on its screen: marked `data-jv-filter` for the menu inventory (M55). */
+		filter?: boolean;
 		oninput?: (event: Event) => void;
 	}
 	let {
@@ -28,6 +30,7 @@ A single-line input, or a textarea when `rows` is set. Bind the value:
 		disabled = false,
 		invalid = false,
 		testid = '',
+		filter = false,
 		oninput
 	}: Props = $props();
 </script>
@@ -48,6 +51,7 @@ A single-line input, or a textarea when `rows` is set. Bind the value:
 {:else}
 	<input
 		class="in"
+		data-jv-filter={filter ? '' : undefined}
 		class:mono
 		class:invalid
 		type="text"

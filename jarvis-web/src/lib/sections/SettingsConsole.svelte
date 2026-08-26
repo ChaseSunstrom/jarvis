@@ -303,7 +303,7 @@
 			{:else}
 				<ul class="devices" data-testid="desktop-devices">
 					{#each desktops as device (device.device_id)}
-						<li class="device">
+						<li data-jv-row data-testid="paired-{device.device_id}" class="device">
 							<span class="name">{device.name}</span>
 							<code>{device.platform ?? 'unknown'}</code>
 							<code>{device.action_count ?? device.actions?.length ?? 0} actions</code>

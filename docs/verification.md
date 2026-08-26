@@ -689,6 +689,21 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### Simpler menus everywhere (M55)
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The menu inventory (`docs/UI_MIGRATION.md` §4) names every leaf screen once with a rows marker, a per-row cap, a primary and a search count | Automated | the gate parses the table against `screens.ts` |
+| Every screen holds to it: ≤ 1 primary at rest, no duplicate-named controls outside rows, no row over its cap, the declared search boxes | Automated | `jarvis-web/e2e/menus.spec.ts` (17) against the mock backend |
+| The tools page is one search: a nonsense query empties every fold, `get_state` is found by name, each fold's header says how many match | Automated | `menus.spec.ts` |
+| On an owned dashboard `+ Widget` is the one primary and the one way into the layout editor; DONE closes it | Automated | `menus.spec.ts`; `dashboards.spec.ts` enters through it |
+| An entity row offers the one move it can make (open/close, play/pause, lock/unlock, start/dock) | Automated | `e2e.spec.ts` presses what the row shows (the front door starts locked → UNLOCK); the inventory caps a player row at 4 |
+| The specs that drive the trimmed rows still pass | Automated | dashboards, e2e, console-repairs, knowledge, notes, memory, extensions, mcp, tasks, code, home, controls — 138 in the gate |
+| Token lint, states, dead controls, svelte-check, vitest, look.spec | Automated | the gate |
+| The trimmed screens at three widths | Scripted | the gate regenerates `docs/ui-review/{house-*,work-*,knowledge-*,settings-tools}/` |
+| The trimmed routes open in the real console with no console error and only token colours | Containerised | the gate: `LIVE_CONSOLE_ROUTES=… testing/live/console_pass.py` against the running stack after `make up` |
+| The phone mirrors the inventory | **Not built** | M61 |
+
 ### Cameras and local vision (M56)
 
 `bash scripts/verify/m56-vision.sh`. Two wires, one refusal rule, the events the voice tab draws.
@@ -719,7 +734,7 @@ person-shaped probe asks; what the suite found, written up.
 | The model has `sensor_readings`, `sensor_compare`, `sensor_history`, `sensor_summary`, read-only, tier direct | Automated | `test_mqtt_sensors.py` |
 | The six fixtures name their source | Automated | the gate counts them; each carries a `source` line (Zigbee2MQTT 2.13, ESPHome 2026.8, rtl_433 25.12, Tasmota 14, Shelly 1.4) |
 | The rig can be the device: `do: mqtt_publish:` to the stack's broker | Automated | `testing/live/tests/test_rig.py`; `sensors-discovered` parses and publishes |
-| A device announced over discovery is answered about a moment later, with its reading and unit; the lowest over the last hour reaches for `sensor_history` | Containerised | `LIVE_CAPABILITY=sensors bash scripts/verify/live_interaction.sh --full` against the running stack, 26 Aug 09:52: LIVE 9/9, `sensors-discovered` 2/2 spoken turns — "What's the temperature in the garage?" → "12.5 °C, Sir — cool enough to keep the tools honest." (no tool: the reading was in the house state, routed `answer`, not scored); "What's the lowest the garage has been in the last hour?" → `sensor_history` → "11.0 °C, Sir — it has since crept back up to 12.5." routed `sensors`. The device retracted afterwards with an empty retained config |
+| A device announced over discovery is answered about a moment later, with its reading and unit; the lowest over the last hour reaches for `sensor_history` | Containerised | `LIVE_CAPABILITY=sensors bash scripts/verify/live_interaction.sh --full` against the running stack, 26 Aug ~08:30: LIVE 9/9, `sensors-discovered` 2/2 spoken turns — "What's the temperature in the garage?" → "12.5 °C, Sir — cool enough to keep the tools honest." (no tool: the reading was in the house state, routed `answer`, not scored); "What's the lowest the garage has been in the last hour?" → `sensor_history` → "11.0 °C, Sir — it has since crept back up to 12.5." routed `sensors`. The device retracted afterwards with an empty retained config |
 | The keys are switched on in the deployed config and every one is read by code | Automated | `test_packaging.py::test_no_shipped_option_is_silently_ignored`; the gate |
 
 ### The sky (M58)
@@ -749,7 +764,7 @@ integrator runs against the stack (below), never from the gate.
 | Nothing in the tests touches the network | Automated | the autouse `no_network` fixture; the gate greps the test for it |
 | skyfield is pinned to one minor; the venv has it; the builtin timescale loads offline | Automated | the gate reads `requirements.txt` back as a pin and imports it |
 | The shipped config does not enable it; the router knows the four tools as `sky`; the scenario parses and is gated on M58 | Automated | the gate |
-| Asked out loud, the running Jarvis picks the tool and answers with a time and a direction | Containerised | `LIVE_CAPABILITY=sky bash scripts/verify/live_interaction.sh --full` against the running stack, 26 Aug 10:02: LIVE 9/9, `sky-iss-pass` voice and text both routed `sky` off `next_pass`. Voice: "The ISS is next visible tonight at 22:45 — it rises in the west, climbs to 88 degrees high in the north at 22:49, and is gone by 22:52. Bright, and nearly straight overhead. The elements are a little under a day old…" Text: "…the orbital elements are about 17 hours old, so allow a minute or two of leeway." |
+| Asked out loud, the running Jarvis picks the tool and answers with a time and a direction | Containerised | `LIVE_CAPABILITY=sky bash scripts/verify/live_interaction.sh --full` against the running stack, 26 Aug ~08:40: LIVE 9/9, `sky-iss-pass` voice and text both routed `sky` off `next_pass`. Voice: "The ISS is next visible tonight at 22:45 — it rises in the west, climbs to 88 degrees high in the north at 22:49, and is gone by 22:52. Bright, and nearly straight overhead. The elements are a little under a day old…" Text: "…the orbital elements are about 17 hours old, so allow a minute or two of leeway." |
 | The first real download of elements and of de421 from this box | **Manual** | switch the block on, watch the log for `sky: refreshed stations.csv` and `sky: downloaded de421.bsp`; `sky.moon` leaves `unknown` |
 | ADS-B through readsb behind profile `radio` | **Not built** | in M58's scope line; not in this change |
 ### Motion when it does things (M53)

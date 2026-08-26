@@ -909,7 +909,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     information architecture cut to Assistant · Voice · House · Console · Tools with plain
     labels and the rest behind "everything".
   - Verify: `bash scripts/verify/m54-settings-models.sh`
-- [ ] **M55 — Simpler menus everywhere** · size M · deps M50, M54 · parallel-ok M56, M57, M58
+- [x] **M55 — Simpler menus everywhere** · size M · deps M50, M54 · parallel-ok M56, M57, M58
   - Scope: HOUSE, WORK, KNOWLEDGE trimmed to their jobs; one control per row where one will do;
     the tools page one searchable list; no two ways to the same thing; a menu inventory pinned
     in `docs/UI_MIGRATION.md` §4 and read by a test.

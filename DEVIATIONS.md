@@ -412,6 +412,17 @@ in for satellites, one dependency beats two.
 If the image size matters more than the sky on some install, the line to move is one
 requirement into an optional file; nothing in the integration would change.
 
+## 17. A player row keeps three transport controls (M55)
+
+The rule is "one control per row where one will do". On a media player one
+will not: previous, play/pause and next are what the row is for, and a person
+skipping a track should not open anything to do it. The row lost one control
+(PLAY and PAUSE became the one the player can take now) and keeps three; the
+menu inventory caps a Devices row at four (transport plus Edit) and says why.
+A cover keeps STOP beside OPEN-or-CLOSE for the same reason — a door halfway
+is a real state. Everything else on the four destinations is one control and
+a disclosure.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

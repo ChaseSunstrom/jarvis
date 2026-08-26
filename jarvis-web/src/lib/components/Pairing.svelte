@@ -668,7 +668,7 @@
 				</p>
 			{/if}
 			{#each tokens as row (row.id)}
-				<div class="r" data-testid="token-{row.id}">
+				<div data-jv-row class="r" data-testid="token-{row.id}">
 					<div class="what">
 						<b>{row.name}</b><code>{row.id}</code>
 					</div>

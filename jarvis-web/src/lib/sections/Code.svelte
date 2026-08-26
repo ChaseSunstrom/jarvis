@@ -574,7 +574,7 @@
 				<h2 id="code-jobs-head">Jobs</h2>
 				<div class="jobs jv-stagger" data-testid="code-jobs">
 					{#each mine as job, i (job.id)}
-						<div class="job" style={staggerStyle(i)}>
+						<div class="job" style={staggerStyle(i)} data-jv-row data-testid="job-{job.id}">
 							<TaskCard task={job} onCancel={cancel} />
 							<div class="opener">
 								<Button

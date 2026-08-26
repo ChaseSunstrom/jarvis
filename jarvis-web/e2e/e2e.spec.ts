@@ -232,6 +232,7 @@ test("areas page creates, renames and deletes an area", async ({ page }) => {
   const bay = page.getByTestId("area-test_bay");
   await expect(bay).toBeVisible({ timeout: 10_000 });
 
+  await page.getByTestId("edit-test_bay").click();
   await page.getByTestId("rename-test_bay").fill("Test Bay Two");
   await page.getByTestId("save-test_bay").click();
   await expect(bay).toContainText("Test Bay Two", { timeout: 10_000 });
@@ -244,6 +245,7 @@ test("areas page creates, renames and deletes an area", async ({ page }) => {
     timeout: 10_000,
   });
 
+  if (!(await page.getByTestId("delete-test_bay").isVisible())) await page.getByTestId("edit-test_bay").click();
   await page.getByTestId("delete-test_bay").click();
   await expect(bay).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByTestId("error")).toHaveCount(0);
@@ -285,6 +287,8 @@ test("automations page shows last_triggered, toggles and runs now", async ({
   await expect(page.getByTestId("gated-automation.morning_lights")).toHaveCount(
     0,
   );
+
+  await page.getByTestId("more-automation.morning_lights").click();
 
   await page.getByTestId("trigger-automation.morning_lights").click();
   await expect(page.getByTestId("flash")).toContainText("triggered", {
@@ -420,6 +424,8 @@ test("tools page creates, edits and deletes a tool, and protects the built-ins",
   await open.getByTestId("tool-save").click();
   await expect(created).toContainText("Search Paperless", { timeout: 10_000 });
 
+  // DELETE lives in the editor (M55): open it if the save closed it.
+  if (!(await page.getByTestId("tool-delete-paperless_search").isVisible())) await page.getByTestId("tool-edit-paperless_search").click();
   const del = page.getByTestId("tool-delete-paperless_search");
   await del.click();
   await expect(del).toHaveText("CONFIRM?");
@@ -534,6 +540,7 @@ test("automations page creates, edits and deletes an automation", async ({
   await expect(created).toContainText("Porch Light");
 
   // --- edit -----------------------------------------------------------
+  await page.getByTestId("more-automation.porch_light").click();
   await page.getByTestId("edit-automation.porch_light").click();
   const openEditor = page.locator('[data-testid^="editor-ui_"]');
   await expect(openEditor.getByTestId("field-alias")).toHaveValue(
@@ -554,6 +561,7 @@ test("automations page creates, edits and deletes an automation", async ({
   await expect(page.getByTestId("delete-automation.night_mode")).toHaveCount(0);
 
   // --- delete ----------------------------------------------------------
+  await page.getByTestId("more-automation.porch_light").click();
   const del = page.getByTestId("delete-automation.porch_light");
   await del.click();
   // One click arms, the second commits — an automation is recoverable only
@@ -964,7 +972,8 @@ test("a rejected call_service raises a toast as well as an inline error", async 
   page,
 }) => {
   await page.goto("/house/devices");
-  const lock = page.getByTestId("lock-lock.front_door");
+  // The door starts locked, so the one control the row offers (M55) is UNLOCK.
+  const lock = page.getByTestId("unlock-lock.front_door");
   await expect(lock).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("filter").fill("front door");
   await expect(lock).toBeVisible();
@@ -973,10 +982,10 @@ test("a rejected call_service raises a toast as well as an inline error", async 
 
   const toast = page.getByTestId("toast").first();
   await expect(toast).toBeVisible({ timeout: 10_000 });
-  await expect(toast).toContainText("Lock failed");
-  await expect(toast).toContainText("unknown service lock.lock");
+  await expect(toast).toContainText("Unlock failed");
+  await expect(toast).toContainText("unknown service lock.unlock");
   await expect(page.getByTestId("error")).toContainText(
-    "unknown service lock.lock",
+    "unknown service lock.unlock",
   );
 
   // It is dismissible, not just decorative.
