@@ -164,6 +164,18 @@ export function makeWorld() {
 				unit_of_measurement: '°C',
 				device_class: 'temperature'
 			}),
+			// Two more readings in two more rooms (M63): the dashboard's readings
+			// widget groups by room, and one room is not a grouping.
+			mkState('sensor.garage_humidity', '61', {
+				friendly_name: 'Garage Humidity',
+				unit_of_measurement: '%',
+				device_class: 'humidity'
+			}),
+			mkState('sensor.living_room_power', '134', {
+				friendly_name: 'Living Room Power',
+				unit_of_measurement: 'W',
+				device_class: 'power'
+			}),
 			mkState('cover.garage_door', 'closed', {
 				friendly_name: 'Garage Door',
 				current_position: 0
@@ -206,6 +218,8 @@ export function makeWorld() {
 		['light.hall_lamp', null, null],
 		['switch.desk_fan', 'lab', 'dev-lab-1'],
 		['sensor.lab_temperature', null, 'dev-lab-1'],
+		['sensor.garage_humidity', 'garage', null],
+		['sensor.living_room_power', 'living_room', null],
 		['cover.garage_door', 'garage', null],
 		['climate.thermostat', 'living_room', null],
 		['media_player.speaker', 'living_room', null],
@@ -940,12 +954,33 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 	const taskLogs = new Map();
 
 	/**
-	 * Dashboards the mock serves. One shipped (owned by nobody, read-only) and
-	 * one this token owns, so the console's "yours vs shared" split is exercised
-	 * rather than assumed.
+	 * Dashboards the mock serves. Two shipped (owned by nobody, read-only) —
+	 * the House first, as jarvis-core orders them, so the console opens on the
+	 * house — and one this token owns, so the console's "yours vs shared" split
+	 * is exercised rather than assumed.
+	 *
+	 * The House carries one widget of every non-graph kind (M63): an entity
+	 * tile on a light that is ON, so its switch reads TURN OFF and a press can
+	 * be seen to round-trip; the readings; a camera whose consent is `never`,
+	 * so the refusal path is the one a test meets; the sky; the moments.
 	 * @type {any[]}
 	 */
 	let dashboards = [
+		{
+			id: 'house',
+			title: 'House',
+			owner: '',
+			range: '24h',
+			shipped: true,
+			updated: Date.now() / 1000,
+			widgets: [
+				{ id: 'lamp', title: 'Hall lamp', kind: 'entity', entity: 'light.hall_lamp', x: 0, y: 0, w: 3, h: 2 },
+				{ id: 'sky', title: 'Tonight', kind: 'sky', x: 3, y: 0, w: 3, h: 2 },
+				{ id: 'camera', title: 'Front door', kind: 'camera', camera: 'Front Door', x: 6, y: 0, w: 6, h: 3 },
+				{ id: 'readings', title: 'Readings', kind: 'readings', area: '', x: 0, y: 2, w: 6, h: 3 },
+				{ id: 'moments', title: 'Moments', kind: 'moments', limit: 6, x: 6, y: 3, w: 6, h: 2 }
+			]
+		},
 		{
 			id: 'homelab',
 			title: 'Homelab',
@@ -997,6 +1032,22 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 			]
 		}
 	];
+
+	/**
+	 * The cameras, as the vision integration keeps them (M63). One whose
+	 * consent is `never`, so a dashboard still meets the refusal a look would —
+	 * the setting is a policy, and a wall panel that could show the camera
+	 * anyway would make it decorative — and one that always answers, with the
+	 * smallest JPEG there is, so the picture path is exercised too.
+	 */
+	const cameras = [
+		{ name: 'Front Door', consent: 'never', area: 'Front Porch' },
+		{ name: 'Garden', consent: 'always', area: 'Garden' }
+	];
+	/** A 1×1 grey JPEG: enough to be an <img>, not enough to be a picture of anything. */
+	const TINY_JPEG =
+		'/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+	let lookSeq = 0;
 
 	/**
 	 * Fire one activity event, and log it. The payload shape is
@@ -3416,6 +3467,153 @@ index 1234567..89abcde 100644
 							}
 							return { key, label: key, unit: key.includes('load') ? '' : 'ms', aggregate: msg.aggregate || 'mean', error: '', points };
 						})
+					});
+					break;
+				}
+
+				// --- what the house widgets read (M63) ------------------------
+				case 'jarvis/sensors/readings': {
+					// Every sensor's newest reading with its room, as
+					// `jarvis.integrations.sensors.readings` builds the rows: the
+					// room from the registry (the entity's area, else its device's),
+					// the age from `last_updated`, the dead ones kept and flagged.
+					const wanted = String(msg.area || '').trim().toLowerCase();
+					const areaName = (entityId) => {
+						const entry = world.entities.find((e) => e.entity_id === entityId);
+						const areaId = entry?.area_id ?? world.devices.find((d) => d.id === entry?.device_id)?.area_id ?? null;
+						return world.areas.find((a) => a.id === areaId)?.name ?? '';
+					};
+					const rows = [...world.states.values()]
+						.filter((s) => s.entity_id.startsWith('sensor.') || s.entity_id.startsWith('binary_sensor.'))
+						.map((s) => {
+							const number = Number(s.state);
+							return {
+								entity_id: s.entity_id,
+								name: s.attributes.friendly_name ?? s.entity_id,
+								value: s.state !== '' && Number.isFinite(number) ? number : s.state,
+								unit: s.attributes.unit_of_measurement ?? '',
+								device_class: s.attributes.device_class ?? '',
+								area: areaName(s.entity_id),
+								age_s: Math.max(0, Math.round((Date.now() - Date.parse(s.last_updated)) / 1000)),
+								available: s.state !== 'unavailable' && s.state !== 'unknown'
+							};
+						})
+						.filter((row) => !wanted || row.area.toLowerCase().includes(wanted))
+						.sort((a, b) => a.age_s - b.age_s);
+					const limit = Number(msg.limit) || 0;
+					ok(msg.id, {
+						readings: limit > 0 ? rows.slice(0, limit) : rows,
+						count: rows.length,
+						area: String(msg.area || ''),
+						configured: true
+					});
+					break;
+				}
+
+				case 'jarvis/sky/summary': {
+					// Tonight, as the sky integration computes it from cached
+					// elements for a London house: the same field names as
+					// `next_pass_snapshot` / `moon_snapshot`, with the age of the
+					// elements, because the console says how old they are.
+					const tonight = new Date();
+					tonight.setHours(21, 14, 0, 0);
+					const later = new Date(tonight.getTime() + 95 * 60_000);
+					const full = new Date(tonight.getTime() + 2 * 86_400_000);
+					ok(msg.id, {
+						configured: true,
+						satellite: 'ISS (ZARYA)',
+						now: new Date().toISOString(),
+						pass: {
+							state: tonight.toISOString(),
+							satellite: 'ISS (ZARYA)',
+							max_alt: 41,
+							direction: 'south',
+							rise_direction: 'west-south-west',
+							set_direction: 'east',
+							visible: true,
+							next_visible: later.toISOString(),
+							tle_age_hours: 12.0,
+							elements_age_days: 1.5,
+							window_hours: 48
+						},
+						moon: {
+							state: 'waxing gibbous',
+							illumination: 98.1,
+							phase_angle: 164.2,
+							waxing: true,
+							next_full: full.toISOString(),
+							next_new: null
+						}
+					});
+					break;
+				}
+
+				case 'jarvis/vision/still': {
+					// A still IS a look: the camera's consent decides, the audit
+					// gets a row, and the bus sees the same events the voice tab's
+					// activity strip draws. A `never` camera is refused before any
+					// fetch; the only-camera rule resolves an empty name when there
+					// is exactly one, which here there is not.
+					const asked = String(msg.camera || '').trim().toLowerCase();
+					const camera = asked
+						? cameras.find((c) => c.name.toLowerCase() === asked)
+						: cameras.length === 1
+							? cameras[0]
+							: null;
+					const names = cameras.map((c) => c.name);
+					if (!camera) {
+						ok(msg.id, {
+							configured: true,
+							cameras: names,
+							status: 'error',
+							error: `no camera called '${msg.camera ?? ''}'. Known cameras: ${names.join(', ')}.`,
+							decision: 'unknown_camera'
+						});
+						break;
+					}
+					const id = `look-${++lookSeq}`;
+					const record = {
+						id,
+						camera: camera.name,
+						question: '',
+						allowed: camera.consent !== 'never',
+						action: 'snapshot',
+						reason: String(msg.reason || 'a dashboard still'),
+						requester: 'api:mock-token',
+						consent: camera.consent,
+						decision: camera.consent === 'never' ? 'policy_never' : 'always',
+						at: Date.now() / 1000
+					};
+					if (camera.consent === 'never') {
+						broadcast('vision_look_denied', { ...record, error: 'consent: never' });
+						ok(msg.id, {
+							configured: true,
+							cameras: names,
+							status: 'denied',
+							allowed: false,
+							camera: camera.name,
+							entity_id: `camera.${camera.name.toLowerCase().replace(/\s+/g, '_')}`,
+							consent: camera.consent,
+							decision: 'policy_never',
+							audit_id: id,
+							frame_fetched: false,
+							message: `${camera.name} is set to consent: never`
+						});
+						break;
+					}
+					broadcast('vision_look_started', record);
+					broadcast('vision_look_finished', { ...record, ok: true, duration_ms: 12, outcome: 'ok', error: '' });
+					ok(msg.id, {
+						configured: true,
+						cameras: names,
+						status: 'ok',
+						camera: camera.name,
+						entity_id: `camera.${camera.name.toLowerCase().replace(/\s+/g, '_')}`,
+						audit_id: id,
+						frame: { camera: camera.name, content_type: 'image/jpeg', bytes: 631, taken_at: nowIso(), width: 1, height: 1, cached: false },
+						written_to: null,
+						held_for_seconds: 30,
+						image: `data:image/jpeg;base64,${TINY_JPEG}`
 					});
 					break;
 				}

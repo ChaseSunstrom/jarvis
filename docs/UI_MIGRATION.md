@@ -257,6 +257,19 @@ was done (`bash scripts/verify/m55-menus.sh`):
 - [x] SETTINGS › Console · a paired phone or computer is a row (`token-…`, `paired-…`) so its REVOKE is the row's control, not a duplicate on the page.
 - [x] `scripts/verify/m55-menus.sh` builds the console before any spec (the e2e server serves the build; a spec against a stale bundle measures the last change).
 
+### M63 — the dashboard shows the house
+
+The operator's "full functionality". A widget has a kind; the House is what the console opens
+on; each kind's empty state says how the thing gets there. What changed on the screen:
+
+- [x] DASHBOARDS · the `+ Widget` editor asks **what to show** first (`new-kind`: Graph, Entity, Readings, Camera, Sky, Moments, each with one sentence on when to use it) and then only the fields that kind needs — a graph's chart, source and series; a tile's entity id (`new-entity`, with a few of this house's ids as the hint); a camera's name (`new-camera`, blank for the only one); a room (`new-area`); how many moments (`new-limit`). A name that is not an entity id is refused with a sentence, not saved as a tile about nothing.
+- [x] DASHBOARDS · an entity tile (`EntityTile`) is the **one control at rest** on the screen: TURN ON / TURN OFF, or LOCK / UNLOCK — the move the entity can make from where it is, exactly as its Devices row offers it, calling the same `call_service` and changing only on `state_changed`. The inventory row's per-row cap moves from 0 to 1 for it; the readings, a still, the sky and the moments carry no control, so a moment on the dashboard is not a link (the inbox on VOICE is where it is read and dismissed).
+- [x] DASHBOARDS · the hero (the first widget in reading order) spends the accent on its live value — a tile's state, the sky's rise time, the newest reading, the newest moment's title — and nothing else on the page is cyan but that and a lit switch.
+- [x] DASHBOARDS · a camera widget is a look. It shows the frame the vision integration handed back, or the refusal in the camera's own terms (`consent: never`, the rate limit, nobody answered) with a pointer to `vision.audit`; a house with no camera reads "No camera is configured. Add one under vision: cameras: …". No frame is ever kept on the page.
+- [x] DASHBOARDS · the sky says "Not fetched yet — <the integration's reason>" before the elements or the ephemeris are downloaded, never a guessed time; every pass carries the age of the elements it was computed from.
+- [x] DASHBOARDS · the shipped **House** opens first (its `order: 0` sorts it ahead of Homelab); its tile is the sun, which every install has, and its camera is unnamed, which is the only camera when there is one — a default that invents a light nobody owns is worse than one that controls nothing.
+- [x] The mock backend serves the three commands, a House with one widget of every non-graph kind, a light that is on, a camera that refuses and one that answers, three readings in three rooms, and the sky; `e2e/dashboards.spec.ts` drives the tile's round trip, the refusal, a live moment, a live reading and the kind picker against it.
+
 ### The menu inventory
 
 One row per leaf screen. **Rows are** is the `data-testid` prefix of the
@@ -273,7 +286,7 @@ primary, a fourth row control or a second search box fails it.
 | VOICE | `/` | — | — | — | 0 | the ring is the control; the strip's rows are not controls |
 | HOUSE › Devices | `/house/devices` | `device-` | 4 | — | 1 | the entity's own control and Edit — a switch; open/close and stop for a cover; lock/unlock as one; previous, play/pause and next for a player, which is the row that sets the cap; the editor's Save appears only open |
 | HOUSE › Areas | `/house/areas` | `area-` | 1 | `create-area` | 0 | the row is its expander; Rename and Delete inside |
-| DASHBOARDS | `/dashboards` | `widget-` | 0 | — | 0 | on an owned dashboard `+ Widget` (`dashboard-add`) is the one primary and the one way into the layout editor; a shipped one has none; widgets show their remove control only while editing |
+| DASHBOARDS | `/dashboards` | `widget-` | 1 | — | 0 | on an owned dashboard `+ Widget` (`dashboard-add`) is the one primary and the one way into the layout editor; a shipped one has none; widgets show their move and remove controls only while editing. The one control at rest is an entity tile's switch (M63): TURN ON / TURN OFF, or LOCK / UNLOCK — the move the entity can make from where it is, as its Devices row offers it; a graph, the readings, a still, the sky and the moments carry none |
 | HOUSE › Automations | `/house/automations` | `automation-` | 2 | — | 0 | the switch and MORE; Save is primary only inside an open editor |
 | WORK › Tasks | `/work/tasks` | `task-` | 3 | — | 1 | the task's title (a link to its page), the steps fold, and Cancel (running) or Forget (finished); Clear finished is the page's one action |
 | WORK › Code | `/work/code` | `job-` | 3 | — | 0 | the steps fold, Cancel and the job's opener; Start is primary only inside the open form |

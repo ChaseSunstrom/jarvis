@@ -7,6 +7,7 @@ the actual work here means ``call_service`` over the socket and
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -1501,6 +1502,86 @@ async def async_metrics_query(jarvis: Any, payload: dict[str, Any]) -> dict[str,
         "end": window.end,
         "step": window.resolved_step(),
     }
+
+
+# --- what the house widgets read (M63) -------------------------------------
+#
+# Three read-only commands behind the dashboard's non-graph widgets. Each one
+# answers rather than raises when the integration behind it is not set up:
+# a dashboard with five widgets and no cameras should draw four and one
+# honest "no camera is configured", not a page-wide error, and the widget's
+# sentence about how to get the thing is written from `configured: false`.
+
+
+def sensors_readings_payload(jarvis: "Jarvis", area: str = "", limit: int = 0) -> dict[str, Any]:
+    """Every sensor's newest reading, with its room and age; `area` filters."""
+    from ..integrations.sensors import readings
+
+    rows = readings(jarvis, area=area, limit=limit)
+    return {
+        "readings": rows,
+        "count": len(rows),
+        "area": str(area or ""),
+        # The rows come from the state machine, so a house with any sensor at
+        # all has readings; what this says is whether the sensors integration
+        # is there to bring new ones in over MQTT or the webhook.
+        "configured": jarvis.data.get("sensors") is not None,
+    }
+
+
+async def async_sky_summary(jarvis: "Jarvis") -> dict[str, Any]:
+    """The next pass of the first tracked satellite and the moon tonight.
+
+    Honest about what is not there: without `sky:` the answer is
+    `configured: false`; with it but before the elements or the ephemeris
+    have been fetched, each half carries `state: unknown` and the `reason`
+    the integration gives — never a guessed time.
+    """
+    from ..integrations.sky import get_sky
+
+    data = get_sky(jarvis)
+    if data is None:
+        return {"configured": False, "satellite": "", "pass": None, "moon": None}
+    satellite = data.satellites[0] if data.satellites else ""
+
+    def compute() -> tuple[dict[str, Any], dict[str, Any]]:
+        # skyfield is CPU work — milliseconds, but on the event loop it would
+        # be milliseconds in which every socket waits.
+        return data.next_pass_snapshot(satellite), data.moon_snapshot()
+
+    next_pass, moon = await asyncio.to_thread(compute)
+    return {
+        "configured": True,
+        "satellite": satellite,
+        "now": data.now().isoformat(),
+        "pass": next_pass,
+        "moon": moon,
+    }
+
+
+async def async_vision_still(
+    jarvis: "Jarvis", camera: str = "", reason: str = "", requester: str = "api"
+) -> dict[str, Any]:
+    """One frame as a JPEG data URL, or the refusal.
+
+    Goes through `VisionManager.still`, which is `camera.snapshot` with the
+    bytes attached: the camera's consent, the rate limit and the audit row are
+    all the same as a look's. A `never` camera answers `denied`; an `ask`
+    camera asks the person the way a look would. No camera at all answers
+    `configured: false` so the widget can say how one is added.
+    """
+    store = jarvis.data.get("vision")
+    manager = store.get("manager") if isinstance(store, dict) else None
+    if manager is None or not getattr(manager, "sources", None):
+        return {
+            "status": "unconfigured",
+            "configured": False,
+            "cameras": [],
+            "message": "no camera is configured",
+        }
+    result = await manager.still(camera, reason or "a dashboard still", requester=requester)
+    return {"configured": True, "cameras": manager.names(), **result}
+
 
 def _mcp(jarvis: "Jarvis") -> Any:
     from ..integrations.mcp import get_manager

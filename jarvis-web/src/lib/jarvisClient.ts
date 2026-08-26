@@ -14,8 +14,18 @@ import type { Trace } from './trace';
 import * as conversations from './conversations';
 import { toTaskList, toTaskRow, type TaskRow } from './tasks';
 import { type LogEntry, toLog } from './taskEvents';
-import { type Dashboard, toDashboard, toDashboards } from './dashboards/layout';
+import { type Dashboard, toDashboard, toDashboards, wireWidget } from './dashboards/layout';
 import { type SeriesData, toSeries } from './dashboards/series';
+import {
+	type CameraStill,
+	type MomentRow,
+	type ReadingsPayload,
+	type SkySummary,
+	toMoments,
+	toReadings,
+	toSky,
+	toStill
+} from './dashboards/widgets';
 
 /** One data source, as `jarvis/metrics/sources` describes it. */
 export interface MetricSource {
@@ -1046,9 +1056,47 @@ export class JarvisClient {
 	async saveDashboard(dashboard: Dashboard): Promise<Dashboard | null> {
 		const result = await this.command<{ dashboard?: unknown }>({
 			type: 'jarvis/dashboards/save',
-			dashboard
+			// Only the fields each widget's kind needs go over the wire; the
+			// server drops the rest, and a graph's empty `series` on an entity
+			// tile would only make the frame lie about what the tile is.
+			dashboard: { ...dashboard, widgets: dashboard.widgets.map(wireWidget) }
 		});
 		return toDashboard(result?.dashboard);
+	}
+
+	// --- what the house widgets read (M63) -----------------------------------
+	//
+	// Three reads and the notifications list. Each answers rather than throws
+	// when the integration behind it is not set up (`configured: false`), so a
+	// widget can say how the thing is added instead of the page erroring.
+
+	/** Every sensor's newest reading, with its room and age; `area` filters. */
+	async sensorReadings(area = '', limit = 0): Promise<ReadingsPayload> {
+		const payload: Record<string, any> = { type: 'jarvis/sensors/readings' };
+		if (area) payload.area = area;
+		if (limit) payload.limit = limit;
+		return toReadings(await this.command(payload));
+	}
+
+	/** The next pass of the first tracked satellite and the moon tonight. */
+	async skySummary(): Promise<SkySummary> {
+		return toSky(await this.command({ type: 'jarvis/sky/summary' }));
+	}
+
+	/**
+	 * One frame from a camera as a data URL — through the camera's consent,
+	 * rate limit and audit, exactly as a look. A refusal comes back as a
+	 * `denied` still with its decision, not as an error.
+	 */
+	async visionStill(camera = ''): Promise<CameraStill> {
+		const payload: Record<string, any> = { type: 'jarvis/vision/still' };
+		if (camera) payload.camera = camera;
+		return toStill(await this.command(payload));
+	}
+
+	/** The newest moments, newest first. */
+	async listMoments(limit = 6): Promise<MomentRow[]> {
+		return toMoments(await this.command({ type: 'jarvis/notifications/list', limit }), limit);
 	}
 
 	async deleteDashboard(id: string): Promise<boolean> {

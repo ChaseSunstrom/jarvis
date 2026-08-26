@@ -976,10 +976,21 @@ web and of Tasker. Local only. Each row here is planned in that document.
     structure rather than slash count; the bar holds at 768–1440 without overlapping itself
     (it did on a tablet at first — the M50 render showed VOICE over the brand) and fades its
     overflowing edge on a phone. The phone opens its console on DASHBOARDS.
+- [ ] **M63 — The dashboard shows the house** · size M · deps M56, M57, M58, M62 · parallel-ok M61
+  - Scope: the operator's "full functionality" — a widget has a kind: a graph (M62's, and what
+    an unkinded widget is, so every saved layout still loads), one entity's state with its
+    switch (the Devices row's own `call_service`, live over `state_changed`), the newest
+    sensor readings by room (M57), a still from a camera through the vision integration's
+    consent, rate limit and audit (M56 — a `never` camera shows its refusal), the next ISS
+    pass and the moon (M58, "not fetched yet" when the elements are not), the newest
+    moments; the `+ Widget` editor asks the kind first; three read commands behind them,
+    served by the mock; a shipped, read-only House the console opens on, its empty pieces
+    saying how each thing gets there. The inventory row allows the tile's one switch at rest.
+  - Verify: `bash scripts/verify/m63-dashboard-widgets.sh`
 
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M62
+- [ ] **M23 — Final integration** · size M · deps M00–M63
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
     m30, m45, m58; m25/m26 re-measured after the next rebuild); the rest are M56 (no served

@@ -834,6 +834,25 @@ def _readings(jarvis: "Jarvis") -> list[dict[str, Any]]:
     return rows
 
 
+def readings(jarvis: "Jarvis", area: str = "", limit: int = 0) -> list[dict[str, Any]]:
+    """The rows `sensor_readings` reads, for a console widget (M63).
+
+    The same rows the tool returns — a reading with a unit, a class, a room and
+    an age — newest first, so a dashboard shows what just happened. `area`
+    filters by room the way the tool does; `limit` caps the list, 0 meaning
+    all. Unavailable sensors are kept, flagged `available: false`: a widget
+    that quietly dropped a dead sensor would hide the one thing worth noticing.
+    Works without the sensors integration: the rows come from the state
+    machine, so anything with a unit counts.
+    """
+    rows = _readings(jarvis)
+    wanted = str(area or "").strip().lower()
+    if wanted:
+        rows = [r for r in rows if wanted in r["area"].lower()]
+    rows.sort(key=lambda r: r["age_s"])
+    return rows[: int(limit)] if limit and int(limit) > 0 else rows
+
+
 def _fmt(row: dict[str, Any]) -> str:
     unit = f" {row['unit']}" if row["unit"] else ""
     where = f" in the {row['area']}" if row["area"] else ""

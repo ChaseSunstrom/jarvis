@@ -8,6 +8,17 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M63 — the dashboard shows the house.** A widget has a kind now, not only a chart type: a
+  graph (every layout saved before this still loads as one), one entity's state with its switch
+  — the same `call_service` the HOUSE › Devices row sends, changing only when the backend says
+  so — the newest sensor readings room by room, a still from a camera, the next ISS pass and the
+  moon tonight, the newest moments. A still is a look: it goes through the camera's consent,
+  rate limit and audit exactly as `look` does, so a `consent: never` camera shows its refusal on
+  the wall panel and never a frame. Each widget says what would be there and how it gets there
+  when its thing is missing — "not fetched yet" for the sky before the elements are downloaded,
+  never a guessed time. `+ Widget` asks the kind first. A shipped, read-only **House** dashboard
+  is what a fresh install opens on; the machine's graphs (Homelab) are the second. Three read
+  commands behind it: `jarvis/sensors/readings`, `jarvis/sky/summary`, `jarvis/vision/still`.
 - **M62 — the dashboard is a destination.** DASHBOARDS is the first console tab, on the console
   and on the phone (whose console opens on it): its own path, no sections, the one destination
   that does not redirect. It was a section of HOUSE from M48, two taps behind the device list.

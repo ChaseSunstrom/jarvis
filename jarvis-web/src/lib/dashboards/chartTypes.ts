@@ -59,6 +59,73 @@ export function isChartType(value: unknown): value is ChartType {
 	return typeof value === 'string' && value in CHART_TYPES;
 }
 
+/**
+ * What a widget SHOWS (M63) — a graph is one kind among six.
+ *
+ * `metric` is the graphs of M62 and what a widget with no `kind` is, so a
+ * layout saved before kinds existed loads unchanged. The rest show the house
+ * rather than a number. `when` is the sentence in the picker, so a person
+ * chooses by what they want to see; `needs` names the one field the editor
+ * has to ask for, or nothing.
+ *
+ * The list and jarvis-core's are the same list — the contract's `kinds` table,
+ * which both suites read.
+ */
+export const WIDGET_KINDS = {
+	metric: {
+		label: 'Graph',
+		when: 'Recorded numbers over time: a temperature, a load, a count.',
+		needs: 'series'
+	},
+	entity: {
+		label: 'Entity',
+		when: 'One thing in the house: its state, when it changed, and its switch.',
+		needs: 'entity'
+	},
+	readings: {
+		label: 'Readings',
+		when: 'The newest sensor readings, room by room.',
+		needs: 'area'
+	},
+	camera: {
+		label: 'Camera',
+		when: 'A still from a camera, on the camera’s own consent terms.',
+		needs: 'camera'
+	},
+	sky: {
+		label: 'Sky',
+		when: 'The next ISS pass over the house and the moon tonight.',
+		needs: ''
+	},
+	moments: {
+		label: 'Moments',
+		when: 'What Jarvis said while nobody was looking, newest first.',
+		needs: ''
+	}
+} as const;
+
+export type WidgetKind = keyof typeof WIDGET_KINDS;
+
+export const WIDGET_KIND_NAMES = Object.keys(WIDGET_KINDS) as WidgetKind[];
+
+export function isWidgetKind(value: unknown): value is WidgetKind {
+	return typeof value === 'string' && value in WIDGET_KINDS;
+}
+
+/** A new widget's footprint per kind, in columns and rows — the server's table. */
+export const DEFAULT_SIZE: Record<WidgetKind, { w: number; h: number }> = {
+	metric: { w: 4, h: 2 },
+	entity: { w: 3, h: 2 },
+	readings: { w: 6, h: 3 },
+	camera: { w: 6, h: 3 },
+	sky: { w: 3, h: 2 },
+	moments: { w: 6, h: 3 }
+};
+
+/** How many moments a moments widget shows when it does not say, and the most. */
+export const DEFAULT_MOMENTS = 6;
+export const MAX_MOMENTS = 20;
+
 /** How several samples inside one step become one point. */
 export const AGGREGATES = ['last', 'mean', 'min', 'max', 'sum', 'count'] as const;
 export type Aggregate = (typeof AGGREGATES)[number];

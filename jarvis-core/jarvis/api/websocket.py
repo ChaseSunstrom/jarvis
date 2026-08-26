@@ -711,6 +711,25 @@ class WebSocketHandler:
     async def _cmd_metrics_query(self, msg: dict[str, Any]) -> Any:
         return await common.async_metrics_query(self.jarvis, msg)
 
+    async def _cmd_sensors_readings(self, msg: dict[str, Any]) -> Any:
+        return common.sensors_readings_payload(
+            self.jarvis, area=str(msg.get("area") or ""), limit=int(msg.get("limit") or 0)
+        )
+
+    async def _cmd_sky_summary(self, msg: dict[str, Any]) -> Any:
+        return await common.async_sky_summary(self.jarvis)
+
+    async def _cmd_vision_still(self, msg: dict[str, Any]) -> Any:
+        # The requester is this socket's token, in the vision integration's
+        # `origin:user` spelling — the payload never gets to say who is asking,
+        # or the audit trail would be worth nothing.
+        return await common.async_vision_still(
+            self.jarvis,
+            camera=str(msg.get("camera") or ""),
+            reason=str(msg.get("reason") or ""),
+            requester=f"api:{self.user_id}" if self.user_id else "api",
+        )
+
     async def _cmd_task_log(self, msg: dict[str, Any]) -> Any:
         return common.task_log_payload(
             self.jarvis, str(msg.get("task_id") or ""), int(msg.get("limit") or 200)
@@ -1325,6 +1344,12 @@ WebSocketHandler._HANDLERS = {
     "jarvis/dashboards/delete": WebSocketHandler._cmd_dashboards_delete,
     "jarvis/metrics/sources": WebSocketHandler._cmd_metrics_sources,
     "jarvis/metrics/query": WebSocketHandler._cmd_metrics_query,
+    # What the dashboard's house widgets read (M63). All three are reads; the
+    # still is the one with a side effect — an audit row and, on an `ask`
+    # camera, a question to a person — which is exactly a look's.
+    "jarvis/sensors/readings": WebSocketHandler._cmd_sensors_readings,
+    "jarvis/sky/summary": WebSocketHandler._cmd_sky_summary,
+    "jarvis/vision/still": WebSocketHandler._cmd_vision_still,
     "jarvis/tasks/retry": WebSocketHandler._cmd_task_retry,
     "jarvis/tasks/cancel": WebSocketHandler._cmd_task_cancel,
     "jarvis/tasks/delete": WebSocketHandler._cmd_task_delete,

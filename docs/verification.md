@@ -704,6 +704,33 @@ person-shaped probe asks; what the suite found, written up.
 | It looks like a destination — title, lede, then the arranged graphs, under a six-tab bar | Manual | `docs/ui-review/dashboards/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
 | No more than six tabs | Automated | `scripts/verify/m48-webui-c2.sh` (the cap, five until M62) |
 
+### The dashboard shows the house (M63)
+
+`bash scripts/verify/m63-dashboard-widgets.sh` — 32 checks, green on 26 Aug. Server: `jarvis-core/tests/test_dashboards.py`
++ `test_dashboard_widgets.py`, 46 passed (32 + 14). Console: `npx vitest run src/lib/dashboards`, 70 passed
+(the whole suite 757, from 716); `e2e/dashboards.spec.ts`, 11 passed (from 5).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A widget has a kind — metric, entity, readings, camera, sky, moments — and the server, the console and the contract name the same six, each with what it needs | Automated | `tests/contracts/dashboard_layout.json` `kinds`; `test_dashboards.py` "the module shows the kinds the contract names"; `layout.test.ts` "names exactly the kinds the contract names"; the gate reads all three |
+| A layout saved before kinds existed loads unchanged: a widget with no `kind` is a graph, a graph with no `type` a line | Automated | `test_dashboards.py` "a layout saved before kinds survives a reload" (M62's JSON byte for byte); `layout.test.ts` "reads a widget with no kind as a graph" |
+| A widget missing what its kind needs is refused, not drawn blank; an entity tile needs an entity id the state machine could hold | Automated | `test_dashboards.py` "a kind missing what it needs is refused"; `layout.test.ts` the same, both driven from the contract's `needs` |
+| The console sends the server only the fields a kind needs, and reads back what it sent | Automated | `layout.test.ts` "sends the server only the fields a kind needs" (`wireWidget` ↔ `toWidget`) |
+| `jarvis/sensors/readings` is every sensor's newest reading with its room and age, the dead ones flagged, `area` filtering as the tool does; answers over the socket | Automated | `test_dashboard_widgets.py` (payload and a `WebSocketHandler` round trip) |
+| `jarvis/sky/summary` is the next pass and the moon from cached elements — the same numbers the entities carry — and says `unknown` with the reason before anything was fetched; `configured: false` without `sky:` | Automated | `test_dashboard_widgets.py` against `tests/fixtures/tle/iss.csv` and the `de421` excerpt (the M58 fixture) |
+| `jarvis/vision/still` is a look: the frame comes back as a JPEG data URL with one audit row (`snapshot`, the socket's token as requester), a `consent: never` camera is refused before any fetch and audited, an unknown camera names the ones there are, the only camera need not be named, no camera at all is `configured: false` | Automated | `test_dashboard_widgets.py` against the M56 fake camera; the gate reads `VisionManager.still` for the snapshot path and the absence of any disk write |
+| The requester on a still comes from the socket's token, never from the payload | Automated | `test_dashboard_widgets.py` "takes its requester from the token not the payload" |
+| Each kind renders its data, and its empty state is a sentence saying how the thing gets there | Automated | `tiles.test.ts` (server-rendered: a tile with its switch, a lock with UNLOCK, a sensor with none, "No entity called…", rooms in order, the refusal, "not fetched yet", "No moments yet"); `widgets.test.ts` (grouping, ages, the sentences) |
+| The console opens on the House: a tile, the readings by room, the camera, the sky, the moments | Automated | `e2e/dashboards.spec.ts` "the console opens on the House" against the mock |
+| A press on an entity tile sends the same `call_service` the Devices row sends, and the tile changes only when the backend says so | Automated | `e2e/dashboards.spec.ts` "a press on an entity tile round-trips call_service" — the frame is read off the socket, the tile off `state_changed` |
+| A camera without consent shows its refusal and no frame; a camera that consents shows the frame | Automated | `e2e/dashboards.spec.ts` "a camera without consent…" and the Garden camera in "the kind picker…" |
+| A moment landing live goes to the top; a reading changing live changes its row | Automated | `e2e/dashboards.spec.ts` "a moment landing live…", "a reading changing live…" |
+| `+ Widget` asks the kind first; a tile, a camera and the sky can be added to a board you own and survive a reload; a name that is not an entity id is refused with a sentence | Automated | `e2e/dashboards.spec.ts` "the kind picker…" |
+| The inventory row allows an entity tile's one switch at rest and nothing on the other kinds; the dashboard still renders, loads and goes offline as a screen | Automated | `e2e/menus.spec.ts` (DASHBOARDS row of `docs/UI_MIGRATION.md` §4, per row at rest 1), `e2e/states.spec.ts` |
+| The shipped House opens first on a fresh install, names no device nobody owns (its tile is `sun.sun`), and leaves the camera unnamed | Automated | `test_dashboards.py` "the shipped house…", "a fresh install opens on the house…" |
+| It looks like the design — near-black, hairline cards, the display face on the big figures, tabular numerals, one cyan on the hero's live value — at three widths | Manual | `docs/ui-review/dashboards/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
+| A still from a real camera on this host, and the sky from real downloaded elements | **Unproven** | this host has no camera configured and the sky cache is the fixture's; the paths are proven against the M56 fake camera and the M58 fixture, and the widgets say "no camera is configured" / "not fetched yet" on this box, which is the truth |
+
 ### The phone, the equal of the web (M61, first stage)
 
 | Claim | Status | Evidence |

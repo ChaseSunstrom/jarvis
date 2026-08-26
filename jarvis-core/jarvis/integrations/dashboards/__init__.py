@@ -20,6 +20,15 @@ grid coordinates, saved under the token that saved it —
 `tests/contracts/dashboard_layout.json` is the shape, read by this side and by
 the console's tests.
 
+A widget has a *kind* (M63). `metric` is a graph of recorded numbers and the
+default when the field is absent, so every layout saved before kinds existed
+loads unchanged. The others show the house itself: `entity` (one entity's
+state and its switch), `readings` (the newest sensor readings by room),
+`camera` (a still, through the vision integration's consent and audit),
+`sky` (the next ISS pass and the moon), `moments` (the newest notifications).
+The data behind them is read over three websocket commands the contract
+names; this module only decides what a saved widget may be.
+
 ## Whose dashboard is it
 
 There are no user accounts here (`jarvis/auth.py`: "There are no user accounts
@@ -36,6 +45,7 @@ tokens already.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -63,6 +73,27 @@ COLUMNS = 12
 #: The chart types the console can draw. A widget naming anything else is
 #: refused at save time rather than drawn as a blank rectangle later.
 TYPES = ("line", "area", "bar", "stat", "gauge", "table")
+#: What a widget shows. `metric` is the graphs; a widget with no `kind` is one,
+#: so a layout saved before M63 loads as it did. The console's list is the same
+#: list — the contract's `kinds` table — and both suites check it.
+KINDS = ("metric", "entity", "readings", "camera", "sky", "moments")
+#: A new widget's footprint per kind, in columns and rows: a tile is small, a
+#: list of readings or a still needs room. Only used when the client sent none.
+DEFAULT_SIZE = {
+    "metric": (4, 2),
+    "entity": (3, 2),
+    "readings": (6, 3),
+    "camera": (6, 3),
+    "sky": (3, 2),
+    "moments": (6, 3),
+}
+#: How many moments a `moments` widget shows when it does not say, and the most
+#: it may ask for — a dashboard is a glance, not the inbox.
+DEFAULT_MOMENTS = 6
+MAX_MOMENTS = 20
+#: `domain.object_id`, as the state machine spells it. An entity tile naming
+#: anything else would poll for a state that can never exist.
+_ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 RANGES = ("1h", "6h", "24h", "7d")
 RANGE_SECONDS = {"1h": 3600.0, "6h": 21600.0, "24h": 86400.0, "7d": 604800.0}
 
@@ -82,30 +113,60 @@ def _int(value: Any, default: int, low: int, high: int) -> int:
 def clean_widget(raw: Any, index: int) -> dict[str, Any] | None:
     """One widget, or None if it is not one.
 
-    Refusing here rather than when drawing: a widget with a type the console
-    cannot draw becomes a blank rectangle somebody has to delete, and a widget
-    with no series becomes an empty chart that looks like a broken sensor.
+    Refusing here rather than when drawing: a widget with a kind or chart type
+    the console cannot draw becomes a blank rectangle somebody has to delete, a
+    graph with no series becomes an empty chart that looks like a broken
+    sensor, and an entity tile with no entity is a card about nothing.
+
+    What this does not check is that the entity, camera or room exists today.
+    A layout is saved one day and shown on another, and a tile whose device is
+    unplugged for the afternoon should come back with it, not be dropped from
+    the file.
     """
     if not isinstance(raw, dict):
         return None
-    kind = str(raw.get("type") or "line")
-    if kind not in TYPES:
+    kind = str(raw.get("kind") or "metric")
+    if kind not in KINDS:
         return None
-    series = [str(s)[:120] for s in (raw.get("series") or []) if str(s).strip()][:8]
-    if not series:
-        return None
-    return {
+    width, height = DEFAULT_SIZE[kind]
+    widget: dict[str, Any] = {
         "id": _slug(raw.get("id"), f"w{index}"),
         "title": str(raw.get("title") or "")[:80],
-        "type": kind,
-        "source": _slug(raw.get("source"), "internal"),
-        "series": series,
-        "aggregate": str(raw.get("aggregate") or "")[:10],
+        "kind": kind,
         "x": _int(raw.get("x"), 0, 0, COLUMNS - 1),
         "y": _int(raw.get("y"), index, 0, 500),
-        "w": _int(raw.get("w"), 4, 1, COLUMNS),
-        "h": _int(raw.get("h"), 2, 1, 12),
+        "w": _int(raw.get("w"), width, 1, COLUMNS),
+        "h": _int(raw.get("h"), height, 1, 12),
     }
+    if kind == "metric":
+        chart = str(raw.get("type") or "line")
+        if chart not in TYPES:
+            return None
+        series = [str(s)[:120] for s in (raw.get("series") or []) if str(s).strip()][:8]
+        if not series:
+            return None
+        widget.update(
+            {
+                "type": chart,
+                "source": _slug(raw.get("source"), "internal"),
+                "series": series,
+                "aggregate": str(raw.get("aggregate") or "")[:10],
+            }
+        )
+    elif kind == "entity":
+        entity = str(raw.get("entity") or "").strip()[:120]
+        if not _ENTITY_ID.match(entity):
+            return None
+        widget["entity"] = entity
+    elif kind == "camera":
+        # Empty means "the only camera, if there is one": the shipped House
+        # dashboard cannot know what an installation calls its front door.
+        widget["camera"] = str(raw.get("camera") or "").strip()[:80]
+    elif kind == "readings":
+        widget["area"] = str(raw.get("area") or "").strip()[:80]
+    elif kind == "moments":
+        widget["limit"] = _int(raw.get("limit"), DEFAULT_MOMENTS, 1, MAX_MOMENTS)
+    return widget
 
 
 def clean_dashboard(raw: Any, *, owner: str = "") -> dict[str, Any] | None:
@@ -153,11 +214,17 @@ class DashboardStore:
         await self.store.save({"dashboards": self.saved})
 
     def load_shipped(self, directory: Any) -> None:
-        """Examples an operator can copy. Never written to."""
+        """Examples an operator can copy. Never written to.
+
+        Ordered by each file's `order`, then its name: the first shipped board
+        is what a fresh install opens on, and file names sort "homelab" ahead
+        of "house" — the graphs of the machine ahead of the house itself.
+        """
         try:
             paths = sorted(directory.glob("*.yaml")) if directory.is_dir() else []
         except OSError:  # pragma: no cover
             return
+        loaded: list[tuple[int, str, dict[str, Any]]] = []
         for path in paths:
             try:
                 raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -169,7 +236,9 @@ class DashboardStore:
                 _LOGGER.warning("dashboards: %s is not a dashboard", path.name)
                 continue
             board["shipped"] = True
-            self.shipped.append(board)
+            loaded.append((_int(raw.get("order"), 100, 0, 1000), path.name, board))
+        loaded.sort(key=lambda item: (item[0], item[1]))
+        self.shipped.extend(board for _, _, board in loaded)
 
     def visible_to(self, owner: str) -> list[dict[str, Any]]:
         """This token's own, plus everything shared. Never somebody else's."""

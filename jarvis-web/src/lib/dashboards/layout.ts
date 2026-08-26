@@ -7,24 +7,53 @@
  * that is impossible to reason about inside a component.
  */
 
-import { isChartType, type Aggregate, type ChartType, type Range } from './chartTypes';
+import {
+	DEFAULT_MOMENTS,
+	DEFAULT_SIZE,
+	MAX_MOMENTS,
+	isChartType,
+	isWidgetKind,
+	type Aggregate,
+	type ChartType,
+	type Range,
+	type WidgetKind
+} from './chartTypes';
 
 /** The grid is twelve columns wide, like the contract says. */
 export const COLUMNS = 12;
 export const MAX_WIDGETS = 40;
 
+/**
+ * One widget. Every field is present whatever the kind, with the other kinds'
+ * fields empty, so a component can read `widget.entity` without a guard; the
+ * server keeps only the fields the kind needs, and `toWidget` fills the rest
+ * back in when the layout comes down.
+ */
 export interface Widget {
 	id: string;
 	title: string;
+	kind: WidgetKind;
+	/** metric */
 	type: ChartType;
 	source: string;
 	series: string[];
 	aggregate: Aggregate | '';
+	/** entity: the entity_id the tile shows and switches. */
+	entity: string;
+	/** camera: its name; empty means the only camera, if there is one. */
+	camera: string;
+	/** readings: one room, or every room when empty. */
+	area: string;
+	/** moments: how many, newest first. */
+	limit: number;
 	x: number;
 	y: number;
 	w: number;
 	h: number;
 }
+
+/** `domain.object_id`, as the state machine spells it — the server's rule. */
+const ENTITY_ID = /^[a-z_]+\.[a-z0-9_]+$/;
 
 export interface Dashboard {
 	id: string;
@@ -43,27 +72,139 @@ const clamp = (value: unknown, low: number, high: number, fallback: number): num
 	return Math.max(low, Math.min(high, Math.round(number)));
 };
 
+/**
+ * One widget from the wire, or null if it is not one.
+ *
+ * Refusing rather than drawing: a widget of a kind or chart type this console
+ * cannot draw would be a blank card somebody has to delete, a graph with no
+ * series an empty chart that looks like a broken sensor, an entity tile with
+ * no entity a card about nothing. A widget with no `kind` is a graph — every
+ * layout saved before M63 — and a graph with no `type` is a line, as the
+ * server has always read one.
+ */
 export function toWidget(raw: unknown, index = 0): Widget | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const source = raw as Record<string, unknown>;
-	if (!isChartType(source.type)) return null;
-	const series = (Array.isArray(source.series) ? source.series : [])
-		.map((key) => String(key))
-		.filter(Boolean)
-		.slice(0, 8);
-	if (!series.length) return null;
-	return {
+	const kind = source.kind === undefined || source.kind === '' ? 'metric' : source.kind;
+	if (!isWidgetKind(kind)) return null;
+	const size = DEFAULT_SIZE[kind];
+	const widget: Widget = {
 		id: String(source.id || `w${index}`),
 		title: String(source.title || ''),
-		type: source.type,
-		source: String(source.source || 'internal'),
-		series,
-		aggregate: (source.aggregate as Aggregate) || '',
+		kind,
+		type: 'line',
+		source: 'internal',
+		series: [],
+		aggregate: '',
+		entity: '',
+		camera: '',
+		area: '',
+		limit: DEFAULT_MOMENTS,
 		x: clamp(source.x, 0, COLUMNS - 1, 0),
 		y: clamp(source.y, 0, 500, index),
-		w: clamp(source.w, 1, COLUMNS, 4),
-		h: clamp(source.h, 1, 12, 2)
+		w: clamp(source.w, 1, COLUMNS, size.w),
+		h: clamp(source.h, 1, 12, size.h)
 	};
+	if (kind === 'metric') {
+		const type = source.type === undefined || source.type === '' ? 'line' : source.type;
+		if (!isChartType(type)) return null;
+		const series = (Array.isArray(source.series) ? source.series : [])
+			.map((key) => String(key))
+			.filter(Boolean)
+			.slice(0, 8);
+		if (!series.length) return null;
+		widget.type = type;
+		widget.source = String(source.source || 'internal');
+		widget.series = series;
+		widget.aggregate = (source.aggregate as Aggregate) || '';
+	} else if (kind === 'entity') {
+		const entity = String(source.entity || '').trim();
+		if (!ENTITY_ID.test(entity)) return null;
+		widget.entity = entity;
+	} else if (kind === 'camera') {
+		widget.camera = String(source.camera || '').trim();
+	} else if (kind === 'readings') {
+		widget.area = String(source.area || '').trim();
+	} else if (kind === 'moments') {
+		widget.limit = clamp(source.limit, 1, MAX_MOMENTS, DEFAULT_MOMENTS);
+	}
+	return widget;
+}
+
+/**
+ * What the server is sent: only the fields the kind needs. The server drops
+ * the rest anyway; sending a graph's empty `series` on an entity tile would
+ * only make the wire lie about what the tile is.
+ */
+export function wireWidget(widget: Widget): Record<string, unknown> {
+	const base = {
+		id: widget.id,
+		title: widget.title,
+		kind: widget.kind,
+		x: widget.x,
+		y: widget.y,
+		w: widget.w,
+		h: widget.h
+	};
+	switch (widget.kind) {
+		case 'metric':
+			return {
+				...base,
+				type: widget.type,
+				source: widget.source,
+				series: widget.series,
+				aggregate: widget.aggregate
+			};
+		case 'entity':
+			return { ...base, entity: widget.entity };
+		case 'camera':
+			return { ...base, camera: widget.camera };
+		case 'readings':
+			return { ...base, area: widget.area };
+		case 'moments':
+			return { ...base, limit: widget.limit };
+		default:
+			return base;
+	}
+}
+
+/** A blank widget of one kind, for the editor's draft. */
+export function blankWidget(kind: WidgetKind, id: string): Widget {
+	return {
+		id,
+		title: '',
+		kind,
+		type: 'line',
+		source: 'internal',
+		series: [],
+		aggregate: '',
+		entity: '',
+		camera: '',
+		area: '',
+		limit: DEFAULT_MOMENTS,
+		x: 0,
+		y: 0,
+		...DEFAULT_SIZE[kind]
+	};
+}
+
+/** What a widget is about, for its header and its accessible name. */
+export function widgetSubject(widget: Widget): string {
+	if (widget.title) return widget.title;
+	switch (widget.kind) {
+		case 'metric':
+			return widget.series[0] ?? 'graph';
+		case 'entity':
+			return widget.entity;
+		case 'camera':
+			return widget.camera || 'camera';
+		case 'readings':
+			return widget.area ? `readings · ${widget.area}` : 'readings';
+		case 'sky':
+			return 'tonight';
+		case 'moments':
+			return 'moments';
+	}
 }
 
 export function toDashboard(raw: unknown): Dashboard | null {

@@ -70,6 +70,7 @@ optional listener that turns an NVR's events into moments.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import time
 from collections import deque
@@ -736,21 +737,58 @@ class VisionManager:
         requester: str = "unknown",
     ) -> dict[str, Any]:
         """Pull a frame into memory. To disk only when handed a filename."""
+        result, _frame = await self._snapshot(camera, filename, reason, requester)
+        return result
+
+    async def still(
+        self,
+        camera: Any,
+        reason: Any = None,
+        requester: str = "unknown",
+    ) -> dict[str, Any]:
+        """One frame for a screen to show, as a `data:` URL (M63).
+
+        The dashboard's camera widget. It is `snapshot` with the bytes attached
+        — the same resolve, consent, rate limit and audit row, because a still
+        on a wall panel is a look at the camera and must never be a way around
+        the camera's policy. What comes back on refusal is `snapshot`'s denial,
+        so the widget can say why (`policy_never`, a human's no, the limiter).
+
+        The frame is in the reply and nowhere else: not on disk, not in the
+        audit trail, and in the frame store only for its usual short TTL.
+        """
+        result, frame = await self._snapshot(camera, None, reason or "a dashboard still", requester)
+        if result.get("status") != "ok" or frame is None:
+            return result
+        encoded = base64.b64encode(frame.data).decode("ascii")
+        return {
+            **result,
+            "image": f"data:{frame.content_type or 'image/jpeg'};base64,{encoded}",
+        }
+
+    async def _snapshot(
+        self,
+        camera: Any,
+        filename: Any,
+        reason: Any,
+        requester: str,
+    ) -> tuple[dict[str, Any], Frame | None]:
+        """The snapshot path, returning the frame too for callers that need the bytes."""
         source = self.resolve(camera)
         if source is None:
-            return self._unknown_camera(camera, ACTION_SNAPSHOT, requester)
+            return self._unknown_camera(camera, ACTION_SNAPSHOT, requester), None
 
         decision, record = await self.authorize(
             source, ACTION_SNAPSHOT, str(reason or "snapshot"), requester
         )
         if not decision.allowed:
-            return self.denial_result(decision, record)
+            return self.denial_result(decision, record), None
 
         self._fire(EVENT_LOOK_STARTED, record)
         try:
             frame, cached = await self._grab(source, record)
         except CameraError as exc:
-            return self._failed(record, "camera_error", str(exc))
+            return self._failed(record, "camera_error", str(exc)), None
 
         written: str | None = None
         if filename:
@@ -760,11 +798,11 @@ class VisionManager:
                     write_snapshot_sync, path, frame.data
                 )
             except CameraError as exc:
-                return self._failed(record, "camera_error", str(exc))
+                return self._failed(record, "camera_error", str(exc)), None
             except OSError as exc:
                 return self._failed(
                     record, "camera_error", f"could not write the snapshot: {exc}"
-                )
+                ), None
 
         record.outcome = "ok"
         self.audit.add(record)
@@ -777,7 +815,7 @@ class VisionManager:
             "frame": {**frame.as_dict(), "cached": cached},
             "written_to": written,
             "held_for_seconds": self.frames.ttl,
-        }
+        }, frame
 
     async def async_shutdown(self) -> None:
         for source in self.sources.values():

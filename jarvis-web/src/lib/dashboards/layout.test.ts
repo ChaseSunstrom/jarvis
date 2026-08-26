@@ -5,10 +5,20 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CHART_TYPE_NAMES, isChartType } from './chartTypes';
+import {
+	CHART_TYPE_NAMES,
+	DEFAULT_MOMENTS,
+	DEFAULT_SIZE,
+	MAX_MOMENTS,
+	WIDGET_KIND_NAMES,
+	isChartType,
+	isWidgetKind,
+	type WidgetKind
+} from './chartTypes';
 import {
 	COLUMNS,
 	addWidget,
+	blankWidget,
 	moveWidget,
 	newWidgetId,
 	overlaps,
@@ -20,6 +30,8 @@ import {
 	toDashboard,
 	toDashboards,
 	toWidget,
+	widgetSubject,
+	wireWidget,
 	type Widget
 } from './layout';
 
@@ -33,16 +45,37 @@ const CONTRACT = JSON.parse(
 const widget = (over: Partial<Widget> = {}): Widget => ({
 	id: 'w1',
 	title: '',
+	kind: 'metric',
 	type: 'line',
 	source: 'internal',
 	series: ['host.load1'],
 	aggregate: '',
+	entity: '',
+	camera: '',
+	area: '',
+	limit: DEFAULT_MOMENTS,
 	x: 0,
 	y: 0,
 	w: 4,
 	h: 2,
 	...over
 });
+
+/** One value per field a kind may need, so any kind can be built from the contract alone. */
+const SAMPLE_FIELDS: Record<string, unknown> = {
+	type: 'line',
+	source: 'internal',
+	series: ['a'],
+	entity: 'light.hall'
+};
+
+const rawOfKind = (kind: string, except = ''): Record<string, unknown> => {
+	const needs: string[] = CONTRACT.kinds[kind].needs;
+	return Object.fromEntries([
+		['kind', kind],
+		...needs.filter((field) => field !== except).map((field) => [field, SAMPLE_FIELDS[field]])
+	]);
+};
 
 describe('the contract', () => {
 	it('names exactly the chart types this console can draw', () => {
@@ -150,5 +183,85 @@ describe('arranging', () => {
 	it('never reuses an id', () => {
 		const widgets = [widget({ id: 'w1' }), widget({ id: 'w2' })];
 		expect(newWidgetId(widgets)).toBe('w3');
+	});
+});
+
+describe('kinds (M63)', () => {
+	it('names exactly the kinds the contract names', () => {
+		expect(new Set(WIDGET_KIND_NAMES)).toEqual(new Set(Object.keys(CONTRACT.kinds)));
+		expect(isWidgetKind('weather')).toBe(false);
+	});
+
+	it('reads a widget with no kind as a graph, so a layout saved before kinds still loads', () => {
+		const old = toWidget({ id: 'w1', type: 'stat', source: 'internal', series: ['host.disk_free'], x: 0, y: 0, w: 3, h: 2 });
+		expect(old?.kind).toBe('metric');
+		expect(old?.series).toEqual(['host.disk_free']);
+	});
+
+	it('reads a graph with no type as a line, as the server always has', () => {
+		expect(toWidget({ series: ['a'] })?.type).toBe('line');
+	});
+
+	it('cleans each kind with the fields the contract says it needs, and refuses one missing them', () => {
+		for (const kind of Object.keys(CONTRACT.kinds)) {
+			const cleaned = toWidget(rawOfKind(kind));
+			expect(cleaned, `a ${kind} widget with everything it needs was refused`).not.toBeNull();
+			for (const field of [...CONTRACT.widget.required, ...CONTRACT.kinds[kind].needs]) {
+				expect(cleaned, `${kind} lacks ${field}`).toHaveProperty(field);
+			}
+			for (const missing of CONTRACT.kinds[kind].needs) {
+				expect(toWidget(rawOfKind(kind, missing)), `${kind} without ${missing} was kept`).toBeNull();
+			}
+		}
+	});
+
+	it('refuses a kind nobody can draw', () => {
+		expect(toWidget({ kind: 'weather' })).toBeNull();
+	});
+
+	it('needs an entity id the state machine could hold on an entity tile', () => {
+		expect(toWidget({ kind: 'entity', entity: 'hall lamp' })).toBeNull();
+		expect(toWidget({ kind: 'entity', entity: 'light.' })).toBeNull();
+		expect(toWidget({ kind: 'entity', entity: 'light.hall_lamp' })?.entity).toBe('light.hall_lamp');
+	});
+
+	it('lets a camera widget leave the camera unnamed — the only one, if there is one', () => {
+		expect(toWidget({ kind: 'camera' })?.camera).toBe('');
+		expect(toWidget({ kind: 'camera', camera: 'Front Door' })?.camera).toBe('Front Door');
+	});
+
+	it('keeps a moments widget a glance, not the inbox', () => {
+		expect(toWidget({ kind: 'moments' })?.limit).toBe(DEFAULT_MOMENTS);
+		expect(toWidget({ kind: 'moments', limit: 500 })?.limit).toBe(MAX_MOMENTS);
+		expect(toWidget({ kind: 'moments', limit: 0 })?.limit).toBe(1);
+	});
+
+	it('gives each kind its own footprint when the layout sent none', () => {
+		for (const kind of Object.keys(DEFAULT_SIZE) as WidgetKind[]) {
+			const cleaned = toWidget(rawOfKind(kind));
+			expect({ w: cleaned?.w, h: cleaned?.h }, kind).toEqual(DEFAULT_SIZE[kind]);
+			expect(blankWidget(kind, 'w9')).toMatchObject({ id: 'w9', kind, ...DEFAULT_SIZE[kind] });
+		}
+	});
+
+	it('sends the server only the fields a kind needs', () => {
+		const tile = wireWidget(widget({ kind: 'entity', entity: 'light.x', series: ['leak'] }));
+		expect(tile).not.toHaveProperty('series');
+		expect(tile).toMatchObject({ kind: 'entity', entity: 'light.x' });
+		const graph = wireWidget(widget({ entity: 'leak' }));
+		expect(graph).not.toHaveProperty('entity');
+		expect(graph).toMatchObject({ kind: 'metric', series: ['host.load1'], type: 'line' });
+		// And what it sends, it can read back.
+		expect(toWidget(tile)).toMatchObject({ kind: 'entity', entity: 'light.x' });
+	});
+
+	it('names what a widget is about when it has no title', () => {
+		expect(widgetSubject(widget({ title: 'Load' }))).toBe('Load');
+		expect(widgetSubject(widget())).toBe('host.load1');
+		expect(widgetSubject(widget({ kind: 'entity', entity: 'light.x' }))).toBe('light.x');
+		expect(widgetSubject(widget({ kind: 'readings', area: 'Kitchen' }))).toBe('readings · Kitchen');
+		expect(widgetSubject(widget({ kind: 'camera' }))).toBe('camera');
+		expect(widgetSubject(widget({ kind: 'sky' }))).toBe('tonight');
+		expect(widgetSubject(widget({ kind: 'moments' }))).toBe('moments');
 	});
 });
