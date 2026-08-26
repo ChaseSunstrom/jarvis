@@ -26,6 +26,12 @@ This document is the spine. Each numbered item is a milestone in
   full core suite green). M61's phone work compiles, lints and passes its JVM tests here (M08's
   toolchain under $HOME). M23 is the final gate and cannot be green on this host for those two
   reasons and the round-trip threshold (BLOCKERS §2, §3, §4).
+- The live rig, measured on the 26th: the report run at 18:32 — 51/58 scenarios,
+  intent 92.9 %, routing 92.0 %, WER 5.9 %, median 3.17 s (thresholds intent ≥ 95 %
+  and median ≤ 2 s still missed, recorded); the eight it lost re-run at 18:50 on the
+  stack rebuilt with the evening's fixes, 9 of 11 variants, then 11 of 11 with the
+  guard's "do the same" form; the smoke set 100 % at 2.5 s. `docs/verification.md`
+  has each failure by name.
 - Cameras: the `vision` integration speaks the OpenAI wire to the same model
   server as the chat model, go2rtc restreams behind `--profile cameras`,
   Frigate's events become moments, and it is switched on with no cameras.

@@ -1217,7 +1217,12 @@ median still miss their thresholds; both recorded. The seven failures:
   of zero carried only a `reason`, which the model read as success. `forget`
   takes the one entry that matched the whole query when no other did, and
   every empty outcome says NOTHING was forgotten in the reply's words.
-  Re-measured on the next rebuilt stack.
+  Re-measured on the second rebuilt stack: the fact left the store, and the
+  third turn's reply hinted that something had been forgotten — the tool's
+  message now forbids the hint (65bf479). On the third: turn one left two
+  notes, the user's and the extractor's paraphrase of it, a real tie — a
+  paraphrase whose words contain another's is the same note now, and the
+  extractor's is not kept beside the user's (d3570cb). Fourth rebuild pending.
 - `interactions-proactive-moment` — the background sensor audit ended
   `jarvis_task_failed`: "interrupted when Jarvis restarted", like every failed
   task in the store — `resilience-core-restart`, later in the run, restarts
