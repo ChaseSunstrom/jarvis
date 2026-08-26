@@ -13,7 +13,8 @@
 	 *   An animation here would say "working" about a task that is not.
 	 *
 	 * Every one of those decisions is made in `$lib/tasks.ts` and tested in
-	 * Node; this file only draws the answer.
+	 * Node; this file only draws the answer. On Reactor II it is a thin accent
+	 * rule on a hairline rail — no gradient, no glow.
 	 */
 	import { barMode, isFinished, percent, type TaskRow } from '$lib/tasks';
 
@@ -51,7 +52,7 @@
 	.track {
 		position: relative;
 		height: var(--jv-radius-sm);
-		border-radius: var(--jv-rule-live);
+		border-radius: var(--jv-radius-sm);
 		background: var(--jv-line-hair);
 		overflow: hidden;
 	}
@@ -61,12 +62,12 @@
 	.fill {
 		display: block;
 		height: 100%;
-		background: linear-gradient(90deg, var(--jv-accent-deep), var(--jv-accent));
+		background: var(--jv-accent);
 		/* The width IS the truth; the transition only stops it snapping. */
 		transition: width var(--jv-dur-base) var(--jv-ease-out);
 	}
 	[data-tone='error'] .fill {
-		background: linear-gradient(90deg, var(--jv-warn), var(--jv-danger));
+		background: var(--jv-danger);
 	}
 	[data-tone='muted'] .fill {
 		background: var(--jv-line);
@@ -91,10 +92,10 @@
 	/*
 	 * Reduced motion takes the sweep away, and something has to stand in its
 	 * place: the rail alone is indistinguishable from a task that has not
-	 * started. base.css cuts animations to 0.001ms globally, which would leave
-	 * the sweep frozen at its start position — a stub of colour on the left,
-	 * which reads as "2% done". A dim full-width wash instead: no motion, no
-	 * number, and visibly not the same as an empty rail.
+	 * started. base.css cuts animations globally, which would leave the sweep
+	 * frozen at its start position — a stub of colour on the left, which reads
+	 * as "2% done". A dim full-width wash instead: no motion, no number, and
+	 * visibly not the same as an empty rail.
 	 */
 	@media (prefers-reduced-motion: reduce) {
 		.sweep {

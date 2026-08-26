@@ -8,17 +8,22 @@
 	 * Live over the same socket, not polled. `jarvis/tasks/list` runs once on
 	 * connect and the three bus events keep it true afterwards, which is the
 	 * whole reason the registry fires them.
+	 *
+	 * Reactor II puts the day across the top: every scheduled firing still to
+	 * come and every task that ran today, on one strip, so "did my seven
+	 * o'clock reminder run" is a glance and not a search.
 	 */
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import Skeleton from '$lib/components/Skeleton.svelte';
 	import ScheduledJobs from '$lib/components/ScheduledJobs.svelte';
 	import TaskCard from '$lib/components/TaskCard.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { isUnsupported, type Subscription } from '$lib/jarvisClient';
 	import { staggerStyle } from '$lib/motion';
+	import type { ScheduledJob } from '$lib/schedule';
 	import { toasts } from '$lib/toast';
-	import { Button, EmptyState, ScreenState } from '$lib/ui';
+	import { Button, DayStrip, EmptyState, Input, ScreenState, SkeletonRows } from '$lib/ui';
+	import type { DayNode } from '$lib/ui/DayStrip.svelte';
 	import {
 		TASK_EVENTS,
 		activeTasks,
@@ -37,6 +42,7 @@
 	let hint = $state('');
 	let loading = $state(true);
 	let tasks = $state<TaskRow[]>([]);
+	let jobs = $state<ScheduledJob[]>([]);
 	let filter = $state('');
 	/** Ids with an action in flight, so a row's buttons go inert. */
 	let busy = $state<string[]>([]);
@@ -62,6 +68,63 @@
 	const live = $derived(activeTasks(matching));
 	const over = $derived(finishedTasks(matching));
 	const line = $derived(summarise(tasks));
+
+	/** HH:MM, local, for the strip. */
+	function clock(epochSeconds: number): string {
+		const d = new Date(epochSeconds * 1000);
+		return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+	}
+	const MAX_DAY_NODES = 12;
+	const WORD_LENGTH = 14;
+	const word = (text: string) =>
+		text.length > WORD_LENGTH ? `${text.slice(0, WORD_LENGTH - 1)}…` : text;
+
+	/**
+	 * The day: today's tasks and the firings still to come, in clock order.
+	 *
+	 * A task's dot is the state it is in; a scheduled firing is a pending dot
+	 * until it mints a task, which then appears as its own. Capped, because a
+	 * strip that scrolls is a list.
+	 */
+	const dayNodes = $derived.by((): DayNode[] => {
+		const start = new Date();
+		start.setHours(0, 0, 0, 0);
+		const dayStart = start.getTime() / 1000;
+		const dayEnd = dayStart + 86_400;
+		const nodes: (DayNode & { at_s: number })[] = [];
+		for (const task of tasks) {
+			if (task.created < dayStart) continue;
+			nodes.push({
+				at_s: task.created,
+				at: clock(task.created),
+				label: word(task.title),
+				state:
+					task.status === 'running'
+						? 'running'
+						: task.status === 'error'
+							? 'error'
+							: task.status === 'done' || task.status === 'cancelled'
+								? 'done'
+								: 'pending',
+				href: `/work/tasks/${task.id}`,
+				testid: `day-task-${task.id}`
+			});
+		}
+		for (const job of jobs) {
+			if (!job.enabled || !job.next_at || job.next_at >= dayEnd) continue;
+			nodes.push({
+				at_s: job.next_at,
+				at: clock(job.next_at),
+				label: word(job.title),
+				state: 'pending',
+				testid: `day-job-${job.id}`
+			});
+		}
+		return nodes
+			.sort((a, b) => a.at_s - b.at_s)
+			.slice(0, MAX_DAY_NODES)
+			.map(({ at_s: _at, ...node }) => node);
+	});
 
 	function isBusy(id: string): boolean {
 		return busy.includes(id);
@@ -205,11 +268,14 @@
 	);
 </script>
 
-
 <p class="lede" data-testid="tasks-lede" data-redialling={redialling}>
 	{tasks.length} task{tasks.length === 1 ? '' : 's'}{line ? ` · ${line}` : ''} · live over websocket
 	· link {status}
 </p>
+
+{#if dayNodes.length}
+	<DayStrip nodes={dayNodes} label="Today" />
+{/if}
 
 <ScreenState
 	status={screen}
@@ -225,34 +291,33 @@
      task it mints are the same thing at two moments, and putting them a
      navigation apart makes "did my seven o'clock reminder run?" a two-page
      question. -->
-<ScheduledJobs {conn} />
+<div class="scheduled">
+	<ScheduledJobs {conn} onJobs={(list) => (jobs = list)} />
+</div>
 
-{#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
+{#if hint}<p class="hint" data-testid="hint">{hint}</p>{/if}
 
 <div class="toolbar">
-	<label class="jv-sr-only" for="task-filter">Filter tasks</label>
-	<input
-		id="task-filter"
-		type="text"
-		placeholder="filter by title, kind or status  ( / )"
-		data-testid="filter"
-		data-jv-filter
-		bind:value={filter}
-	/>
+	<div class="filter">
+		<label class="jv-sr-only" for="task-filter">Filter tasks</label>
+		<Input
+			bind:value={filter}
+			placeholder="filter by title, kind or status  ( / )"
+			testid="filter"
+		/>
+	</div>
 	{#if filter}
-		<Button testid="clear-filter" onclick={() => (filter = '')}>
-			CLEAR
-		</Button>
+		<Button testid="clear-filter" onclick={() => (filter = '')}>Clear</Button>
 	{/if}
 	{#if over.length}
 		<Button testid="clear-finished" disabled={clearing} onclick={clearFinished}>
-			CLEAR FINISHED
+			Clear finished
 		</Button>
 	{/if}
 </div>
 
 {#if loading}
-	<Skeleton rows={3} />
+	<SkeletonRows rows={3} />
 {:else if !tasks.length}
 	<EmptyState
 		testid="tasks-empty"
@@ -264,7 +329,7 @@
 {:else}
 	{#if live.length}
 		<section aria-labelledby="tasks-live">
-			<h2 id="tasks-live">RUNNING</h2>
+			<h2 id="tasks-live">Running</h2>
 			<div class="stack jv-stagger" data-testid="tasks-live">
 				{#each live as task, i (task.id)}
 					<div style={staggerStyle(i)}>
@@ -277,7 +342,7 @@
 
 	{#if over.length}
 		<section aria-labelledby="tasks-over">
-			<h2 id="tasks-over">FINISHED</h2>
+			<h2 id="tasks-over">Finished</h2>
 			<div class="stack jv-stagger" data-testid="tasks-finished">
 				{#each over as task, i (task.id)}
 					<div style={staggerStyle(i)}>
@@ -290,48 +355,42 @@
 {/if}
 
 <style>
-	h1 {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-lg);
-		letter-spacing: var(--jv-track-logo);
-		color: var(--jv-text-bright);
-		margin: 0 0 var(--jv-space-1);
+	.lede {
+		margin: 0 0 var(--jv-space-4);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.scheduled {
+		margin-bottom: var(--jv-space-4);
 	}
 	h2 {
-		font-family: var(--jv-font-chrome);
+		margin: var(--jv-space-5) 0 var(--jv-space-3);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
 		color: var(--jv-text-faint);
-		margin: var(--jv-space-4) 0 var(--jv-space-2);
 	}
-	.lede {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
-		color: var(--jv-text-dim);
+	.hint {
 		margin: 0 0 var(--jv-space-3);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-warn);
 	}
 	.toolbar {
 		display: flex;
+		align-items: center;
 		gap: var(--jv-space-2);
-		margin-bottom: var(--jv-space-3);
+		margin-bottom: var(--jv-space-4);
 	}
-	.toolbar input {
+	.filter {
 		flex: 1 1 auto;
 		min-width: 0;
+		max-width: calc(var(--jv-space-7) * 9);
 	}
 	.stack {
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-space-2);
-	}
-	.err {
-		color: var(--jv-danger-text);
-		font-size: var(--jv-fs-xs);
-		margin: 0 0 var(--jv-space-2);
-	}
-	.notice {
-		color: var(--jv-warn);
-		font-size: var(--jv-fs-xs);
-		margin: 0 0 var(--jv-space-2);
+		gap: var(--jv-space-3);
 	}
 </style>

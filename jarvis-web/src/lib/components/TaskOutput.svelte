@@ -16,17 +16,20 @@
 		chunks: OutputChunk[];
 		/** Shown when there is nothing yet. */
 		waiting?: string;
+		/** Still printing: a caret blinks after the last line. */
+		live?: boolean;
 	}
-	let { chunks, waiting = 'Nothing printed yet.' }: Props = $props();
+	let { chunks, waiting = 'Nothing printed yet.', live = false }: Props = $props();
 
 	let pane = $state<HTMLDivElement | null>(null);
 	let stuck = $state(true);
+	const SLACK_PX = 24;
 
 	function onscroll() {
 		if (!pane) return;
-		// A 24px tolerance: "at the bottom" has to survive a fractional scroll
-		// height, or the pane unsticks itself on its own output.
-		stuck = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 24;
+		// A little tolerance: "at the bottom" has to survive a fractional
+		// scroll height, or the pane unsticks itself on its own output.
+		stuck = pane.scrollHeight - pane.scrollTop - pane.clientHeight < SLACK_PX;
 	}
 
 	$effect(() => {
@@ -50,6 +53,7 @@
 		{#each chunks as chunk (chunk.seq)}
 			<pre class="chunk" data-stream={chunk.stream}>{chunk.chunk}</pre>
 		{/each}
+		{#if live}<span class="caret" aria-hidden="true"></span>{/if}
 	{:else}
 		<p class="waiting">{waiting}</p>
 	{/if}
@@ -60,15 +64,13 @@
 		max-height: var(--jv-measure-log);
 		overflow: auto;
 		background: var(--jv-surface-sunken);
-		border: 1px solid var(--jv-line-hair);
-		border-radius: var(--jv-radius-md);
-		padding: var(--jv-space-3);
+		padding: var(--jv-space-3) var(--jv-space-4);
 	}
 	.chunk {
 		margin: 0;
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
-		line-height: 1.7;
+		line-height: 1.85;
 		color: var(--jv-text-dim);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
@@ -79,9 +81,26 @@
 	.chunk[data-stream='note'] {
 		color: var(--jv-text);
 	}
+	.caret {
+		display: inline-block;
+		width: var(--jv-rule-live);
+		height: var(--jv-rel-caret);
+		vertical-align: -0.15em;
+		background: var(--jv-accent);
+		animation: blink var(--jv-dur-enter) steps(2) infinite;
+	}
+	@keyframes blink {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0;
+		}
+	}
 	.waiting {
 		margin: 0;
-		font-size: var(--jv-fs-2xs);
+		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-faint);
 	}
 </style>

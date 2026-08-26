@@ -4,8 +4,8 @@
 	 *
 	 * Same reasoning as the approvals banner and the tool strip above it: a
 	 * research run or a scheduled job keeps going while you navigate, so what it
-	 * is doing has to be on screen on every route — the HUD included, where
-	 * there is no console chrome at all and no other way to find out.
+	 * is doing has to be on screen on every route — the voice screen included,
+	 * where there is no console chrome at all and no other way to find out.
 	 *
 	 * It is a GLANCE, not a page. Titles, bars, and a link to `/tasks` for the
 	 * steps and the buttons. It draws nothing when nothing is happening, which
@@ -104,9 +104,9 @@
 {#if shown.length}
 	<section class="dock" data-testid="task-dock" aria-live="polite">
 		<header>
-			<span class="label">TASKS</span>
+			<span class="label">Tasks</span>
 			{#if line}<span class="line" data-testid="task-dock-summary">{line}</span>{/if}
-			<a class="more" href="/tasks" data-testid="task-dock-link">ALL</a>
+			<a class="more" href="/tasks" data-testid="task-dock-link">All</a>
 		</header>
 		<ul>
 			{#each shown as task (task.id)}
@@ -128,59 +128,72 @@
 
 <style>
 	.dock {
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-sm);
 		background: var(--jv-panel);
-		padding: var(--jv-space-3);
-		margin-bottom: var(--jv-space-3);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		margin-bottom: var(--jv-space-4);
 		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 	}
 	header {
 		display: flex;
 		align-items: baseline;
-		gap: var(--jv-space-2);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-3) var(--jv-space-4);
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.label {
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
 		color: var(--jv-text-dim);
-		margin-bottom: var(--jv-space-2);
 	}
 	.line {
-		color: var(--jv-accent);
 		flex: 1 1 auto;
-		letter-spacing: 0;
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-accent);
 		font-variant-numeric: tabular-nums;
 	}
 	.more {
 		margin-left: auto;
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-chrome);
+		text-transform: uppercase;
 		color: var(--jv-text-faint);
 		text-decoration: none;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.more:hover {
-		color: var(--jv-accent);
+		color: var(--jv-text-bright);
 	}
 	ul {
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-2);
 	}
 	li {
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-radius-sm);
+		gap: var(--jv-space-2);
+		padding: var(--jv-space-3) var(--jv-space-4);
+		border-bottom: 1px solid var(--jv-line-hair);
 		animation: jv-rise var(--jv-dur-fast) var(--jv-ease-out) both;
+	}
+	li:last-child {
+		border-bottom: 0;
 	}
 	.top {
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
-		gap: var(--jv-space-2);
+		gap: var(--jv-space-3);
 	}
 	.what {
-		font-size: var(--jv-fs-xs);
+		font-size: var(--jv-fs-sm);
 		color: var(--jv-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -192,7 +205,7 @@
 		flex: 0 0 auto;
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-wide);
+		letter-spacing: var(--jv-track-tight);
 		color: var(--jv-text-faint);
 		font-variant-numeric: tabular-nums;
 	}
@@ -209,21 +222,13 @@
 		color: var(--jv-danger-text);
 	}
 	.say {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		color: var(--jv-text-faint);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	li[data-status='error'] .say {
 		color: var(--jv-danger-text);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.dock,
-		li {
-			animation: none;
-		}
 	}
 </style>

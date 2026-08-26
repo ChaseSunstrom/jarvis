@@ -5,10 +5,10 @@
 	 * A turn that called five tools and took nine seconds used to show a
 	 * spinner. Tool calls are the most interesting thing a turn does — they are
 	 * the moment the assistant touches the house — and they were the least
-	 * visible. jarvis-core now fires `jarvis_tool_started` and
+	 * visible. jarvis-core fires `jarvis_tool_started` and
 	 * `jarvis_tool_finished` around each one; this draws them.
 	 *
-	 * The progress bar is real. `index` and `total` come from the model's own
+	 * The progress rule is real. `index` and `total` come from the model's own
 	 * call list for the round, so "3 of 5" means three of the five things it
 	 * asked for are done. A bar that animated on a timer would be a decoration
 	 * that lies during exactly the nine seconds anybody is looking at it.
@@ -16,6 +16,11 @@
 	 * Rows persist for a moment after the turn so you can read what happened,
 	 * then fade. A failed call stays longer and keeps its reason: that one is
 	 * not a progress report, it is an answer.
+	 *
+	 * The rows are drawn here rather than with `<CallLine>` for one reason: a
+	 * failed call's reason carries its own test id (`tool-error-<name>`), which
+	 * the e2e suite reads verbatim, and the library's line has no hook for it.
+	 * They look the same — that is the point of the line's shape.
 	 */
 	import { onDestroy } from 'svelte';
 	import type { Connection } from '$lib/connection';
@@ -140,7 +145,7 @@
 {#if rows.length}
 	<section class="tools" data-testid="tool-activity" aria-live="polite">
 		<header>
-			<span class="label">{running ? 'WORKING' : failed ? 'FINISHED WITH ERRORS' : 'DONE'}</span>
+			<span class="label">{running ? 'Working' : failed ? 'Finished with errors' : 'Done'}</span>
 			<span class="count" data-testid="tool-progress-count">{done} / {total}</span>
 		</header>
 
@@ -158,15 +163,15 @@
 		<ul>
 			{#each rows as row (row.key)}
 				<li class={row.state} data-testid="tool-row-{row.name}">
-					<span class="dot" aria-hidden="true"></span>
-					<span class="name">{row.name}</span>
+					<i aria-hidden="true"></i>
+					<b>{row.name}</b>
 					<span class="args">{summarise(row.arguments)}</span>
 					{#if row.state === 'running'}
-						<span class="meta">…</span>
+						<em class="live">…</em>
 					{:else if row.state === 'failed'}
-						<span class="meta err" data-testid="tool-error-{row.name}">{row.error ?? 'failed'}</span>
+						<em class="bad" data-testid="tool-error-{row.name}">{row.error ?? 'failed'}</em>
 					{:else}
-						<span class="meta">{row.durationMs}ms</span>
+						<em class="ok">ok</em><span class="ms">· {row.durationMs} ms</span>
 					{/if}
 				</li>
 			{/each}
@@ -176,117 +181,108 @@
 
 <style>
 	.tools {
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-sm);
 		background: var(--jv-panel);
-		padding: var(--jv-space-3);
-		margin-bottom: var(--jv-space-3);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		margin-bottom: var(--jv-space-4);
 		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 	}
 	header {
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+		padding: var(--jv-space-3) var(--jv-space-4);
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.label {
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
 		color: var(--jv-text-dim);
-		margin-bottom: var(--jv-space-2);
 	}
 	.count {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
 		font-variant-numeric: tabular-nums;
 		color: var(--jv-accent);
 	}
 	.track {
-		height: var(--jv-radius-sm);
-		border-radius: var(--jv-rule-live);
+		height: var(--jv-rule-live);
 		background: var(--jv-line-hair);
 		overflow: hidden;
 	}
 	.fill {
 		height: 100%;
-		background: linear-gradient(90deg, var(--jv-accent-deep), var(--jv-accent));
+		background: var(--jv-accent);
 		/* The width is the truth; the transition only stops it snapping. */
 		transition: width var(--jv-dur-base) var(--jv-ease-out);
 	}
 	.fill.failed {
-		background: linear-gradient(90deg, var(--jv-warn), var(--jv-danger));
+		background: var(--jv-danger);
 	}
 	ul {
 		list-style: none;
-		margin: var(--jv-space-2) 0 0;
-		padding: 0;
+		margin: 0;
+		padding: var(--jv-space-2) var(--jv-space-4) var(--jv-space-3);
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-rule-live);
 	}
 	li {
-		display: grid;
-		grid-template-columns: 10px minmax(0, auto) minmax(0, 1fr) auto;
+		display: flex;
 		align-items: baseline;
 		gap: var(--jv-space-2);
+		min-width: 0;
 		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
-		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.9;
+		color: var(--jv-text-faint);
 		animation: jv-rise var(--jv-dur-fast) var(--jv-ease-out) both;
 	}
-	.dot {
-		width: var(--jv-radius-md);
-		height: var(--jv-radius-md);
+	i {
+		flex: none;
+		width: var(--jv-space-1);
+		height: var(--jv-space-1);
 		border-radius: 50%;
-		background: var(--jv-line);
-		justify-self: center;
-	}
-	li.running .dot {
-		background: var(--jv-accent);
-		animation: jv-pulse var(--jv-dur-enter) ease-in-out infinite;
-	}
-	li.ok .dot {
 		background: var(--jv-ok);
+		align-self: center;
 	}
-	li.failed .dot {
+	li.running i {
+		background: var(--jv-accent);
+		box-shadow: 0 0 var(--jv-radius-md) var(--jv-glow);
+		animation: jv-blink var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
+	}
+	li.failed i {
 		background: var(--jv-danger);
 	}
-	.name {
-		color: var(--jv-text);
-		font-weight: 600;
+	b {
+		font-weight: var(--jv-weight-body);
+		color: var(--jv-text-dim);
 	}
-	.args,
-	.meta {
+	li.running b {
+		color: var(--jv-text-bright);
+	}
+	.args {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		min-width: 0;
 	}
-	.meta {
-		font-variant-numeric: tabular-nums;
-		color: var(--jv-text-faint);
+	em {
+		font-style: normal;
 	}
-	.meta.err {
+	.ok {
+		color: var(--jv-ok);
+	}
+	.bad {
 		color: var(--jv-danger-text);
 	}
-
-	@keyframes jv-pulse {
-		0%,
-		100% {
-			opacity: 1;
-			transform: scale(1);
-		}
-		50% {
-			opacity: 0.35;
-			transform: scale(0.7);
-		}
+	.live {
+		color: var(--jv-accent);
 	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.tools,
-		li {
-			animation: none;
-		}
-		li.running .dot {
-			animation: none;
-		}
-		.fill {
-			transition: none;
-		}
+	.ms {
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 </style>

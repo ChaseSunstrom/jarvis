@@ -7,8 +7,14 @@
 	 * open while the task is running, because that is when "which step" is the
 	 * question, and shut once it is over, when the answer is the result. A page
 	 * of twelve finished research jobs should not be forty screens of steps.
+	 *
+	 * On Reactor II the card is a flat panel: the title in the body face, the
+	 * kind and the elapsed time in mono, the bar a thin accent rule, and the
+	 * state said twice — a tag, and an inset rule down the left edge in the
+	 * state's colour, so a failed job reads as one before the word is read.
 	 */
 	import TaskBar from './TaskBar.svelte';
+	import { Button, Pill } from '$lib/ui';
 	import {
 		ago,
 		canCancel,
@@ -42,6 +48,17 @@
 	const open = $derived(touched ? opened : !isFinished(task) && task.steps.length > 0);
 	const step = $derived(currentStep(task));
 	const counts = $derived(stepCount(task));
+	const tone = $derived(
+		task.status === 'running'
+			? 'live'
+			: task.status === 'blocked'
+				? 'warn'
+				: task.status === 'error'
+					? 'danger'
+					: task.status === 'done'
+						? 'ok'
+						: 'neutral'
+	);
 
 	function toggle(): void {
 		touched = true;
@@ -51,7 +68,7 @@
 
 <article class="task" data-testid="task-card-{task.id}" data-status={task.status} data-kind={task.kind}>
 	<header>
-		<span class="badge" data-testid="task-status-{task.id}">{statusLabel(task)}</span>
+		<Pill {tone} testid="task-status-{task.id}">{statusLabel(task)}</Pill>
 		<h3 title={task.title}>
 			<a class="open" href="/tasks/{task.id}" data-testid="task-open-{task.id}">{task.title}</a>
 		</h3>
@@ -75,7 +92,8 @@
 				aria-expanded={open}
 				onclick={toggle}
 			>
-				{open ? '▾' : '▸'} {task.steps.length} step{task.steps.length === 1 ? '' : 's'}
+				<span class="chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+				{task.steps.length} step{task.steps.length === 1 ? '' : 's'}
 				{#if step && !open}<span class="now">— {step.title}</span>{/if}
 			</button>
 		{:else}
@@ -84,22 +102,14 @@
 
 		<span class="actions">
 			{#if canCancel(task) && onCancel}
-				<button
-					type="button"
-					class="act"
-					data-testid="task-cancel-{task.id}"
-					disabled={busy}
-					onclick={() => onCancel?.(task)}>CANCEL</button
-				>
+				<Button testid="task-cancel-{task.id}" disabled={busy} onclick={() => onCancel?.(task)}>
+					Cancel
+				</Button>
 			{/if}
 			{#if onForget}
-				<button
-					type="button"
-					class="act"
-					data-testid="task-forget-{task.id}"
-					disabled={busy}
-					onclick={() => onForget?.(task)}>FORGET</button
-				>
+				<Button testid="task-forget-{task.id}" disabled={busy} onclick={() => onForget?.(task)}>
+					Forget
+				</Button>
 			{/if}
 		</span>
 	</footer>
@@ -108,11 +118,10 @@
 		<ol class="steps" data-testid="task-step-list-{task.id}">
 			{#each task.steps as s, i (s.title + i)}
 				<li data-status={s.status}>
-					<span class="mark" aria-hidden="true">
-						{#if s.status === 'done'}[ok]{:else if s.status === 'error'}[--]{:else if s.status === 'running'}[&gt;&gt;]{:else if s.status === 'blocked'}[??]{:else}[&nbsp;&nbsp;]{/if}
-					</span>
+					<span class="n" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
 					<span class="what">{s.title}</span>
 					{#if s.detail}<span class="say">{s.detail}</span>{/if}
+					<span class="state">{s.status}</span>
 				</li>
 			{/each}
 		</ol>
@@ -120,78 +129,56 @@
 </article>
 
 <style>
+	.task {
+		display: flex;
+		flex-direction: column;
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-4);
+		background: var(--jv-panel);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+	}
+	/* The state, said down the edge: the one rule this card draws in colour. */
+	.task[data-status='running'] {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
+	}
+	.task[data-status='blocked'] {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn);
+	}
+	.task[data-status='error'] {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-danger);
+	}
+	header {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: baseline;
+		gap: var(--jv-space-3);
+	}
+	h3 {
+		margin: 0;
+		font-size: var(--jv-fs-md);
+		font-weight: var(--jv-weight-body);
+		color: var(--jv-text-bright);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.open {
 		color: inherit;
 		text-decoration: none;
-		border-bottom: 1px solid var(--jv-line-hair);
+		border-bottom: 1px solid transparent;
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.open:hover {
-		color: var(--jv-text-bright);
 		border-bottom-color: var(--jv-accent);
 	}
 	.open:focus-visible {
 		outline: var(--jv-focus-outline);
 		outline-offset: var(--jv-focus-offset);
 	}
-
-	.task {
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-sm);
-		background: var(--jv-panel);
-		padding: var(--jv-space-3);
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-2);
-	}
-	.task[data-status='error'] {
-		border-color: var(--jv-danger);
-	}
-	.task[data-status='blocked'] {
-		border-color: var(--jv-warn);
-	}
-	header {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		align-items: baseline;
-		gap: var(--jv-space-2);
-	}
-	h3 {
-		margin: 0;
-		font-size: var(--jv-fs-sm);
-		font-weight: 500;
-		color: var(--jv-text-bright);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.badge {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-wide);
-		color: var(--jv-text-dim);
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-pill);
-		padding: 1px var(--jv-space-2);
-		white-space: nowrap;
-	}
-	[data-status='running'] .badge {
-		color: var(--jv-accent);
-		border-color: var(--jv-accent-deep);
-	}
-	[data-status='blocked'] .badge {
-		color: var(--jv-warn);
-		border-color: var(--jv-warn);
-	}
-	[data-status='done'] .badge {
-		color: var(--jv-ok);
-	}
-	[data-status='error'] .badge {
-		color: var(--jv-danger-text);
-		border-color: var(--jv-danger);
-	}
 	.meta {
 		display: flex;
-		gap: var(--jv-space-2);
+		gap: var(--jv-space-3);
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		color: var(--jv-text-faint);
@@ -199,12 +186,12 @@
 		font-variant-numeric: tabular-nums;
 	}
 	.kind {
-		letter-spacing: var(--jv-track-wide);
+		letter-spacing: var(--jv-track-tight);
 		text-transform: uppercase;
 	}
 	.detail {
 		margin: 0;
-		font-size: var(--jv-fs-xs);
+		font-size: var(--jv-fs-sm);
 		color: var(--jv-text-dim);
 		overflow-wrap: anywhere;
 	}
@@ -215,15 +202,19 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		gap: var(--jv-space-2);
+		gap: var(--jv-space-3);
 	}
+	/* Prose, not chrome: "5 steps — wiring the socket" reads as a sentence, and
+	   a test reads it with innerText, which a text-transform would rewrite. */
 	.disclose {
+		display: inline-flex;
+		align-items: baseline;
+		gap: var(--jv-space-2);
 		background: none;
 		border: 0;
 		padding: 0;
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-wide);
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-dim);
 		cursor: pointer;
 		text-align: left;
@@ -231,42 +222,29 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.disclose.flat {
 		cursor: default;
 		color: var(--jv-text-faint);
 	}
 	.disclose:hover:not(.flat) {
-		color: var(--jv-accent);
+		color: var(--jv-text-bright);
+	}
+	.disclose:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: var(--jv-focus-offset);
+	}
+	.chevron {
+		color: var(--jv-text-faint);
 	}
 	.now {
 		color: var(--jv-text-faint);
-		text-transform: none;
-		letter-spacing: 0;
 	}
 	.actions {
 		display: flex;
 		gap: var(--jv-space-2);
 		flex: 0 0 auto;
-	}
-	.act {
-		background: none;
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-sm);
-		padding: var(--jv-rule-live) var(--jv-space-2);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-wide);
-		color: var(--jv-text-dim);
-		cursor: pointer;
-	}
-	.act:hover:not(:disabled) {
-		color: var(--jv-accent);
-		border-color: var(--jv-accent-deep);
-	}
-	.act:disabled {
-		opacity: 0.45;
-		cursor: default;
 	}
 	.steps {
 		list-style: none;
@@ -274,34 +252,61 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-rule-live);
-		border-top: 1px dashed var(--jv-line-hair);
-		padding-top: var(--jv-space-2);
+		border-top: 1px solid var(--jv-line-hair);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 	}
 	.steps li {
 		display: grid;
-		grid-template-columns: auto minmax(0, auto) minmax(0, 1fr);
-		gap: var(--jv-space-2);
+		grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto;
+		align-items: baseline;
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-2) var(--jv-space-2);
+		border-bottom: 1px solid var(--jv-line-hair);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+	}
+	.steps li:last-child {
+		border-bottom: 0;
+	}
+	.n,
+	.state {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		color: var(--jv-text-faint);
+		font-variant-numeric: tabular-nums;
 	}
-	.steps li[data-status='running'] .what {
+	.steps li[data-status='running'] {
+		color: var(--jv-text-bright);
+		background: var(--jv-wash);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
+	}
+	.steps li[data-status='running'] .n,
+	.steps li[data-status='running'] .state {
 		color: var(--jv-accent);
 	}
-	.steps li[data-status='done'] .mark {
+	.steps li[data-status='done'] .n {
 		color: var(--jv-ok);
 	}
-	.steps li[data-status='error'] .mark,
-	.steps li[data-status='error'] .say {
+	.steps li[data-status='error'] .n,
+	.steps li[data-status='error'] .say,
+	.steps li[data-status='error'] .state {
 		color: var(--jv-danger-text);
 	}
-	.steps li[data-status='blocked'] .mark {
+	.steps li[data-status='blocked'] .n,
+	.steps li[data-status='blocked'] .state {
 		color: var(--jv-warn);
 	}
 	.say {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	@media (max-width: 640px) {
+		header {
+			grid-template-columns: auto minmax(0, 1fr);
+		}
+		.meta {
+			grid-column: 1 / -1;
+		}
 	}
 </style>

@@ -22,14 +22,6 @@
 	}
 	let { entries, startedAt = 0, live = false }: Props = $props();
 
-	const KIND_MARK: Record<string, string> = {
-		status: '●',
-		step: '▸',
-		tool: '⟩',
-		output: '·',
-		note: '·'
-	};
-
 	function offset(at: number): string {
 		if (!startedAt || !at) return '';
 		const seconds = Math.max(0, Math.round(at - startedAt));
@@ -47,7 +39,7 @@
 			data-testid="timeline-entry"
 		>
 			<span class="at">{offset(entry.at)}</span>
-			<span class="mark" aria-hidden="true">{KIND_MARK[entry.kind] ?? '·'}</span>
+			<i class="mark" aria-hidden="true"></i>
 			<span class="text">{entry.text}</span>
 		</li>
 	{:else}
@@ -60,26 +52,35 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: grid;
-		gap: 0;
 	}
 	.entry {
 		display: grid;
-		grid-template-columns: 4rem var(--jv-space-4) 1fr;
+		grid-template-columns: auto auto minmax(0, 1fr);
 		align-items: baseline;
-		gap: var(--jv-space-2);
-		padding: var(--jv-space-1) var(--jv-space-4);
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-2) var(--jv-space-4);
 		border-bottom: 1px solid var(--jv-line-hair);
-		font-size: var(--jv-fs-2xs);
+		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-dim);
+	}
+	.entry:last-child {
+		border-bottom: 0;
 	}
 	.at {
 		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
 		font-variant-numeric: tabular-nums;
 		color: var(--jv-text-faint);
+		min-width: calc(var(--jv-space-7) + var(--jv-space-2));
 	}
+	/* A dot per entry, in the colour of what it was: a step or a status in the
+	   deep accent, a tool call brighter, output the quiet tick. */
 	.mark {
-		color: var(--jv-tick);
+		width: var(--jv-space-1);
+		height: var(--jv-space-1);
+		border-radius: 50%;
+		background: var(--jv-tick);
+		align-self: center;
 	}
 	.text {
 		white-space: pre-wrap;
@@ -87,10 +88,14 @@
 	}
 	.entry[data-kind='status'] .mark,
 	.entry[data-kind='step'] .mark {
-		color: var(--jv-accent-deep);
+		background: var(--jv-accent-deep);
+	}
+	.entry[data-kind='tool'] .mark {
+		background: var(--jv-text-dim);
 	}
 	.entry[data-kind='tool'] .text {
 		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
 		color: var(--jv-text);
 	}
 	.entry.live {
@@ -99,11 +104,13 @@
 		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	}
 	.entry.live .mark {
-		color: var(--jv-accent);
+		background: var(--jv-accent);
+		box-shadow: 0 0 var(--jv-radius-md) var(--jv-glow);
+		animation: jv-blink var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
 	}
 	.empty {
 		padding: var(--jv-space-4);
-		font-size: var(--jv-fs-2xs);
+		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-faint);
 	}
 </style>

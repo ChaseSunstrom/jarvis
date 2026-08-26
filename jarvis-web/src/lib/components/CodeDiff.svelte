@@ -25,21 +25,21 @@
 </span>{/each}</code
 		></pre>
 {:else}
-	<p class="muted" data-testid="code-diff-empty">No changes.</p>
+	<p class="none" data-testid="code-diff-empty">No changes.</p>
 {/if}
 
 <style>
 	.head {
 		display: flex;
-		gap: var(--jv-space-2);
+		gap: var(--jv-space-3);
 		align-items: baseline;
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-wide);
-		margin-bottom: var(--jv-space-1);
+		letter-spacing: var(--jv-track-tight);
+		margin-bottom: var(--jv-space-2);
 	}
 	.add {
-		color: var(--jv-ok, var(--jv-accent));
+		color: var(--jv-ok);
 	}
 	.rem {
 		color: var(--jv-danger-text);
@@ -52,17 +52,19 @@
 		max-height: calc(var(--jv-space-7) * 8.66667);
 		overflow: auto;
 		border: 1px solid var(--jv-line-hair);
-		background: var(--jv-surface-sunken, transparent);
-		padding: var(--jv-space-2);
-		font-size: var(--jv-fs-xs);
-		line-height: 1.45;
+		border-radius: var(--jv-radius-md);
+		background: var(--jv-surface-sunken);
+		padding: var(--jv-space-3) var(--jv-space-4);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.7;
 	}
 	.ln {
 		display: block;
 		white-space: pre;
 	}
 	.ln.add {
-		color: var(--jv-ok, var(--jv-accent));
+		color: var(--jv-ok);
 	}
 	.ln.remove {
 		color: var(--jv-danger-text);
@@ -75,5 +77,10 @@
 	}
 	.ln.context {
 		color: var(--jv-text-dim);
+	}
+	.none {
+		margin: 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
 	}
 </style>
