@@ -620,27 +620,27 @@ is quiet. Done since:
   download failing on the runner and being retried, read by the job as a crash loop. The
   job now caches ./models/embeddings across runs and counts restarts from a service's first
   healthy answer, which is where a loop would show; a retried first start is a warning.
-- 19:45 — the fourth rebuild (the dedupe): the fact leaves the store and only one note is
+- 19:30 — the fourth rebuild (the dedupe): the fact leaves the store and only one note is
   kept; memory-forget now misses on the reply to "forget that" — "Understood, Sir." — because
   the message forbade mentioning a forgetting at all. It says the two things separately now
   (confirm now; never hint later), 04cabae; a fifth rebuild measures it.
-- 19:55 — the scorecard gate 13/14 with the load's own subject: every section 100 %, idle and
+- 19:40 — the scorecard gate 13/14 with the load's own subject: every section 100 %, idle and
   under-load latency measured; its smoke slice lost one scenario (read below). CI green on
   cd95876 but for compose smoke's retried download, addressed; ae87e96 pushed (the dedupe,
   the forget confirmation, the compose-smoke retry rule and model cache, the scorecard
   load). The fifth rebuild measures the forget confirmation.
-- 20:05 — the fifth rebuild: memory-forget's first two turns pass (one note, confirmed
+- 19:41 — the fifth rebuild: memory-forget's first two turns pass (one note, confirmed
   forgotten); the third still hints — "You asked me to forget it, Sir — so I can't say" — a
   tool result's note two turns back does not outweigh the conversation the model can see.
   Being made structural: a successful forget scrubs the forgotten text from the thread, so
   "nothing recorded" is the only thing left to say. house-light-on green both variants,
   median 1.25 s.
-- 20:10 — the hint was the transcript scrub's own placeholder, "(something the user later
+- 19:43 — the hint was the transcript scrub's own placeholder, "(something the user later
   asked Jarvis to forget)", read back verbatim; it says "(nothing recorded)" now and the
   rules say the same in words (7a16547). A sixth rebuild measures it behind the clean M26
   run. The scorecard gate's fourth run: 13/14, the scorecard itself passing with the load
   measured; the fifth run keeps its smoke slice's detail.
-- 20:20 — the clean M26 run: the scorecard passes (every section, idle and under load); its
+- 19:50 — the clean M26 run: the scorecard passes (every section, idle and under load); its
   smoke slice lost chat-context-retention on both variants — "now turn it off again"
   answered with turn_on (voice, the call written out and recovered) and with no call
   (text) — after four passes of the same slice today on the same rules. The mechanism is
@@ -648,10 +648,17 @@ is quiet. Done since:
   routing runs under; measuring the smoke set at a lower value is the next intelligence
   experiment, recorded here rather than tuned blind. CI green on ae87e96 so far (desktop,
   compose smoke with the cache, CI, APK).
-- 20:30 — the sixth rebuild: the placeholder holds — nothing hints at a forgetting — and the
+- 19:53 — the sixth rebuild: the placeholder holds — nothing hints at a forgetting — and the
   thread scenarios pass both variants; memory-forget's confirmation came as "Done, Sir.",
   which the judge does not take as the word. The message names the word (a14377f); the
   seventh rebuild measures it. Each of these is a ten-minute loop of build, smoke, judge.
-- 20:35 — CI fully green on ae87e96 (seventh all-green head), compose smoke included with
+- 19:57 — CI fully green on ae87e96 (seventh all-green head), compose smoke included with
   the model cache and the first-health restart rule; 01bfb30 pushed (the placeholder, the
   forget wording, the logs). The seventh rebuild is measuring the forget confirmation.
+- 20:00 — M65, the catalogue, cherry-picked from its worktree (ddec4bc): a built-in `bundled`
+  source of the four shipped skills, browse answering installed/sources/errors, the Catalogue
+  first on Settings › Tools through the one search box, ADD BY URL for MCP; verifying on the
+  branch (core 181, vitest 757, the gates running). CI on 01bfb30: the web e2e reported a
+  second filled control on six screens with no web file changed; both specs name the
+  control now (d47d443) and pass here 36/36. (Stamps from here on are `date` on this host;
+  the five before were ahead of it.)
