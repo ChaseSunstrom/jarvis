@@ -1036,7 +1036,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the first panel after the one search box. Remote https sources stay unexercised (as
     under M47).
 
-- [ ] **M66 — Ask and answer** · size M · deps M43, M60 · parallel-ok M67, M68, M69, M70, M71
+- [x] **M66 — Ask and answer** · size M · deps M43, M60 · parallel-ok M67, M68, M69, M70, M71
   - Scope: the operator's reports of 26 Aug 20:21: when Jarvis asks something, the voice speaks
     the reply AND the question (a double); a held question expires after five minutes and the
     answer then fails with "unknown, expired or already-used approval request" / "ask_user was
@@ -1053,6 +1053,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the phone shows a `spoken` question and stays silent. Not ticked because the live rig has
     not heard it and the Kotlin does not build here; no Settings row for `question_ttl` (M67 is
     in the settings registry at the same time).
+  - 26 Aug 22:28: ticked on the branch — the agent's commits (61b8fba, f1d2a04, 05a505d, 9de37a1,
+    476bb77) cherry-picked over M67 and M71 (`speaker` and `spoken` both reach `converse`; the
+    banner keeps M67's sentence and M66's clock), gate 28/28 here. `llm.question_ttl` is in the
+    settings registry now (Question expiry, beside Approval expiry). The spoken yes on the real
+    house is `house-confirm-by-voice` in the live rig; its numbers land with the report run.
 - [x] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66
   - Scope: "how can I ask it to be able to edit settings with permission" — a `list_settings`
     tool (Tier 1, read-only) over the console's settings registry, compact for the whole list and
@@ -1088,7 +1093,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     lookups, the JavaScript page, the document and cancel all answer through the fallback; the
     deep report missed because the model called deep_research with no question and then told
     the user the work was waiting on confirmation — fixed in the commit after this one.
-- [ ] **M69 — The house is editable by voice** · size M · deps M66 · parallel-ok M67
+- [x] **M69 — The house is editable by voice** · size M · deps M66 · parallel-ok M67
   - Scope: "Can you remove all of the elements of the house?" — "I have no tool for deleting
     entities". A `remove_entities` tool (Tier 3, entity ids pinned) and `remove_device` over
     the entity/device registries the console's Devices and Areas screens already write, with
@@ -1099,6 +1104,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     `test_entity_remove` 29 with the API, tier-table and packaging suites; the harness self-test's
     removal confirmed by "yes, go ahead" and "all of the elements" refused; the Devices screen's
     REMOVE and the removed tile in a browser (3). Waits for the live rig.
+  - 26 Aug 22:28: ticked on the branch — gate 19/19 after one merge-time fix of the console's own:
+    the Devices screen subscribed to `state_changed` after its first load, so a removal made
+    elsewhere in that gap never reached the page (1 in 9 locally); it subscribes first now. The
+    spoken removal on the real house is `house-remove-by-voice` in the live rig (the rig announces
+    a sensor, asserts it is there, has it removed, asserts it is absent); numbers with the report.
 - [x] **M70 — A faster voice** · size S · deps M35 · parallel-ok M66
   - Scope: "can you have jarvis speak slightly faster" — Piper's length scale (`PIPER_LENGTH_SCALE`
     in compose, pinned to `.env.example` and `configuration.yaml` as the other voice knobs are)

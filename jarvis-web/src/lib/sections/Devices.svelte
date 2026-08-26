@@ -269,7 +269,13 @@
 	}
 
 	// --- the socket, and getting it back ------------------------------------
-	// Dial, load, subscribe: the three steps that make this page's rows true.
+	// Dial, subscribe, load: the three steps that make this page's rows true —
+	// in that order. Subscribing after the first load left a gap between the
+	// rows being visible and the socket listening, and a removal made
+	// elsewhere in that gap (the M69 gate on a busy box) never reached the
+	// page: the row stayed. Subscribed first, an event that lands during the
+	// load is applied to a map the load then rebuilds from a snapshot taken
+	// after the subscription — so nothing is missed, only re-read.
 	// `connect()` is a function rather than the body of onMount so the RECONNECT
 	// button can run all three again — see `$lib/ui` OfflineState for why a page’s
 	// socket does not reattach on its own.
@@ -302,8 +308,6 @@
 				return;
 			}
 			conn = connection;
-			await load(connection);
-			await loadCompanions(connection);
 			subs.push(
 				await connection.client.subscribeEvents((event) => {
 					if (applyStateChanged(stateMap, event)) publish();
@@ -349,6 +353,8 @@
 					// still correct on load, which is what it was before.
 				}
 			}
+			await load(connection);
+			await loadCompanions(connection);
 		} catch (e) {
 			err = describeError(e);
 		} finally {

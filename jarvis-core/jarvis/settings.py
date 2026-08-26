@@ -248,6 +248,14 @@ def _apply_approval_ttl(jarvis: "Jarvis", value: Any) -> bool:
     return True
 
 
+def _apply_question_ttl(jarvis: "Jarvis", value: Any) -> bool:
+    registry = jarvis.data.get("llm_tools")
+    if registry is None:
+        return False
+    registry.question_ttl = value
+    return True
+
+
 def _model_choices(jarvis: "Jarvis") -> list[str]:
     """Whatever Ollama says it has, when it is answering."""
     agent = _llm_agent(jarvis)
@@ -396,6 +404,21 @@ SETTINGS: tuple[SettingSpec, ...] = (
         note="Seconds a Tier-3 request waits for a human before it lapses.",
         validate=_number(30, 3600),
         apply_hook=_apply_approval_ttl,
+    ),
+    SettingSpec(
+        key="llm.question_ttl",
+        path=("llm", "question_ttl"),
+        label="Question expiry",
+        group="Assistant",
+        type="number",
+        # Its own clock (M66): a question waits on a fact the person may have
+        # to walk to the console for; an approval waits on a yes. The
+        # operator's held question was answered after five minutes and told
+        # "expired" — this is the number that decides that.
+        note="Seconds a question the assistant asks waits for an answer before it "
+        "lapses. Longer than approval expiry: a person may be away from the console.",
+        validate=_number(30, 7200),
+        apply_hook=_apply_question_ttl,
     ),
     SettingSpec(
         key="llm.timeout",

@@ -721,3 +721,16 @@ is quiet. Done since:
   pending in the shared world for the rest of the run. The mock now treats a re-raised id as the
   same request (as the server does). HUD + look + menus together: 42/42. M67 ticked (gate 25/25
   on the branch); M70 ticked (gate 14/14, the Settings › Voice pace row).
+- 22:28 — M66/M69 and M71 merged: nine commits cherry-picked over M67 with eight code conflicts
+  resolved by keeping both sides (`speaker` and `spoken` both reach `converse`; the banner keeps
+  M67's sentence and M66's clock). Re-verified on the branch, which found three merge seams the
+  worktrees could not: a `/**` lost between two doc comments (the web build failed), `change_setting`
+  missing from the Tier-3 service-twin table M69 added beside it, and — a defect of the console's
+  own — the Devices screen subscribing to `state_changed` after its first load, so a removal made
+  elsewhere in that gap was missed (1 in 9 locally; it subscribes first now). Gates on the branch:
+  M66 28/28, M69 19/19, M71 37/37, M67 25/25. `llm.question_ttl` joined the settings registry.
+  Three live scenarios written for the report run: house-confirm-by-voice (a spoken yes completes
+  a held unlock), house-remove-by-voice (a spoken removal of a rig-announced sensor, asserted
+  present then absent) and settings-by-voice (the operator's "demo mode", then a held setting
+  change confirmed by voice). CI on 2257937: the python red was the table row; the web red a HUD
+  short-screen test that passes 4/4 here.
