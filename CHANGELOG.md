@@ -17,7 +17,10 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the remainder, never the whole twice. Eight Tasker rows closed with actions the JVM can prove —
   `show_toast`, `set_auto_brightness`, `set_rotation_lock`, `set_screen_timeout`,
   `get_network_info`, `send_intent`, `launch_shortcut`, `media_control` — and two named under the
-  accessibility agent's existing ids (`lock_screen`, `screenshot`). Not ticked: this host has no
+  accessibility agent's existing ids (`lock_screen`, `screenshot`). The phone's reactor moves for
+  what Jarvis does as the console's does: the blades sweep once per tool call (`motion.dur.sweep`),
+  the rim beats while speaking (`motion.reactor.speak`), the iris gathers while a camera is
+  looked at (`reactor_motion_test.py`). Not ticked: this host has no
   Android SDK, so the Kotlin is mirrored in Python and JVM tests are written but the build, lint
   and golden screenshots wait for a machine that has one (ADT-036…039); thirteen rows stay gap
   for permissions the app does not yet request.
@@ -33,6 +36,20 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   website: `do: fixture_write:` rewrites a page under the fixture web's `live/`, `{{handbook}}`
   in a turn is the fixture's address, and `watch-page-change` asks for a watch, changes the page,
   and expects the moment.
+- **M60 — intelligence and speed.** The wait on a voice turn was never the model (≈75 tok/s); it
+  was the prompt and the speech. The prompt prefix is now kept on the server between turns
+  (`cache_prompt` on every request, top-level for llama.cpp and in `extra_body` for the gateway)
+  and the system prompt is ordered stable-first — persona, rules, toolbox, rooms, skills, then
+  the house, the notes for this question, and the clock last — so the cache hits; its size is
+  measured against `PROMPT_TOKEN_BUDGET` by a test. The first finished sentence of a reply is
+  synthesised and sent as `tts-chunk` while the model writes the rest; the console plays the
+  chunks and then `tts_output.remainder_url`; `tts-end` still carries the whole reply for a
+  client that plays only that (the phone, until M61). Whisper runs `--compute-type int8`
+  (decision in `docs/TOOLING_DECISIONS.md`). For a small model: after it narrates a tool call
+  instead of making one, the corrective retry is answered under a JSON schema naming exactly the
+  tools offered (`llm: constrained_tool_calls`), so the reply can only be a call. The task
+  planner marks steps that only look (`reads_only`) and acts on a run of them in one round. The
+  eval floors are pinned in the gate and were not moved.
 - **M55 — simpler menus everywhere.** HOUSE, WORK, KNOWLEDGE and the tools page held to a menu
   inventory in `docs/UI_MIGRATION.md` §4 that `e2e/menus.spec.ts` reads and enforces against the
   mock: one primary control per screen at rest, no two visible controls outside rows with the same

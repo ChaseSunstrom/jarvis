@@ -62,7 +62,7 @@ print(f"{len(closed)} rows closed by M61, each with a unit test")
 check "the phone draws the activity strip from the shared vocabulary" test -f android-app/tools/activity_mirror_test.py
 check "the activity mirror agrees with the contract" python3 android-app/tools/activity_mirror_test.py
 check "the voice screen has the graph and the activity strip" bash -c "grep -rqE 'ActivityStrip|activityStrip' $KT/ui && grep -rqE 'KnowledgeGraph|knowledgeGraph' $KT/ui"
-check "the reactor sweeps, beats and irises on the phone (the M53 vocabulary)" bash -c "grep -qE 'sweep' $KT/ui/ReactorOrb.kt && grep -qE 'speak|cadence' $KT/ui/ReactorOrb.kt && grep -qE 'iris|looking' $KT/ui/ReactorOrb.kt"
+check "the reactor sweeps, beats and irises on the phone (the M53 vocabulary)" python3 android-app/tools/reactor_motion_test.py
 check "the geometry mirror still pins Kotlin to the contract" python3 android-app/tools/reactor_orb_test.py
 check "token lint: the phone is clean" python3 scripts/verify/token_lint.py --require-clean android-app/app/src/main/
 check_sh "the Android mirrors" 'make -s test-android 2>&1 | tail -3'

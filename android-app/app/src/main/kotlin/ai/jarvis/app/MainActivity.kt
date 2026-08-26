@@ -828,6 +828,10 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     override fun onActivity(rows: ActivityRows) = activityStrip.render(rows)
     override fun onKnowledge(nodes: List<KnowledgeGraph.Node>, edges: List<KnowledgeGraph.Edge>) = knowledgeGraphView.render(nodes, edges)
     override fun onKnowledgePulse(ids: List<String>) = knowledgeGraphView.pulse(ids)
+    override fun onWork() = orbView.work()
+    override fun onLooking(looking: Boolean) {
+        orbView.looking = looking
+    }
 
     /**
      * A conversation ended. On a screen with no talk button, that is not a

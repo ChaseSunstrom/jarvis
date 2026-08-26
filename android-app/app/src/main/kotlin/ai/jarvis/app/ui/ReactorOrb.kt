@@ -122,6 +122,18 @@ class ReactorOrb(private val density: Float) {
         var turbulence = false
 
         /**
+         * The M53 vocabulary, as the web has it (`docs/design/MOTION.md`):
+         * [workSweep] is how lit the blade ring still is from the last tool
+         * call (1 at the call, 0 after `Motion.Dur.SWEEP`); [cadence] is the
+         * rim's beat while speaking (1 at rest, dipping by [CADENCE_DEPTH] on
+         * `Motion.Reactor.SPEAK`); [looking] converges the iris arcs while a
+         * camera is being looked at. The view computes them from its clock.
+         */
+        var workSweep = 0f
+        var cadence = 1f
+        var looking = false
+
+        /**
          * Largest radius anything may reach. A View's canvas is clipped to its
          * bounds by its parent; nothing here exceeds the bezel, but the cap
          * stays so a caller's budget cannot be silently exceeded by a retune.
@@ -248,7 +260,9 @@ class ReactorOrb(private val density: Float) {
             // Every third blade is quieter, as on the web, so the ring has a
             // rhythm rather than being one grey band with gaps in it.
             val rest = if (i % 3 == 2) JarvisTokens.Color.LINE_SOFT else JarvisTokens.Color.LINE
-            line.color = withAlpha(mix(rest, live, glint(f.time, i)), a)
+            // A tool call lights every blade at once and lets them settle: the
+            // sweep rides over the glint rather than replacing it.
+            line.color = withAlpha(mix(rest, live, max(glint(f.time, i), f.workSweep)), a)
             canvas.drawArc(arc, i * step - 90f, sweep, false, line)
         }
         canvas.restore()
@@ -332,7 +346,7 @@ class ReactorOrb(private val density: Float) {
         fill.shader = null
 
         line.strokeWidth = dp(RIM_WIDTH_DP)
-        line.color = withAlpha(live, a * f.rimAlpha)
+        line.color = withAlpha(live, a * f.rimAlpha * f.cadence)
         canvas.drawCircle(f.cx, f.cy, rc, line)
 
         // Two iris arcs on two periods, turning opposite ways, so the lens
@@ -341,11 +355,15 @@ class ReactorOrb(private val density: Float) {
         val ra = rc * IRIS_A_R
         arc.set(f.cx - ra, f.cy - ra, f.cx + ra, f.cy + ra)
         round.color = withAlpha(deep, a * IRIS_A_ALPHA)
-        canvas.drawArc(arc, -90f + 360f * (f.time / irisAPeriod), 180f * IRIS_A_SWEEP, false, round)
+        // Looking (M53): both arcs gather at the top and hold — an iris
+        // narrowing on what the camera shows — instead of turning.
+        val startA = if (f.looking) -90f - 90f * IRIS_A_SWEEP else -90f + 360f * (f.time / irisAPeriod)
+        canvas.drawArc(arc, startA, 180f * IRIS_A_SWEEP, false, round)
         val rb = rc * IRIS_B_R
         arc.set(f.cx - rb, f.cy - rb, f.cx + rb, f.cy + rb)
         round.color = withAlpha(JarvisTokens.Color.TEXT_DIM, a * IRIS_B_ALPHA)
-        canvas.drawArc(arc, 90f - 360f * (f.time / irisBPeriod), 180f * IRIS_B_SWEEP, false, round)
+        val startB = if (f.looking) -90f - 90f * IRIS_B_SWEEP else 90f - 360f * (f.time / irisBPeriod)
+        canvas.drawArc(arc, startB, 180f * IRIS_B_SWEEP, false, round)
 
         // The think ring: the fastest thing on the instrument, and only while
         // the model is thinking — which is how thinking reads as a different
@@ -507,6 +525,8 @@ class ReactorOrb(private val density: Float) {
         // --- opacities ----------------------------------------------------------------
 
         const val RIM_ALPHA_REST = 0.55f
+        /** How far the rim dips on each beat while speaking. */
+        const val CADENCE_DEPTH = 0.15f
 
         /** Listening and speaking lift the rim; the web does the same. */
         const val RIM_ALPHA_LIT = 0.85f

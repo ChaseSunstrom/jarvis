@@ -17,6 +17,7 @@ import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import kotlin.math.max
+import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 import ai.jarvis.app.ui.theme.JarvisTokens
@@ -184,6 +185,26 @@ class JarvisOrbView @JvmOverloads constructor(
      * tokens — so the phone's blades take the same two minutes the web's do.
      */
     private var timeSeconds = 0f
+
+    /** When the last tool call lit the blades, on [timeSeconds]; -1 before any (M53). */
+    private var lastWorkAt = -1f
+    private val sweepSeconds = JarvisTokens.Motion.Dur.SWEEP / 1000f
+    private val speakSeconds = JarvisTokens.Motion.Reactor.SPEAK / 1000f
+
+    /** A camera is being looked at: the iris arcs gather and hold. */
+    var looking = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    /** A tool call started: light the blades once and let them settle. */
+    fun work() {
+        lastWorkAt = timeSeconds
+        invalidate()
+    }
 
     // --- animators ---------------------------------------------------------
 
@@ -573,6 +594,13 @@ class JarvisOrbView @JvmOverloads constructor(
         }
         f.maxRadius = min(width, height) / 2f
         f.turbulence = mode == Mode.THINKING && boot == null
+        f.workSweep = if (lastWorkAt < 0f) 0f else (1f - (timeSeconds - lastWorkAt) / sweepSeconds).coerceIn(0f, 1f)
+        f.cadence = if (mode == Mode.SPEAKING) {
+            1f - ReactorOrb.CADENCE_DEPTH * (0.5f - 0.5f * cos(ReactorOrb.TWO_PI * timeSeconds / speakSeconds))
+        } else {
+            1f
+        }
+        f.looking = looking
         if (boot == null) {
             f.settleRings()
         } else {

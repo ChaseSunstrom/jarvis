@@ -91,6 +91,12 @@ class JarvisConversation(
 
         /** The graph's nodes a tool call touched, to light for a moment. */
         fun onKnowledgePulse(ids: List<String>) {}
+
+        /** A tool call started: the reactor's blades sweep once (M53). */
+        fun onWork() {}
+
+        /** A camera is (or is no longer) being looked at: the iris gathers (M53). */
+        fun onLooking(looking: Boolean) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -811,7 +817,10 @@ class JarvisConversation(
     }
 
     override fun onBusEvent(type: String, data: JSONObject) {
-        if (activity.apply(type, data)) ui.onActivity(activity)
+        if (activity.apply(type, data)) {
+            ui.onActivity(activity)
+            if (type.startsWith("vision_look_")) ui.onLooking(activity.lookingCaption().isNotEmpty())
+        }
     }
 
     override fun onRunEnd() {
@@ -840,6 +849,7 @@ class JarvisConversation(
         ui.onTools(tools)
         val touched = KnowledgeGraph.touchedBy(name, arguments.toMap(), graphNodes)
         if (touched.isNotEmpty()) ui.onKnowledgePulse(touched)
+        ui.onWork()
     }
 
     override fun onToolFinished(
