@@ -190,14 +190,14 @@ The library (`src/lib/ui`), re-skinned once so the pages inherit:
 
 ### M51 — the phone, on the same look
 
-- [ ] HUD (`MainActivity`, `JarvisOrbView` / `ReactorOrb.kt` / `SiriOrbView`) · **old** · GLSL sphere, pill PAIR / SETTINGS → the instrument drawn on Canvas from the same geometry table, the same four states from `color.orb.*`, the same dock.
-- [ ] Console frame strip (`ConsoleFrame.kt`) · **partial** → C2 tabs with the underline.
-- [ ] Approval (`ApprovalActivity`, `ApprovalBridge` banner) · **partial** → the C2 approval bar.
-- [ ] Task overlay (`ToolActivityView`, task frames) · **partial**
-- [ ] PHONE settings (`SettingsActivity`), `SystemCheckActivity`, `VoiceIdentityActivity`, `PermissionRequestActivity`, `CompanionAskActivity`, `CrashLogActivity` · **partial** · `JarvisUi` pills and brackets → hairline panels, Barlow, one primary.
-- [ ] Boot (`JarvisBootAnimation`, `BootTimeline`) · **partial** → the staged instrument.
-- [ ] `JarvisUi.kt` `pill()` / `ghost()` / `CornerBrackets` · **old** → replaced; Roborazzi goldens re-rendered; `docs/ANDROID_DEVICE_TESTS.md` gains what only a device can confirm.
-- [ ] Desktop app (`jarvis-desktop-app`) · loads the console build — nothing to restyle beyond the tray icon; verified by its existing Playwright `_electron` run.
+- [x] HUD (`MainActivity`, `JarvisOrbView` / `ReactorOrb.kt` / `SiriOrbView`) · **old** · GLSL sphere, pill PAIR / SETTINGS → the instrument drawn on Canvas from the same geometry table, the same four states from `color.orb.*`, the same dock. — **done (M51)**: `ReactorOrb.kt` draws bezel, blades, coil, level, lens and dot from the same geometry contract as the web; both orb views use it; the sphere shader, its specular and the brackets are gone; three hairline field circles behind.
+- [x] Console frame strip (`ConsoleFrame.kt`) · **partial** → C2 tabs with the underline. — **done (M51)**: `tab()` with the accent underline under the current tab.
+- [x] Approval (`ApprovalActivity`, `ApprovalBridge` banner) · **partial** → the C2 approval bar. — **done (M51)**: the held bar — gold tier label, body-face prose, mono action id, filled APPROVE, quiet DENY; brackets removed.
+- [x] Task overlay (`ToolActivityView`, task frames) · **partial** — **done (M51)**: draws through the rewritten `JarvisUi` primitives (no pill, ghost or bracket survives in `ToolActivityView`); `task-overlay` golden re-recorded.
+- [x] PHONE settings (`SettingsActivity`), `SystemCheckActivity`, `VoiceIdentityActivity`, `PermissionRequestActivity`, `CompanionAskActivity`, `CrashLogActivity` · **partial** · `JarvisUi` pills and brackets → hairline panels, Barlow, one primary. — **done (M51)**: one primary per screen (SAVE, RECORD, SEND, MANAGE); `PermissionRequestActivity` carried no old furniture and needed no change.
+- [x] Boot (`JarvisBootAnimation`, `BootTimeline`) · **partial** → the staged instrument. — **done (M51)**: the staged instrument, sans wordmark without blur.
+- [x] `JarvisUi.kt` `pill()` / `ghost()` / `CornerBrackets` · **old** → replaced; Roborazzi goldens re-rendered; `docs/ANDROID_DEVICE_TESTS.md` gains what only a device can confirm. — **done (M51)**: `button()`, `primary()`, `tab()`, hairline panels; ten Roborazzi goldens recorded and verified; ADT-031…035.
+- [x] Desktop app (`jarvis-desktop-app`) · loads the console build — nothing to restyle beyond the tray icon; verified by its existing Playwright `_electron` run. — **done (M51)**: nothing to restyle beyond what the console build carries; its Playwright run is unchanged.
 
 ## 4. What "clean" means here
 

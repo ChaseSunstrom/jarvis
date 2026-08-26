@@ -665,6 +665,19 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### The phone, on the same look (M51)
+
+`bash scripts/verify/m51-android-c2.sh`. Build, unit, lint and goldens — no device.
+
+| Claim | Level | Proof |
+|---|---|---|
+| The phone's instrument is the web's: bezel, blades, coil, level, lens and dot from the one geometry contract, periods from the motion tokens | Automated | `android-app/tools/reactor_orb_test.py` pins the 23 constants and 8 periods to `tests/contracts/reactor_geometry.json`; `design/build.py --check` |
+| Both orb views draw one renderer; the sphere shader, its specular and the brackets are gone | Automated | the gate greps `ReactorOrb.kt`, `JarvisOrbView.kt`, `SiriOrbView.kt` |
+| No pill, ghost or bracket primitive survives; `button()`, `primary()`, `tab()` and the underline exist | Automated | the gate greps `JarvisUi.kt` and `ConsoleFrame.kt`; `make test-android` |
+| It builds, its 185 unit tests pass, lint is clean, ten Roborazzi goldens verify (idle, listening, thinking, speaking among them) | Automated | `./gradlew assembleDebug testDebugUnitTest lintDebug verifyRoborazziDebug` |
+| Nothing typed is a colour, size, font or duration | Automated | `scripts/verify/token_lint.py --require-clean android-app/app/src/main/kotlin` |
+| What only a handset can confirm | **Manual** | `docs/ANDROID_DEVICE_TESTS.md` ADT-031…035 |
+
 ### The voice screen (M49)
 
 `bash scripts/verify/m49-home-reactor.sh`. The signature surface, on Reactor II.

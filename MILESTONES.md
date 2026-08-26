@@ -868,7 +868,7 @@ screens become one animated graph, because the brief asked for one by name.
     not a token.
   - Verify: `bash scripts/verify/m50-webui-c2-look.sh`
 
-- [ ] **M51 — The phone, on the same look** · size XL · deps M49, M08 · parallel-ok M50 (separate trees)
+- [x] **M51 — The phone, on the same look** · size XL · deps M49, M08 · parallel-ok M50 (separate trees)
   - Scope: `ReactorOrb.kt` draws the instrument on Canvas from
     `tests/contracts/reactor_geometry.json` — bezel, blades, coil, level, lens, dot — with the
     four states from `color.orb.*` and the level from the phone's own amplitude, in both the
