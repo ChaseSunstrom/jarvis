@@ -1047,12 +1047,17 @@ class ConversationAgent:
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
         *,
         model: str | None = None,
+        think: bool | None = None,
     ) -> AsyncIterator[str]:
         """Run one turn, yielding text deltas as the model produces them.
 
         ``model`` names the model for THIS turn — the voice path passes
-        ``fast_model`` when one is set (M60); None is the chat model. Nothing
-        else about the turn changes: same tools, same persona, same history.
+        ``fast_model`` when one is set (M60); None is the chat model. ``think``
+        likewise: the voice path passes False, because a reasoning block is
+        the largest avoidable part of the wait before the first word and
+        nobody hears it; None is the agent's setting. A turn the model asks
+        to think about (the think tool) still escalates. Nothing else about
+        the turn changes: same tools, same persona, same history.
 
         ``on_event`` is this turn's side channel: tool calls as they start and
         finish, and reasoning as it is produced. Everything it reports is also
@@ -1126,7 +1131,7 @@ class ConversationAgent:
                 # waiting on async-generator finalisation.
                 async with aclosing(
                     self._run_rounds(
-                        messages, schema, context, result, emit, _on_thinking, model=model
+                        messages, schema, context, result, emit, _on_thinking, model=model, think=think
                     )
                 ) as rounds:
                     async for delta in rounds:
@@ -1312,6 +1317,7 @@ class ConversationAgent:
         on_thinking: Callable[[str], None] | None = None,
         *,
         model: str | None = None,
+        think: bool | None = None,
     ) -> AsyncIterator[str]:
         emit = emit or self._turn_emitter(None)
         #: One corrective round per turn, no more. A model that narrates the
@@ -1347,6 +1353,7 @@ class ConversationAgent:
                 on_thinking,
                 format=toolcall_schema(offered) if constrain_next and offered else None,
                 model=model,
+                think=think,
             )
             constrain_next = False
             said: list[str] = []
@@ -1455,7 +1462,7 @@ class ConversationAgent:
                 ),
             }
         ]
-        final = _Round(self, final_messages, None, context, result, emit, on_thinking, model=model)
+        final = _Round(self, final_messages, None, context, result, emit, on_thinking, model=model, think=think)
         async with aclosing(final.stream()) as deltas:
             async for delta in deltas:
                 yield delta
@@ -1653,6 +1660,7 @@ class _Round:
         on_thinking: Callable[[str], None] | None = None,
         format: dict[str, Any] | None = None,
         model: str | None = None,
+        think: bool | None = None,
     ) -> None:
         self._agent = agent
         self._messages = messages
@@ -1667,6 +1675,8 @@ class _Round:
         self._format = format
         #: The model for this turn, or None for the agent's (M60: the voice path's fast model).
         self._model = model
+        #: Whether this turn may reason, or None for the agent's setting (M60: the voice path says False).
+        self._think = think
         self.pending_tool_calls = False
 
     def __aiter__(self) -> AsyncIterator[str]:
@@ -1724,7 +1734,7 @@ class _Round:
                 # `None` leaves the model's own default alone, which is what an
                 # install that has not set `llm: think:` gets. A turn the model
                 # asked to think about overrides it for its remaining rounds.
-                think=True if self._result.escalated else agent.think,
+                think=True if self._result.escalated else (self._think if self._think is not None else agent.think),
                 format=self._format,
             )
             # Set rather than passed: `chat()` is the client's public contract

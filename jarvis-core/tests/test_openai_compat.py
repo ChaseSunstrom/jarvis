@@ -866,3 +866,29 @@ def test_the_diagnostic_script_still_finds_what_it_imports():
         module = importlib.import_module(module_name)
         missing = sorted(n for n in names if not hasattr(module, n))
         assert not missing, f"{module_name} no longer provides {missing}"
+
+
+async def test_think_false_reaches_the_server_as_the_templates_switch_and_none_is_left_alone():
+    """`think=False` is `chat_template_kwargs.enable_thinking: false` (M60).
+
+    Qwen3 reasons by default and on this wire the chat template's switch is
+    the only way to say "not this turn"; llama.cpp and vLLM both read it.
+    Top-level for a direct server, in `extra_body` for a gateway to forward.
+    None leaves the model's own default alone, as before.
+    """
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.clear()
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, content=_sse(_delta(content="ok")))
+
+    stream = _client(handler).chat(messages=[{"role": "user", "content": "x"}], think=False)
+    async for _ in stream:
+        pass
+    assert seen["chat_template_kwargs"] == {"enable_thinking": False}
+    assert seen["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    stream = _client(handler).chat(messages=[{"role": "user", "content": "x"}])
+    async for _ in stream:
+        pass
+    assert "chat_template_kwargs" not in seen and "chat_template_kwargs" not in seen.get("extra_body", {})

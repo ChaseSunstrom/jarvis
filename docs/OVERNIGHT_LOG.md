@@ -413,3 +413,12 @@ is quiet. Done since:
   delegate first. research-cancel passes alone (its error was run order). The
   stack's SearXNG returns nothing — its upstream engines time out — recorded as
   the environment's. Two scenarios re-running; then the final full run.
+- 10:53 — The loop fix committed (`66a7b43`): the same call three rounds running
+  ends the turn and the last round is told to answer; deep_research says
+  "answer now". JavaScript-page passes on the harness; deep-report re-running;
+  the stack rebuilding for the final full run with the report.
+- 10:59 — research-deep-report passes on the harness (delegates first, files the
+  note); its 240 s run before was a reasoning block. A spoken turn now does not
+  reason unless `voice: think: true` (think per turn on the agent, `enable_thinking`
+  on the OpenAI wire); text keeps the model's default. Stack rebuilt; the final
+  full-mode run with the report starts now.

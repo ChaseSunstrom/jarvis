@@ -51,8 +51,12 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   planner marks steps that only look (`reads_only`) and acts on a run of them in one round.
   `llm.fast_model`, when set, is the model for spoken turns (the console's text turns keep the
   chat model; empty means the chat model, which is what an operator whose big model is fast
-  enough wants) and the MODELS panel says so instead of calling it idle. The eval floors are
-  pinned in the gate and were not moved.
+  enough wants) and the MODELS panel says so instead of calling it idle. A spoken turn does not
+  reason unless `voice: think: true`: the block is generated at full cost and stripped before the
+  ear, and on this house it was minutes before the first word; `think=False` now reaches
+  llama.cpp and vLLM as the chat template's `enable_thinking` switch, and the model can still ask
+  to think on a turn that needs it. A turn that makes the same calls three rounds running is
+  ended and told to answer. The eval floors are pinned in the gate and were not moved.
 - **M55 — simpler menus everywhere.** HOUSE, WORK, KNOWLEDGE and the tools page held to a menu
   inventory in `docs/UI_MIGRATION.md` §4 that `e2e/menus.spec.ts` reads and enforces against the
   mock: one primary control per screen at rest, no two visible controls outside rows with the same

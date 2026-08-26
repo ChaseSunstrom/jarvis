@@ -132,8 +132,13 @@ sun:
 # sentence rather than the last; the console plays the chunks and then the
 # remainder. Off for an install whose only client cannot play chunks.
 
+# A spoken turn does not reason (M60): the block is generated at full cost and
+# stripped before the ear, and on this house it was minutes before the first
+# word. The model can still ask to think on a turn that needs it (the think
+# tool). Text turns keep the model's own default. `think: true` puts it back.
 voice:
   early_speech: true
+  think: false
   language: en
   stt:
     host: 127.0.0.1

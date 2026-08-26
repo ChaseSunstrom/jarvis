@@ -406,10 +406,11 @@ class OpenAICompatClient:
     ) -> ChatStream:
         """Start a chat exchange. Same contract as the Ollama client's.
 
-        `keep_alive` and `think` are accepted and ignored: they are Ollama's
-        own, and a caller that sets one should not have to know which backend
-        it ended up talking to. Accepting-and-ignoring is the honest option —
-        the alternative is a TypeError from a keyword that used to work.
+        `keep_alive` is accepted and ignored: it is Ollama's own, and a caller
+        that sets it should not have to know which backend it ended up talking
+        to. `think=False` is translated (M60): a spoken turn must not wait a
+        minute for a reasoning block nobody reads; `True`/`None` leave the
+        model's own default alone, as before.
 
         `privacy` is for a caller that KNOWS what it is sending is private —
         the vision integration, whose prompt is a picture of the inside of
@@ -445,6 +446,14 @@ class OpenAICompatClient:
             payload.update(extra)
             if body:
                 payload.setdefault("extra_body", {}).update(body)
+        if think is False:
+            # Qwen3 and its kin reason by default, and on this wire the only
+            # way to say "not this turn" is the chat template's own switch —
+            # llama.cpp and vLLM both read `chat_template_kwargs`. Top-level
+            # for a direct server; in `extra_body` for a gateway to forward. A
+            # server that knows neither ignores both, and thinks.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            payload.setdefault("extra_body", {}).setdefault("chat_template_kwargs", {"enable_thinking": False})
         _tag_privacy(payload, force=privacy)
         return OpenAICompatStream(self, payload)
 

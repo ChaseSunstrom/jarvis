@@ -122,6 +122,9 @@ class VoiceData:
     #: `voice: early_speech: false` turns it off for a client that cannot
     #: play chunks and must not hear the reply twice.
     early_speech: bool = True
+    #: Let a spoken turn reason (M60 turns it off by default: a minute of
+    #: thinking before the first word is the wait the operator hears).
+    think: bool = False
 
     #: What the running services say they can do, from their own `describe`.
     #:
@@ -255,25 +258,34 @@ def async_create_run(
     return data.async_create_run(pipeline, **kwargs)
 
 
-def _on_the_fast_model(agent: Any, converse: Any) -> Any:
-    """The agent's converse, naming `fast_model` for a spoken turn when one is set (M60).
+def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = False) -> Any:
+    """The agent's converse for a spoken turn (M60): `fast_model` when one is
+    set, and no reasoning unless `voice: think: true`.
 
-    Read at call time, not wrapped once: the setting is live. An agent whose
-    converse does not take `model` (a stand-in in a test) is used as it is.
+    Read at call time, not wrapped once: the settings are live. An agent whose
+    converse takes neither `model` nor `think` (a stand-in in a test) is used
+    as it is.
     """
     import inspect
 
     try:
-        takes_model = "model" in inspect.signature(converse).parameters
+        parameters = inspect.signature(converse).parameters
     except (TypeError, ValueError):
-        takes_model = False
-    if not takes_model:
+        parameters = {}
+    takes_model = "model" in parameters
+    if not takes_model and "think" not in parameters:
         return converse
 
     def spoken(text: str, conversation_id: str | None = None, *args: Any, **kwargs: Any) -> Any:
         fast = str(getattr(agent, "fast_model", "") or "").strip()
         if fast:
             kwargs.setdefault("model", fast)
+        # A spoken turn does not reason unless the house says so: the block is
+        # generated at full cost, stripped before the ear, and is the largest
+        # avoidable part of the wait before the first word. The think tool
+        # still lets the model ask for it on a turn that needs it.
+        if not think_on_voice and "think" in parameters:
+            kwargs.setdefault("think", False)
         return converse(text, conversation_id, *args, **kwargs)
 
     return spoken
@@ -289,10 +301,12 @@ def resolve_conversation_agent(jarvis: "Jarvis") -> Any:
         return candidate
 
     llm = jarvis.data.get("llm")
+    voice = jarvis.data.get(DATA_VOICE)
+    think_on_voice = bool(getattr(voice, "think", False))
     for attr in ("async_converse", "converse", "async_process", "process"):
         method = getattr(llm, attr, None)
         if callable(method):
-            return _on_the_fast_model(llm, method) if attr == "converse" else method
+            return _on_the_fast_model(llm, method, think_on_voice) if attr == "converse" else method
 
     if jarvis.services.has_service("conversation", "process"):
 
@@ -664,6 +678,7 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         language=language,
         tts_voice=tts_voice,
         early_speech=bool(config.get("early_speech", True)),
+        think=bool(config.get("think", False)),
         wake_word=wake_word,
     )
     jarvis.data[DATA_VOICE] = data

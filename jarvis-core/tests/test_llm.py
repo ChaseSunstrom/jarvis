@@ -2192,3 +2192,36 @@ async def test_a_turn_that_repeats_the_same_call_is_ended_and_answered(tmp_path)
     assert history is not None
     assert all("No more tools this turn" not in str(m.get("content")) for m in fake.requests[-1]["messages"][:-1])
     await shutdown(jarvis)
+
+
+async def test_a_spoken_turn_does_not_reason_unless_the_house_says_so(tmp_path):
+    """The voice path passes think=False (M60); `voice: think: true` leaves it to the model.
+
+    A reasoning block is generated at full cost, stripped before the ear,
+    and is the largest avoidable part of the wait before the first word —
+    on the rig a research question reasoned for four minutes and timed out.
+    The think tool still lets the model ask for it on a turn that needs it.
+    """
+    from jarvis.integrations.voice import DATA_VOICE, resolve_conversation_agent
+
+    jarvis, house = await build_house(tmp_path)
+    fake = FakeOllama(say("Yes, Sir."), say("Quite, Sir."), say("Indeed, Sir."))
+    agent = make_agent(jarvis, fake)
+    deltas = [d async for d in agent.converse("hello", think=False)]
+    assert "Yes, Sir." in "".join(deltas)
+    assert fake.requests[0].get("think") is False
+
+    class Voice:
+        think = False
+
+    jarvis.data["llm"] = agent
+    jarvis.data[DATA_VOICE] = Voice()
+    out = resolve_conversation_agent(jarvis)("hello again", None)
+    "".join([str(d) async for d in out]) if hasattr(out, "__aiter__") else await out
+    assert fake.requests[1].get("think") is False, "a spoken turn reasoned"
+
+    Voice.think = True
+    out = resolve_conversation_agent(jarvis)("once more", None)
+    "".join([str(d) async for d in out]) if hasattr(out, "__aiter__") else await out
+    assert fake.requests[2].get("think") is not False, "voice: think: true was ignored"
+    await shutdown(jarvis)

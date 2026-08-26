@@ -434,6 +434,18 @@ tens of milliseconds a sentence, and it buys the console its first word at
 the first sentence rather than the last. M61 teaches the phone to play chunks
 and the remainder, after which the whole-reply clip goes.
 
+## 19. A spoken turn does not reason by default (M60)
+
+Qwen3 reasons before it answers unless told not to, and the block is
+generated at full cost and stripped before the ear. On this house a research
+question reasoned for four minutes on the rig and timed out; a light switch
+reasons for seconds nobody hears. `voice: think: false` is therefore the
+shipped default for the voice path only: text turns keep the model's own
+default, and the think tool lets the model ask for a reasoning turn when a
+question needs one. The trade is deliberate and reversible in one line, and
+the live suite's intent accuracy is the number that says whether it cost
+anything (docs/verification.md, "Known failures").
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).
