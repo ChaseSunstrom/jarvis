@@ -765,6 +765,16 @@ class Tool:
     #: for. Defaulting to False is deliberate — a new tool nobody classified
     #: escalates, which is the safe direction to be wrong in.
     read_only: bool = False
+    #: True for a tool that applies the taint rule ITSELF, at the surface that
+    #: runs the action. `control_device` is the one: device_control raises the
+    #: device's tier to CONFIRM for the rest of a tainted turn, reason carried
+    #: verbatim, so the phone shows the human the real action before it runs.
+    #: Holding it here as well asked twice — and the second prompt, on the
+    #: server, named the tool rather than the action (the harness self-test
+    #: `test_reading_untrusted_content_raises_the_next_action_to_confirm`
+    #: caught it). Declared, never inferred: a tool that does not say so is
+    #: escalated like any other, which is the safe direction to be wrong in.
+    escalates_itself: bool = False
     #: The ONE argument a human may fill in when they resolve this request.
     #:
     #: Almost always None, and that is the point. `approve_request` accepts an
@@ -914,6 +924,9 @@ def _weaker_than(new: Tool, old: Tool) -> str:
       provenance stamp went missing without anything failing.
     * **domain** is what `requires_approval` compares against `GATED_DOMAINS`,
       so dropping `domain="lock"` un-gates every lock in the house.
+    * **escalates_itself** switches the taint hold off for the tool, on the
+      promise that the surface running it asks instead. A replacement that
+      makes the promise the original did not keep is the hold going missing.
     """
     if new.tier < old.tier:
         return f"tier {old.tier} -> {new.tier}"
@@ -923,6 +936,8 @@ def _weaker_than(new: Tool, old: Tool) -> str:
         return f"loses answerable={old.answerable!r}, so the phone bridge drops it"
     if old.domain and new.domain != old.domain:
         return f"domain {old.domain!r} -> {new.domain!r}"
+    if new.escalates_itself and not old.escalates_itself:
+        return "claims to escalate itself, so the registry would stop holding it after untrusted content"
     return ""
 
 
@@ -956,6 +971,7 @@ class ToolRegistry:
         pin: TargetPin | None = None,
         answerable: str | None = None,
         read_only: bool = False,
+        escalates_itself: bool = False,
         replaces: str | None = None,
     ) -> Tool:
         """Add a tool. A re-registration may not quietly WEAKEN the one there.
@@ -1009,6 +1025,7 @@ class ToolRegistry:
                 gate=gate,
                 pin=pin,
                 read_only=read_only,
+                escalates_itself=escalates_itself,
             )
         existing = self._tools.get(tool.name)
         if existing is not None and replaces != tool.name:
@@ -1115,6 +1132,7 @@ class ToolRegistry:
             return True
         if (
             not self.is_read_only(tool)
+            and not tool.escalates_itself
             and tool.name not in REFUSE_WHEN_TAINTED
             and self._is_tainted(context)
         ):

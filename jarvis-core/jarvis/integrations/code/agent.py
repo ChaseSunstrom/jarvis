@@ -435,6 +435,13 @@ class CodeAgent:
         tools = self._tool_schemas()
 
         for round_number in range(self.max_rounds):
+            # Yield first, or the check below can only see a cancel that landed
+            # while something else suspended. A real model always suspends; a
+            # fake one and a cached read never did, and on Python 3.12 the loop
+            # ran all twenty calls before the client's cancel was ever run
+            # (test_cancelling_a_job_actually_stops_it). The guarantee must not
+            # depend on what the last call happened to await.
+            await asyncio.sleep(0)
             self._check_stopped()
             if time.monotonic() - self._started > self.max_seconds:
                 self.run.stopped_early = True
@@ -453,6 +460,7 @@ class CodeAgent:
 
             messages.append(self._assistant_message(result))
             for call in calls:
+                await asyncio.sleep(0)
                 self._check_stopped()
                 # Per CALL, not only per round: ten `sleep 890`s in one
                 # assistant message is ten times the environment's timeout

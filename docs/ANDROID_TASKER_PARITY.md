@@ -148,7 +148,7 @@ possible for a third-party app on modern Android (with the reason).
 | Conditions | `tasks/Conditions.kt`, `DeviceConditionProbe.kt` | unit | done |
 | Variables and substitution | `tasks/VariableSubstitution.kt` | unit | done |
 | Tasks (sequences), run from the hub or the phone | `tasks/TaskEngine.kt` | unit | done |
-| If / else / loops / wait | `tasks/TaskRunner.kt` — if, wait, and `repeat` by count or while a condition holds, bounded by `TaskLimits` | mirror (`task_repeat_test.py`, M61) | done |
+| If / else / loops / wait | `tasks/TaskRunner.kt` — if, wait, and a repeat step (by count, or while a condition holds) bounded by `TaskLimits` | mirror (`task_repeat_test.py`, M61) | done |
 | Ask the user mid-task | `tasks/AskJarvis.kt`, `CompanionAskActivity` | unit | done |
 | Policy: tiers, kill switch, audit | `policy/*`, `audit/*` | unit | done |
 

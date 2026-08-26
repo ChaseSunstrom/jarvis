@@ -119,7 +119,9 @@ jobs:
       # difference can be looked at rather than guessed at.
       - name: Screenshot goldens (Robolectric + Roborazzi)
         run: |
-          bash android-app/tools/bootstrap-toolchain.sh
+          # working-directory is android-app (the job's default), so the path
+          # is relative to it — `android-app/tools/...` from here does not exist.
+          bash tools/bootstrap-toolchain.sh
           gradle :app:verifyRoborazziDebug --no-daemon
 
       - name: Upload screenshot diffs

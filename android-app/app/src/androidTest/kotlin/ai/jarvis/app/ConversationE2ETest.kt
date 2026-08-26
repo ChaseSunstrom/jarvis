@@ -228,13 +228,16 @@ class ConversationE2ETest {
      * The transcript and the reply, read off the two views that carry them.
      *
      * Found structurally rather than by text, because the text is the thing
-     * under test. `MainActivity.buildUi` puts exactly this in its controls
-     * column, in this order: the banner slot (a `FrameLayout`), the transcript
-     * (`TextView`), the response (`TextView`), the talk control (a `Button`) and
-     * the nav row (a `LinearLayout`). So: find the talk button, take its parent,
-     * and the plain `TextView` children of that parent — plain because `Button`
-     * extends `TextView` and the talk control would otherwise be counted as a
-     * transcript. MAIN THREAD ONLY.
+     * under test. `MainActivity.buildUi` puts these in its controls column, in
+     * this order: the banner slot (a `FrameLayout`), the tool activity view,
+     * the activity strip and the knowledge graph (none of them a `TextView`),
+     * the transcript (`TextView`), the response (`TextView`), the mute (a
+     * `Button`), the listen control and its reason line, and the nav row. So:
+     * find the mute button, take its parent, and the first two plain `TextView`
+     * children of that parent — plain because `Button` extends `TextView` and
+     * the controls would otherwise be counted as a transcript. A `TextView`
+     * inserted ABOVE the transcript would silently shift this read; new text
+     * goes below the mute. MAIN THREAD ONLY.
      */
     private fun readTurn(main: MainActivity): Turn {
         val column = muteButton(main)?.parent as? LinearLayout ?: return Turn("", "")

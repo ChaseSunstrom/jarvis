@@ -13,13 +13,18 @@ import android.view.View
  * hairline for a link, a fainter one for a shared tag, a point per note or
  * memory with its name beneath, and the points a turn touched lit in the
  * accent. The arithmetic is [KnowledgeGraph]; this only paints, in tokens.
- * Nothing is drawn until there is a node, so a house with no notes shows the
- * reactor alone, as it did.
+ * GONE until there is a node — not merely blank: a blank 200 dp slot pushed
+ * the home screen's nav row off a pixel_2's screen for the instrumented suite
+ * — so a house with no notes shows the reactor alone, as it did.
  */
 class KnowledgeGraphView(context: Context) : View(context) {
 
     private var layout: KnowledgeGraph.Layout? = null
     private var lit: Set<String> = emptySet()
+
+    init {
+        visibility = GONE
+    }
 
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE

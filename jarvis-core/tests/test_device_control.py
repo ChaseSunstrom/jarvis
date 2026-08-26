@@ -741,6 +741,36 @@ async def test_untrusted_content_from_another_integration_raises_the_bar(jarvis,
     assert fresh["tier"] == TIER_AUTO
 
 
+async def test_the_registry_lets_control_device_raise_the_device_instead_of_holding_it(jarvis, phone):
+    """M43 holds every state-changing tool for approval once a turn has read
+    untrusted content. `control_device` declares `escalates_itself`, because
+    the device is the surface that asks: `_report` raises the tier to CONFIRM
+    with the reason verbatim, so the human sees the real action on the phone.
+    Held at the registry as well, the phone never saw the action and the server
+    asked about "control_device" instead — the harness self-test
+    `test_reading_untrusted_content_raises_the_next_action_to_confirm` is the
+    end-to-end twin of this.
+    """
+    link, wire = phone
+    registry = jarvis.data["llm_tools"]
+    context = Context(origin="llm")
+    mark_untrusted(jarvis, context)
+
+    command, result = await answer(
+        registry.call(
+            "control_device",
+            {"device": PHONE, "action": "get_battery", "reason": "Checking the battery, Sir."},
+            context,
+        ),
+        link, wire,
+    )
+    assert result.get("status") != "approval_required", result
+    assert command["tier"] == TIER_CONFIRM, "the device was not asked to confirm"
+    assert command["reason"] == "Checking the battery, Sir."
+    assert result["action"] == "get_battery" and "tier_raised" in result
+    assert not registry.pending_requests(), "the registry held the call as well"
+
+
 async def test_device_control_and_the_shared_store_agree(jarvis, manager):
     context = Context(origin="llm")
     manager.note_untrusted(context)

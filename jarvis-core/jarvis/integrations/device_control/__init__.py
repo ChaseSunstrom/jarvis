@@ -871,8 +871,13 @@ def _register_tools(jarvis: "Jarvis", manager: DeviceControl) -> None:
         handler=control_device,
         # Tier 1 here on purpose: the gate for these actions lives on the device
         # that runs them, and it is the strict one. Holding a second approval
-        # here would double every prompt without adding a decision.
+        # here would double every prompt without adding a decision. The same
+        # goes for the taint rule: after untrusted content `_report` raises the
+        # device's tier to CONFIRM with the reason verbatim, so the phone asks
+        # — the registry holding the call as well would ask a second time and
+        # name the tool, not the action.
         tier=TIER_DIRECT,
+        escalates_itself=True,
     )
 
     async def run_device_sequence(args: dict[str, Any], context: Any) -> Any:

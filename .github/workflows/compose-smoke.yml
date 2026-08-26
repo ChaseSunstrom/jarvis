@@ -43,9 +43,17 @@ name: Compose smoke
 # endpoint every turn goes through and therefore the last thing that should be
 # untested in a bring-up job.
 #
-# Skipped: photon, and only photon. It is an offline geocoder whose first start
-# downloads a planet index — tens of GB with `PHOTON_REGION` unset, which is
-# what .env.example ships — and the runner has neither the disk nor the hour.
+# Skipped, each behind a profile a default install never enables:
+#   photon (`geocode`) — an offline geocoder whose first start downloads a
+#     planet index, tens of GB with `PHOTON_REGION` unset, which is what
+#     .env.example ships; the runner has neither the disk nor the hour.
+#   jarvis-tts (`kokoro`) — the neural voice; ~350 MB of model on first start
+#     and piper already proves the Wyoming TTS path.
+#   jarvis-radicale, jarvis-mailsink (`fixtures`) — the live rig's calendar and
+#     mail fixtures, not part of an install; jarvis-core reaches them only when
+#     the harness writes their blocks.
+#   go2rtc (`cameras`) — a restreamer for RTSP/USB/ONVIF cameras; host
+#     networking and no camera to restream on a runner.
 # Nothing else in the file is excluded, and the "every service is accounted
 # for" step below fails if a new service appears in neither list, so narrowing
 # this job further has to be a decision somebody writes down.
@@ -114,20 +122,23 @@ env:
   # started by `scripts/verify/m39-integrations.sh`, which is where they are
   # actually exercised; starting them here would prove only that two
   # containers can boot.
-  SKIPPED_SERVICES: photon jarvis-tts jarvis-radicale jarvis-mailsink
+  SKIPPED_SERVICES: photon jarvis-tts jarvis-radicale jarvis-mailsink go2rtc
 
   # How long to sit still before asking whether anything restarted. A crash
   # loop shows up in seconds — docker's backoff starts at 100 ms — so this is
   # deliberately generous rather than finely tuned.
   SETTLE_SECONDS: "60"
 
-  # Sentinel values for the two Ollama knobs. Nothing listens on 11439 and no
+  # Sentinel values for the two model knobs — `LLM_URL` and `LLM_MODEL`, the
+  # names .env.example documents and configuration.yaml reads (`OLLAMA_*` are
+  # the pre-rename fallbacks, read only when these are unset, so writing those
+  # would test the fallback and not the knob). Nothing listens on 11439 and no
   # such model exists, which is the point: the log line jarvis-core prints at
   # startup has to echo BOTH of them back. When `llm.url` was hardcoded, the
-  # log cheerfully reported loopback whatever OLLAMA_URL said, and that is the
+  # log cheerfully reported loopback whatever the env said, and that is the
   # only way to see the wire is cut from outside the container.
-  OLLAMA_URL_SENTINEL: http://127.0.0.1:11439
-  OLLAMA_MODEL_SENTINEL: jarvis-ci-smoke-model
+  LLM_URL_SENTINEL: http://127.0.0.1:11439
+  LLM_MODEL_SENTINEL: jarvis-ci-smoke-model
 
 jobs:
   compose:
@@ -181,11 +192,13 @@ jobs:
             echo "BROWSER_APPROVAL_SECRET=$(openssl rand -hex 32)"
           } >> .env
 
-          # And the two sentinels. Ollama is not in this stack either way; the
-          # values are here so the startup log can be checked against them.
+          # And the two sentinels. No model server is in this stack either
+          # way; the values are here so the startup log can be checked against
+          # them — appended, so they override the example's own LLM_URL and
+          # LLM_MODEL the way the file's instructions say an install's do.
           {
-            echo "OLLAMA_URL=${OLLAMA_URL_SENTINEL}"
-            echo "OLLAMA_MODEL=${OLLAMA_MODEL_SENTINEL}"
+            echo "LLM_URL=${LLM_URL_SENTINEL}"
+            echo "LLM_MODEL=${LLM_MODEL_SENTINEL}"
           } >> .env
 
           # The file holds secrets now. Print the keys, never the values.
@@ -200,8 +213,10 @@ jobs:
 
           # A service added to docker-compose.yml must be a deliberate decision
           # here, not a silent gap: the whole value of this job is that it
-          # starts what a real install starts.
-          declared="$(docker compose config --services | sort -u)"
+          # starts what a real install starts. `--profile '*'` because compose
+          # v2.24+ lists only the active profiles' services; without it the
+          # skipped ones read as phantoms and the check fails on its own list.
+          declared="$(docker compose --profile '*' config --services | sort -u)"
           accounted="$(printf '%s\n' $SMOKE_SERVICES $SKIPPED_SERVICES | sort -u)"
           echo "declared:  $(echo $declared | tr '\n' ' ')"
           echo "accounted: $(echo $accounted | tr '\n' ' ')"
@@ -473,7 +488,7 @@ jobs:
           print("wrote and removed", probe)
           PY
 
-      - name: The Ollama knobs are wired to something
+      - name: The model knobs are wired to something
         working-directory: jarvis-core
         run: |
           set -euo pipefail
@@ -487,9 +502,9 @@ jobs:
           # with the values it will really use, so handing it two sentinels and
           # requiring them back is the whole test. If this line is ever
           # reworded, update the expectation here rather than deleting it.
-          expected="model=${OLLAMA_MODEL_SENTINEL} url=${OLLAMA_URL_SENTINEL}"
+          expected="model=${LLM_MODEL_SENTINEL} url=${LLM_URL_SENTINEL}"
           if ! docker compose logs --no-color jarvis-core | grep -F "LLM agent ready: $expected"; then
-            echo "::error::jarvis-core never reported '$expected'. OLLAMA_URL/OLLAMA_MODEL reached the container (compose passes them) but something downstream is not reading them — which is exactly how a hardcoded llm.url looks from the outside."
+            echo "::error::jarvis-core never reported '$expected'. LLM_URL/LLM_MODEL reached the container (compose passes them) but something downstream is not reading them — which is exactly how a hardcoded llm.url looks from the outside."
             docker compose logs --no-color jarvis-core | grep -F "LLM agent ready" || true
             exit 1
           fi

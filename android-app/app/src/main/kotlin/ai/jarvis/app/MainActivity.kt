@@ -905,7 +905,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
          * The orb's caption while idle. A state word, deliberately NOT the
          * talk button's label — see [showIdle].
          */
-        private const val IDLE_CAPTION = "STANDBY"
+        internal const val IDLE_CAPTION = "STANDBY"
 
         /**
          * Backstop for a splash-exit listener that never fires. Long enough

@@ -30,8 +30,8 @@ import java.util.concurrent.TimeoutException
  *
  * ## Why this test exists at all
  *
- * `MainActivity`'s AUTOMATIONS button and `SettingsActivity`'s AUTOMATIONS and
- * AUDIT LOG buttons point at `ai.jarvis.app.automation.ui.*` activities that
+ * `SettingsActivity`'s PHONE TASKS and AUDIT LOG buttons point at
+ * `ai.jarvis.app.automation.ui.*` activities that
  * are declared in AndroidManifest.xml. They ARE implemented now — the test
  * branches on that and asserts the screen opens — but the manifest entry is
  * what makes their absence dangerous in a build that strips the module: as

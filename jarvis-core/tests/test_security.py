@@ -169,6 +169,33 @@ def test_an_untainted_turn_is_unaffected():
     assert registry.requires_approval(writer, {}, Context(origin="user")) is False
 
 
+def test_a_tool_that_escalates_itself_is_left_to_its_own_surface():
+    """`control_device` declares it: the device raises its tier to CONFIRM and
+    asks, with the reason verbatim. Held here as well, the phone never saw the
+    action and the server asked about the tool instead — the harness self-test
+    `test_reading_untrusted_content_raises_the_next_action_to_confirm` is where
+    that showed. Declared, so a tool that does not say so still escalates.
+    """
+    from jarvis.api.devices import mark_untrusted
+
+    jarvis = FakeJarvis()
+    registry = _registry(jarvis)
+    device = _tool(registry, "control_device", escalates_itself=True)
+    plain = _tool(registry, "set_state")
+    context = Context(origin="llm")
+    mark_untrusted(jarvis, context)
+    assert registry.requires_approval(device, {}, context) is False
+    assert registry.requires_approval(plain, {}, context) is True
+
+
+def test_a_re_registration_may_not_start_escalating_itself():
+    """The promise switches the hold off, so making it later is a weakening."""
+    registry = _registry(FakeJarvis())
+    _tool(registry, "set_state")
+    with pytest.raises(ValueError, match="escalate itself"):
+        _tool(registry, "set_state", escalates_itself=True)
+
+
 def test_the_refusers_really_do_refuse():
     """`REFUSE_WHEN_TAINTED` skips the gate, so each name must refuse itself.
 
