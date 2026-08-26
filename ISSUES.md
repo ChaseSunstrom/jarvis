@@ -16,8 +16,9 @@ and is not misled).
 ## "Note that…" was remembered, not noted
 
 severity: major
-status: **fixed** (M27 — `MEMORY_REQUESTS` no longer counts a note phrase; the
-note-taking skill's rule is the words, not the length)
+status: **fixed** (M27 — the deployed `configuration.yaml` never enabled the
+notes integration at all; `MEMORY_REQUESTS` no longer counts a note phrase;
+the note-taking skill's rule is the words, not the length)
 Regression: `notes-write-and-find`
 Found by: the exploratory pass (`notes-then-recall`) and, the first time it
 was ever selected, the scenario above — it had been `gated-on: M16` and
@@ -38,6 +39,15 @@ The store now refuses a note phrase — `{"stored": false, "use_instead":
 says *remember*, and the skill says the words decide: "note that…" is a note
 however short. `evals/test_routing.py` pins the store's two lists to the
 router's definition so they cannot drift apart again.
+
+And then, with the store refusing, the model said the quiet part: *"the note
+tool isn't available to me at the moment."* It was not. The operator's
+`configuration.yaml` had no `notes:` block, so the deployed core never set the
+integration up — no `note_create`, `/api/notes` answering 400 — and M16 had
+been verified against the harness's generated config, never against this
+file. The same defect the memory block's own comment describes, one
+integration later. `notes:` is switched on now; the scenario passes on both
+variants against the running stack, with the note written and found again.
 
 ## The Wyoming containers logged a reset on every `describe`
 
