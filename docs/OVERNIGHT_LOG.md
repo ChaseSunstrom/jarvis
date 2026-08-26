@@ -620,3 +620,7 @@ is quiet. Done since:
   download failing on the runner and being retried, read by the job as a crash loop. The
   job now caches ./models/embeddings across runs and counts restarts from a service's first
   healthy answer, which is where a loop would show; a retried first start is a warning.
+- 19:45 — the fourth rebuild (the dedupe): the fact leaves the store and only one note is
+  kept; memory-forget now misses on the reply to "forget that" — "Understood, Sir." — because
+  the message forbade mentioning a forgetting at all. It says the two things separately now
+  (confirm now; never hint later), 04cabae; a fifth rebuild measures it.
