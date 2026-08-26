@@ -629,3 +629,9 @@ is quiet. Done since:
   cd95876 but for compose smoke's retried download, addressed; ae87e96 pushed (the dedupe,
   the forget confirmation, the compose-smoke retry rule and model cache, the scorecard
   load). The fifth rebuild measures the forget confirmation.
+- 20:05 — the fifth rebuild: memory-forget's first two turns pass (one note, confirmed
+  forgotten); the third still hints — "You asked me to forget it, Sir — so I can't say" — a
+  tool result's note two turns back does not outweigh the conversation the model can see.
+  Being made structural: a successful forget scrubs the forgotten text from the thread, so
+  "nothing recorded" is the only thing left to say. house-light-on green both variants,
+  median 1.25 s.
