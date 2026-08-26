@@ -13,9 +13,12 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -47,6 +50,16 @@ import kotlin.concurrent.thread
  * utterance against it. A biometric gate whose threshold was guessed is a gate
  * that locks you out on the first cold morning, and the only defence is being
  * able to see the numbers before you turn it on.
+ *
+ * ## Who (M71)
+ *
+ * A sample is enrolled under a NAME. The box above the phrases is who is
+ * reading them; empty means the server's default person, so a house with one
+ * voice types nothing. A new name is a new person, up to the server's
+ * `max_people`; the phrase list follows THAT person's sample count, so two
+ * people enrolling on one phone are not asked each other's phrases. Everyone
+ * enrolled is listed, each with their own FORGET, and TEST MY VOICE says who
+ * it heard rather than only whether.
  *
  * Nothing here enables enforcement. That is a line in `configuration.yaml` on
  * the server, deliberately: turning on the thing that can refuse you should not
@@ -85,7 +98,23 @@ class VoiceIdentityActivity : Activity() {
     /** One row per phrase: what it says and whether it has been given. */
     private lateinit var stepList: LinearLayout
 
+    /** Who is reading the phrases (M71). Empty is the server's default person. */
+    private lateinit var nameField: EditText
+
+    /** Everyone enrolled, one row each with its own FORGET. */
+    private lateinit var peopleList: LinearLayout
+
     private var status: VoiceIdentityClient.Status? = null
+
+    /**
+     * The name the next sample goes to: what was typed, trimmed and collapsed
+     * the way the server's `normalise_label` does it, else the server's default.
+     */
+    private val label: String
+        get() {
+            val typed = nameField.text?.toString().orEmpty().trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+            return typed.ifEmpty { status?.defaultLabel ?: "owner" }
+        }
 
     /**
      * Which phrase to read next.
@@ -105,9 +134,13 @@ class VoiceIdentityActivity : Activity() {
      * three stored, the next phrase to read is the fourth.
      *
      * [redo] is the one thing that can move it backwards, and only by one.
+     *
+     * Since M71 it is the NAMED person's count. Two people enrolling on one
+     * phone must not be asked each other's phrases, and a name nobody has
+     * enrolled under yet starts at the top.
      */
     private val promptIndex: Int
-        get() = ((status?.samples ?: 0) - redo).coerceAtLeast(0)
+        get() = ((status?.personNamed(label)?.samples ?: 0) - redo).coerceAtLeast(0)
 
     /**
      * How far REDO has stepped the phrase list back.
@@ -220,6 +253,29 @@ class VoiceIdentityActivity : Activity() {
             )
         )
 
+        // WHO, before WHAT. Typing a name changes which phrase is next, so the
+        // box sits above the phrase it decides.
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
+        column.addView(JarvisUi.label(this, "Who is this"))
+        nameField = JarvisUi.field(this, "owner", "")
+        nameField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // The phrase list follows the named person's count.
+                redo = 0
+                status?.let { render(it) }
+            }
+        })
+        column.addView(nameField, matchWidth())
+        column.addView(
+            JarvisUi.hint(
+                this,
+                "Leave it empty for the first voice. A new name is a new person, and " +
+                    "Jarvis is told who is speaking."
+            )
+        )
+
         column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
         column.addView(JarvisUi.label(this, "Say this"))
         promptView = JarvisUi.responseView(this)
@@ -263,7 +319,17 @@ class VoiceIdentityActivity : Activity() {
         column.addView(redoButton, matchWidth())
         testButton = JarvisUi.button(this, "TEST MY VOICE") { startTest() }
         column.addView(testButton, matchWidth())
-        forgetButton = JarvisUi.button(this, "FORGET MY VOICE") { forget() }
+
+        // Everyone enrolled, one row each with its own FORGET (M71): the
+        // console's people list, on the phone. Rebuilt by [renderPeople]
+        // because the household changes under a running screen.
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
+        column.addView(JarvisUi.label(this, "Enrolled"))
+        peopleList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(peopleList, matchWidth())
+
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
+        forgetButton = JarvisUi.button(this, FORGET_ONE) { forget() }
         column.addView(forgetButton, matchWidth())
 
         column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
@@ -446,10 +512,19 @@ class VoiceIdentityActivity : Activity() {
     }
 
     // --- server round trips -------------------------------------------------
-    private fun refresh() = offMainThread({ it.status() }) { render(it) }
+    private fun refresh() {
+        // The loading state, said in words: the buttons are disabled for the
+        // round trip, and a screen that is silent while disabled reads as a
+        // screen that has stopped working.
+        if (status == null) {
+            statusView.text = "Asking Jarvis who is enrolled…"
+            detailView.text = ""
+        }
+        offMainThread({ it.status() }) { render(it) }
+    }
 
     private fun submitEnrolment(pcm: ByteArray) =
-        offMainThread({ it.enrol(pcm) }) { enrolment ->
+        offMainThread({ it.enrol(pcm, label) }) { enrolment ->
             // The phrase list advances because the SERVER's count advanced —
             // see [promptIndex]. Nothing is counted here.
             redo = 0
@@ -459,10 +534,11 @@ class VoiceIdentityActivity : Activity() {
             render(enrolment.status)
         }
 
-    private fun forget() = offMainThread({ it.forget() }) { fresh ->
+    /** Forget one person by name, or everyone when [who] is null. */
+    private fun forget(who: String? = null) = offMainThread({ it.forget(who) }) { fresh ->
         redo = 0
         lastNote = null
-        toast("Voiceprint deleted.")
+        toast(if (who == null) "Every voiceprint deleted." else "$who's voiceprint deleted.")
         render(fresh)
     }
 
@@ -503,7 +579,17 @@ class VoiceIdentityActivity : Activity() {
         val score = verdict?.optDouble("score") ?: Double.NaN
         val threshold = verdict?.optDouble("threshold") ?: Double.NaN
         val blocked = result.optBoolean("would_block", false)
-        statusView.text = if (accepted) "RECOGNISED" else "NOT RECOGNISED"
+        // WHO (M71): the verdict names the person it accepted, and on a
+        // refusal the nearest enrolled person — so a false reject of the owner
+        // reads as "nearest: owner", not as a stranger with no explanation.
+        val who = verdict?.let { textOf(it, "label") }.orEmpty()
+        val nearest = verdict?.let { textOf(it, "nearest") }.orEmpty()
+        statusView.text = when {
+            accepted && who.isNotEmpty() -> "RECOGNISED AS ${who.uppercase()}"
+            accepted -> "RECOGNISED"
+            nearest.isNotEmpty() -> "NOT RECOGNISED (NEAREST: ${nearest.uppercase()})"
+            else -> "NOT RECOGNISED"
+        }
         detailView.text = buildString {
             append(String.format("score %.2f against threshold %.2f", score, threshold))
             append(if (blocked) "\nWith enforcement on, that turn would have been refused."
@@ -562,6 +648,12 @@ class VoiceIdentityActivity : Activity() {
         }
     }
 
+    /** A JSON string, or "" for absent AND for JSON null — `optString` says "null" for the latter. */
+    private fun textOf(json: org.json.JSONObject, key: String): String {
+        val value = json.opt(key) ?: return ""
+        return if (value == org.json.JSONObject.NULL) "" else value.toString()
+    }
+
     /**
      * One place that decides what may be pressed, called from every transition.
      *
@@ -578,6 +670,9 @@ class VoiceIdentityActivity : Activity() {
         recordButton.text = if (recording) RECORD_STOP else RECORD_START
         testButton.isEnabled = paired && !busy && !recording
         forgetButton.isEnabled = paired && !busy && !recording && (status?.enrolled == true)
+        // The word says what it deletes: one voice, or the whole household.
+        forgetButton.text = if ((status?.people?.size ?: 0) > 1) FORGET_ALL else FORGET_ONE
+        nameField.isEnabled = paired && !busy && !recording
         // Only once there is an earlier phrase to go back to. Live from the
         // FIRST accepted sample, which is exactly when "that was too quiet"
         // first becomes possible to think.
@@ -646,6 +741,41 @@ class VoiceIdentityActivity : Activity() {
         }
     }
 
+    /**
+     * One row per enrolled person: the name, their own numbers, and a FORGET
+     * that deletes that person only. The console draws the same rows.
+     */
+    private fun renderPeople(fresh: VoiceIdentityClient.Status) {
+        peopleList.removeAllViews()
+        if (fresh.people.isEmpty()) {
+            peopleList.addView(
+                JarvisUi.hint(this, "Nobody is enrolled yet — the gate is inert until somebody reads the phrases."),
+                matchWidth(),
+            )
+            return
+        }
+        for (person in fresh.people) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, JarvisUi.dp(this@VoiceIdentityActivity, JarvisUi.Space.MICRO), 0, 0)
+            }
+            val numbers = buildString {
+                append("${person.samples} of ${person.maxSamples}")
+                if (person.threshold > 0) append(String.format(" · threshold %.2f", person.threshold))
+                val worst = person.worstSelfScore
+                if (person.thresholdMeasured && worst != null) append(String.format(" · worst %.2f", worst))
+                if (!person.enrolled) append(" · needs ${(fresh.minSamples - person.samples).coerceAtLeast(1)} more")
+            }
+            row.addView(
+                JarvisUi.mono(this, "${person.label}  $numbers"),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            row.addView(JarvisUi.button(this, "FORGET") { forget(person.label) })
+            JarvisUi.describe(row, "${person.label}: $numbers")
+            peopleList.addView(row, matchWidth())
+        }
+    }
+
     private fun render(fresh: VoiceIdentityClient.Status) {
         status = fresh
         // Cache what the server is doing, so a turn starting later does not
@@ -661,13 +791,29 @@ class VoiceIdentityActivity : Activity() {
             else -> "That is enough — add more only if it stops recognising you."
         }
         renderSteps(fresh)
-        statusView.text = if (fresh.enrolled) {
-            "${fresh.samples} of ${fresh.maxSamples} samples · gate is ${fresh.mode}"
-        } else {
-            "Not enrolled — ${fresh.minSamples} phrases needed"
+        renderPeople(fresh)
+        // The named person's own count, not the first person's; and the
+        // household when there is one.
+        val person = fresh.personNamed(label)
+        statusView.text = when {
+            fresh.people.size > 1 -> {
+                val total = fresh.people.sumOf { it.samples }
+                "${fresh.people.size} people · $total samples · gate is ${fresh.mode}"
+            }
+            person != null && person.enrolled -> "${person.samples} of ${person.maxSamples} samples · gate is ${fresh.mode}"
+            person != null -> "$label: ${person.samples} of ${fresh.minSamples} phrases so far"
+            fresh.enrolled -> "$label is new — ${fresh.minSamples} phrases needed · gate is ${fresh.mode}"
+            else -> "Not enrolled — ${fresh.minSamples} phrases needed"
         }
         val worst = fresh.worstSelfScore
         detailView.text = when {
+            person == null || !person.enrolled ->
+                "Nothing is checked for $label until there are ${fresh.minSamples} samples."
+            fresh.configuredThreshold != null -> String.format(
+                "The server names a threshold of %.2f in configuration.yaml, and that is what is " +
+                    "in force; enrolment suggests %.2f.",
+                fresh.configuredThreshold, fresh.suggestedThreshold,
+            )
             !fresh.usable ->
                 "Nothing is checked until there are ${fresh.minSamples} samples."
             // A threshold that was never measured must not be reported as one.
@@ -743,5 +889,9 @@ class VoiceIdentityActivity : Activity() {
 
         const val RECORD_START = "TAP TO SPEAK"
         const val RECORD_STOP = "TAP TO STOP"
+
+        /** What the bottom button deletes: one voice, or the household. */
+        const val FORGET_ONE = "FORGET MY VOICE"
+        const val FORGET_ALL = "FORGET EVERYONE"
     }
 }

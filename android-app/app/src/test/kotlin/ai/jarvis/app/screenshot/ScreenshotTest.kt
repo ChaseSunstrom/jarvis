@@ -426,6 +426,7 @@ class ScreenshotTest {
         rows.apply("state_changed", org.json.JSONObject("""{"entity_id":"sensor.garage_temperature","new_state":{"state":"12.5","attributes":{"friendly_name":"Garage temperature","unit_of_measurement":"°C"}}}"""), 3L)
         rows.apply("vision_look_started", org.json.JSONObject("""{"id":"l1","camera":"Kitchen","question":"anyone there?"}"""), 4L)
         rows.apply("jarvis_notification", org.json.JSONObject("""{"notification":{"id":"n1","title":"Check the oven","kind":"reminder"}}"""), 5L)
+        rows.apply("jarvis_speaker_verdict", org.json.JSONObject("""{"run_id":"r1","accepted":true,"label":"Ted","nearest":"Ted","score":2.314,"threshold":8.831,"reason":"match","enforced":false}"""), 6L)
         val strip = ai.jarvis.app.ui.ActivityStrip(context)
         strip.render(rows)
         bitmapOf(strip).captureRoboImage(golden("voice-activity"))

@@ -7,12 +7,13 @@ import org.json.JSONObject
  *
  * The same vocabulary as the console's `activity.svelte.ts`: which bus events
  * make a row, what kind each makes, and the cap. Both read
- * `tests/contracts/activity_rows.json`; `android-app/tools/activity_mirror_test.py`
- * fails when this file and the contract disagree. No Android in it, so the
+ * `tests/contracts/activity_rows.json` (and, for the speaker row, the field
+ * table in `speaker_verdict.json`); `android-app/tools/activity_mirror_test.py`
+ * fails when this file and the contracts disagree. No Android in it, so the
  * arithmetic is testable on the JVM and the view only paints.
  */
 class ActivityRows {
-    enum class Kind { TOOL, TASK, SENSOR, CAMERA, MEMORY, MOMENT, APPROVAL, ERROR }
+    enum class Kind { TOOL, TASK, SENSOR, CAMERA, MEMORY, MOMENT, APPROVAL, SPEAKER, ERROR }
     enum class State { LIVE, DONE, FAILED }
 
     data class Row(
@@ -64,7 +65,25 @@ class ActivityRows {
             "jarvis_notification" to Kind.MOMENT,
             "jarvis_approval_required" to Kind.APPROVAL,
             "jarvis_approval_resolved" to Kind.APPROVAL,
+            "jarvis_speaker_verdict" to Kind.SPEAKER,
         )
+
+        /**
+         * The verifier's reasons that mean "could not judge" rather than
+         * "judged and it was not you" — `tests/contracts/speaker_verdict.json`.
+         * A strip that painted a half-second "stop" as a stranger would be
+         * lying about the owner.
+         */
+        val UNVERIFIABLE = setOf("no-speech", "unverifiable-no-pitch", "unverifiable-transcript")
+
+        /** A JSON string, or "" for absent AND for JSON null — `optString` says "null" for the latter. */
+        private fun text(data: JSONObject, key: String): String {
+            val value = data.opt(key) ?: return ""
+            return if (value == JSONObject.NULL) "" else value.toString()
+        }
+
+        private fun number(value: Any?): String? =
+            (value as? Number)?.toDouble()?.takeIf { it.isFinite() }?.let { String.format(java.util.Locale.ROOT, "%.2f", it) }
 
         /** Domains whose `state_changed` is a reading worth a row. */
         val SENSOR_DOMAINS = setOf("sensor", "binary_sensor", "climate", "weather", "number", "event", "device_tracker")
@@ -138,6 +157,28 @@ class ActivityRows {
                 }
                 "jarvis_approval_required" -> Row("approval:${data.optString("id")}", kind, data.optString("tool"), "waiting for you", State.LIVE, at)
                 "jarvis_approval_resolved" -> Row("approval:${data.optString("id")}", kind, data.optString("tool"), data.optString("decision"), State.DONE, at)
+                "jarvis_speaker_verdict" -> {
+                    // Who the voice gate heard (M71), by the rule in the contract:
+                    // the name when accepted; "unverified" for audio too short or
+                    // too quiet to judge, never painted as a stranger; "not
+                    // recognised", failed only when the gate actually refused the
+                    // turn, naming the nearest enrolled person so a false reject
+                    // of the owner can be read for what it was.
+                    val id = "speaker:${text(data, "run_id").ifEmpty { at.toString() }}"
+                    val score = number(data.opt("score"))
+                    val threshold = number(data.opt("threshold"))
+                    val numbers = if (score != null && threshold != null) "$score / $threshold" else score.orEmpty()
+                    if (data.optBoolean("accepted", false)) {
+                        return Row(id, kind, text(data, "label").ifEmpty { "recognised" }, numbers, State.DONE, at)
+                    }
+                    val reason = text(data, "reason")
+                    if (reason in UNVERIFIABLE) return Row(id, kind, "unverified", reason, State.DONE, at)
+                    val enforced = data.optBoolean("enforced", false)
+                    val nearest = text(data, "nearest").takeIf { it.isNotEmpty() }?.let { "nearest $it" }
+                    val detail = listOfNotNull(if (enforced) "refused" else "observed", nearest, numbers.takeIf { it.isNotEmpty() })
+                        .joinToString(" · ")
+                    Row(id, kind, "not recognised", detail, if (enforced) State.FAILED else State.DONE, at)
+                }
                 else -> null
             }
         }

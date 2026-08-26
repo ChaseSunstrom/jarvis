@@ -47,6 +47,37 @@ class ActivityRowsTest {
     }
 
     @Test
+    fun aVoiceHeardIsNamedAndTooShortToJudgeIsNotAStranger() {
+        val rows = ActivityRows()
+        assertTrue(rows.apply("jarvis_speaker_verdict", json("""{"run_id":"r1","accepted":true,"label":"Ted","nearest":"Ted","score":2.314,"threshold":8.831,"reason":"match","enforced":false}"""), 1L))
+        assertEquals(ActivityRows.Kind.SPEAKER, rows.rows[0].kind)
+        assertEquals("Ted", rows.rows[0].title)
+        assertEquals("2.31 / 8.83", rows.rows[0].detail)
+        assertEquals(ActivityRows.State.DONE, rows.rows[0].state)
+        // A refusal while enforcing: failed, nobody named as the speaker, the
+        // nearest person named so a false reject can be read for what it was.
+        rows.apply("jarvis_speaker_verdict", json("""{"run_id":"r2","accepted":false,"label":null,"nearest":"owner","score":11.87,"threshold":9.0,"reason":"mismatch","enforced":true}"""), 2L)
+        assertEquals("not recognised", rows.rows[0].title)
+        assertEquals("refused · nearest owner · 11.87 / 9.00", rows.rows[0].detail)
+        assertEquals(ActivityRows.State.FAILED, rows.rows[0].state)
+        // The same verdict merely observed is not a failure of anything.
+        rows.apply("jarvis_speaker_verdict", json("""{"run_id":"r3","accepted":false,"label":null,"nearest":"owner","score":11.87,"threshold":9.0,"reason":"mismatch","enforced":false}"""), 3L)
+        assertEquals("observed · nearest owner · 11.87 / 9.00", rows.rows[0].detail)
+        assertEquals(ActivityRows.State.DONE, rows.rows[0].state)
+        // Too short to judge is "unverified", never a stranger.
+        for (reason in ActivityRows.UNVERIFIABLE) {
+            rows.apply("jarvis_speaker_verdict", json("""{"run_id":"$reason","accepted":false,"label":null,"nearest":null,"score":null,"threshold":null,"reason":"$reason","enforced":false}"""), 4L)
+            assertEquals("unverified", rows.rows[0].title)
+            assertEquals(reason, rows.rows[0].detail)
+            assertEquals(ActivityRows.State.DONE, rows.rows[0].state)
+        }
+        // One run is one row, updated in place.
+        rows.apply("jarvis_speaker_verdict", json("""{"run_id":"r1","accepted":true,"label":"Ted","score":1.5,"threshold":8.831}"""), 5L)
+        assertEquals(1, rows.rows.count { it.id == "speaker:r1" })
+        assertEquals("1.50 / 8.83", rows.rows.first { it.id == "speaker:r1" }.detail)
+    }
+
+    @Test
     fun theStripKeepsADozenNewestFirst() {
         val rows = ActivityRows()
         for (i in 0 until 15) rows.apply("jarvis_tool_started", json("""{"name":"tool_$i","round":1,"index":$i}"""), i.toLong())

@@ -23,6 +23,7 @@ KT = ROOT / "app/src/main/kotlin/ai/jarvis/app/assist/ActivityRows.kt"
 STRIP = ROOT / "app/src/main/kotlin/ai/jarvis/app/ui/ActivityStrip.kt"
 CLIENT = ROOT / "app/src/main/kotlin/ai/jarvis/app/assist/AssistPipelineClient.kt"
 CONTRACT = ROOT.parent / "tests/contracts/activity_rows.json"
+VERDICT = ROOT.parent / "tests/contracts/speaker_verdict.json"
 
 
 def contract() -> dict:
@@ -76,6 +77,25 @@ def test_the_strip_only_paints():
     strip = STRIP.read_text()
     assert "class ActivityStrip" in strip and "fun render(rows: ActivityRows)" in strip
     assert "JarvisUi." in strip and not re.search(r"Color\.parseColor|0x[0-9A-Fa-f]{6,8}", strip), "a colour typed by hand"
+
+
+def test_the_speaker_row_follows_the_verdict_contract():
+    """Who the voice gate heard (M71): the phone's row rule is the console's,
+    from `speaker_verdict.json` — the name when accepted, "unverified" for
+    every reason the contract calls unverifiable (never a stranger), and
+    "not recognised" naming the nearest person, failed only when enforced."""
+    verdict = json.loads(VERDICT.read_text())
+    src = KT.read_text()
+    assert verdict["event"] in kotlin_events() and kotlin_events()[verdict["event"]] == verdict["row"]["kind"]
+    block = src[src.index("val UNVERIFIABLE"): src.index(")", src.index("val UNVERIFIABLE"))]
+    reasons = re.findall(r'"([a-z-]+)"', block)
+    assert sorted(reasons) == sorted(verdict["unverifiable_reasons"]), reasons
+    case = src[src.index(f'"{verdict["event"]}" ->'): src.index("else -> null")]
+    assert '"unverified"' in case and '"not recognised"' in case, "the two non-name titles are not both drawn"
+    assert "State.FAILED else State.DONE" in case, "a refusal is a failure whether or not it was enforced"
+    assert '"nearest' in case, "a refusal does not name who it was nearest"
+    # JSON null must not become the word "null" in a title: `optString` does that.
+    assert 'text(data, "label")' in case and 'text(data, "nearest")' in case
 
 
 def main() -> int:
