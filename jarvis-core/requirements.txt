@@ -31,3 +31,15 @@ jinja2>=3.1,<4.0
 # rather than failing, but MQTT discovery is how most real hardware arrives,
 # so it is installed by default. paho-mqtt is the fallback backend.
 aiomqtt>=2.0,<3.0
+
+# --- The sky: satellite passes, the moon, the planets (integrations/sky) ----
+# One minor release, not a range — written as bounds because every line here
+# carries both (test_packaging pins that), but it is a pin: the almanac calls
+# the integration leans on (find_risings / find_settings with a horizon,
+# EarthSatellite.from_omm) moved between minors, and tests/test_sky.py asserts
+# times to the minute against a fixed element set. Brings numpy, sgp4 and
+# jplephem — the first compiled wheels in this file. All three ship manylinux
+# wheels for amd64 and arm64, so the "no compiler" claim above still holds;
+# the "pure-Python" one no longer does (DEVIATIONS.md §15). The import is
+# lazy: a box with no `sky:` block never loads them.
+skyfield>=1.55,<1.56

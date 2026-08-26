@@ -24,6 +24,7 @@ above the run: snapshot before, restore after.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -275,6 +276,12 @@ class StackGround(Ground):
             # sound once that process has re-opened it.
             self.guard.restore(self.snapshot)
             self.snapshot = None
+            # A breath before the restart: the last voice turn's synthesis can
+            # still be streaming to whoever asked for it, and a core torn down
+            # mid-stream leaves piper writing into a closed socket (an ERROR
+            # in its log that stack-logs-clean then reports against a run that
+            # went perfectly). Three seconds is longer than any reply.
+            time.sleep(3.0)
             self.stack.restart(CORE_CONTAINER)
 
 

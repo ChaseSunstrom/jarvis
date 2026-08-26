@@ -1,0 +1,38 @@
+# The sky — the next ISS pass for the house, what is overhead now, the moon's
+# phase, the planets tonight. Nothing in this file is loaded: copy the block
+# into configuration.yaml to switch it on.
+#
+# Everything is computed on this box with skyfield. Two things are ever
+# downloaded, both cached under the config directory: orbital elements from
+# CelesTrak (a few KB, refreshed when older than `refresh_hours`) and the
+# planetary ephemeris de421.bsp (17 MB, once). After that it answers offline
+# for as long as the elements are worth anything — about two weeks — and
+# every answer says how old they are. A box that never goes online can drop
+# a .tle or .csv file into `tle_cache` and the ephemeris into place by hand.
+#
+# Location comes from `jarvis:` (latitude, longitude, elevation, time_zone),
+# the way `sun:` reads it. Times in every answer are in that zone.
+#
+# Entities: `sky.iss_next_pass` (state: when the next pass rises; attributes
+# max_alt, direction, visible, tle_age_hours) and `sky.moon` (state: the phase
+# name; attributes illumination, next_full, next_new).
+#
+# Tools the model gets, all read-only: next_pass, overhead_now, moon_phase,
+# planets_tonight.
+#
+# sky:
+#   tle_cache: sky/tle           # under the config dir
+#   ephemeris: sky/de421.bsp     # under the config dir; downloaded once if absent
+#   refresh_hours: 24            # re-fetch elements older than this (never under 2)
+#   min_altitude: 10             # degrees; a pass begins and ends here
+#   update_interval: 300         # seconds between entity recomputes
+#   satellites:                  # tracked: one `sky.<name>_next_pass` entity each
+#     - ISS (ZARYA)
+#     # - CSS (TIANHE)           # Tiangong; in the same `stations` group
+#   sources:                     # CelesTrak groups as OMM CSV (a TLE file is read too,
+#                                # but the catalogue outgrew the TLE format in 2026)
+#     - https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=csv
+#     # - https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=csv
+#     # starlink and last-30-days are opt-in: thousands of rows, and a train
+#     # after a launch is what people actually want from them
+#   download: true               # false: never touch the network

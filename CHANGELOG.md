@@ -8,6 +8,23 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M58 — the sky.** A `sky` integration shaped like `sun`: the next ISS pass for the house,
+  what is overhead now, the moon's phase, the planets tonight — computed here with skyfield
+  from orbital elements cached under `<config>/sky/` and a 17 MB ephemeris downloaded once,
+  so it answers offline after the first download and every answer says how old the elements
+  are. Elements come from CelesTrak as OMM CSV (the catalogue outgrew the TLE format in July
+  2026; a hand-typed TLE is still read), never fetched more often than CelesTrak's two-hour
+  cycle, and a failed fetch keeps the cache rather than the silence. Four read-only tools —
+  `next_pass`, `overhead_now`, `moon_phase`, `planets_tonight` — each returning a short dict
+  and a `spoken` line in the house register ("next visible tomorrow morning at 04:45: it comes
+  up in the west, reaches 88 degrees in the north … bright, high overhead, from orbital
+  elements 1 day old"); "visible" is sunlit-while-the-house-is-dark-above-10°, the way
+  Heavens-Above means it. Entities `sky.iss_next_pass` and `sky.moon` on a timer. Without the
+  ephemeris the satellite tools still work and the moon and the planets say the file is not
+  there yet; without skyfield the integration says so and the house boots. Tested against a
+  real 2026 element set, a 36 KB excerpt of de421 and a frozen clock, with the network pinned
+  shut. Ships unconfigured — the integrator adds the block. `sky-iss-pass` is the live scenario,
+  gated on this milestone. Not in this change: ADS-B through readsb (profile `radio`).
 - **M54 — settings that make sense, and the real models.** SETTINGS › Assistant opens on a
   MODELS panel that lists what the model servers actually serve: `jarvis/llm/models` (and
   `GET /api/llm/models`) resolves the gateway's aliases through LiteLLM's `/model/info` to the

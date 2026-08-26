@@ -502,6 +502,26 @@ notes:
 notifications:
   max_entries: 200        # oldest READ entries go first; unread ones are kept
 
+# The sky (M58): the next ISS pass for the house, what is overhead now, the
+# moon's phase, the planets tonight — computed here with skyfield. Orbital
+# elements come from CelesTrak as OMM CSV, cached under sky/tle and refreshed
+# when older than a day; the 17 MB ephemeris is downloaded once into sky/.
+# After that it answers offline for as long as the elements are worth
+# anything (about two weeks), and every answer says how old they are. The
+# location is `jarvis:` above. Switched on here, not only in the harness's
+# generated config, for the reason the notes and notifications blocks give.
+sky:
+  tle_cache: sky/tle
+  ephemeris: sky/de421.bsp
+  refresh_hours: 24
+  min_altitude: 10
+  update_interval: 300
+  satellites:
+    - ISS (ZARYA)
+  sources:
+    - https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=csv
+  download: true
+
 
 # ---------------------------------------------------------------------------
 # Calendar and mail — the two things a diary assistant is actually for. OFF.

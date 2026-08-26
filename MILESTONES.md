@@ -926,7 +926,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     ("power draw now", "coldest room"); changes on the voice tab. Research:
     `docs/research/sky-satellites-and-radio.md`, `docs/research/devices-and-protocols.md`.
   - Verify: `bash scripts/verify/m57-sensors.sh`
-- [ ] **M58 — The sky** · size M · deps M52 · parallel-ok M56, M57
+- [x] **M58 — The sky** · size M · deps M52 · parallel-ok M56, M57
   - Scope: skyfield with cached TLEs — the next ISS pass for the house, what is overhead now,
     the moon's phase, the planets tonight — offline after the first download; optional ADS-B
     through readsb behind profile `radio`. Research: `docs/research/sky-satellites-and-radio.md`.

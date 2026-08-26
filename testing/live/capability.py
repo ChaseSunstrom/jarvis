@@ -49,6 +49,13 @@ TOOL_CAPABILITY = {
     # Asking how a job is going is about the job, not about starting one.
     "task_status": "task",
     "cancel_task": "task",
+    # The sky (M58): four read-only questions answered from cached orbital
+    # elements and an ephemeris. One capability, because a turn that asked
+    # "what's up tonight" and got the moon AND the planets did one thing.
+    "next_pass": "sky",
+    "overhead_now": "sky",
+    "moon_phase": "sky",
+    "planets_tonight": "sky",
 }
 
 
@@ -82,7 +89,7 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
         chosen.add("memory")
     if any(call.startswith("notes.") for call in calls):
         chosen.add("notes")
-    for capability in ("subagents", "coding", "research", "memory", "notes"):
+    for capability in ("subagents", "coding", "research", "memory", "notes", "sky"):
         if capability in chosen:
             return capability
     if task_kinds or "run_background_task" in tools:

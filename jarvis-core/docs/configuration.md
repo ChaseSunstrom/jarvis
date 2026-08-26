@@ -137,6 +137,47 @@ trigger:
 
 For an offset, use a template condition on `next_setting`.
 
+## `sky:`
+
+```yaml
+sky:
+  tle_cache: sky/tle            # under the config dir; drop your own .csv/.tle here
+  ephemeris: sky/de421.bsp      # under the config dir; downloaded once when absent
+  refresh_hours: 24             # re-fetch elements older than this; never under 2
+  min_altitude: 10              # degrees; a pass begins and ends here
+  update_interval: 300          # seconds between entity recomputes
+  satellites: [ISS (ZARYA)]     # tracked: one `sky.<name>_next_pass` entity each
+  sources:
+    - https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=csv
+  download: true                # false: never touch the network
+```
+
+The next ISS pass for the house, what is overhead now, the moon's phase and
+the planets tonight, computed here with skyfield. Location comes from
+`jarvis:`, times are in its `time_zone`. Two downloads, both cached under the
+config directory: orbital elements from CelesTrak (a few KB, refreshed when
+older than `refresh_hours`; never fetched more often than every two hours,
+which is CelesTrak's own cycle) and the planetary ephemeris (17 MB, once).
+Neither happens on the way to start-up, and neither failing stops anything —
+the cached elements keep serving with their age in every answer, and without
+the ephemeris the satellite tools still work while the moon and the planets
+say the file is not there yet. `download: false` is for an air-gapped box:
+put a CSV (or a TLE) in `tle_cache` and the ephemeris in place by hand.
+
+Entities: `sky.iss_next_pass` (state: when the next pass above `min_altitude`
+rises, in the house zone; attributes `max_alt`, `direction`, `visible`,
+`rise_direction`, `culmination`, `set`, `set_direction`, `next_visible`,
+`tle_age_hours`, `elements_age_days`) and `sky.moon` (state: the phase name;
+attributes `illumination`, `phase_angle`, `waxing`, `next_full`, `next_new`).
+
+Tools, all tier 1 and read-only: `next_pass(satellite, hours)`,
+`overhead_now(min_altitude)`, `moon_phase()`, `planets_tonight()`. Each
+returns a short dict and a `spoken` sentence. "Visible" means the satellite
+is above the floor, lit by the sun, and the sun at the house is below −6°;
+"bright" is a visible pass that climbs past 40°.
+
+Worked example, with the notes: `examples/sky.yaml`.
+
 ## `voice:`
 
 ```yaml

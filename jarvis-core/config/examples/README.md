@@ -44,6 +44,13 @@ default.
 | `packages-laundry.yaml` | one self-contained feature — helper, template sensor, automation and script in one file. Copy to `packages/laundry.yaml` |
 | `example.tool.yaml` | a YAML-defined LLM tool. Copy to `tools/` |
 
+## `sky.yaml` — the sky
+
+The `sky:` block, commented out, with what each key does: the next ISS pass
+for the house, what is overhead, the moon, the planets. Copy the block into
+`configuration.yaml`. It downloads orbital elements and a 17 MB ephemeris
+once, into `<config>/sky/`, and answers offline after that.
+
 ### It is also the test fixture
 
 `tests/test_packaging.py` boots this directory to check properties that need a

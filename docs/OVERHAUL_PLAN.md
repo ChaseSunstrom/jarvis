@@ -16,9 +16,10 @@ This document is the spine. Each numbered item is a milestone in
 
 ## What is true now
 
-- 48 milestones ticked; M27, M50, M51 built and awaiting their gates on a free
-  stack; M23 is the final gate. The live suite is green on 52 of 53 variants
-  (the last needs a faster model — `BLOCKERS.md` §2).
+- 54 milestones ticked as of 07:35 on the 26th (M27, M50–M54 this morning);
+  M23 is the final gate. The full-mode live run: 47 of 53 variants, 72 of 77
+  turns, WER 5.7 %, median round trip 6.7 s; the two thresholds missed are
+  written down in `docs/verification.md`.
 - Cameras: a `vision` integration exists (consent, audit, fenced
   descriptions, still/mjpeg/rtsp/mqtt cameras) but speaks only Ollama's API
   and is not enabled in the deployed config. Sensors: `sensors` and `mqtt`
@@ -34,7 +35,8 @@ This document is the spine. Each numbered item is a milestone in
   shows the graph and the activity strip beside the instrument, and as of
   M53 the instrument moves for what Jarvis does (`docs/design/MOTION.md`). Settings is a generic rows renderer
   with the model chosen from the server's *aliases* (`house`), which is not
-  what the operator means by "the model".
+  what the operator means by "the model" — until M54: five sections, plain
+  rows, and a MODELS panel that lists what the servers actually serve.
 
 ## The milestones, in order
 

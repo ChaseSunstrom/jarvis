@@ -391,6 +391,26 @@ log line, which is not a reminder. A reminder now lands in the notifications
 inbox — kind `reminder`, kept until read, on every console — and goes to the
 phone second. Someone with a phone gets it twice, in two places that both
 show it as read once it is read; someone without gets it at all.
+## 16. The image is no longer pure-Python: the sky brings numpy
+
+`jarvis-core/requirements.txt` opens with "deliberately short and pure-Python: every one of
+these installs from a wheel with no compiler". M58 adds `skyfield`, which brings `numpy`,
+`sgp4` and `jplephem` — the first compiled wheels in the file, and ~30 MB of image. The
+research (`docs/research/sky-satellites-and-radio.md` §1) recommended an optional
+requirements file for exactly this reason; the milestone brief asked for the pin in
+`requirements.txt`, and that is what shipped.
+
+What still holds: the "no compiler" half. All three publish manylinux wheels for amd64 and
+arm64, so the Dockerfile's build stage is unchanged and a Pi builds it as before. What no
+longer holds: "pure-Python". What limits the cost: the import is lazy — `jarvis` starts
+without touching numpy on a box that has no `sky:` block — and the module never imports
+numpy itself (test_packaging's "every third-party import is declared" check would have
+caught it; skyfield's arrays are numpy without the name appearing in the tree). The
+alternative, `astral`, is pure Python but has no planets and no satellites; once skyfield is
+in for satellites, one dependency beats two.
+
+If the image size matters more than the sky on some install, the line to move is one
+requirement into an optional file; nothing in the integration would change.
 
 ## Licensing notes
 

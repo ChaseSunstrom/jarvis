@@ -13,6 +13,24 @@ and is not misled).
 
 ---
 
+## Piper logs a reset when the core is restarted mid-synthesis
+
+severity: minor
+status: **open** — seen three times on 26 August, each within seconds of the
+rig restarting or stopping a core: not reproduced on a turn that ran to its
+end. Every Wyoming exit is now a polite hang-up (previous entry), which
+covers the running core; a process being terminated is a different door.
+Regression: `stack-logs-clean`, on any run the rig ends with a restart
+Found by: `stack-logs-clean` on the sky scenario's run, and twice before
+
+`ConnectionResetError('Connection lost')` in piper's event handler at
+07:18:50, then 07:31:19 — the second twenty seconds before "Voice ready"
+from the restarted core, i.e. while the rig's end-of-run restore was
+stopping it and the last voice turn's audio was still being streamed to the
+rig. The rig now waits three seconds after restoring before it restarts the
+core; if the record recurs with that in place, the next step is the core's
+shutdown draining its Wyoming connections before uvicorn's own deadline.
+
 ## A worktree brought the stack up, again — and the console's reconnect threw
 
 severity: critical

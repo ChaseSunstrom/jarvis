@@ -342,3 +342,17 @@ is quiet. Done since:
   brought onto the branch one milestone at a time — M54 first (gate 37/38,
   the last red a stale picture folder, re-running), then M58 (its gate is
   green in its worktree), then M56 (one camera test to finish).
+- 07:35 — M54 (`3294b96`, gate 38/38) and M27 (`ae5d8da`, gate 9/9) ticked
+  and committed; the console container carries the five-section SETTINGS
+  and the MODELS panel. M58 is on the branch with `sky:` switched on in the
+  deployed config; its gate and the core rebuild are running.
+- 07:45 — the sky is live: on the rebuilt core the integration fetched 22
+  station element sets from CelesTrak and the ephemeris, and the live
+  scenario "when is the space station next visible from here?" passes on
+  voice and on text. M58's gate on the branch had one check written the
+  wrong way round (it demanded the deployed config NOT enable the sky);
+  reversed to the policy the notes and notifications blocks set, re-running.
+  A startup race that fetched the elements twice is closed; the rig now
+  breathes for three seconds before restarting a core at the end of a run
+  (piper logged a reset each time a core was torn down mid-synthesis;
+  `ISSUES.md`).

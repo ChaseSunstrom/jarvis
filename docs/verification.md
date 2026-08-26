@@ -689,6 +689,36 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### The sky (M58)
+
+`bash scripts/verify/m58-sky.sh`. Green on unit tests alone, by design: everything below
+runs against a real 2026 ISS element set, a 36 KB excerpt of de421, a frozen clock and London,
+with `httpx.AsyncClient` replaced by a class that raises. The live half is a separate line the
+integrator runs against the stack (below), never from the gate.
+
+| Claim | Level | Proof |
+|---|---|---|
+| A pass is found within 48 hours with sane numbers: rise < culmination < set, minutes long, above the floor, compass words, a handful per two days | Automated | `test_a_pass_is_found_within_48_hours_with_sane_numbers` |
+| The first pass and the first *visible* pass are different things — 01:35 in shadow, 04:45 lit and bright — and the answer leads with the visible one | Automated | `test_the_first_pass_and_the_first_visible_pass_are_different_things` |
+| "Visible" is sunlit + house in the dark (sun < −6°) + above the floor; "bright" is visible and past 40° | Automated | the same test asserts `sunlit`, `dark_at_house`, `visible`, `bright` on both passes |
+| Times are in the house's zone, and follow it (`time_zone`, or the automation clock a test puts there) | Automated | `test_times_are_in_the_house_zone` — the same instant as `+01:00` and `+05:45` |
+| "ISS", "the space station", "zarya", nothing at all — all resolve; "Tiangong" with no elements cached says what IS cached | Automated | `test_a_satellite_can_be_asked_for_by_what_people_call_it` |
+| `overhead_now`: below the horizon says so with the age; at culmination the station is up, at the pass's altitude and direction; a higher floor hides it | Automated | `test_overhead_now_says_below_the_horizon_with_the_age`, `test_overhead_now_finds_the_station_at_culmination` |
+| The moon on known dates: waxing gibbous at 98 % on 2026-08-26, full 2026-08-28 05:18 BST, new 2026-09-11, new on the day of the eclipse, full at 100 % | Automated | `test_the_moon_on_known_dates`, `test_moon_phase_names_by_angle` |
+| `planets_tonight`: dusk and dawn at −6°, every planet placed or listed as not up, rises/sets/best with a direction; Saturn at 42° due south, Venus low in the west at dusk; "already dark" starts the night now | Automated | `test_planets_tonight_shape_and_a_known_night`, `test_planets_tonight_when_it_is_already_dark` |
+| Without the ephemeris the satellite tools still answer (visibility `null`, and the sentence says why) and the moon and planets say the file is missing | Automated | `test_without_an_ephemeris_passes_still_come_but_visibility_is_unknown` |
+| A stale cache whose fetch fails keeps serving, reports its age (30 h), warns once, and the answer carries the epoch age | Automated | `test_a_stale_cache_keeps_serving_when_the_fetch_fails` |
+| A fresh cache is not fetched; a fetch replaces the file and its clock atomically; a body with no satellites cannot clobber a good cache; `download: false` never fetches; the floor is CelesTrak's two hours | Automated | `test_a_fresh_cache_is_not_fetched`, `test_a_successful_fetch_replaces_the_set_and_its_clock`, `test_a_body_with_no_satellites_cannot_clobber_a_good_cache`, `test_download_off_means_no_fetch_however_stale`, `test_refresh_never_goes_below_celestraks_cycle` |
+| OMM CSV is what is read; a hand-typed TLE is the fallback and builds the same orbit (epoch to the second, position to the kilometre) | Automated | `test_parse_elements_reads_omm_csv_and_falls_back_to_tle`, `test_a_tle_dropped_in_by_hand_is_read_and_dated_by_its_mtime` |
+| Through `async_setup`: `sky.iss_next_pass` and `sky.moon` computed before they are added, the four tools at tier 1 and read-only, bad arguments degrade to defaults, no fetch and no loop with downloads off | Automated | `test_setup_registers_entities_and_read_only_tools`; the gate registers them against a bare `Jarvis` too |
+| With downloads on, setup returns at once; the fetch runs after, fails against the shut network, keeps the fixture set, and the entities were computed from it | Automated | `test_setup_with_downloads_on_never_blocks_and_a_failed_fetch_keeps_the_cache` |
+| No coordinates: warns, still works (for 0°N 0°E) | Automated | `test_setup_without_coordinates_still_works_and_warns` |
+| Nothing in the tests touches the network | Automated | the autouse `no_network` fixture; the gate greps the test for it |
+| skyfield is pinned to one minor; the venv has it; the builtin timescale loads offline | Automated | the gate reads `requirements.txt` back as a pin and imports it |
+| The shipped config does not enable it; the router knows the four tools as `sky`; the scenario parses and is gated on M58 | Automated | the gate |
+| Asked out loud, the running Jarvis picks the tool and answers with a time and a direction | **Needs the stack** | `LIVE_CAPABILITY=sky bash scripts/verify/live_interaction.sh --full` — `sky-iss-pass`, voice and text, `capability: sky` read off the tool that ran. Not run from a worktree; the integrator runs it against the deployment |
+| The first real download of elements and of de421 from this box | **Manual** | switch the block on, watch the log for `sky: refreshed stations.csv` and `sky: downloaded de421.bsp`; `sky.moon` leaves `unknown` |
+| ADS-B through readsb behind profile `radio` | **Not built** | in M58's scope line; not in this change |
 ### Motion when it does things (M53)
 
 `bash scripts/verify/m53-motion-acts.sh`. Each choreography measured; nothing moves under reduced motion.
