@@ -535,3 +535,13 @@ is quiet. Done since:
   End-to-end (harness self-test, desktop agent, and the emulator suite, whose five
   failures were the automation master switch). The seven jobs the operator listed this
   afternoon are all green; the fixes were the repository's, not the tests'.
+- 18:20 — the once-red gates on the rebuilt stack: M03 (three tests load-only, green alone),
+  M07, M08, M14, M19, M21, M22, M28, M30, M45 green. M26's scorecard measured idle (median
+  3.1 s, WER 0.07) but could not start its load job: its prompt was research-deep-report's
+  old "the fixture handbook" wording, which the model now asks about — the prompt names the
+  address and run.py expands it (7beb17b). M51's smoke slice lost chat-context-retention
+  (text): the claimed-action guard's note read as the user complaining and the model's
+  apology to it became the spoken reply; both guard notes now say what to do and that the
+  user never sees them (f1e3795). The stack is rebuilt with these after the sequence, and
+  the smoke set, the eight M25 scenarios, the scorecard and the M51/M61/M64 gates run again
+  on it. Broker and search engine up beside the stack since 17:55.
