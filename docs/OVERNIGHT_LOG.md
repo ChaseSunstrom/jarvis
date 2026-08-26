@@ -517,7 +517,7 @@ is quiet. Done since:
   reproduction found it: 3260 passed, 1 failed), and the new annotation step took three
   green suites down because GitHub's run shell is `bash -e` and a grep with nothing to
   find returns 1. Both fixed in df0fab8 and pushed.
-- 17:50 — M25's full live run on the rebuilt stack: 49/57 scenarios, 75/82 turns, intent
+- 17:45 — M25's full live run on the rebuilt stack: 49/57 scenarios, 75/82 turns, intent
   91.5 %, routing 95.8 %, WER 5.9 %, median 3.23 s, p95 29 s — the two thresholds still
   missed, recorded not lowered. Eight failures read one by one: the stack had been started
   without the `mqtt`/`search` profiles (no broker, no search engine — the Makefile exports
@@ -529,13 +529,13 @@ is quiet. Done since:
   one restart scenario claimed a light on without calling (a model miss after the
   restart, recorded); one delegation follow-up reported pending findings after 30 s.
   Committed b4010d0 and b7543dd; measured by the next full run.
-- 18:00 — CI on df0fab8: every workflow green — CI (core on 3.12, web build + unit + e2e,
+- 17:50 — CI on df0fab8: every workflow green — CI (core on 3.12, web build + unit + e2e,
   browser, desktop, orchestrator/evals, lint, static, android specs), Build Jarvis APK,
   Build jarvis-desktop (wheel, three installs, the Electron shell), Compose smoke, and
   End-to-end (harness self-test, desktop agent, and the emulator suite, whose five
   failures were the automation master switch). The seven jobs the operator listed this
   afternoon are all green; the fixes were the repository's, not the tests'.
-- 18:20 — the once-red gates on the rebuilt stack: M03 (three tests load-only, green alone),
+- 17:58 — the once-red gates on the rebuilt stack: M03 (three tests load-only, green alone),
   M07, M08, M14, M19, M21, M22, M28, M30, M45 green. M26's scorecard measured idle (median
   3.1 s, WER 0.07) but could not start its load job: its prompt was research-deep-report's
   old "the fixture handbook" wording, which the model now asks about — the prompt names the
@@ -545,8 +545,11 @@ is quiet. Done since:
   user never sees them (f1e3795). The stack is rebuilt with these after the sequence, and
   the smoke set, the eight M25 scenarios, the scorecard and the M51/M61/M64 gates run again
   on it. Broker and search engine up beside the stack since 17:55.
-- 18:40 — M61 (20/20) and M64 (64/64) ticked from the main checkout, live smoke slices
+- 18:08 — M61 (20/20) and M64 (64/64) ticked from the main checkout, live smoke slices
   included; M63 32/32 again, M58 21/21; M23 12/13 with M56 its one open check. 63 of 64
   overhaul milestones ticked. CI on 570158b: CI, APK, compose smoke and the desktop workflow
   green; End-to-end running. The sequence's last step, the full live run with its report,
   is under way; the rebuild-and-remeasure chain follows it.
+- 18:13 — CI green on 570158b as well, End-to-end included: the emulator suite has now
+  passed twice since the automation-switch fix. Pushed 49f39a7 (the M61 and M64 ticks, the
+  guard and scorecard fixes, the 17:40 verification record, the House dashboard's pictures).

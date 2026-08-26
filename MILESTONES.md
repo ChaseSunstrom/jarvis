@@ -953,7 +953,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     triggers as profiles; "on my phone, do X" end to end from the hub. Build, unit, lint and
     goldens only — never a device.
   - Verify: `bash scripts/verify/m61-android-tasker.sh`
-  - 26 Aug 18:30: gate 20/20 from the main checkout on the rebuilt stack — twenty Tasker rows
+  - 26 Aug 18:03: gate 20/20 from the main checkout on the rebuilt stack — twenty Tasker rows
     done and none gap, 226 JVM tests, lint, goldens, the mirrors, and the live smoke slice.
     What only a phone shows is ADT-036…046, Unproven.
   - 26 Aug: the strip, the graph, chunked speech and the reactor's moves on the phone from
@@ -1012,7 +1012,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     ground and memories are not gold; lists enter staggered on `motion.stagger.*` and
     nothing decorative moves under reduced motion. Build, unit, lint and goldens — no device.
   - Verify: `bash scripts/verify/m64-phone-look.sh`
-  - 26 Aug 18:40: gate 64/64 from the main checkout on the rebuilt stack, live smoke slice
+  - 26 Aug 18:08: gate 64/64 from the main checkout on the rebuilt stack, live smoke slice
     included; goldens re-recorded on the merged tree (console-frame with DASHBOARDS first
     under M64's bar) and looked at. What only a phone shows is ADT-047…051, Unproven.
 
