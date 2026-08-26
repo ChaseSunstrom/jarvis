@@ -187,6 +187,12 @@ It is safe to run against a house you use, and deliberately:
   well as a changed one being put back.
 * Every thread it opens is named `test:<scenario>:<variant>`, so what the suite
   did is identifiable in your own thread list.
+* The `voice` and `text` variants go through the API. A scenario that asserts
+  on the page (`ui:` — a testid and the text it must show) declares `voice-ui`
+  or `text-ui` instead, and the rig drives the real console on :8199 in a
+  headless browser: the WAV is played as the microphone, or the words are
+  typed into chat. Those variants need the console up; `--no-browser` skips
+  them and says so.
 * Anything a scenario creates — notes, memory entries, threads — is deleted at
   the end of that scenario, and its absence is asserted before the next one
   starts. A leftover is a failure, not a warning.

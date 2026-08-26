@@ -49,6 +49,15 @@ Which of those to do is an operator's decision about cost and quality, so the
 threshold is reported as missed in `docs/LIVE_TEST_REPORT.md` rather than
 quietly lowered.
 
+The same hardware fails one more scenario the same way. `interactions-
+proactive-moment` hands "go through every sensor and tell me what looks
+wrong" to the background and expects the finished-task moment within 240 s;
+the task engine takes one model round trip per sensor, and on the night of
+26 August the job was a third of the way through when the budget ran out
+(it finishes, minutes later — the moment then arrives, now that the inbox is
+switched on). The budget is the scenario author's idea of a small job and is
+left as it is: a faster model is the fix, not a longer wait.
+
 ## 3. Everything that needs a phone, a wall panel or a microphone
 
 **Needed by:** M08's device backlog, M22's phone automation, and the rows in

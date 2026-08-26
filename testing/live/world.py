@@ -307,6 +307,39 @@ class Observer:
             return []
         return list((answer or {}).get("tasks") or [])
 
+    async def schedules(self) -> list[dict[str, Any]]:
+        """What is scheduled and not yet fired — reminders, timed jobs."""
+        try:
+            answer = await self.client.command("jarvis/schedule/list")
+        except Exception:  # noqa: BLE001 - a build without a schedule fails the assertion
+            return []
+        return list((answer or {}).get("jobs") or [])
+
+    async def wait_for_schedule(
+        self,
+        *,
+        title_contains: str = "",
+        timeout: float = 60.0,
+        since: float = 0.0,
+    ) -> dict[str, Any] | None:
+        """The first schedule entry matching, or None once `timeout` has passed.
+
+        `since` is the same wall-clock floor `wait_for_task` has: an entry
+        created before the scenario began is somebody else's reminder.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for job in await self.schedules():
+                if since and float(job.get("created") or 0.0) < since:
+                    continue
+                if title_contains and title_contains.lower() not in str(
+                    job.get("title") or ""
+                ).lower():
+                    continue
+                return job
+            await asyncio.sleep(0.5)
+        return None
+
     async def wait_for_task(
         self,
         *,
@@ -314,10 +347,21 @@ class Observer:
         status: str = "",
         title_contains: str = "",
         timeout: float = 120.0,
+        since: float = 0.0,
     ) -> dict[str, Any] | None:
+        """The first task matching, or None once `timeout` has passed.
+
+        `since` is a wall-clock floor on `created`: without it, a turn that
+        made no task at all was passed by whatever task was already in the
+        list — four sensor audits interrupted by a restart hours earlier
+        satisfied "a background task appeared within 30 s" for every scenario
+        after them.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             for task in await self.tasks():
+                if since and float(task.get("created") or 0.0) < since:
+                    continue
                 if kind and task.get("kind") != kind:
                     continue
                 if status and task.get("status") != status:

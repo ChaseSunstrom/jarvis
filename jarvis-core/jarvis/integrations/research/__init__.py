@@ -272,15 +272,29 @@ def _register_tools(jarvis: "Jarvis") -> None:
     from ...llm.tools import TIER_DIRECT, schema_object
 
     async def tool_research(args: dict[str, Any], context: Any = None) -> Any:
+        # `question` is the parameter; a local model reaches for `query`,
+        # `topic` or `text` often enough that refusing them cost a whole
+        # research turn — the model then told the user the work was "queued
+        # and waiting on your confirmation", which was nothing of the kind.
+        question = next(
+            (str(args[key]) for key in ("question", "query", "topic", "text") if args.get(key)),
+            "",
+        )
         task = await async_start(
             jarvis,
-            str(args.get("question") or ""),
+            question,
             remember=bool(args.get("remember")),
             source="conversation",
             mode=str(args.get("mode") or "deep"),
         )
         if task is None:
-            return {"status": "error", "error": "I need a question to research."}
+            return {
+                "status": "error",
+                "error": (
+                    "nothing started: call deep_research again with `question` set "
+                    "to what to research. Do not tell the user it is queued."
+                ),
+            }
         # The wording matters. The old background-task tool told the model to
         # say the work was under way when nothing was running; this one may say
         # exactly that, because something is — and it says where to look, so

@@ -216,6 +216,13 @@ async def _deadline(seconds: float):
 
 
 # --- connection -------------------------------------------------------------
+#: How long a hang-up waits for a server that is still sending. Piper on a
+#: CPU produces a few seconds of speech per second; a reply of three sentences
+#: abandoned at its first word is several seconds of audio the server will
+#: write whether or not anyone reads it.
+ABANDON_GRACE = 8.0
+
+
 class WyomingConnection:
     """An open TCP connection to a Wyoming service (async context manager)."""
 
@@ -291,7 +298,19 @@ class WyomingConnection:
         return await self.connect()
 
     async def __aexit__(self, *exc_info: Any) -> None:
-        await self.close()
+        # Every exit hangs up politely, not only `describe`: a synthesis
+        # abandoned half-way (the listener went away, the turn was cancelled)
+        # left piper writing into a closed socket, and it logged
+        # `BrokenPipeError` at ERROR for a turn nobody was waiting on. The
+        # drain is longer than `describe`'s because a server mid-sentence has
+        # seconds of audio still to send, and shielded because the usual way
+        # here is a cancelled task, which would otherwise cut the drain short
+        # and slam the door after all.
+        try:
+            await asyncio.shield(self.end(grace=ABANDON_GRACE))
+        except BaseException:  # noqa: BLE001 - the door still shuts
+            await self.close()
+            raise
 
     async def write(self, event: WyomingEvent) -> None:
         if self._writer is None:

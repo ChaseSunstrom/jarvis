@@ -12,7 +12,11 @@
 //           audio. Nothing is stubbed: `?e2e=1` (which forces a turn to start
 //           because the mock backend has no audio) is deliberately NOT used.
 //   text  — the chat panel, typed into, which is that surface's real entry point.
-const { chromium } = require('@playwright/test');
+// Resolved from jarvis-web's node_modules by path, not by cwd: this file lives
+// outside that tree, so a bare require() finds nothing wherever it is run from.
+const { chromium } = require(require.resolve('@playwright/test', {
+	paths: [require('path').join(__dirname, '..', '..', 'jarvis-web')],
+}));
 
 const job = JSON.parse(process.argv[2] || '{}');
 const timeout = job.timeoutMs || 180000;
@@ -106,12 +110,33 @@ const say = (payload) => process.stdout.write(JSON.stringify(payload) + '\n');
 		}
 
 		const latencyLabel = await settled(page.getByTestId('latency'));
+
+		// What the page shows *after* the answer — the task dock filling, a
+		// step count rising. Each probe waits for its text, bounded, and
+		// reports what was actually there when it gave up, so a failure names
+		// the real state of the page and not just "not found".
+		const probes = [];
+		for (const probe of job.probes || []) {
+			const until = Date.now() + (probe.withinMs || 30000);
+			let text = '';
+			let ok = false;
+			while (Date.now() < until) {
+				text = await settled(page.getByTestId(probe.testid).first());
+				if (text.toLowerCase().includes(String(probe.contains || '').toLowerCase())) {
+					ok = true;
+					break;
+				}
+				await page.waitForTimeout(500);
+			}
+			probes.push({ testid: probe.testid, contains: probe.contains, ok, text: text.slice(0, 200) });
+		}
 		say({
 			transcript,
 			response,
 			ttsUrl,
 			latency: marks,
 			latencyLabel,
+			probes,
 			logs: logs.slice(-20),
 			error: response ? '' : 'no answer appeared before the timeout'
 		});

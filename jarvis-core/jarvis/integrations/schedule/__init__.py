@@ -510,9 +510,21 @@ class ScheduleManager:
 
     async def _notify(self, job: Job) -> str:
         message = str(job.payload.get("message") or job.title)
-        # Through `companion`, which is the channel that knows which device the
-        # user is at. Absent it, the task's own result is the record — and the
-        # task list is a surface, so the reminder is not lost.
+        # A moment first: the notifications inbox keeps it until it is read,
+        # on every console. Before this the phone was the only channel, and a
+        # house with no phone paired got "remind me in a minute" as a task
+        # result and a log line — a surface, but not one anybody watches for
+        # a reminder.
+        try:
+            await self.jarvis.services.async_call(
+                "notifications", "add",
+                {"kind": "reminder", "title": message, "body": message, "source": "schedule"},
+                blocking=True,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.info("schedule: no notifications inbox for %s (%s)", job.id, err)
+        # Then `companion`, which is the channel that knows which device the
+        # user is at. Absent it, the task's own result is still the record.
         try:
             await self.jarvis.services.async_call(
                 "companion", "notify", {"message": message}, blocking=True

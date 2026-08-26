@@ -1575,3 +1575,18 @@ async def test_a_reply_that_cannot_be_spoken_skips_tts_rather_than_failing(monke
     url = await pipeline_module.PipelineRun._run_tts(run, "...?")
     assert url == ""
     assert not calls
+
+
+async def test_synthesize_hangs_up_politely(server):
+    """Every Wyoming exit is a hang-up, not only `describe`.
+
+    Piper logged `BrokenPipeError` at ERROR three times in one live run: the
+    core had read the last audio chunk and closed while the server still had
+    a write in flight. The synthesis path must end the stream the way
+    `wyoming_info` does — EOF first, then wait — so the server sees a clean
+    end and logs nothing.
+    """
+    client = WyomingTtsClient("127.0.0.1", server.port)
+    await client.synthesize("the kettle is on")
+    await asyncio.sleep(0.05)
+    assert server.hangups == ["eof"]

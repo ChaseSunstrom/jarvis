@@ -26,4 +26,6 @@ turns:
     expect:
       reply_contains: ["blue tin"]
       memory: {recalls: "blue tin"}
-      reply_means: "says the spare key is in the blue tin on the shelf"
+      reply_means: >-
+        names the blue tin on the shelf as where the spare key is — an answer
+        of just "the blue tin on the shelf" counts, the question named the key

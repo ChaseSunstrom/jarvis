@@ -1429,9 +1429,17 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
                     "all: true, which only the user can run."
                 ),
             }
-        return await memory.async_forget(
-            entry_id=entry_id, query=query, forget_all=False
-        )
+        out = await memory.async_forget(entry_id=entry_id, query=query, forget_all=False)
+        if out.get("count"):
+            # The fact is still in this conversation's transcript, and a model
+            # asked "where did I say it was?" a turn after forgetting it read
+            # it back from there ("under the second flowerpot — but you asked
+            # me to forget it"). Forgotten means not repeated, from anywhere.
+            out["message"] = (
+                "Forgotten. Do not repeat what it said, even from earlier in this "
+                "conversation: if asked, say you have nothing recorded about it."
+            )
+        return out
 
     registry.register(
         name="remember",

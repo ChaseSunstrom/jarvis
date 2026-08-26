@@ -72,6 +72,9 @@ class Turn:
     #: Seconds from the start of the turn to each stage's first frame.
     latency: dict[str, float] = field(default_factory=dict)
     transport: str = ""
+    #: What the console showed after the answer, one entry per `ui` probe —
+    #: only a browser transport fills this; `None` means nobody looked.
+    ui: list[dict[str, Any]] | None = None
 
     @property
     def spoke(self) -> bool:
@@ -152,6 +155,7 @@ class ApiVoice:
         conversation_id: str | None = None,
         timeout: float = TURN_TIMEOUT,
         wake_phrase: str = "",
+        **_ignored: Any,
     ) -> Turn:
         utterance: Utterance | None = None
         if pcm is None:
@@ -400,6 +404,7 @@ class Browser:
         rate: int | None = None,
         mode: str = "voice",
         timeout: float = 180.0,
+        probes: list[dict[str, Any]] | None = None,
         **_ignored: Any,
     ) -> Turn:
         wav_path = None
@@ -423,6 +428,7 @@ class Browser:
             "wav": str(wav_path) if wav_path else None,
             "headless": self.headless,
             "timeoutMs": int(timeout * 1000),
+            "probes": probes or [],
         }
         started = time.monotonic()
         process = await asyncio.create_subprocess_exec(
@@ -458,6 +464,7 @@ class Browser:
                 for key, value in (result.get("latency") or {}).items()
             },
             transport=f"{self.name}-{mode}",
+            ui=list(result.get("probes") or []),
         )
         turn.latency.setdefault("total", time.monotonic() - started)
         if turn.tts_url:

@@ -53,12 +53,14 @@ EXPECT_KEYS = {
     "no_reply",          # nothing should have been said at all
     "wake_word",         # the detected wake word id, or false for "none"
     "task",              # {kind?, status?, title_contains?, steps_at_least?, within?}
+    "schedule",          # {title_contains?, within?} — a reminder registered, not yet fired
     "no_task",           # no task was created by this turn
     "note",              # {title_contains?, body_contains?, citations_at_least?}
     "notification",      # {title_contains?, kind?, source?, within?}
     "memory",            # {recalls?, forgotten?}
     "approval",          # {tool, decision: approve|deny}
-    "ui",                # {testid, contains?, visible?} — asserted in the browser
+    "ui",                # {testid, contains, within?} or a list of them — the page
+                         # after the answer; only the voice-ui/text-ui variants look
     "file",              # {path, exists: bool} — containment checks
     "error",             # the turn failed, visibly: {contains?, code?}
     "within_seconds",    # the whole turn must finish inside this
@@ -67,7 +69,10 @@ EXPECT_KEYS = {
                          #  skill_offered?, skill_withheld?}
 }
 
-VARIANTS = ("voice", "text")
+#: The API transports, and the two that drive the real console in a browser.
+#: A scenario names the `-ui` ones only when it asserts on the page.
+API_VARIANTS = ("voice", "text")
+VARIANTS = API_VARIANTS + ("voice-ui", "text-ui")
 
 #: Where a scenario can run. See `Scenario.ground`.
 GROUNDS = ("stack", "fixture")
@@ -104,6 +109,10 @@ class Turn:
     wait: float = 0.0
     #: Send raw audio instead of speech: "silence" | "room_tone".
     sound: str = ""
+    #: Say nothing, send nothing: wait, then assert on what happened by itself
+    #: — a reminder firing, a task finishing. A silent audio turn is not the
+    #: same thing: the pipeline answers silence with an STT error.
+    observe: bool = False
     #: Start this turn in a NEW conversation, as a different thread would.
     #:
     #: The whole of `redteam-cross-conversation-leak`: without it, every turn
@@ -134,7 +143,7 @@ class Scenario:
     capability: str
     turns: list[Turn]
     gated_on: str = ""
-    variants: tuple[str, ...] = VARIANTS
+    variants: tuple[str, ...] = API_VARIANTS
     setup: dict[str, Any] = field(default_factory=dict)
     tags: tuple[str, ...] = ()
     path: Path | None = None
@@ -192,7 +201,8 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         raise ValueError(f"{name}: turn {index} is not a mapping")
     say = str(raw.get("say") or "").strip()
     sound = str(raw.get("sound") or "")
-    if not say and not sound:
+    observe = bool(raw.get("observe"))
+    if not say and not sound and not observe:
         raise ValueError(f"{name}: turn {index} says nothing and plays nothing")
     expect = raw.get("expect") or {}
     if not isinstance(expect, dict):
@@ -212,6 +222,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         audio=dict(raw.get("audio") or {}),
         wait=float(raw.get("wait") or 0.0),
         sound=sound,
+        observe=observe,
         restart=bool(raw.get("restart")),
         new_conversation=bool(raw.get("new_conversation")),
         kill=str(raw.get("kill") or ""),
@@ -228,7 +239,9 @@ def load_scenario(path: str | Path) -> Scenario:
     turns = raw.get("turns")
     if not isinstance(turns, list) or not turns:
         raise ValueError(f"{name}: no turns")
-    variants = tuple(str(v) for v in (raw.get("variants") or VARIANTS))
+    # A scenario that says nothing runs through the API both ways; the browser
+    # variants are opted into, because they assert on a page.
+    variants = tuple(str(v) for v in (raw.get("variants") or API_VARIANTS))
     unknown = set(variants) - set(VARIANTS)
     if unknown:
         raise ValueError(f"{name}: unknown variant(s) {sorted(unknown)}")

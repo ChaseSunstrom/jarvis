@@ -9,7 +9,11 @@
 // the panel colours against the tokens, the grid and brackets that must not
 // be there. The e2e suite asks the same of the mock-backed build
 // (`look.spec.ts`); this asks it of the console people actually open.
-const { chromium } = require('@playwright/test');
+// Resolved from jarvis-web's node_modules by path, not by cwd: this file lives
+// outside that tree, so a bare require() finds nothing wherever it is run from.
+const { chromium } = require(require.resolve('@playwright/test', {
+	paths: [require('path').join(__dirname, '..', '..', 'jarvis-web')],
+}));
 
 const job = JSON.parse(process.argv[2] || '{}');
 const timeout = job.timeoutMs || 30000;

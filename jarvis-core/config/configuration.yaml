@@ -491,6 +491,17 @@ notes:
   path: notes             # under the config directory; the files are yours
   max_bytes: 200000       # one note's ceiling; a report is pages, not a book
 
+# AND THIS. M17 shipped the moments inbox — the record of everything Jarvis
+# says without being asked: a finished task, a fired reminder, a proactive
+# word — and the console's MOMENTS strip reads it. Verified against the
+# harness's generated config, which has the key; never against this file,
+# which did not. On the deployed Jarvis every reminder and every "your task
+# is done" went to a phone if one was paired and otherwise nowhere, and the
+# strip was empty for the whole of M17–M50. Found by the live suite the night
+# `task-scheduled` was first checked honestly.
+notifications:
+  max_entries: 200        # oldest READ entries go first; unread ones are kept
+
 
 # ---------------------------------------------------------------------------
 # Calendar and mail — the two things a diary assistant is actually for. OFF.

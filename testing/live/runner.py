@@ -73,6 +73,7 @@ from testing.live.transport import (  # noqa: E402
     Browser,
     Link,
     Text,
+    Turn,
 )
 from testing.live.voice import Ears, Mouth, services_are_up  # noqa: E402
 from testing.live.world import Observer  # noqa: E402
@@ -90,6 +91,27 @@ THRESHOLDS = {
     "routing_accuracy": 0.90,
     "round_trip_median": 2.0,
 }
+
+
+def _ui_probes(expect: dict[str, Any]) -> list[dict[str, Any]]:
+    """The `ui:` expectations of a turn as probes for the browser turn.
+
+    One mapping or a list of them, each `{testid, contains, within}`; `within`
+    is seconds (default 30). Only a browser transport acts on these — the API
+    transports accept and ignore the argument.
+    """
+    raw = expect.get("ui")
+    if not raw:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    return [
+        {
+            "testid": str(item.get("testid") or ""),
+            "contains": str(item.get("contains") or ""),
+            "withinMs": int(float(item.get("within") or 30.0) * 1000),
+        }
+        for item in items
+    ]
 
 
 class Runner:
@@ -261,6 +283,11 @@ class Runner:
                     for variant in scenario.variants:
                         if variant not in self.variants:
                             continue
+                        if variant.endswith("-ui") and console is None:
+                            # `--no-browser`, or no console to drive: the page
+                            # cannot be watched, so the page is not asserted on.
+                            print(f"  skip {scenario.name} ({variant}): no console", flush=True)
+                            continue
                         result = await self._run_scenario(
                             scenario, variant, transports, ground
                         )
@@ -300,6 +327,11 @@ class Runner:
         )
         killed: list[str] = []
         self._approval_cursor = 0
+        # The floor for "a task appeared": anything created before the
+        # scenario began is history, not a result — but a task made in turn 0
+        # and cancelled in turn 1 is this scenario's, so the floor is the
+        # scenario's start, not the turn's.
+        self._scenario_started_at = time.time() - 5.0
         transport = transports.get(variant)
         if transport is None:
             result.ok = False
@@ -319,7 +351,9 @@ class Runner:
                 else None
             )
             for index, turn in enumerate(scenario.turns):
-                if turn.wait:
+                if turn.wait and not turn.observe:
+                    # "Wait, then say the next thing": the wait is before the
+                    # turn's marks, so the check covers the turn's own effects.
                     await asyncio.sleep(turn.wait)
                 if turn.kill:
                     # Pull a service out from under a turn in flight. The
@@ -362,9 +396,20 @@ class Runner:
                     self.observer = observer
                 mark, event_mark = observer.mark(), observer.event_mark()
                 tool_mark, approval_mark = observer.tool_mark(), observer.approval_mark()
-                spoken = await self._speak(
-                    transport, turn, variant, conversation_id, scenario.timeout
-                )
+                if turn.observe and turn.wait:
+                    # An observe turn is the opposite: what happens DURING the
+                    # wait is the point, so the marks are taken first. The
+                    # first reminder scenario slept through its own reminder
+                    # and then looked for it after the mark.
+                    await asyncio.sleep(turn.wait)
+                if turn.observe:
+                    # Nothing is said or sent: the turn waited (above) and
+                    # now asserts on what the house did by itself.
+                    spoken = Turn(said="", conversation_id=conversation_id or "")
+                else:
+                    spoken = await self._speak(
+                        transport, turn, variant, conversation_id, scenario.timeout
+                    )
                 conversation_id = spoken.conversation_id or conversation_id
                 turn_result = await self._check(
                     scenario, variant, index, turn, spoken, observer, mark,
@@ -481,7 +526,7 @@ class Runner:
             if entry_id in baseline.get("memory", set()):
                 continue
             try:
-                await self.link.client.command("jarvis/memory/forget", memory_id=entry_id)
+                await self.link.client.command("jarvis/memory/forget", entry_id=entry_id)
             except Exception as err:  # noqa: BLE001
                 problems.append(f"memory {entry_id} could not be removed: {err}")
         for conversation_id in await self._conversation_ids():
@@ -546,7 +591,7 @@ class Runner:
             )
             return await transport.say(
                 "(no speech)", pcm=pcm, rate=16000, conversation_id=conversation_id,
-                timeout=timeout or TURN_TIMEOUT,
+                timeout=timeout or TURN_TIMEOUT, probes=_ui_probes(turn.expect),
             )
 
         pcm = rate = None
@@ -570,6 +615,7 @@ class Runner:
             conversation_id=conversation_id,
             wake_phrase=wake_phrase,
             timeout=timeout or TURN_TIMEOUT,
+            probes=_ui_probes(turn.expect),
         )
 
     # --- the assertions ----------------------------------------------------
@@ -750,6 +796,7 @@ class Runner:
                 status=str(want_task.get("status") or ""),
                 title_contains=str(want_task.get("title_contains") or ""),
                 timeout=float(want_task.get("within") or 120.0),
+                since=getattr(self, "_scenario_started_at", started_at),
             )
             if task is None:
                 seen = [(t.get("kind"), t.get("status")) for t in await observer.tasks()]
@@ -761,6 +808,19 @@ class Runner:
                     f"task has {len(task.get('steps') or [])} step(s), "
                     f"expected at least {want_task['steps_at_least']}"
                 )
+        # A reminder is a schedule entry until it fires; only then is it a task.
+        # "Remind me in a minute" is proved by the entry appearing now, and by
+        # the reminder being heard a minute later — not by a task within 30 s.
+        want_schedule = expect.get("schedule")
+        if want_schedule:
+            job = await observer.wait_for_schedule(
+                title_contains=str(want_schedule.get("title_contains") or ""),
+                timeout=float(want_schedule.get("within") or 60.0),
+                since=getattr(self, "_scenario_started_at", started_at),
+            )
+            if job is None:
+                seen = [(j.get("kind"), (j.get("title") or "")[:40]) for j in await observer.schedules()]
+                fail(f"no schedule entry matching {want_schedule} appeared; schedules were {seen}")
         if expect.get("no_task"):
             tasks = await observer.tasks()
             fresh = [t for t in tasks if float(t.get("created") or 0) > time.time() - 300]
@@ -887,12 +947,25 @@ class Runner:
                     if skill in skills:
                         fail(f"the skill {skill!r} is still offered after being turned off")
 
-        for unsupported in ("ui",):
-            if unsupported in expect:
+        # --- what the console showed (browser variants only)
+        want_ui = _ui_probes(expect)
+        if want_ui:
+            if spoken.ui is None:
                 fail(
-                    f"this scenario asserts {unsupported!r}, which the rig checks only "
-                    f"through the capability that owns it — see gated-on"
+                    "this scenario asserts 'ui', which only a browser variant "
+                    "(voice-ui / text-ui) can check — the API transports never open a page"
                 )
+            else:
+                seen = {p.get("testid"): p for p in spoken.ui}
+                for probe in want_ui:
+                    got = seen.get(probe["testid"])
+                    if got is None:
+                        fail(f"ui: nothing was probed for [{probe['testid']}]")
+                    elif not got.get("ok"):
+                        fail(
+                            f"ui: [{probe['testid']}] never showed {probe['contains']!r} "
+                            f"within {probe['withinMs'] / 1000:g}s; it showed {got.get('text')!r}"
+                        )
 
         out.ok = not out.failures
         return out
@@ -1034,7 +1107,8 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--full", action="store_true", help="everything, with thresholds")
     parser.add_argument("--only", default="", help="comma-separated scenario names")
     parser.add_argument("--capability", default="", help="one capability")
-    parser.add_argument("--variants", default="voice,text")
+    parser.add_argument("--variants", default="voice,text,voice-ui,text-ui",
+                        help="which variants to run; the -ui ones need the console")
     parser.add_argument("--no-browser", action="store_true",
                         help="skip the browser transports (no console build needed)")
     parser.add_argument("--write-report", action="store_true",

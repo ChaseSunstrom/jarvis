@@ -62,7 +62,11 @@ CORE_INTEGRATIONS = (
 )
 
 # Keys in configuration.yaml that are NOT integrations.
-NON_INTEGRATION_KEYS = {"jarvis", "packages", "secrets"}
+#: Top-level keys that configure something other than an integration. `metrics`
+#: is the dashboards integration's data-source block (`metrics: sources:`), read
+#: by `integrations/dashboards` — the loader warned "No integration named
+#: 'metrics'" at every start for a key that was doing its job.
+NON_INTEGRATION_KEYS = {"jarvis", "packages", "secrets", "metrics"}
 
 #: Config keys that ARE features but are not integration names, because another
 #: integration consumes them. Without this the loader warned

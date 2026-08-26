@@ -28,6 +28,13 @@ Getting this wrong in the cheap direction wastes somebody's afternoon. Getting
 it wrong in the expensive direction wastes a minute of theirs and looks like
 you were showing off.
 
+The words settle it before the shape does. If the person said *research*,
+*deep research*, *look into it properly* or *write me a report*, that is
+`deep_research` — however small the question looks, and however tempting one
+search and a page would be. They asked for the work to be done in the
+background and written up; answering from one page instead is doing a
+different job than the one they gave you.
+
 ## While you read
 
 Take the number, not the impression. "Roughly twice as fast" is what somebody

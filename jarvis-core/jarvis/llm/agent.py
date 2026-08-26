@@ -229,6 +229,9 @@ TURN_EVENT_TOOL_NARRATED = "tool-narrated"
 #: list beside things that unlock doors.
 THINK_TOOL_NAME = "think_it_through"
 
+#: What a transcript turn says once the fact it carried has been forgotten.
+FORGOTTEN_PLACEHOLDER = "(something the user later asked Jarvis to forget)"
+
 THINK_TOOL_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -527,6 +530,14 @@ class ConversationAgent:
         #: off for anyone who would rather the latency be predictable than the
         #: hard turns be better.
         self.can_escalate_think = bool(allow_think_escalation) and think is False
+        # A forgotten fact must not survive in the transcript: asked "where did
+        # I say the shed key was?" a turn after forgetting it, the model read
+        # the answer straight back out of the conversation, tool message or
+        # no tool message. The memory store announces every forget on the bus;
+        # this is where the words themselves are taken out of the history.
+        bus = getattr(jarvis, "bus", None)
+        if bus is not None and hasattr(bus, "listen"):
+            bus.listen("memory_changed", self._on_memory_changed)
         #: How many times one round may be attempted, and the first backoff.
         #: Only ever used before a token has reached the user — see
         #: `_Round.stream`. Two attempts covers the overwhelmingly common case
@@ -626,6 +637,59 @@ class ConversationAgent:
             )
         return "\n".join(lines)
 
+    def _on_memory_changed(self, event: Any) -> None:
+        data = getattr(event, "data", None) or {}
+        if data.get("action") != "forgotten" or not data.get("entry"):
+            return
+        entry = data["entry"]
+        self.redact_forgotten(str(entry.get("text") or ""), float(entry.get("created") or 0.0))
+
+    def redact_forgotten(self, text: str, created: float, window: float = 300.0) -> int:
+        """Blank the turns that put a now-forgotten fact into the transcript.
+
+        The fact was remembered from a user turn and acknowledged by the
+        assistant turn after it — both of which reach the history at the END
+        of that turn, so they are stamped after the entry's `created`, not
+        before. Both are replaced — in the live history and in the archive
+        the console redraws — when they fall inside `window` seconds either
+        side of the entry and share a distinctive word with it. Sharing a
+        word, not the exact text: the store keeps the model's paraphrase, not
+        the user's sentence. Returns how many turns were blanked. The forget
+        request itself is not in the history yet when the store announces
+        the forget (it lands when its own turn ends), so it is never touched.
+        """
+        words = {w for w in re.findall(r"[a-z0-9']+", text.lower()) if len(w) >= 4}
+        words -= {"that", "this", "with", "from", "have", "your", "about", "under", "into"}
+        if not words or not created:
+            return 0
+        low, high = created - window, created + window
+
+        def hit(content: str, stamp: float) -> bool:
+            if not (low <= stamp <= high):
+                return False
+            return bool(words & set(re.findall(r"[a-z0-9']+", content.lower())))
+
+        blanked = 0
+        for conversation_id in list(self.memory.ids):
+            conversation = self.memory.get(conversation_id)
+            if conversation is None:
+                continue
+            for turn in conversation.turns:
+                if hit(turn.content, turn.timestamp):
+                    turn.content = FORGOTTEN_PLACEHOLDER
+                    blanked += 1
+        for conversation in list(getattr(self.archive, "_conversations", {}).values()):
+            for turn in conversation.turns:
+                if hit(turn.content, turn.timestamp):
+                    turn.content = FORGOTTEN_PLACEHOLDER
+                    turn.tool_calls = []
+                    blanked += 1
+        if blanked and hasattr(self.archive, "schedule_save"):
+            self.archive.schedule_save()
+        if blanked:
+            _LOGGER.info("Forgot a fact from %d transcript turn(s)", blanked)
+        return blanked
+
     def system_prompt(
         self, query: str = "", semantic: dict[str, float] | None = None
     ) -> str:
@@ -660,7 +724,17 @@ class ConversationAgent:
         and every date the notes skill asks for depends on this one line, and
         it costs a dozen tokens.
         """
-        now = datetime.now().astimezone()
+        # The HOUSE's clock, not the container's: the schedule resolves "05:40"
+        # in `jarvis: time_zone:` (the console can set it), and a prompt that
+        # told the time in the container's zone had the model write London
+        # times that the scheduler read in Chicago — a one-minute reminder
+        # set for six hours later.
+        try:
+            from ..automation.util import configured_clock
+
+            now = configured_clock(self.jarvis).now()
+        except Exception:  # noqa: BLE001 - a prompt line must never fail a turn
+            now = datetime.now().astimezone()
         zone = now.tzname() or ""
         return f"Now: {now.strftime('%A %-d %B %Y, %H:%M')}{' ' + zone if zone else ''}."
 

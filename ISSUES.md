@@ -13,6 +13,192 @@ and is not misled).
 
 ---
 
+## The prompt told the time in one zone and the scheduler kept it in another
+
+severity: major
+status: **fixed** (M27 — the prompt's clock line reads `configured_clock`, the
+same clock the schedule and the automations use) — and one thing for the
+operator, below
+Regression: `task-scheduled`, and
+`jarvis-core/tests/test_llm.py::test_agent_system_prompt_says_what_day_it_is`
+Found by: a reminder set "in one minute" that the schedule filed for six hours
+later; the probe that set it directly and read the job back
+
+The clock line added the night before used the container's zone (Europe/London).
+The house's configured zone — `jarvis: time_zone:`, which the console can set
+and `.storage/settings.json` overrides — was `America/Chicago`. The model
+wrote "2026-08-26T05:40:00" for one minute ahead in London time; the schedule,
+honouring the configured zone as it should, read that as 05:40 CDT. Neither
+was wrong on its own terms; they were reading different clocks. Now there is
+one clock.
+
+**For the operator:** `.storage/settings.json` holds `jarvis.time_zone:
+America/Chicago`, `unit_system: imperial`, `currency: USD`, `country: US` —
+saved from the console's settings page at 20:13 on 25 August, and unlike the
+`llm.model: house` entry beside them they read like a form's US defaults
+saved once rather than a choice. `configuration.yaml` says Europe/London and
+so does the container. Not changed tonight: it is your house's setting. If it
+is not what you meant, the Settings page or deleting those four keys puts it
+back to the file's values.
+
+## A reminder with no phone paired went nowhere anyone looks
+
+severity: major
+status: **fixed** (M27 — a fired reminder is recorded in the notifications
+inbox first, kind `reminder`, and sent to the phone second)
+Regression: `task-scheduled`, and
+`jarvis-core/tests/test_schedule.py::test_a_reminder_lands_in_the_inbox_whether_or_not_a_phone_is_paired`
+Found by: the live suite, once `task-scheduled` could be checked honestly
+
+"Remind me in one minute to check the oven" registered the reminder and, a
+minute later, delivered it through `companion.notify` — the phone channel.
+This house has no phone paired, so the reminder became a task result and an
+INFO line, which the scenario's own intent ("arrive as a UI moment rather
+than a line in a log") names as the failure. The scenario had been passing
+by accident: its second turn sent an empty text message, the model read that
+as a fresh request and set a *second* reminder, and the reply happened to
+contain "oven". The rig now has observe-only turns (say nothing, wait,
+assert on what the house did by itself) and a `schedule:` expectation for
+the entry before it fires; the scenario waits for the reminder in the inbox.
+
+## The rig re-created the stack with the caller's shell variables
+
+severity: critical
+status: **fixed** (M27 — every `docker compose` child the rig starts gets a
+clean environment: docker's own knobs and the basics, nothing a service could
+interpolate)
+Regression: `testing/live/tests/test_rig.py::test_compose_never_sees_the_callers_exported_env`
+Found by: a run that collapsed after its first scenario — the core restarted,
+then the core, the gateway and the browser service all answered 401
+
+`live_interaction.sh` does `set -a; . .env` to hand the runner `LLM_URL`; so
+did I, launching the runner directly. The runner's preflight
+`docker compose up -d --wait` inherited that shell, and compose prefers a
+shell variable over the project's own `.env` — so the root file's values
+(no browser tokens; a different gateway key) went into jarvis-core, the
+gateway, the browser service and whisper, which were re-created on the spot.
+The browser service crash-looped on its empty token, every model call got
+"invalid key", and the rig's own token no longer matched the core it had
+just rebuilt. Nothing on disk changed; `make up` from each stack's directory
+put it right. Critical because the rig is meant to be safe to run against a
+house somebody lives in, and this re-created that house's services with the
+wrong secrets without asking.
+
+## A forgotten fact was read back out of the transcript
+
+severity: major
+status: **fixed** (M27 — the agent blanks the turns that carried a fact when
+the store announces it forgotten; the tool result also says not to repeat it)
+Regression: `memory-forget`, and
+`jarvis-core/tests/test_llm.py::test_a_forgotten_fact_leaves_the_transcript`
+Found by: the live suite, `memory-forget (text)`
+
+"Remember that the shed key is under the second flowerpot" — "forget that" —
+"where did I say the shed key was?" got *"You told me it was under the second
+flowerpot, Sir — and then asked me to forget it, which I did."* The store had
+forgotten; the conversation had not, and the model answered from the
+conversation. A tool message telling it not to repeat the fact was ignored
+on the next run, which is the point: the words have to go, not the advice.
+The agent now listens for `memory_changed: forgotten` and replaces the user
+turn that stated the fact and the assistant turn that acknowledged it — in
+the live history and in the archive the console redraws — with a placeholder.
+The forget request itself stays, since it names the subject and not the fact.
+
+## A long job was ground through inline, so there was nothing to cancel
+
+severity: major
+status: **fixed** (M27 — persona §6: a plainly long job goes to the background
+whether or not "don't wait" was said; "tell me later" is a background job)
+Regression: `task-cancel-mid-run`, `task-live-ui`
+Found by: the live suite — `task-cancel-mid-run` on both variants
+
+"Look into every sensor in the house and write me a long report about all of
+them", then "stop that job": the model did the audit in the conversation —
+eight to eleven tool calls, two to six minutes — and answered "nothing to
+stop, the report is already written". And "look into which lights are on and
+tell me what you found later" became a *scheduled* reminder, so the task
+dock, rightly, showed nothing running. Persona §6 only covered "don't wait";
+it now says a job that plainly means reading a dozen things one after
+another is handed to the background regardless, and that "later" with no
+time given is that, not an alarm.
+
+## The rig passed a turn on a task that was hours old
+
+severity: major
+status: **fixed** (M27 — `wait_for_task(since=…)`, a wall-clock floor on the
+task's `created`)
+Regression: `testing/live/tests/test_rig.py::test_a_task_older_than_the_turn_does_not_satisfy_the_turn`
+Found by: reading the verbose run, not by the suite — which is the defect
+
+`task: {kind: background, within: 30}` was satisfied by any background task
+in the list, and four sensor audits that a restart had interrupted the day
+before were still in it. Every task scenario's first turn "passed" whether
+or not a task was made; the second turn then failed for reasons that made no
+sense. A verify that can be passed by history is worse than none.
+
+## `deep_research` was refused for the question being under the wrong key
+
+severity: minor
+status: **fixed** (M27 — the tool accepts `query`, `topic` and `text` for
+`question`, and its refusal says what to call instead)
+Regression: `research-deep-report`
+Found by: the live suite, `research-deep-report (text)`
+
+The model called `deep_research` with the question under another name, the
+tool said "I need a question to research", and the model told the user the
+research was *"queued and waiting on your confirmation before it runs"* —
+nothing was queued and nothing waited. A tool whose one required argument a
+30B model gets wrong one time in a handful is a tool that should take the
+obvious synonyms; the refusal now also says "do not tell the user it is
+queued".
+
+## Piper logged a broken pipe when a synthesis was abandoned
+
+severity: minor
+status: **fixed** (M27 — every Wyoming connection exit is the polite hang-up
+`describe` was given earlier)
+Regression: `stack-logs-clean`, and
+`jarvis-core/tests/test_voice.py::test_synthesize_hangs_up_politely`
+Found by: `stack-logs-clean`, on the first run that drove the console
+
+A browser-driven turn closed its page while Jarvis was still speaking; the
+core dropped the piper connection with audio in flight, and piper logged
+`BrokenPipeError` at ERROR three times for a turn nobody was listening to.
+The synthesis path closed the socket the way `describe` used to.
+
+## The console's chat thread does not survive a core restart
+
+severity: minor
+status: **open** — found by the one run that put the restart scenario through
+the console; the API variants of the same scenario pass
+Regression: `resilience-core-restart` run with `--variants text-ui`
+Found by: the live suite, once the browser variants could run at all
+
+Over the API, "turn on the ceiling lights" — restart — "now do the same in the
+bedroom" works: the conversation is archived and reloaded. Through the
+console's chat, the second turn got *"I've lost the thread of what 'the same'
+was"* — the page's conversation id is not the one the core reloaded, or the
+page starts a new thread when the link comes back. Needs a look at how the
+console picks up its thread after a reconnect; not changed tonight.
+
+## No scenario had ever run through the console
+
+severity: major
+status: **fixed** (M27 — `ui:` probes are implemented, the browser variants run
+by default when a console is reachable, `task-live-ui` names testids that
+exist)
+Regression: `task-live-ui`, and
+`testing/live/tests/test_rig.py::test_every_ui_probe_names_a_testid_the_console_renders`
+Found by: reading the runner after `task-live-ui` failed with "asserts 'ui',
+which the rig checks only through the capability that owns it"
+
+The browser transport existed, nothing declared a `voice-ui`/`text-ui`
+variant, nothing passed `--variants`, `ui:` was a documented expectation the
+runner rejected outright, and the one scenario that used it probed a testid
+(`task-activity`) the console has never rendered. Its Node script could not
+even `require('@playwright/test')` from where it lived. All of that is fixed
+and a rig test pins every probed testid to the console's source.
+
 ## "Note that…" was remembered, not noted
 
 severity: major
@@ -578,8 +764,9 @@ pointer to this entry rather than to hide it: the number is still reported in
 
 severity: major
 status: **open** — see `BLOCKERS.md`
-Regression: measured on every voice scenario; the numbers are in
-`docs/LIVE_TEST_REPORT.md`
+Regression: the round-trip threshold in `testing/live/runner.py`, which
+fails a `--full` run on a median over two seconds; the per-stage numbers
+are in `docs/LIVE_TEST_REPORT.md`
 
 Measured on this host, per stage, for a tool-using turn: streaming the audio
 and recognising it ≈ 11 s, first model token ≈ 2–3 s after that, the rest of

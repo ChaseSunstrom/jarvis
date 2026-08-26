@@ -1700,7 +1700,7 @@ async def async_memory_forget(jarvis: "Jarvis", entry_id: str = "", query: str =
     if everything:
         return await store.async_wipe()
     if not entry_id and not query:
-        raise ApiError("invalid_format", "say which note: id or query", 400)
+        raise ApiError("invalid_format", "say which memory: entry_id or query", 400)
     return await store.async_forget(entry_id=entry_id, query=query)
 
 

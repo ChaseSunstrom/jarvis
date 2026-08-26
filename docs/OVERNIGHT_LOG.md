@@ -1,0 +1,283 @@
+# Overnight log — 26 August 2026
+
+The 2 AM prompt (`docs/OVERNIGHT_BRIEF.md`) arrived at 02:00 UTC (03:00
+London) while M50's verify script was mid-run. Per the brief, the work in
+flight is finished first; the brief's rules apply from the moment it was
+read. This file is the morning handoff: read it first, then the sections it
+points at.
+
+## State when the brief arrived
+
+- 48 of 52 milestones ticked. Unchecked: **M50** (every page on Reactor II —
+  the ledger in `docs/UI_MIGRATION.md` §3 is fully ticked and the verify script
+  is on its second full run after two plumbing fixes), **M51** (the phone on
+  the same look — an agent is finishing the Gradle run in its worktree),
+  **M27** (the exploratory pass and the live report — three defects the rig
+  found are fixed and committed, the report is not yet written), **M23**
+  (final integration — every other box, `make verify-all` green, the suite in
+  `--full` mode).
+- The stack is up and healthy with tonight's core changes (notes enabled in
+  the deployed config, the Wyoming hang-up, the model's clock line).
+- Standing blockers (`BLOCKERS.md`): §2 the voice round trip is 15–20 s on
+  this host with no GPU — the ≤ 2 s median threshold cannot be met by code;
+  §3 anything needing a handset or microphone; §4 accounts and keys for the
+  outside world; §5 the motion taste checkpoint is yours.
+
+## The plan, dependencies first
+
+1. **M50** — read the verify result; if green, tick, commit (the milestone
+   is the integration of four page commits plus two WIP commits; they are
+   left as they are — the brief forbids history rewriting), update
+   `CHANGELOG.md` and `docs/verification.md`.
+2. **M51** — collect the Android agent's commit, cherry-pick, run
+   `m51-android.sh` (build, unit, lint, Roborazzi goldens — no device), tick.
+3. **M27** — run the implemented-only suite and the exploratory pass against
+   the live stack, `--write-report`, tick when `m27-live-report.sh` passes.
+   Every ISSUES.md entry now names a regression that exists.
+4. **M23** — `make verify-all` in full; the `--full` live run. The latency
+   threshold will fail on this host (BLOCKERS §2): that is logged, not
+   weakened. M23's tick depends on what verify-all says; if the only red is
+   the latency threshold the box stays open and the reason is written here.
+5. **The final phase** (the user's audit brief): prove nothing is faked, the
+   cold re-run from `down -v` — with the config and memory volumes
+   snapshotted first and restored after, per the brief — the capability
+   audit (`docs/CAPABILITY_AUDIT.md`), improvements, `docs/FUTURE.md`,
+   `docs/FINAL_STATE.md`.
+
+Parallelised: the Android build (already in an agent's worktree). Everything
+that touches the live stack or the console's port runs one at a time — two
+suites on one model server double every latency.
+
+Deferred to you: the motion taste checkpoint; the real-credential smoke of
+email / channels / calendar (fixture servers only tonight); the phone.
+
+## Assumptions made
+
+- "History rewriting" covers squashing the WIP commits of a milestone into
+  one, so M50 lands as a ticking commit on top of its parts rather than one
+  squashed commit. `PROCESS.md` prefers one commit per milestone; the brief's
+  rule wins tonight.
+- The 2 AM job was scheduled with Claude Code's own session scheduler (no
+  `at`, no `tmux`, no sudo on this box) and fired on the box's UTC clock.
+
+## Running record
+
+(appended as the night goes)
+
+### 02:00–02:30 — M50 to the gate
+
+- M50's first full gate run failed two plumbing checks, neither about the
+  console: the folder check's regex also matched `path: string` in
+  `screens.ts` (tightened to the quoted literal), and
+  `testing/live/browser_routes.cjs` could not `require('@playwright/test')`
+  from outside `jarvis-web` — nor could the rig's `browser_turn.cjs`, which
+  only the `--full` variants load. Both now resolve Playwright by path.
+  Route pass: 16/16 routes render against the stack, no console error, only
+  palette colours.
+- Looking at the regenerated pictures: KNOWLEDGE's graph printed "Boiler
+  serviced" across "The spare key…". Labels now dodge each other (a colliding
+  label goes above its node); `knowledge.spec.ts` asserts every pair of label
+  boxes is disjoint and failed on the old build with that exact pair.
+- M27's "every issue has a regression" check accepted only a live scenario
+  name; seven entries name an eval, a verify script, the Android lint gate or
+  a pytest node id instead. The check now accepts any regression that exists
+  (it verifies the file, the test name in it, or the scenario/probe name)
+  and every entry passes. The latency entry now names the `--full` threshold
+  rather than a report that had not been written.
+- The 2 AM prompt arrived at 02:00 UTC. M50's gate is on its final run; the
+  implemented-only live suite is running with `--report` for M27; the
+  Android agent is still in Gradle.
+
+### 02:30–03:20 — the live suite, and what it found
+
+- Implemented-only suite with `--report`: 42/53 scenario variants, 67/77
+  turns, WER 5.4 %, median round trip 7.6 s. Eleven variants failed; the
+  report is `docs/LIVE_TEST_REPORT.md`. My mistake: M50's gate ran at the
+  same time and its smoke subset overwrote `.verify/live/results.json`, so
+  the per-turn tool calls of the failures were lost and the eight scenarios
+  are being re-run verbosely. From here one thing at a time on the stack.
+- Fixed from the failures without waiting:
+  - the rig's memory cleanup sent `memory_id=` to an API that takes
+    `entry_id=` (every memory scenario "failed" in teardown), and the API's
+    complaint said "say which note" about a memory;
+  - `forget` now tells the model not to repeat the forgotten fact from the
+    transcript ("under the second flowerpot — but you asked me to forget");
+  - the persona says a room with one device of the kind asked for means that
+    one — "do the same in the bedroom" got "shall I switch the Bed Light on
+    instead?";
+  - `CallLine` carries `data-mono`: the dashboards route showed a recall
+    call in mono and the route pass read it as prose.
+- Found: **no scenario has ever run through the console.** The browser
+  transport existed, nothing declared a `voice-ui`/`text-ui` variant, nothing
+  passed `--variants`, and `task-live-ui` asserted on a testid
+  (`task-activity`) the console has never rendered. The brief asks for the
+  task queue watched through the task UI via Playwright, so: `ui:` probes
+  are implemented in `browser_turn.cjs` (poll a testid for text, bounded,
+  report what was there), carried on the `Turn`, asserted by the runner; the
+  browser variants run by default when a console is reachable and are
+  skipped (not failed) under `--no-browser`; `task-live-ui` runs as `text-ui`
+  and probes the task dock; a rig unit test now pins every probed testid to
+  the console's source.
+
+### 03:20–03:50 — the diagnostic re-run, and seven more fixes
+
+Eight scenarios re-run verbosely on the rebuilt stack. The persona rule
+fixed `resilience-core-restart` (both API variants green). The rest, with
+what was actually wrong:
+
+- **The rig's task matcher had no time floor**: `task: {kind: background,
+  within: 30}` was satisfied by four sensor audits interrupted hours earlier,
+  so a turn that made no task at all "passed". `wait_for_task(since=…)` now
+  ignores anything created before the turn; a rig test pins it. This is why
+  `task-cancel-mid-run` and `task-live-ui` looked half-green.
+- **A long job is done inline**: "write me a long report about every
+  sensor" ran eight to eleven tool calls in the conversation instead of as a
+  task, so there was nothing to cancel. Persona §6 now says a plainly long
+  job goes to the background whether or not "don't wait" was said, and that
+  "tell me later" with no time is a background job, not a reminder (the
+  model had scheduled one).
+- **`task-scheduled` expected a `notify` task kind that has never existed**;
+  the schedule tool files `scheduled`. Fixed the scenario, and its judge now
+  accepts a clock time a minute ahead.
+- **`deep_research` was called with the question under the wrong key** and
+  refused ("I need a question"), which the model narrated as "queued and
+  waiting on your confirmation". The tool accepts `query`/`topic`/`text` as
+  well and its refusal says what to do.
+- **The forgotten fact was still in the transcript**: the tool message alone
+  did not stop the model reading it back. The agent now listens for the
+  store's `memory_changed: forgotten` event and blanks the turns that carried
+  the fact — live history and archive — leaving the forget request itself.
+  Unit test: `test_a_forgotten_fact_leaves_the_transcript`.
+- **Piper logged `BrokenPipeError` at ERROR** when a synthesis was abandoned
+  (a browser variant closed its page mid-answer). Every Wyoming connection
+  exit is now the polite hang-up `describe` got earlier; test added.
+- The recall judge failed "The blue tin on the shelf, Sir" for not repeating
+  "spare key"; the criterion now says an elliptical answer counts. Not a
+  weakening: the answer was right.
+- A scenario with no `variants:` line stays on the API variants; the
+  browser ones are opted into. (The first re-run put `resilience-core-restart`
+  through the console and found that the console's chat thread does not
+  survive a core restart the way the API's does — logged as an open issue.)
+
+### 03:30 — M51 integrated
+
+The Android agent's commit (`dfa68c6` here, `ab4bd3b` in its worktree)
+cherry-picked cleanly on top of the token removal: `design/build.py --check`
+reports nine generated files current and the phone's twenty-three geometry
+constants agree with the web's; `make test-android` has no FAIL line. Its
+Gradle run (assemble, 185 unit tests, lint, ten Roborazzi goldens verified)
+passed in the worktree; the same run and the M51 gate are queued on this
+checkout behind the live re-run, so the two do not share the CPU. The M51
+ledger rows are ticked with what each got; `docs/verification.md` now says
+185 JVM tests. No device was touched.
+- 03:32 — the whole core suite passes after tonight's changes: 3100 tests in
+  8m39s. The rig's own tests: 42. `ruff`: clean.
+
+### 03:25–03:45 — an incident, mine, and what it taught the rig
+
+The re-run of the eight scenarios collapsed after its first scenario: the
+core restarted, then the core, the gateway and the browser service answered
+401 / "invalid key" / "token must be set". Cause: to launch the runner
+directly (not through `live_interaction.sh`) I did `set -a; . ./.env`, which
+exported the **root** `.env` into the runner's environment; the runner's
+preflight `docker compose up -d --wait` then interpolated services from those
+shell variables, which compose prefers over the project's own `.env`. At
+03:26:37 it re-created jarvis-core, jarvis-gateway, jarvis-browser and
+whisper with the root file's values — no browser tokens (crash loop), a
+different gateway key (401 on every model call) — and the run's own
+end-of-scenario restore/restart at 03:34 finished the job. Nothing on disk
+was lost: `jarvis-core/config`, `.storage` (two tokens) and both `.env` files
+are intact and untouched. Note `live_interaction.sh` itself does the same
+`set -a` (line 47), so the hazard was latent in the canonical path too.
+
+Repair: `make up` (each stack from its own directory; no volume was
+removed). Hardening: the rig now runs every `docker compose` child with a
+clean environment — docker's own knobs and the basics, nothing that could
+interpolate into a service — pinned by
+`test_compose_never_sees_the_callers_exported_env`. The eight scenarios are
+being re-run on the repaired stack.
+
+### 03:45–04:05 — the repaired stack, and the next layer
+
+On the repaired stack: `task-live-ui` **passes through the real console**
+(the dock probe sees the job running), recall and both restart variants
+pass. Six remained, each with its own cause:
+
+- The redaction never fired: the history is written at the *end* of a turn,
+  so the turns carrying the fact are stamped after the memory entry, outside
+  a window that only looked before it. The window now spans either side; the
+  unit test models the real ordering.
+- `task-cancel-mid-run`'s turn 0 now made a task and the engine cancelled it
+  on "stop that job" (the core log says so) — but the rig's new time floor
+  was per *turn*, so the task created in turn 0 did not count in turn 1. The
+  floor is the scenario's start.
+- "Remind me in one minute" is a schedule entry until it fires, and only then
+  a `scheduled` task; the scenario asked for a task within 30 s. The rig has
+  a `schedule:` expectation now (`jarvis/schedule/list`), with the same
+  floor, and the scenario uses it.
+- `deep_research` was skipped this time in favour of one search and a page,
+  although the request said "deep research"; the research skill now says the
+  word decides, whatever the question looks like.
+- The proactive task was "a third of the way through" at 240 s: one model
+  round trip per sensor on this hardware. Not a code defect; noted against
+  BLOCKERS §2.
+- Piper logged one `ConnectionResetError` at 03:53:18 during a voice turn,
+  after the polite hang-up was in place; not yet explained.
+
+### 04:05–04:30 — down to the last four, and two more product gaps
+
+Re-run: `memory-forget` passes (the redaction, with the window on both
+sides), `task-cancel-mid-run` passes both ways (the engine cancels; the rig
+now sees it), `task-live-ui` passes again through the console. Left:
+
+- **`task-scheduled`**: the text variant "passed" for the wrong reason — its
+  second turn sent an empty message, the model set a second reminder and the
+  reply happened to say "oven"; the voice variant sent silence and got an STT
+  error. Underneath: a fired reminder only went to `companion.notify`, and
+  with no phone paired that is a task result and a log line. Fixed: the
+  reminder lands in the notifications inbox first (kind `reminder`), the
+  phone second; the rig gained observe-only turns and a `schedule:`
+  expectation; the scenario watches for the moment.
+- **`research-deep-report`**: `deep_research` was held for approval — by
+  design: the model had called `web_search` first, the turn was tainted by
+  untrusted content, and the quarantine escalates a tool that writes. The
+  research skill now says the word "research" decides the tool before any
+  search; whether the model obeys is what the re-run measures. Not weakened.
+- **`interactions-proactive-moment`**: a third of the way at 240 s. Hardware.
+- **piper `ConnectionResetError`** during the console-driven turn: the
+  browser closes its page mid-answer, the core's TTS is cancelled, and a
+  one-second drain was too short for a reply's worth of audio; the hang-up
+  now drains for up to eight seconds and is shielded from the cancellation.
+
+### 04:30–04:50 — the empty inbox and the six-hour reminder
+
+Direct probe (a reminder set over the API, the job read back):
+
+- **The notifications integration is not configured on the deployed
+  Jarvis** — `not_configured` from `jarvis/notifications/list`. The same
+  class of gap as notes: shipped in M17, verified against the harness's
+  generated config, never switched on in `configuration.yaml`. Every empty
+  inbox tonight (reminders, task-completed moments) was this. Enabled, with
+  the same kind of note the notes block got.
+- **The reminder was filed six hours out.** The running core's zone is
+  `America/Chicago` — `.storage/settings.json` overrides the file's
+  Europe/London (saved from the console's settings page yesterday at 20:13,
+  alongside imperial/USD/US) — and my clock line used the container's zone,
+  so the model wrote a London time the scheduler read in Chicago. Fixed in
+  code: the prompt reads the same `configured_clock` as the schedule, with a
+  test that moves the house to Kiritimati. **Not changed:** the setting
+  itself; it is the operator's, and it is flagged in `ISSUES.md`.
+- `NON_INTEGRATION_KEYS` gains `metrics`: the dashboards integration reads
+  `metrics: sources:` and the loader warned "No integration named 'metrics'"
+  at every start.
+
+### 04:50–05:00 — the reminder, end to end
+
+With the inbox on and one clock: `task-scheduled` passes on both variants —
+the schedule entry appears within seconds, the reminder fires a minute later
+and is in the notifications inbox as a `reminder` moment, on voice and on
+text. `house-light-on` clean, piper clean. The one remaining red in this set
+is `interactions-proactive-moment`: the background audit of every sensor is
+a model round trip per sensor and does not finish inside the scenario's
+240 s on this host (BLOCKERS §2). Not weakened; the full run will show it
+red, and that is the true state.

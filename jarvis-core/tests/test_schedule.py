@@ -710,3 +710,31 @@ async def test_one_bad_job_does_not_stop_the_others(jarvis):
     failed = next(t for t in jarvis.tasks.tasks if t.title == "bad")
     assert failed.status == "error"
     assert "broken" in failed.error
+
+
+async def test_a_reminder_lands_in_the_inbox_whether_or_not_a_phone_is_paired(jarvis):
+    """The reminder is a moment before it is a phone notification.
+
+    With no companion paired, "remind me in a minute" fired into a task
+    result and a log line — nothing a person watches. Whatever the phone
+    does, the notifications inbox gets the reminder, with a kind the console
+    can show as a tag and a title the rig can wait for.
+    """
+    inbox: list[dict[str, Any]] = []
+
+    async def add(call: Any) -> dict[str, Any]:
+        inbox.append(dict(call.data or {}))
+        return {"recorded": True}
+
+    jarvis.services.register("notifications", "add", add, supports_response=True)
+    clock = FrozenClock("2026-01-01T18:59")
+    manager = await manager_for(jarvis, clock)  # no Recorder: no companion at all
+    await manager.async_add(
+        {"kind": "notify", "message": "check the oven", "at": "2026-01-01T19:00:00"},
+        allow_service=False,
+    )
+    clock.advance(minutes=2)
+    await manager._tick()
+    await settle(jarvis)
+    assert inbox and inbox[0]["kind"] == "reminder" and inbox[0]["title"] == "check the oven"
+    assert inbox[0]["source"] == "schedule"

@@ -77,12 +77,36 @@ _CONTINUATION = ("  ", "\t", "Traceback (most recent call last)")
 _EXCEPTION_LINE = re.compile(r"[A-Za-z_][\w.]*(Error|Exception|Exit|Interrupt|Timeout)\b")
 
 
+#: What a `docker compose` child gets as its environment: enough to find
+#: docker and the user, and nothing that could interpolate into a service.
+#: The caller's shell has often just done `set -a; . .env` to give the rig
+#: LLM_URL — and compose prefers a shell variable over the project's own
+#: `.env`. One such run re-created jarvis-core, the gateway and the browser
+#: service with the root `.env`'s values: empty browser tokens (a crash loop),
+#: a different gateway key (401 on every model call), a core whose token store
+#: the rig no longer matched. The compose file's directory holds its `.env`;
+#: that, and only that, decides what a container is built with.
+_COMPOSE_ENV_KEEP = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "TZ")
+_COMPOSE_ENV_PREFIXES = ("DOCKER_", "COMPOSE_", "BUILDKIT_")
+
+
+def _compose_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in _COMPOSE_ENV_KEEP or key.startswith(_COMPOSE_ENV_PREFIXES)
+    }
+    env.update(extra or {})
+    return env
+
+
 def _run(argv: list[str], timeout: float = 600.0, check: bool = True,
          env: dict[str, str] | None = None) -> str:
+    compose = argv[:2] == ["docker", "compose"]
     try:
         done = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT),
-            env={**os.environ, **env} if env else None,
+            env=_compose_env(env) if compose else ({**os.environ, **env} if env else None),
         )
     except subprocess.TimeoutExpired as err:
         raise LiveError(f"{' '.join(argv[:3])}… timed out after {timeout:g}s") from err

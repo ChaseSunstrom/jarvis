@@ -1023,12 +1023,22 @@ async def test_agent_system_prompt_says_what_day_it_is(tmp_path):
     """
     from datetime import datetime
 
+    from zoneinfo import ZoneInfo
+
     jarvis, _ = await build_house(tmp_path)
     agent = make_agent(jarvis, FakeOllama(say("Yes, Sir.")))
     prompt = agent.system_prompt()
     now = datetime.now().astimezone()
     assert f"Now: {now.strftime('%A %-d %B %Y')}" in prompt
     assert now.strftime("%H:") in prompt
+    # The house's zone, not the container's: the schedule resolves a time
+    # the model writes in `jarvis: time_zone:`, so the clock the model reads
+    # must be that one. A London prompt and a Chicago scheduler made "in one
+    # minute" fire six hours later.
+    jarvis.config.setdefault("jarvis", {})["time_zone"] = "Pacific/Kiritimati"
+    far = datetime.now(ZoneInfo("Pacific/Kiritimati"))
+    prompt = agent.system_prompt()
+    assert f"Now: {far.strftime('%A %-d %B %Y, %H:')}" in prompt, prompt.split("Now:")[1][:60]
     await shutdown(jarvis)
 
 
@@ -1989,3 +1999,49 @@ def test_the_whole_call_deadline_is_never_shorter_than_the_read_one():
 
     assert OllamaClient(timeout=30.0).call_timeout == CALL_TIMEOUT
     assert OllamaClient(timeout=900.0).call_timeout == 900.0
+
+
+async def test_a_forgotten_fact_leaves_the_transcript(tmp_path):
+    """Forgotten means not repeated — from anywhere.
+
+    "Remember that the shed key is under the second flowerpot", then "forget
+    that", then "where did I say the shed key was?" got "under the second
+    flowerpot — but you asked me to forget it": the fact was gone from the
+    store and still in the conversation. When the store announces a forget,
+    the turns that carried the fact are blanked in the live history and the
+    archive; the forget request itself, which names the subject only, stays.
+    """
+    import time as _time
+
+    from jarvis.llm.agent import FORGOTTEN_PLACEHOLDER
+
+    jarvis, _ = await build_house(tmp_path)
+    agent = make_agent(jarvis, FakeOllama(say("Noted, Sir.")))
+    now = _time.time()
+    # The history is written at the END of a turn: the entry (made mid-turn
+    # by the remember tool) is older than the turns that carried it.
+    conv = agent.memory.get_or_create("t1")
+    conv.add("user", "Remember that the shed key is under the second flowerpot.")
+    conv.turns[-1].timestamp = now + 12
+    conv.add("assistant", "Noted, Sir — the shed key, under the second flowerpot.")
+    conv.turns[-1].timestamp = now + 12
+    agent.archive.record("t1", "Remember that the shed key is under the second flowerpot.",
+                         "Noted, Sir — the shed key, under the second flowerpot.")
+    for turn in agent.archive._conversations["t1"].turns:
+        turn.timestamp = now + 12
+
+    jarvis.bus.fire("memory_changed", {
+        "action": "forgotten",
+        "entry": {"text": "The shed key is under the second flowerpot.", "created": now},
+    })
+    await asyncio.sleep(0.05)
+    # The forget request lands after the event, when its own turn ends.
+    conv.add("user", "Actually, forget what I just told you about the shed key.")
+
+    live = [t.content for t in conv.turns]
+    assert live[0] == FORGOTTEN_PLACEHOLDER and live[1] == FORGOTTEN_PLACEHOLDER
+    assert "shed key" in live[2]  # the request to forget names the subject, not the fact
+    archived = [t.content for t in agent.archive._conversations["t1"].turns]
+    assert all(c == FORGOTTEN_PLACEHOLDER for c in archived), archived
+    assert "flowerpot" not in " ".join(m["content"] for m in conv.messages())
+    await shutdown(jarvis)

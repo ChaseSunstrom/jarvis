@@ -442,3 +442,106 @@ def test_script_source_is_not_page_text():
     text = _text(html)
     assert "visible" in text
     assert "immersion" not in text and "css" not in text
+
+
+def test_every_ui_probe_names_a_testid_the_console_renders():
+    """A `ui:` expectation is only as good as its testid.
+
+    `task-live-ui` asserted on `task-activity` for weeks; nothing in the
+    console has ever rendered that id, so the scenario could not have passed
+    even with a page open. Every testid a scenario probes must appear as a
+    `data-testid` in the console's source — a literal, or the prefix before a
+    `{...}` interpolation.
+    """
+    import re
+    web = Path(__file__).resolve().parents[3] / "jarvis-web" / "src"
+    rendered: set[str] = set()
+    for path in web.rglob("*.svelte"):
+        for m in re.finditer(r'data-testid=(?:"([^"{]+)|\{`([^`{]+)|"([^"]*?)\{)', path.read_text()):
+            rendered.add((m.group(1) or m.group(2) or m.group(3) or "").rstrip("-"))
+    probed: list[tuple[str, str]] = []
+    for scenario in load_all():
+        for turn in scenario.turns:
+            raw = turn.expect.get("ui") or []
+            for item in raw if isinstance(raw, list) else [raw]:
+                probed.append((scenario.name, str(item.get("testid") or "")))
+            if raw:
+                assert all(v.endswith("-ui") for v in scenario.variants), (
+                    f"{scenario.name} asserts on the page but runs API variants {scenario.variants}"
+                )
+    assert probed, "no scenario probes the page any more — task-live-ui used to"
+    missing = [(s, t) for s, t in probed if t not in rendered and t.rsplit("-", 1)[0] not in rendered]
+    assert not missing, f"scenarios probe testids the console never renders: {missing}"
+
+
+def test_a_task_older_than_the_turn_does_not_satisfy_the_turn():
+    """`wait_for_task` used to accept any task in the list.
+
+    Four sensor audits interrupted by a restart hours earlier satisfied
+    "a background task appeared" for every scenario after them, so a turn
+    that made no task at all passed. With `since`, only a task created after
+    the turn began counts.
+    """
+    import asyncio
+    from testing.live.world import Observer
+
+    stale = {"id": "old", "kind": "background", "status": "error", "created": 1000.0}
+    fresh = {"id": "new", "kind": "background", "status": "running", "created": 5000.0}
+
+    class Stub(Observer):
+        def __init__(self, rows):
+            self.rows = rows
+
+        async def tasks(self):
+            return self.rows
+
+    assert asyncio.run(Stub([stale]).wait_for_task(kind="background", timeout=0.6, since=4000.0)) is None
+    assert asyncio.run(Stub([stale, fresh]).wait_for_task(kind="background", timeout=0.6, since=4000.0))["id"] == "new"
+    # No floor: the old behaviour, for callers that want the whole list.
+    assert asyncio.run(Stub([stale]).wait_for_task(kind="background", timeout=0.6))["id"] == "old"
+
+
+def test_compose_never_sees_the_callers_exported_env(monkeypatch):
+    """`docker compose` is run with a clean environment.
+
+    A shell that did `set -a; . .env` to hand the rig LLM_URL also handed
+    compose the root `.env`'s values, and compose prefers a shell variable to
+    the project's own `.env`: one run re-created jarvis-core, the gateway and
+    the browser service with the wrong values. Only docker's own knobs and the
+    basics survive; a service's variables never come from the caller.
+    """
+    from testing.live.stack import _compose_env
+
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "from-the-shell")
+    monkeypatch.setenv("JARVIS_BROWSER_TOKEN", "from-the-shell")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "x")
+    env = _compose_env({"WAIT": "1"})
+    assert "LITELLM_MASTER_KEY" not in env and "JARVIS_BROWSER_TOKEN" not in env
+    assert env["DOCKER_HOST"] and env["COMPOSE_PROJECT_NAME"] == "x" and env["WAIT"] == "1"
+    assert "PATH" in env
+
+
+def test_a_reminder_is_a_schedule_entry_before_it_is_a_task():
+    """`schedule:` waits for the entry, with the same floor as `task:`.
+
+    "Remind me in one minute" registers a schedule entry and only makes a task
+    when it fires, so a scenario that asked for a task within 30 s could never
+    pass; and it used to name a `notify` kind that has never existed.
+    """
+    import asyncio
+    from testing.live.world import Observer
+
+    old = {"id": "a", "title": "Check the oven", "kind": "notify", "created": 1000.0}
+    new = {"id": "b", "title": "Check the oven", "kind": "notify", "created": 5000.0}
+
+    class Stub(Observer):
+        def __init__(self, rows):
+            self.rows = rows
+
+        async def schedules(self):
+            return self.rows
+
+    assert asyncio.run(Stub([old]).wait_for_schedule(title_contains="oven", timeout=0.6, since=4000.0)) is None
+    assert asyncio.run(Stub([old, new]).wait_for_schedule(title_contains="oven", timeout=0.6, since=4000.0))["id"] == "b"
+    assert asyncio.run(Stub([new]).wait_for_schedule(title_contains="kettle", timeout=0.6)) is None
