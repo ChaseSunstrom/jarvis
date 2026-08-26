@@ -388,6 +388,9 @@ on CPU). `--compute-type int8` is CTranslate2's quantised CPU path: the same
 model, roughly half the memory and 1.5–2× the speed on x86 with no measurable
 WER change on `base.en` — the trade every faster-whisper CPU deployment makes.
 Set in `jarvis-core/docker-compose.yml`; the model stays `WHISPER_MODEL`.
+**Decision, provisional:** int8 stays until a WER re-measure on this house's
+own voices says otherwise; **rejected:** float16 (no gain on CPU) and a
+smaller model (WER, measured 5.9 % on `base.en`).
 The prompt side is M60's: the prefix is kept on the server between turns
 (`cache_prompt`), ordered stable-first so the cache hits, measured against
 `PROMPT_TOKEN_BUDGET`; and the first sentence is synthesised while the model
@@ -407,8 +410,11 @@ answer. The system camera app via `ACTION_IMAGE_CAPTURE` is the zero-
 dependency route for a photo but returns through an Activity result, which
 an action dispatched from the hub does not have.
 
-The decision waits for a handset to point at a barcode (the build itself runs
-here with M08's toolchain). Recommendation when both exist: CameraX
+**Decision, provisional:** CameraX headless for `take_photo` and ZXing for
+`scan_code`, not adopted until a handset has been pointed at a barcode (the
+build itself runs here with M08's toolchain). **Rejected:** ML Kit (Google-
+bundled, absent on GrapheneOS), the system camera intent (an Activity result
+an action from the hub does not have). Recommendation when both exist: CameraX
 `ImageCapture` headless for `take_photo` (Tier 3, asks every time, the frame
 goes to `look_at_camera`'s consent and fence), ZXing for `scan_code` (Tier 1,
 the decoded text is untrusted content). No Google dependency.

@@ -111,11 +111,18 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
         chosen.add("memory")
     if any(call.startswith("notes.") for call in calls):
         chosen.add("notes")
-    for capability in ("subagents", "coding", "research", "memory", "notes", "sky", "vision", "sensors", "online"):
+    for capability in ("subagents", "coding", "research", "memory", "notes"):
         if capability in chosen:
             return capability
+    # A job started is the outer act, as a coding job that also called
+    # get_state is still coding: "audit every sensor in the background" that
+    # called run_background_task AND read a sensor did one thing, and it was
+    # the task. The readers (M56–M59) come after it for that reason.
     if task_kinds or "run_background_task" in tools:
         return "task"
+    for capability in ("sky", "vision", "sensors", "online"):
+        if capability in chosen:
+            return capability
     # Only calls that moved something in the HOUSE count as house control. Any
     # service call at all was too crude: a turn that read a skill and answered
     # was routed to "house" because something incidental had gone through the

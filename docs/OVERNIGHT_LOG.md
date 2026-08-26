@@ -445,3 +445,8 @@ is quiet. Done since:
 - 12:50 — The console's whole suite 282/284 with the knowledge reset (the two
   misses are motion frame budgets under a concurrent verify-all). verify-all is
   past m24; its table lands when it ends.
+- 13:35 — verify-all at m42; its next reds read: the phone's gate now runs the
+  smoke set like every gate (m25), a job that also read a sensor routes as the
+  task again (m26's route-6 — the readers sat above `task` in the router), two
+  images off :latest by digest (m28), the two new decisions in the format the
+  decisions doc keeps (m30). Each re-runs after the table lands.

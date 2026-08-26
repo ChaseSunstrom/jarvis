@@ -89,4 +89,8 @@ assert "M61" in doc, "no ADT row for M61"
 print("ADT rows for M61 present")
 '
 
+# The rule every gate keeps (M25): it runs a slice of the live suite. The phone
+# has no rig of its own; the hub side of "on my phone, do X" is the smoke set.
+check_sh "the live smoke scenarios still pass" \
+    'LIVE_ONLY=house-light-on,chat-context-retention,lock-needs-a-human bash scripts/verify/live_interaction.sh --implemented-only 2>&1 | tail -4'
 verify_end

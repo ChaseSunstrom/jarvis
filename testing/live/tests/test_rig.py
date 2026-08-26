@@ -590,3 +590,13 @@ def test_compose_is_refused_from_a_git_worktree(monkeypatch, tmp_path):
     # A plain docker command is not compose and is not refused by this guard.
     out = _run(["true"], check=False)
     assert out == ""
+
+
+def test_a_background_task_that_also_read_a_sensor_is_a_task():
+    """The outer act, not the reader (the intelligence eval's route-6)."""
+    from testing.live.capability import capability_of
+
+    assert capability_of([], [], ["run_background_task", "sensor_readings"], "") == "task"
+    assert capability_of(["background"], [], ["sensor_readings"], "") == "task"
+    assert capability_of([], [], ["sensor_readings"], "") == "sensors"
+    assert capability_of([], [], ["deep_research", "read_page"], "") == "research"
