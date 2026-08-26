@@ -91,6 +91,30 @@ Conversations are kept in `.storage/conversations.json` and survive a restart �
 `llm: conversation: history: false` turns that off. A tool's *result* is never
 written there, only whether it worked.
 
+## What it does beyond the lights (26 August 2026)
+
+- **Any sensor.** Home Assistant MQTT discovery in full — Zigbee2MQTT,
+  ESPHome, rtl_433, Theengs, including button presses (`event`) and phones
+  (`device_tracker`) — plus Tasmota's own discovery and Shelly Gen2 translated;
+  readings arrive in one unit per device class, and the model has
+  `sensor_readings`, `sensor_compare`, `sensor_history`, `sensor_summary`.
+- **The sky.** The next ISS pass, what is overhead, the moon, the planets —
+  computed here from cached orbital elements, no account, no network after the
+  first download.
+- **Anything online, with time in it.** Watch a page and be told when it
+  changes, follow feeds, "tell me when …" asked again until the answer is
+  yes; every change lands as a moment, and `read_page` survives JavaScript.
+- **Cameras, locally.** A look is one call to a vision model on the same
+  server as the chat model, consent asked, fenced, audited; go2rtc restreams
+  RTSP/USB, Frigate's events become moments.
+- **A voice tab that shows the work.** The reactor moves for what Jarvis does,
+  the knowledge graph lights the notes a turn touched, the strip lists tools,
+  tasks, readings, looks and moments as they happen — on the console and on
+  the phone, from one shared vocabulary.
+- **Fast where it counts.** The prompt prefix is kept on the server, the first
+  sentence is spoken before the reply is finished, whisper runs int8, and a
+  small model that narrates a tool call is made to call it.
+
 ## A different model server
 
 Ollama is the default and needs no configuration. Anything speaking
@@ -223,10 +247,20 @@ python3 scripts/check-model-server.py http://127.0.0.1:8080/v1
   work; whether the decomposition is any good depends on your model.
   `make eval-decomp` is the ship/no-ship gate, and failing it is a reason to
   stay on tier 2.
-- **No dashboards.** There is no Lovelace, no config UI, no add-on store. If
-  your house needs Z-Wave JS, HomeKit, Matter or cloud-tied devices, Home
-  Assistant is still the better tool and can run alongside.
+- **No add-on store, and no Lovelace.** The console has its own dashboards
+  (HOUSE › Dashboards), a settings page cut to what a person changes, and a
+  tools page that is one search — and that is the whole UI. If your house
+  needs Z-Wave JS, HomeKit, Matter or cloud-tied devices, Home Assistant is
+  still the better tool and can run alongside.
   [`docs/standalone.md`](docs/standalone.md).
+- **Cameras need a vision model the model server serves.** The vision
+  integration is switched on and asks consent for every look; until a
+  multimodal GGUF is loaded (`house-vision` behind llama-swap) a look says it
+  could not, and the MODELS panel says "not served".
+- **The phone's newest screen has not been compiled here.** The activity
+  strip, the knowledge graph and chunked speech on Android are mirrored in
+  Python and have JVM tests, and wait for a machine with the SDK
+  (`docs/ANDROID_DEVICE_TESTS.md` ADT-039).
 - **GrapheneOS clears the assistant role on every app update.** Re-run
   `scripts/adb-jarvis-role.sh` afterwards. This is OS hardening, not a bug,
   and no app can work around it.

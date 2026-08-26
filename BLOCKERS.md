@@ -79,6 +79,11 @@ The same applies to a real microphone in a real room: the live rig synthesises
 the user's speech and delivers it through the real audio paths, which proves
 the pipeline but not the acoustics of your kitchen.
 
+Nor is there an Android SDK on this host (CLAUDE.md), so M61's gate stops at
+`./gradlew assembleDebug`: the phone's first stage (the activity strip, the
+knowledge graph, chunked speech, eight Tasker rows) is mirrored in Python and
+has JVM tests written, and has not been compiled here. ADT-039 is that build.
+
 ## 4. Accounts and keys for the things that reach the outside world
 
 **Needed by:** M38 (channels), M39 (calendar and mail), M40 (cloud providers,
@@ -98,6 +103,7 @@ something only you can hand over:
 | Mail | IMAP/SMTP host and credentials | the integration is inert |
 | Cloud model providers | an OpenAI / Anthropic / Google / OpenRouter key | **off** — local-only is a complete configuration, and a request carrying memory or notes is refused cloud routing even after you add one |
 | Claude Code backend | an Anthropic API key | **off** — coding tasks use the local agent |
+| A vision model (M56) | a multimodal GGUF behind llama-swap, named `house-vision` (or `VISION_MODEL` for the rig) | the vision integration is on with no cameras and no served model: a look says it could not, and the MODELS panel says "not served" |
 | Catalog sources | the list of origins you are willing to install from | empty, and nothing installs from an unconfigured origin |
 
 Two of these are deliberate exceptions to "everything local", authorised by the
