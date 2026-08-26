@@ -1014,6 +1014,24 @@ async def test_agent_streams_a_plain_answer(tmp_path):
     await shutdown(jarvis)
 
 
+async def test_agent_system_prompt_says_what_day_it_is(tmp_path):
+    """The model has no clock; the prompt lends it one.
+
+    "Note that the boiler was serviced today" produced a note dated
+    2026-02-12 under a reply that said "26 August": the date in the note came
+    from nowhere, because nothing in the prompt said what today was.
+    """
+    from datetime import datetime
+
+    jarvis, _ = await build_house(tmp_path)
+    agent = make_agent(jarvis, FakeOllama(say("Yes, Sir.")))
+    prompt = agent.system_prompt()
+    now = datetime.now().astimezone()
+    assert f"Now: {now.strftime('%A %-d %B %Y')}" in prompt
+    assert now.strftime("%H:") in prompt
+    await shutdown(jarvis)
+
+
 async def test_agent_system_prompt_carries_the_live_house(tmp_path):
     jarvis, _ = await build_house(tmp_path)
     fake = FakeOllama(say("Yes, Sir."))

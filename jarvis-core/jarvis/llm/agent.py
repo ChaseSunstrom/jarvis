@@ -21,6 +21,8 @@ the action has *not* happened.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import asyncio
 import contextlib
 import json
@@ -642,10 +644,25 @@ class ConversationAgent:
             parts.append(toolbox)
         if areas:
             parts.append(f"Areas in this home: {areas}.")
+        parts.append(self.clock_line())
         parts.append(self.house_summary())
         parts.append(self.skill_index())
         parts.append(self.remembered_notes(query, semantic))
         return "\n\n".join(part for part in parts if part)
+
+    def clock_line(self) -> str:
+        """What day and time it is, in the house's own timezone.
+
+        The model has no clock. Asked to "note that the boiler was serviced
+        today", it wrote a note dated 2026-02-12 in a reply that said "26
+        August" — the reply took the date from the conversation, the note
+        took one from nowhere. Every "today", "this evening", "next Tuesday"
+        and every date the notes skill asks for depends on this one line, and
+        it costs a dozen tokens.
+        """
+        now = datetime.now().astimezone()
+        zone = now.tzname() or ""
+        return f"Now: {now.strftime('%A %-d %B %Y, %H:%M')}{' ' + zone if zone else ''}."
 
     def skill_index(self) -> str:
         """One line per loaded skill: its name and what it is for.
