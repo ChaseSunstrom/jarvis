@@ -43,8 +43,21 @@ check "mock backend serves jarvis/notes/*" grep -q 'jarvis/notes/' tests/web/moc
 # untested parallel path to the same API. `console_parity_test.py` is what
 # keeps the tab honest: it fails if the phone offers a section the console
 # does not have, or misses one it does.
-check "the phone offers NOTES, as a console section" \
-    grep -qE 'NOTES\("NOTES", "/notes"\)' android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt
+# Reachable, not "a tab called NOTES". M48 made notes a section of
+# KNOWLEDGE, so the phone offers the destination and the section strip
+# inside the WebView does the rest — which is more reachable than before,
+# and this check said it had gone.
+check "the phone can reach notes, through the destination it lives in" python3 -c '
+import re
+from pathlib import Path
+src = Path("jarvis-web/src/lib/screens.ts").read_text()
+entry = [b for b in re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S) if "/notes" in b][0]
+within = re.search(r"within: .([^\x27]+).", entry).group(1)
+tabs = Path("android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt").read_text()
+needle = chr(34) + within.lstrip("/").upper() + chr(34) + ", " + chr(34) + within + chr(34)
+assert needle in tabs, "the phone cannot reach " + within
+print("notes: a section of " + within + ", which the phone offers")
+'
 check_sh "and the phone's nav still matches the console's" \
     'python3 android-app/tools/console_parity_test.py 2>&1 | tail -1'
 check "the console route exists for it to open" test -f jarvis-web/src/lib/sections/Notes.svelte

@@ -20,8 +20,29 @@ check "jarvis-core reads the layout contract" grep -rlq dashboard_layout.json ja
 check "jarvis-web reads the layout contract" grep -rlq dashboard_layout.json jarvis-web/src
 
 require_file jarvis-web/src/lib/sections/Dashboards.svelte
-check "console nav has Dashboards" grep -qi dashboards jarvis-web/src/routes/+layout.svelte
-check "Android tab strip mirrors the new nav" grep -q DASHBOARDS android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt
+# Reachable, not "named in the layout". Both of these grepped for the word
+# in a file, and both went red when M48 made dashboards a SECTION of HOUSE
+# rather than an eleventh tab — the page was more reachable than before
+# (it kept its chord and gained a real one in `g b`), and the checks said
+# it had gone.
+check "dashboards is reachable, from the console and from the phone" python3 -c '
+import re
+from pathlib import Path
+src = Path("jarvis-web/src/lib/screens.ts").read_text()
+block = [b for b in re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S) if "/dashboards" in b]
+assert block, "dashboards is not a declared screen at all"
+entry = block[0]
+within = re.search(r"within: .([^\x27]+).", entry)
+chord = re.search(r"chord: .([a-z ]+).", entry)
+assert within, "dashboards belongs to no destination, so nothing links to it"
+assert chord, "dashboards lost its keyboard chord"
+# And the phone can get there: it offers the destination dashboards is in.
+tabs = Path("android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt").read_text()
+front_door = within.group(1).lstrip("/").upper()
+needle = chr(34) + front_door + chr(34) + ", " + chr(34) + within.group(1) + chr(34)
+assert needle in tabs, "the phone has no " + front_door + " tab"
+print(f"dashboards: a section of {within.group(1)}, chord {chord.group(1)!r}, reachable from the phone via {front_door}")
+'
 check "console parity mirror passes" python3 android-app/tools/console_parity_test.py
 require_file jarvis-web/src/lib/dashboards/chartTypes.ts
 check_sh ">= 4 chart types" \

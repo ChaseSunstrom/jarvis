@@ -16,7 +16,18 @@ check_sh "push-to-talk reaches the renderer over IPC" 'grep -rqiE "push.?to.?tal
 require_generated "$APP/src/renderer/tokens.css"
 check "token lint: the shell is clean" python3 scripts/verify/token_lint.py --require-clean jarvis-desktop-app/src
 check_sh "the shell serves the console build — parity by construction" 'grep -rqE "jarvis-web|build/index\.js|loadURL" jarvis-desktop-app/src/main'
-check "desktop tab in the console nav" grep -qi desktop jarvis-web/src/routes/+layout.svelte
+# The layout builds its tab strip from `screens.ts` now, so grepping it for
+# the word found nothing — and desktop had not gone anywhere, it had become
+# a section of SETTINGS.
+check "the console reaches the desktop page" python3 -c '
+import re
+from pathlib import Path
+src = Path("jarvis-web/src/lib/screens.ts").read_text()
+entry = [b for b in re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S) if "/desktop" in b][0]
+within = re.search(r"within: .([^\x27]+).", entry)
+assert within, "desktop belongs to no destination, so nothing links to it"
+print("desktop: a section of " + within.group(1))
+'
 require_file jarvis-desktop/jarvis_desktop/ipc.py
 check "consent prompts can be answered by the shell" grep -qE 'class ShellConsentGateway' jarvis-desktop/jarvis_desktop/consent.py
 check_sh "agent ipc tests" 'cd jarvis-desktop && python3 -m pytest tests/test_ipc.py -q --timeout=120 --timeout-method=signal 2>&1 | tail -2'
