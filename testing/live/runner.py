@@ -529,6 +529,20 @@ class Runner:
                 await self.link.client.command("jarvis/memory/forget", entry_id=entry_id)
             except Exception as err:  # noqa: BLE001
                 problems.append(f"memory {entry_id} could not be removed: {err}")
+        # Tasks the scenario started and left running: a twelve-minute sensor
+        # audit from `interactions-proactive-moment` was still the top row of
+        # the task dock when `task-live-ui` looked for its own. A leftover is
+        # a failure, and a running one is also a load on the next scenario.
+        since = getattr(self, "_scenario_started_at", 0.0)
+        for task in await observer.tasks():
+            if float(task.get("created") or 0.0) < since:
+                continue
+            if str(task.get("status") or "") not in ("running", "queued", "blocked"):
+                continue
+            try:
+                await self.link.client.command("jarvis/tasks/cancel", task_id=str(task.get("id")))
+            except Exception as err:  # noqa: BLE001
+                problems.append(f"task {task.get('id')} could not be cancelled: {err}")
         for conversation_id in await self._conversation_ids():
             if conversation_id in baseline.get("conversations", set()):
                 continue

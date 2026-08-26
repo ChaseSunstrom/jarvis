@@ -393,7 +393,7 @@ runs in full mode only. `--implemented-only` runs the ungated ones and must exit
     only where it is not.
   - Verify: `bash scripts/verify/m26-intelligence-eval.sh`
 
-- [ ] **M27 — Exploratory pass and the live test report** · size M · deps M25, M26
+- [x] **M27 — Exploratory pass and the live test report** · size M · deps M25, M26
   - Scope: with the scripted suite green for every implemented capability, ten or more
     **unscripted** conversations through the rig, aimed at the weak spots `docs/AUDIT.md` names.
     Every defect becomes an `ISSUES.md` entry *and* a new regression scenario, and is then fixed.

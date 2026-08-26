@@ -324,3 +324,21 @@ is quiet. Done since:
   (test pinned). The restart exposed a console bug: the link could not
   reconnect after a core restart ("Illegal invocation" — an unbound
   `setTimeout`); fixed with a test that applies the browser's rule.
+- 06:55 — M52 (`a455d30`) and M53 (`9cc55d3`) ticked and committed on green
+  gates (17/17, 13/13; every choreography's worst frame 17–27 ms against a
+  50 ms budget). The full-mode live run with `--report` is running on the
+  quiet stack for M27/M23. M60's and M61's gates are written and fail first;
+  the Tasker parity table (`docs/ANDROID_TASKER_PARITY.md`) is the measure:
+  37 built-in actions plus the accessibility ones exist, the gaps are listed
+  in landing order. Agents: M54, M56, M57 (re-spawned with the corrected
+  brief and the hard rule), M58, M59.
+- 07:25 — the full-mode run: 47/53 variants, 72/77 turns, WER 5.7 %, routing
+  95 %, median 6.7 s; intent 93.5 % against the 95 % floor and the 2 s
+  ceiling both missed and written down in `docs/verification.md` ("Known
+  failures, 26 August") with the cause of each of the five turns. The rig
+  now cancels the tasks a scenario started when it ends (a lingering audit
+  had been what the dock showed). The five build agents were cut off by a
+  model usage limit; their worktrees' work is committed as WIP and is being
+  brought onto the branch one milestone at a time — M54 first (gate 37/38,
+  the last red a stale picture folder, re-running), then M58 (its gate is
+  green in its worktree), then M56 (one camera test to finish).

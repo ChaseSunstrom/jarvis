@@ -1006,6 +1006,21 @@ callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
 **A test that cannot tell a slow machine from a slow app should not claim
 either.**
 
+## Known failures, as of 2026-08-26 (this host)
+
+The full-mode live run at 06:54 (`docs/LIVE_TEST_REPORT.md`): 47 of 53 scenario
+variants, 72 of 77 turns, WER 5.7 %, routing 95 %, median round trip 6.7 s. Two
+thresholds missed, both recorded rather than lowered:
+
+| Threshold | Measured | Why |
+|---|---|---|
+| intent accuracy ≥ 95 % | 93.5 % (72/77 turns) | five turns: `interactions-thread-continuity` (the model asked instead of acting on the one bedroom light — model variance; the persona rule holds on `resilience-core-restart`), `task-live-ui` (a twelve-minute sensor audit from the previous scenario was still running and was what the dock showed; the rig now cancels the tasks a scenario started), `delegation-across-backends` (routed to research, not subagents), `research-deep-report` (answered from one page instead of starting the research — M60 adds a router step so the word "research" is not left to the model), `subagents-parallel-work` turn 2 (the specialists had not finished — time) |
+| median round trip ≤ 2 s | 6.7 s | STT on shared vCPUs, prompt prefill, synthesis start — `BLOCKERS.md` §2; M60 takes the parts the repository can change |
+
+`stack-logs-clean` saw one `ConnectionResetError` from piper at 07:18 while the
+fixture ground's throwaway core was being stopped mid-synthesis; the polite
+hang-up covers the running core, not a process being terminated.
+
 ## Known failures, as of 2026-08-24 (this host)
 
 Two jarvis-core tests fail on the machine that runs Jarvis, with no change to
