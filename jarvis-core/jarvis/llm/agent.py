@@ -1426,6 +1426,11 @@ class ConversationAgent:
                     # with nothing called. The rule says never claim an action
                     # you have not called; when the model does, it is told so
                     # once and asked to call or to say plainly that it did not.
+                    # Told in the second person but NOT as the user: the first
+                    # wording read as the user complaining, and the model's
+                    # apology to it — "You are right, and I apologise, Sir" —
+                    # became the spoken reply (M51's smoke slice, 26 Aug). The
+                    # note says what to do and that the user never sees it.
                     if not narrated and claimed_action(request_text, "".join(said)):
                         nudged = True
                         _LOGGER.warning(
@@ -1439,8 +1444,11 @@ class ConversationAgent:
                                 "role": "user",
                                 "content": (
                                     "You said that was done, but you called no tool, so "
-                                    "nothing changed. Make the tool call now, or tell me "
-                                    "plainly that you did not do it and why."
+                                    "nothing changed. Call the tool now. Then answer the "
+                                    "request itself in one sentence, as you would have "
+                                    "if it had run — no apology, and no mention of this "
+                                    "note, which the user never sees. If you cannot do "
+                                    "it, say plainly that you did not, and why."
                                 ),
                             }
                         )
@@ -1471,9 +1479,11 @@ class ConversationAgent:
                                 "content": (
                                     f"You described calling {narrated} but you did "
                                     "not actually call it, so nothing happened. "
-                                    "Either make the tool call now, or tell me "
-                                    "plainly that you cannot and why. Do not "
-                                    "write a tool call out as text."
+                                    "Make the tool call now — never write a call out "
+                                    "as text — and then answer the request itself, "
+                                    "with no apology and no mention of this note, "
+                                    "which the user never sees. If you cannot, say "
+                                    "plainly that you did not, and why."
                                 ),
                             }
                         )
