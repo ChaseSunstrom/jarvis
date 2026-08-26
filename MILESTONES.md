@@ -960,9 +960,27 @@ web and of Tasker. Local only. Each row here is planned in that document.
     failed to look for): gate 18/19, the one open check being the six gap rows, which
     stay gap until the app asks for those permissions — a product decision, not a build.
 
+- [x] **M62 — The dashboard, a destination** · size S · deps M48, M55 · parallel-ok M61
+  - Scope: the dashboard leaves HOUSE's section strip and becomes the first console tab —
+    its own path, no sections, the one destination that does not redirect; `/house/dashboards`
+    a 308; the phone's strip mirrors the bar and opens on it; the palette, the inventory, the
+    pictures and the bar's e2e follow. The M48 cap moves from five tabs to six, recorded in
+    `DEVIATIONS.md` §20.
+  - Verify: `bash scripts/verify/m62-dashboard-main.sh`
+  - 26 Aug 16:30: gate 17/17; M48 15/15 with the cap at six; M55 21/21 with a leaf defined by
+    structure rather than slash count; the bar holds at 768–1440 without overlapping itself
+    (it did on a tablet at first — the M50 render showed VOICE over the brand) and fades its
+    overflowing edge on a phone. The phone opens its console on DASHBOARDS.
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M61
+- [ ] **M23 — Final integration** · size M · deps M00–M62
+  - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
+    were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
+    m30, m45, m58; m25/m26 re-measured after the next rebuild); the rest are M56 (no served
+    vision model), M61 (six gap rows, being closed), this gate, and the smoke slice in
+    m07/m08/m14/m21/m22 — the rig's stack-logs-clean check on an MQTT startup ERROR, fixed
+    in 483d5e5. The table is in `docs/OVERNIGHT_LOG.md` (15:14).
   - 26 Aug: cannot be green on this host, and is not ticked. Three of its inputs are
     outside the repository's reach: M56's live look needs a vision model the model server
     serves (BLOCKERS §4), M61's gradle steps need an Android SDK (BLOCKERS §3), and the

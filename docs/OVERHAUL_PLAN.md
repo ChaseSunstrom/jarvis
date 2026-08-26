@@ -16,8 +16,10 @@ This document is the spine. Each numbered item is a milestone in
 
 ## What is true now
 
-- 59 milestones ticked as of 11:54 on the 26th (M27, M50–M55, M57–M60 this
-  morning); M56, M61 and M23 are open. M56 is built and on the branch,
+- 60 milestones ticked as of 16:30 on the 26th (M27, M50–M55, M57–M60 this
+  morning, M62 — the dashboard as the first console tab — in the afternoon);
+  M56, M61 (its six gap rows closed on a worktree branch, merging) and M23 are
+  open. M56 is built and on the branch,
   its gate 27/28: the one open check is a live look through a served vision
   model, and the model server serves none. M60 is ticked (gate 13/13, the
   full core suite green). M61's phone work compiles, lints and passes its JVM tests here (M08's
@@ -73,7 +75,8 @@ Dependencies first, value and risk next. Parallel where trees do not touch.
 | M59 | **Anything online, locally** — watch a page for a change, feeds, a reader that survives JavaScript, "tell me when…" as scheduled research → a moment; all self-hosted. | `m59-online.sh`: fixture page changes → moment (live), unit for the watcher | M60 |
 | M60 | **Intelligence and speed** — the operator's facts: llama-swap serves `qwen3.8-27b` for everything (≈75 tok/s, 256k context — fast enough) with `qwen3.6-35b` configured as "fast" and idle; so the wait on a voice turn is STT on shared vCPUs, prompt prefill of a large system prompt, and TTS start — not the model's speed. Scope: prompt-prefix caching through the gateway (`cache_prompt`), a leaner system prompt measured in tokens, sentence-streamed TTS, faster-whisper sized to the CPU (int8, a smaller model for the wake path); grammar-constrained tool calls; the task planner batching read-only steps; evals re-measured, never lowered. | `m60-intelligence.sh`: routing ≥ 90 %, intent ≥ 95 %, the proactive scenario inside its budget on the fast path where the hardware allows | M59 |
 | M61 | **Android: the equal of the web, and of Tasker** — the phone's screens the console's (voice tab with the graph and activity, motion); the action registry audited against Tasker's categories and completed (comms, connectivity, device settings, media, apps, screen, clipboard, NFC, intents, HTTP, variables, flows); triggers as profiles; "on my phone, do X" end to end from the hub. Build, unit, lint, goldens only — no device. | `m61-android-tasker.sh`: registry coverage table vs `docs/ANDROID_TASKER_PARITY.md`, unit tests per action family, goldens, the tools mirror | M56–M60 |
-| M23 | **Final integration** — every box, `make verify-all`, the suite in full mode, docs re-measured. Deps extended to M61. | `m23-final-integration.sh` | — |
+| M62 | **The dashboard, a destination** — the operator's ask: "make the dashboard not its own subtab, and actually a main thing". The first console tab, its own path, no sections; the phone opens on it; the M48 cap becomes six (`DEVIATIONS.md` §20). | `m62-dashboard-main.sh` | S |
+| M23 | **Final integration** — every box, `make verify-all`, the suite in full mode, docs re-measured. Deps extended to M62. | `m23-final-integration.sh` | — |
 
 ## How the work runs
 

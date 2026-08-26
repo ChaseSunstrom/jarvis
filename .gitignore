@@ -73,3 +73,6 @@ jarvis-core/wyoming/
 jarvis-core/config/traces/
 # Pages the live rig rewrites for a scenario (M59): written and removed per run.
 testing/live/fixtures/*/live/
+
+# Kotlin daemon scratch (error logs the compiler drops beside the build)
+android-app/.kotlin/

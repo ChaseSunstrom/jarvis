@@ -689,6 +689,21 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### The dashboard, a destination (M62)
+
+`bash scripts/verify/m62-dashboard-main.sh` — 17 checks.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `/dashboards` is a top-level tab, the first after VOICE, with no destination above it; `/house/dashboards` is no longer a screen | Automated | the gate reads `screens.ts`; `scripts/verify/web_states_check.py` (every screen declared once, served once) |
+| The old path is a permanent redirect and nothing serves a page there | Automated | `routes/house/dashboards/+page.ts` (308); the M48 gate checks every `MOVED` entry has its redirect |
+| The bar links the voice screen to five destinations, the dashboard first, and the dashboard's own path is its page | Automated | `e2e/e2e.spec.ts` "the bar links the voice screen to the five destinations" |
+| The phone's strip mirrors the bar exactly and the console opens on the dashboard | Automated | `android-app/tools/console_parity_test.py` (run by `make test-android` and the gate); `ConsoleTab.DEFAULT` |
+| The dashboard renders, loads, errors and goes offline as a screen of its own, and holds to the menu inventory | Automated | `e2e/states.spec.ts`, `e2e/menus.spec.ts` (DASHBOARDS row of `docs/UI_MIGRATION.md` §4), `e2e/dashboards.spec.ts` |
+| The palette finds it under its own path | Automated | the gate reads `commandPalette.ts` |
+| It looks like a destination — title, lede, then the arranged graphs, under a six-tab bar | Manual | `docs/ui-review/dashboards/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
+| No more than six tabs | Automated | `scripts/verify/m48-webui-c2.sh` (the cap, five until M62) |
+
 ### The phone, the equal of the web (M61, first stage)
 
 | Claim | Status | Evidence |

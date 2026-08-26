@@ -160,12 +160,12 @@ class NavigationTest {
             ) != null
         }
         // `findScrolling`, not a bare findObject. The strip is a
-        // HorizontalScrollView: four labels fit a phone today and PHONE is
-        // pinned beside the strip (ConsoleFrame), but when it held six the last
-        // of them started past the right edge on every device this suite runs
-        // on, and a plain lookup reported it as absent — true of the viewport
-        // and false of the screen. The helper still scrolls so a fifth tab
-        // cannot bring that back.
+        // HorizontalScrollView: it holds the console's five labels today and
+        // PHONE is pinned beside it (ConsoleFrame), but when it held six the
+        // last of them started past the right edge on every device this suite
+        // runs on, and a plain lookup reported it as absent — true of the
+        // viewport and false of the screen. The helper scrolls, so a label
+        // past the edge is found rather than reported missing.
         for (label in ConsoleTab.entries.map { it.label } + ConsoleTab.PHONE_LABEL) {
             assertNotNull(
                 "the console frame does not offer \"$label\".\n${Device.windowDump()}",

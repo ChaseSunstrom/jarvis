@@ -131,8 +131,8 @@ object Views {
         // on every device this suite runs on, and scrolling only up and down
         // reported "No button labelled PHONE on screen" — true and misleading
         // in the same breath: it was on the strip, one swipe away, and the
-        // helper could not reach it. The strip is four labels now and PHONE is
-        // pinned beside it, but a strip is scrollable by design.
+        // helper could not reach it. The strip is the console's five labels
+        // now and PHONE is pinned beside it, but a strip is scrollable by design.
         //
         // Left first for the same reason the vertical pass starts at the top: a
         // strip a previous assertion already scrolled would otherwise be

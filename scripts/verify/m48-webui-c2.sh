@@ -12,7 +12,7 @@ require_file docs/UI_MIGRATION.md
 require_file jarvis-web/src/lib/ui/SectionStrip.svelte
 
 # --- the structure -----------------------------------------------------------
-check "there are no more than five top-level destinations" python3 -c '
+check "there are no more than six top-level tabs: the voice screen, the dashboard, and the four M48 destinations" python3 -c '
 import re
 from pathlib import Path
 src = Path("jarvis-web/src/lib/screens.ts").read_text()
@@ -21,7 +21,7 @@ nav = [
     for block in re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S)
     if "nav: true" in block
 ]
-assert len(nav) <= 5, f"{len(nav)} destinations: {nav}. Reducing this is the milestone, not a side effect"
+assert len(nav) <= 6, f"{len(nav)} tabs: {nav}. Five was this milestone; M62 spent a sixth on the dashboard (DEVIATIONS.md §20). A seventh is a decision, not a side effect"
 print(f"{len(nav)} destinations: " + ", ".join(nav))
 '
 
@@ -102,7 +102,7 @@ from pathlib import Path
 src = Path("jarvis-web/src/lib/commandPalette.ts").read_text()
 assert "SCREENS.filter" in src
 assert "screen.within" in src, "a section is indistinguishable from a destination in the palette"
-for section in ("/house/dashboards", "/settings/tools", "/knowledge/memory"):
+for section in ("/house/automations", "/settings/tools", "/knowledge/memory"):
     assert section in src, f"{section} has no keywords, so nobody will find it"
 print("every section indexed, with its own keywords")
 '

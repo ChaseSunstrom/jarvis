@@ -89,9 +89,13 @@ test('the chat layout: transcript, exchange, this turn, dock, one bar', async ({
 	// The bar, with the voice screen as its first, lit tab.
 	const bar = page.getByTestId('top-bar');
 	await expect(bar).toBeVisible();
+	// Six since M62: the voice screen, the dashboard, and the four M48
+	// destinations. The count is asserted, not derived from screens.ts, so a
+	// seventh tab is a decision made here as well as in the M48 gate.
 	const tabs = bar.locator('nav a');
-	await expect(tabs).toHaveCount(5);
+	await expect(tabs).toHaveCount(6);
 	await expect(tabs.first()).toHaveText(/VOICE/);
+	await expect(tabs.nth(1)).toHaveText(/DASHBOARDS/);
 	await expect(page.getByTestId('nav-voice')).toHaveAttribute('aria-current', 'page');
 	// The underline is placed by measuring the lit tab after hydration and
 	// again once the fonts land, so it is polled rather than read once.
@@ -177,4 +181,49 @@ test('under reduced motion the instrument is still, and the level rests', async 
 	);
 	expect(running, `${running} animations still running under reduced motion`).toBe(0);
 	await expect(reactor).toHaveAttribute('data-level', '0.00');
+});
+
+test('the bar never overlaps itself: brand, tabs and status keep to their own space at every width', async ({
+	page
+}) => {
+	// Six tabs (M62) fit a laptop in one row; on a tablet they did not, and
+	// the grid's flexible side columns collapsed to nothing rather than the
+	// tabs giving way — VOICE was drawn over the brand and SETTINGS under the
+	// search box, with no overflow for responsive.spec to see. So: no two
+	// pieces of the bar may intersect, and none may leave the viewport.
+	await skipBoot(page);
+	for (const width of [768, 834, 1024, 1280, 1440]) {
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto('/?e2e=1');
+		await expect(page.getByTestId('mic')).toBeVisible({ timeout: 10_000 });
+		const boxes = await page.evaluate(() => {
+			const bar = document.querySelector('[data-testid="top-bar"]');
+			if (!bar) return [];
+			const parts = [
+				bar.querySelector('[data-testid="hud-link"]'),
+				...bar.querySelectorAll('nav a'),
+				bar.querySelector('.status')
+			];
+			return parts
+				.filter((el): el is Element => !!el)
+				.map((el) => {
+					const r = el.getBoundingClientRect();
+					return { name: el.textContent?.trim().slice(0, 12) || el.className, l: r.left, r: r.right, t: r.top, b: r.bottom };
+				})
+				.filter((box) => box.r > box.l);
+		});
+		expect(boxes.length, `bar parts at ${width}`).toBeGreaterThan(6);
+		for (const box of boxes) {
+			expect(box.l, `${box.name} left at ${width}`).toBeGreaterThanOrEqual(-1);
+			expect(box.r, `${box.name} right at ${width}`).toBeLessThanOrEqual(width + 1);
+		}
+		for (let i = 0; i < boxes.length; i++) {
+			for (let j = i + 1; j < boxes.length; j++) {
+				const a = boxes[i];
+				const b = boxes[j];
+				const overlap = a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1;
+				expect(overlap, `${a.name} overlaps ${b.name} at ${width}px`).toBe(false);
+			}
+		}
+	}
 });

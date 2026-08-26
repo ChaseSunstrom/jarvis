@@ -103,16 +103,19 @@ test("the tts proxy only reaches media paths", async ({ request }) => {
 
 // --- management UI ---------------------------------------------------------
 
-test("the bar links the voice screen to the four destinations", async ({ page }) => {
+test("the bar links the voice screen to the five destinations", async ({ page }) => {
   await page.goto("/");
   // One bar everywhere (M49): HOUSE is a tab on the voice screen, and it
   // lands in HOUSE's first section because a destination's path is a redirect.
   await page.getByTestId("nav-house").click();
   await expect(page).toHaveURL(/\/house\/devices$/);
 
-  // Four destinations, not eleven (M48). Each lands on its own first section,
-  // because a destination's own path is a redirect and never a second page.
+  // Five destinations, not eleven (M48; the dashboard became one with M62).
+  // Each lands on its own first section, because a destination's own path is
+  // a redirect and never a second page — except the dashboard, which has no
+  // sections and IS its page.
   for (const [testid, path] of [
+    ["nav-dashboards", "/dashboards"],
     ["nav-work", "/work/tasks"],
     ["nav-knowledge", "/knowledge/notes"],
     ["nav-settings", "/settings/assistant"],

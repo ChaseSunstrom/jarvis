@@ -44,6 +44,16 @@ the root layout (the native strip already draws them); the readout stays.
 
 	let nav = $state<HTMLElement | null>(null);
 	let indicator = $state({ left: 0, width: 0, ready: false });
+	/**
+	 * Which edges of the strip hide more tabs, on a phone.
+	 *
+	 * Six words do not fit 360px, so the strip scrolls — and a scroll with
+	 * no scrollbar and nothing cut mid-word is invisible: with five tabs the
+	 * fifth was clipped and read as absent, with six (M62) SETTINGS was off
+	 * the edge entirely. The overflowing edge fades, and the current tab is
+	 * scrolled into view, so what is there can be seen to be there.
+	 */
+	let fade = $state({ left: false, right: false });
 
 	/**
 	 * Put the underline under the current tab.
@@ -62,6 +72,20 @@ the root layout (the native strip already draws them); the readout stays.
 			return;
 		}
 		indicator = { left: current.offsetLeft, width: current.offsetWidth, ready: true };
+		if (host.scrollWidth > host.clientWidth + 1) {
+			current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		}
+		edges();
+	}
+
+	function edges(): void {
+		const host = nav;
+		if (!host) return;
+		const more = host.scrollWidth > host.clientWidth + 1;
+		fade = {
+			left: more && host.scrollLeft > 1,
+			right: more && host.scrollLeft + host.clientWidth < host.scrollWidth - 1
+		};
 	}
 
 	const currentHref = $derived(tabs.find((t) => isCurrent(t.href))?.href ?? '');
@@ -95,7 +119,14 @@ the root layout (the native strip already draws them); the readout stays.
 		<small>local</small>
 	</a>
 
-	<nav class="tabs" aria-label="Management sections" bind:this={nav}>
+	<nav
+		class="tabs"
+		class:fade-l={fade.left}
+		class:fade-r={fade.right}
+		aria-label="Management sections"
+		bind:this={nav}
+		onscroll={edges}
+	>
 		{#each tabs as tab (tab.href)}
 			<a
 				href={tab.href}
@@ -130,7 +161,10 @@ the root layout (the native strip already draws them); the readout stays.
 		top: 0;
 		z-index: 20;
 		display: grid;
-		grid-template-columns: 1fr auto 1fr;
+		/* The tabs take what the brand and the status leave, and scroll inside
+		   it: with `1fr auto 1fr` the side columns collapsed to nothing when six
+		   tabs did not fit a tablet, and VOICE was drawn over the brand. */
+		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: stretch;
 		gap: var(--jv-space-4);
 		min-height: calc(var(--jv-space-7) + var(--jv-space-2));
@@ -170,7 +204,36 @@ the root layout (the native strip already draws them); the readout stays.
 		align-items: stretch;
 		gap: var(--jv-space-5);
 		min-width: 0;
-		justify-self: center;
+		justify-self: stretch;
+		/* `safe`: a centred row that overflows must still scroll to its start. */
+		justify-content: safe center;
+		overflow-x: auto;
+		scrollbar-width: none;
+		scroll-snap-type: x proximity;
+	}
+	.tabs::-webkit-scrollbar {
+		display: none;
+	}
+	/* An edge that hides more tabs fades, so what is there can be seen to be
+	   there; a scroll with no scrollbar and nothing cut mid-word is invisible. */
+	.tabs.fade-r {
+		mask-image: linear-gradient(
+			to right,
+			var(--jv-bg) calc(100% - var(--jv-space-7)),
+			transparent
+		);
+	}
+	.tabs.fade-l {
+		mask-image: linear-gradient(to right, transparent, var(--jv-bg) var(--jv-space-7));
+	}
+	.tabs.fade-l.fade-r {
+		mask-image: linear-gradient(
+			to right,
+			transparent,
+			var(--jv-bg) var(--jv-space-7),
+			var(--jv-bg) calc(100% - var(--jv-space-7)),
+			transparent
+		);
 	}
 	.tabs a {
 		display: flex;
@@ -181,6 +244,7 @@ the root layout (the native strip already draws them); the readout stays.
 		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-xs);
 		letter-spacing: var(--jv-track-chrome);
+		scroll-snap-align: start;
 		text-transform: uppercase;
 		color: var(--jv-text-dim);
 		text-decoration: none;
@@ -212,7 +276,7 @@ the root layout (the native strip already draws them); the readout stays.
 	/* The one underline. */
 	.ind {
 		position: absolute;
-		bottom: -1px;
+		bottom: 0;
 		height: var(--jv-rule-live);
 		background: var(--jv-accent);
 		opacity: 0;
@@ -237,7 +301,9 @@ the root layout (the native strip already draws them); the readout stays.
 			opacity: 0.35;
 		}
 	}
-	@media (max-width: 720px) {
+	/* Up to a tablet the tabs take a row of their own under the brand and the
+	   status: six words fit 768px across, but not beside two other things. */
+	@media (max-width: 1023px) {
 		.top {
 			grid-template-columns: auto 1fr;
 			grid-template-rows: auto auto;
@@ -247,9 +313,6 @@ the root layout (the native strip already draws them); the readout stays.
 		.brand {
 			grid-row: 1;
 		}
-		.brand small {
-			display: none;
-		}
 		.status {
 			grid-row: 1;
 			grid-column: 2;
@@ -257,25 +320,22 @@ the root layout (the native strip already draws them); the readout stays.
 		.tabs {
 			grid-row: 2;
 			grid-column: 1 / -1;
-			justify-self: stretch;
-			gap: var(--jv-space-4);
-			/* min-width:0 is what lets it scroll instead of stretching the bar. */
-			overflow-x: auto;
-			scrollbar-width: none;
 			padding: var(--jv-space-2) 0 var(--jv-space-2);
 		}
-		.tabs::-webkit-scrollbar {
+	}
+	@media (max-width: 720px) {
+		.brand small {
 			display: none;
+		}
+		.tabs {
+			gap: var(--jv-space-4);
 		}
 		.tabs a {
 			padding: var(--jv-space-1) var(--jv-space-1);
-			/* Five words across a phone: the chrome tracking gives way so the
-			   fifth is not clipped mid-word behind an invisible scroll. */
+			/* Six words across a phone: the chrome tracking gives way, and a
+			   tab snaps whole into view rather than stopping mid-word. */
 			font-size: var(--jv-fs-2xs);
 			letter-spacing: var(--jv-track-tight);
-		}
-		.ind {
-			bottom: 0;
 		}
 	}
 </style>

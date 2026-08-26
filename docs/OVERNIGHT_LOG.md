@@ -455,3 +455,32 @@ is quiet. Done since:
   (m58); two 8-px dots used the pill radius where the console draws circles at
   50 % (m50); the M45 check predates M47's catalog store and counted the
   registry's own state as a subsystem (m45).
+- 15:14 — `make verify-all` finished: 11,825 s, 43 gates green, 19 red. Twelve of the
+  reds were fixed while it ran and are green on re-run (m02, m18, m19, m28, m30, m45,
+  m58 re-run green; m25/m26 pending the rebuilt stack); the rest are the ones the
+  repository already names — M56 (no served vision model), M61 (six gap rows), M23
+  (both), and the smoke slice in m07/m08/m14/m21/m22 (chat-context-retention's claimed
+  action, guarded in M60 and re-measured below). Full table in the log's summary; the
+  next full run is after the M62 commit.
+- 15:20 — the operator's new goal: everything works, the phone matches the web, the
+  dashboard a main destination, the PR's seven red CI jobs green, keep testing, clean up.
+  No `gh` here; the public API names each failing step. Reproduced all seven locally on
+  the current head and fixed what they found (commit d7ffe8f): compose-smoke's service
+  accounting broke on compose v2.24's profile-filtered `config --services` and never
+  listed go2rtc; its knob sentinels were the pre-rename OLLAMA_* names; the harness
+  self-test's taint scenario held `control_device` at the registry (M43) when the device
+  already raises its own tier — `Tool.escalates_itself` now declares that; on 3.12 the code
+  agent's cancel check never got a yield; the APK job's goldens step used a path relative
+  to the wrong directory; the phone's home column grew a blank 200 dp graph before it had
+  a node (the instrumented suite's likely clip). Desktop's Electron step and the web e2e
+  pass here; CI will say. A standalone Python 3.12 under ~/.local/py312 runs the core
+  suite the CI way: 3229 passed, 1 failed → fixed.
+- 16:17 — the smoke set on the rebuilt stack: 6/7 scenarios, 8/8 turns, median 2.09 s;
+  the one failure was the rig's stack-logs-clean check on an MQTT ERROR at every stack
+  start — the collision heuristic counted a booting broker's refusals as evictions.
+  Fixed (483d5e5); re-measured after the next rebuild.
+- 15:30 — M62 under way: the dashboard leaves HOUSE and becomes the first console tab, on
+  the console and the phone; the M48 cap moves to six (DEVIATIONS §20); the bar fades
+  its overflowing edge on a phone so a sixth tab is seen to be there. Two agents in
+  worktrees meanwhile: the six Tasker gap rows (M61) and the dashboard's widget kinds
+  (M63).

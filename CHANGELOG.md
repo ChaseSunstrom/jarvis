@@ -8,6 +8,11 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M62 — the dashboard is a destination.** DASHBOARDS is the first console tab, on the console
+  and on the phone (whose console opens on it): its own path, no sections, the one destination
+  that does not redirect. It was a section of HOUSE from M48, two taps behind the device list.
+  `/house/dashboards` redirects (308); bookmarks, notes and an un-updated phone still land. The
+  bar has six tabs now, not five — the M48 cap, spent deliberately (`DEVIATIONS.md` §20).
 - **M61 (first stage) — the phone, the equal of the web.** The voice screens draw the living
   activity around the reactor from the same vocabulary as the console (`ActivityRows.kt` mirrors
   `tests/contracts/activity_rows.json`; the device subscribes to every event in it) and the

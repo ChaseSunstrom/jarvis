@@ -28,7 +28,12 @@ routes = [re.search(r"\| `(/[^`]*)`", l).group(1) for l in rows]
 assert len(routes) == len(set(routes)), "a route is listed twice"
 screens = Path("jarvis-web/src/lib/screens.ts").read_text()
 declared = re.findall(r"path: \x27([^\x27]+)\x27", screens)
-leaves = [p for p in declared if "[" not in p and p != "/" and p.count("/") >= 2 and not p.startswith("/styleguide")]
+# A leaf is a screen that draws its own rows: everything declared except the
+# voice screen, a detail page, the styleguide and a destination that only
+# holds sections. Counting slashes was a proxy for that and broke the day a
+# destination had no sections (/dashboards, M62).
+holders = set(re.findall(r"within: \x27([^\x27]+)\x27", screens))
+leaves = [p for p in declared if "[" not in p and p != "/" and p not in holders and not p.startswith("/styleguide")]
 missing = sorted(set(leaves) - set(routes)); extra = sorted(set(routes) - set(leaves) - {"/"})
 assert not missing and not extra, f"inventory vs screens.ts: missing {missing}, extra {extra}"
 for l in rows:
@@ -104,11 +109,11 @@ check_sh "the house, work, knowledge and tools screens at three widths, regenera
     'cd jarvis-web && UI_REVIEW=1 E2E_PORT=$E2E_PORT npx playwright test ui-review.spec.ts -g "House|Devices|Areas|Dashboards|Automations|Work|Tasks|Code|Knowledge|Notes|Memory|Tools" 2>&1 | tail -3'
 check "one folder per trimmed screen, three pictures each" python3 -c '
 from pathlib import Path
-for slug in ("house-devices", "house-areas", "house-dashboards", "house-automations", "work-tasks", "work-code", "knowledge-notes", "knowledge-memory", "settings-tools"):
+for slug in ("house-devices", "house-areas", "dashboards", "house-automations", "work-tasks", "work-code", "knowledge-notes", "knowledge-memory", "settings-tools"):
     d = Path("docs/ui-review", slug)
     assert d.is_dir() and {p.name for p in d.iterdir()} >= {"desktop.png", "tablet.png", "mobile.png"}, slug
 print("pictures present")
 '
 check_sh "the trimmed routes open in the real console with no console error and only token colours" \
-    'LIVE_CONSOLE_ROUTES=/house/devices,/house/areas,/house/dashboards,/house/automations,/work/tasks,/work/code,/knowledge/notes,/knowledge/memory,/settings/tools python3 testing/live/console_pass.py 2>&1 | tail -6'
+    'LIVE_CONSOLE_ROUTES=/house/devices,/house/areas,/dashboards,/house/automations,/work/tasks,/work/code,/knowledge/notes,/knowledge/memory,/settings/tools python3 testing/live/console_pass.py 2>&1 | tail -6'
 verify_end

@@ -48,7 +48,12 @@ function inventory(): Row[] {
 }
 
 const ROWS = inventory();
-const LEAVES = SCREENS.filter((s) => !s.path.includes('[') && s.path !== '/' && (s.path.match(/\//g) ?? []).length >= 2);
+// A leaf draws its own rows: every screen except the voice screen, a detail
+// page and a destination that only holds sections. Counting slashes was a
+// proxy for that, and broke the day a destination had no sections
+// (/dashboards, M62). The M55 gate applies the same definition.
+const HOLDERS = new Set(SCREENS.map((s) => s.within).filter(Boolean));
+const LEAVES = SCREENS.filter((s) => !s.path.includes('[') && s.path !== '/' && !HOLDERS.has(s.path));
 
 const boot = async (page: Page) => {
 	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));

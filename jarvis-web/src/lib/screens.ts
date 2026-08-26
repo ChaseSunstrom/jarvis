@@ -33,7 +33,7 @@ export interface Screen {
 	 * In the bar — it is the first tab, as Reactor II draws it — but not a
 	 * console front door the phone mirrors: on the phone the voice screen is
 	 * native, so `console_parity_test.py` binds the phone's strip to the
-	 * `nav && !hud` four.
+	 * `nav && !hud` five.
 	 */
 	hud?: boolean;
 	/**
@@ -75,6 +75,20 @@ export const SCREENS: Screen[] = [
 	},
 
 	// --- the four console destinations -----------------------------------
+	// A destination since M62, and the first console tab: the dashboard is
+	// what a person opens the console to look at, and as a section of HOUSE it
+	// sat two taps deep behind the device list. Its own path is the page —
+	// there are no sections — so it is the one destination that does not
+	// redirect. (Comments stay above the brace: m48's gate counts blocks that
+	// open on `path:`.)
+	{
+		path: '/dashboards',
+		name: 'Dashboards',
+		purpose: 'The house at a glance: the graphs and readings somebody arranged.',
+		nav: true,
+		probe: 'dashboards-screen',
+		chord: 'g b'
+	},
 	{
 		path: '/house',
 		name: 'House',
@@ -122,15 +136,6 @@ export const SCREENS: Screen[] = [
 		within: '/house',
 		probe: 'areas-screen',
 		chord: 'g r'
-	},
-	{
-		path: '/house/dashboards',
-		name: 'Dashboards',
-		purpose: 'The graphs: what this house records, over time.',
-		nav: false,
-		within: '/house',
-		probe: 'dashboards-screen',
-		chord: 'g b'
 	},
 	{
 		path: '/house/automations',
@@ -234,7 +239,7 @@ export const SCREENS: Screen[] = [
 	}
 ];
 
-/** The top-level tabs, in order: the voice screen and the four console destinations. */
+/** The top-level tabs, in order: the voice screen and the five console destinations. */
 export const NAV_SCREENS = SCREENS.filter((screen) => screen.nav);
 
 /** The console's front doors — what the phone's native strip mirrors. */
@@ -255,7 +260,8 @@ export function sectionsOf(destination: string): Screen[] {
 export const MOVED: Readonly<Record<string, string>> = {
 	'/devices': '/house/devices',
 	'/areas': '/house/areas',
-	'/dashboards': '/house/dashboards',
+	// A section of HOUSE from M48 to M61, a destination since M62.
+	'/house/dashboards': '/dashboards',
 	'/automations': '/house/automations',
 	'/tasks': '/work/tasks',
 	'/code': '/work/code',

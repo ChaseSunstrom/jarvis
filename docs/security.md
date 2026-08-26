@@ -134,6 +134,18 @@ the words. Nothing is refused — a turn that read a page and needs to ask which
 of three results was meant is the legitimate case, and an attacker who is
 refused simply rephrases. Marking is the control that survives that.
 
+The raising itself happens in one of two places, never both. The tool registry
+holds every tool that is not declared read-only once the turn has read
+untrusted content (`ToolRegistry.requires_approval`); a tool that applies the
+rule at the surface that runs the action declares `escalates_itself` and is let
+through — `control_device` is the one, because `device_control` raises the
+device's own tier to CONFIRM with the reason verbatim, so the phone shows the
+human the real action. Held at the registry as well, the phone never saw the
+action and the server asked about "control_device" instead: two prompts, the
+second naming the tool rather than the deed. The flag is declared, not
+inferred, and a re-registration that starts claiming it is refused as a
+weakening, so a tool that does not say so escalates like any other.
+
 ## Everything that comes back is untrusted too
 
 Search results, fetched pages, crawled pages, specialist-agent prose,

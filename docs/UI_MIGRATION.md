@@ -17,25 +17,28 @@ work is done against, in two passes:
 
 ## 1. The navigation
 
-The console has **four destinations plus the voice screen**, decided under M48
-and kept. What changes in pass 2 is that the voice screen stops being a
+The console has **five destinations plus the voice screen**: four decided under
+M48 and kept, and the dashboard, a section of HOUSE until M62 made it the first
+console tab (§4 says why). What changes in pass 2 is that the voice screen stops being a
 different kind of place: in C2 (`c2-reactor.html`, `?view=chat`) the top bar is
 the same on every screen and VOICE is its first tab, with the sliding accent
 underline. Today the HUD paints its own chrome and reaches the console through
 a floating CONSOLE pill, and the console reaches the HUD through the wordmark —
 two screens that do not look like one product.
 
-### The structure: five tabs in one bar, everywhere
+### The structure: six tabs in one bar, everywhere
 
 | Tab | Path | What it is | Why it belongs in the bar |
 |---|---|---|---|
 | **VOICE** | `/` | Talking to Jarvis: the reactor, the exchange, the transcript, this turn's stages, the dock. | It is the product. C2 draws it under the same bar as everything else. |
+| **DASHBOARDS** | `/dashboards` | The house at a glance: the graphs and readings somebody arranged. No sections; the path is the page. | It is what a person opens the console to look at, and as a section of HOUSE it sat two taps deep behind the device list (M62). |
 | **HOUSE** | `/house` | The physical home: what is on, where it is, what it has been doing, the rules that run themselves. | One question — "what is my house doing" — that four tabs used to answer. |
 | **WORK** | `/work` | What Jarvis is doing or has done: tasks, research runs, coding jobs. | A coding job IS a task. |
 | **KNOWLEDGE** | `/knowledge` | What Jarvis knows: the notes it has written and what it remembers about you — drawn as one graph. | "What did you write down" and "what do you know" are the same question from two distances. |
 | **SETTINGS** | `/settings` | Configuration and capability: the assistant, its tools, what is installed, the machines it runs on, pairing. | Everything here is opened rarely and deliberately. |
 
-Five is the cap `scripts/verify/m48-webui-c2.sh` enforces, and this uses all of
+Six is the cap `scripts/verify/m48-webui-c2.sh` enforces (five from M48 to M61;
+M62 spent the sixth on the dashboard, `DEVIATIONS.md` §20), and this uses all of
 it. The bar is C2's: brand at the left (`JARVIS · v0.1 · local`), the tabs
 centred with one sliding underline (`--jv-dur-base`), the status readout at the
 right (link · model · stt · tts, or per destination: `2 running · 1 held`).
@@ -45,7 +48,7 @@ title — C2's segmented control (`.seg`: hairline box, the active segment on
 `--jv-surface-2`), not a second row of tabs. Moving between sections is a
 shared-element transition; moving between tabs is the route transition.
 
-**The phone** keeps its native strip of the four console front doors
+**The phone** keeps its native strip of the five console front doors
 (`ConsoleTab.kt`); VOICE on the phone is the native HUD, so `screens.ts` marks
 `/` as `hud: true` and `console_parity_test.py` binds the phone's strip to the
 `nav && !hud` screens. **The desktop app** loads the console build and gets
@@ -58,7 +61,7 @@ all of this by construction.
 | `/` | `/` | VOICE. The reactor is the centrepiece. |
 | `/devices` | `/house/devices` | HOUSE's default section. |
 | `/areas` | `/house/areas` | A section. |
-| `/dashboards` | `/house/dashboards` | A section, on C2's dashboard cards. |
+| `/dashboards` | `/dashboards` | A destination of its own since M62 — the first console tab, on C2's dashboard cards. It was a section of HOUSE from M48 to M61; `/house/dashboards` redirects. |
 | `/automations` | `/house/automations` | A section. |
 | `/tasks` | `/work/tasks` | WORK's default section. |
 | `/tasks/[id]` | `/work/tasks/[id]` | A detail view on C2's task layout: ring, plan, tool calls, output, approval. |
@@ -270,7 +273,7 @@ primary, a fourth row control or a second search box fails it.
 | VOICE | `/` | — | — | — | 0 | the ring is the control; the strip's rows are not controls |
 | HOUSE › Devices | `/house/devices` | `device-` | 4 | — | 1 | the entity's own control and Edit — a switch; open/close and stop for a cover; lock/unlock as one; previous, play/pause and next for a player, which is the row that sets the cap; the editor's Save appears only open |
 | HOUSE › Areas | `/house/areas` | `area-` | 1 | `create-area` | 0 | the row is its expander; Rename and Delete inside |
-| HOUSE › Dashboards | `/house/dashboards` | `widget-` | 0 | — | 0 | on an owned dashboard `+ Widget` (`dashboard-add`) is the one primary and the one way into the layout editor; a shipped one has none; widgets show their remove control only while editing |
+| DASHBOARDS | `/dashboards` | `widget-` | 0 | — | 0 | on an owned dashboard `+ Widget` (`dashboard-add`) is the one primary and the one way into the layout editor; a shipped one has none; widgets show their remove control only while editing |
 | HOUSE › Automations | `/house/automations` | `automation-` | 2 | — | 0 | the switch and MORE; Save is primary only inside an open editor |
 | WORK › Tasks | `/work/tasks` | `task-` | 3 | — | 1 | the task's title (a link to its page), the steps fold, and Cancel (running) or Forget (finished); Clear finished is the page's one action |
 | WORK › Code | `/work/code` | `job-` | 3 | — | 0 | the steps fold, Cancel and the job's opener; Start is primary only inside the open form |

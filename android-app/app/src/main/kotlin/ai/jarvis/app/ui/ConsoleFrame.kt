@@ -87,7 +87,7 @@ object ConsoleFrame {
             strip.addView(gap(activity))
         }
 
-        // The console's four scroll. PHONE does NOT.
+        // The console's five scroll. PHONE does NOT.
         //
         // It used to be the sixth button inside this scroller, and six
         // monospace labels do not fit a phone's width — so the one entry that
@@ -99,7 +99,7 @@ object ConsoleFrame {
         // and not the fact that you cannot tap what you cannot see.
         //
         // So it is pinned outside the scroller, always on screen, at the end
-        // where a settings affordance belongs. The four that scroll are the
+        // where a settings affordance belongs. The five that scroll are the
         // console's, which is also the honest visual grouping: they are one
         // thing and this is another.
         val phone = JarvisUi.tab(activity, PHONE_LABEL) {

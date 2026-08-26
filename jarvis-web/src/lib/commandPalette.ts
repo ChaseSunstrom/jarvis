@@ -69,7 +69,7 @@ const PAGE_KEYWORDS: Readonly<Record<string, string>> = {
 	'/settings': 'models backend tools installed skills plugins voice house console',
 	'/house/devices': 'entities states lights switches',
 	'/house/areas': 'rooms zones',
-	'/house/dashboards': 'graphs charts history metrics',
+	'/dashboards': 'graphs charts history metrics readings',
 	'/house/automations': 'routines rules triggers traces',
 	'/work/tasks': 'jobs progress background scheduled research',
 	'/work/code': 'repository repositories git branch diff agent coding job',

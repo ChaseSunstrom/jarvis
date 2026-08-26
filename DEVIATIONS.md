@@ -447,6 +447,19 @@ the shipped default is `think: true`; the switch stays, with both numbers
 beside it in `configuration.yaml`, for a house that wants the first word
 sooner and knows the price.
 
+## 20. The bar has six tabs, not five (M62)
+
+M48 cut eleven destinations to four plus the voice screen and pinned the number
+in its gate ("no more than five top-level destinations… reducing this is the
+milestone, not a side effect"). M62 raises the cap to six, for one tab: the
+dashboard. It was a section of HOUSE — the second of four, behind the device
+list — and it is the thing a person opens the console to look at; on the phone
+it was three taps from the home screen. The operator asked for it to be "a main
+thing", and a main thing is a tab. The cap stays a cap: the gate still refuses
+a seventh, the phone's strip still mirrors the bar exactly, and the four M48
+destinations are unchanged. What was given up is the round number, not the
+reason for it.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).
