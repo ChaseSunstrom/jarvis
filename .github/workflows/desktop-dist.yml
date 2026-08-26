@@ -160,7 +160,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libgtk-3-0 libnotify4 libnss3 libxss1 \
             libxtst6 libatk-bridge2.0-0 libgbm1 libasound2t64 || true
+          # Ubuntu 24.04 runners restrict unprivileged user namespaces; the
+          # spec passes --no-sandbox under CI, and this lifts the restriction
+          # too, so the two ways Electron can fail to start both go away.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           bash tools/xvfb.sh npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: desktop-shell-playwright-report
+          path: jarvis-desktop-app/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Unpacked distribution
         working-directory: jarvis-desktop-app

@@ -14,6 +14,12 @@ export default defineConfig({
   timeout: 60_000,
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"]],
+  // On CI the github reporter annotates each failed test on the check run
+  // (readable on the public API without a token, which the job log is not)
+  // and the html report is what the workflow uploads on failure; the shell
+  // suite failed twice on CI with "exit code 1" and nothing else to go on.
+  reporter: process.env.CI
+    ? [["list"], ["github"], ["html", { open: "never", outputFolder: "playwright-report" }]]
+    : [["list"]],
   use: { trace: "off" },
 });

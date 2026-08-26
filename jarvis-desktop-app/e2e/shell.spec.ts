@@ -25,7 +25,13 @@ test.beforeAll(async () => {
   consoleUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
   app = await electron.launch({
-    args: ["."],
+    // --no-sandbox on CI only: GitHub's Ubuntu 24.04 runners restrict
+    // unprivileged user namespaces (AppArmor) and ship no SUID helper, so
+    // Electron's renderer sandbox cannot start there and the launch dies
+    // before the first window — twice, as "exit code 1" and nothing else.
+    // The sandbox is not what this suite proves; a developer's machine keeps
+    // it, so a real sandbox regression still shows up somewhere.
+    args: [".", ...(process.env.CI ? ["--no-sandbox"] : [])],
     env: {
       ...process.env,
       JARVIS_CONSOLE_URL: consoleUrl,
