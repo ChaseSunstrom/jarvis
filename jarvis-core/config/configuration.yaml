@@ -1558,6 +1558,23 @@ packages: !include_dir_named packages
 dashboards:
   shipped: dashboards
 
+# The voice screen's surface (M83): what Jarvis puts up beside the
+# instrument on "show me the front door" — a tile, a still, a room's
+# readings, a note, a page — kept in .storage/surface so a drag survives a
+# reload and every screen shows the same arrangement. Nothing to set.
+surface: {}
+
+# n8n (M77): the house's workflows through n8n's own API. Empty url means
+# off — the tools then say so. Make the key under Settings → n8n API on the
+# n8n server; the assistant endpoint is the operator's (a Chat Trigger's
+# webhook, or whatever answers at <url>/assistant). Listing reads; running,
+# activating, creating and changing a workflow are held for approval.
+n8n:
+  url: !env_var N8N_URL ""
+  api_key: !env_var N8N_API_KEY ""
+  assistant_url: !env_var N8N_ASSISTANT_URL ""
+  timeout: 30
+
 metrics:
   sources: {}
     # influx:

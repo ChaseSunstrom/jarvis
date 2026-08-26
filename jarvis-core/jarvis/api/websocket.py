@@ -705,6 +705,37 @@ class WebSocketHandler:
             self.jarvis, str(msg.get("id") or ""), self.user_id or ""
         )
 
+    # --- the surface (M83): what Jarvis has put up on the voice screen ------
+    def _surface(self) -> Any:
+        from ..integrations.surface import get_surface
+
+        surface = get_surface(self.jarvis)
+        if surface is None:
+            raise common.ApiError("unsupported", "this backend has no surface integration", 501)
+        return surface
+
+    async def _cmd_surface_list(self, msg: dict[str, Any]) -> Any:
+        return self._surface().as_payload()
+
+    async def _cmd_surface_place(self, msg: dict[str, Any]) -> Any:
+        panel = msg.get("panel")
+        if not isinstance(panel, dict):
+            raise common.ApiError("invalid_format", "place needs a panel", 400)
+        return await self._surface().async_place(panel)
+
+    async def _cmd_surface_move(self, msg: dict[str, Any]) -> Any:
+        # `panel`, not `id`: `id` is the frame's own sequence number, and the
+        # first draft used it — the mock moved nothing and told nobody.
+        return await self._surface().async_move(
+            str(msg.get("panel") or ""), x=msg.get("x"), y=msg.get("y"), w=msg.get("w"), h=msg.get("h")
+        )
+
+    async def _cmd_surface_remove(self, msg: dict[str, Any]) -> Any:
+        return await self._surface().async_remove(str(msg.get("panel") or ""))
+
+    async def _cmd_surface_clear(self, msg: dict[str, Any]) -> Any:
+        return await self._surface().async_clear()
+
     async def _cmd_metrics_sources(self, msg: dict[str, Any]) -> Any:
         return await common.async_metrics_sources(self.jarvis)
 
@@ -1350,6 +1381,13 @@ WebSocketHandler._HANDLERS = {
     "jarvis/dashboards/list": WebSocketHandler._cmd_dashboards_list,
     "jarvis/dashboards/save": WebSocketHandler._cmd_dashboards_save,
     "jarvis/dashboards/delete": WebSocketHandler._cmd_dashboards_delete,
+    # The surface (M83): the panels Jarvis put up on the voice screen. Five
+    # commands and one event, `jarvis_surface_changed`; a drag ends in `move`.
+    "jarvis/surface/list": WebSocketHandler._cmd_surface_list,
+    "jarvis/surface/place": WebSocketHandler._cmd_surface_place,
+    "jarvis/surface/move": WebSocketHandler._cmd_surface_move,
+    "jarvis/surface/remove": WebSocketHandler._cmd_surface_remove,
+    "jarvis/surface/clear": WebSocketHandler._cmd_surface_clear,
     "jarvis/metrics/sources": WebSocketHandler._cmd_metrics_sources,
     "jarvis/metrics/query": WebSocketHandler._cmd_metrics_query,
     # What the dashboard's house widgets read (M63). All three are reads; the

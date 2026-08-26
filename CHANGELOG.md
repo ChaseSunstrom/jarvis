@@ -7,6 +7,22 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+### Added
+- **M77 — n8n, the house's workflows.** Jarvis is a client of the operator's n8n server: it lists
+  workflows and their recent runs, asks the n8n assistant for a proposal (its words come back
+  fenced as another model's), and — held for approval, with the workflow named on the card —
+  runs a workflow through its Webhook trigger, switches one on or off, creates one from a whole
+  definition, or replaces one. `N8N_URL`, `N8N_API_KEY` and `N8N_ASSISTANT_URL` in `.env`; empty
+  means off, and the tools say so.
+- **M83 — pull things up.** "Show me the front door camera", "put the living room readings up",
+  "show the bed light" put a panel on the voice screen beside the instrument — an entity's tile,
+  a camera's still, a room's readings, a note, a page's text, the sky, the moments — drawn live
+  from the house, never from a copy. Panels enter with the stagger, are dragged and resized by
+  hand on a grid over the stage, closed with × or "clear the screen", nudged with "put the camera
+  on the left" / "make it bigger"; the server keeps where they were left, so every screen shows
+  the same arrangement and a reload changes nothing. Three tools: `show`, `clear_screen`,
+  `move_panel` (all Tier 1). One surface per house.
+
 ### Changed
 - **M79 — not listening while you enrol.** The phrases read aloud for a voiceprint no longer
   reach the house as commands: a sample, a test, or the console's and the phone's "recording

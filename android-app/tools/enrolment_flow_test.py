@@ -404,7 +404,7 @@ def test_the_phone_says_recording_now_before_it_opens_the_microphone() -> None:
     start = re.search(r"private fun startCapture\(which: Mode\) \{.*?capture = ByteArrayOutputStream\(\)", activity, re.S)
     assert start, "startCapture is gone"
     body = start.group(0)
-    assert "Thread { client.enrolling() }.start()" in body, "the phone records without saying so"
+    assert "Thread { client?.enrolling() }.start()" in body, "the phone records without saying so"
     assert body.index("requestPermissions") < body.index("client.enrolling()"), (
         "the heartbeat must come after the permission check — a refused microphone records nothing"
     )

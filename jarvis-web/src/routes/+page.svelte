@@ -12,6 +12,7 @@
 	import { tokenMs } from '$lib/tokens';
 	import type { Connection } from '$lib/connection';
 	import TaskDock from '$lib/components/TaskDock.svelte';
+	import Surface from '$lib/components/Surface.svelte';
 	import { setHudStatus } from '$lib/hudStatus.svelte';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 	import {
@@ -950,7 +951,7 @@
 {:else}
 	<main class="voice" data-state={reactorState} data-testid="voice-screen">
 		<!-- The stage: the instrument, over three faint field lines. -->
-		<section class="stage" aria-hidden="true">
+		<section class="stage">
 			<svg class="field" viewBox="0 0 1400 1400">
 				<circle cx="700" cy="700" r="320" />
 				<circle cx="700" cy="700" r="480" stroke-dasharray="1 10" />
@@ -961,6 +962,11 @@
 			</div>
 			<p class="cap" data-testid="caption">{caption}</p>
 		</section>
+		<!-- What Jarvis has put up (M83): panels over the whole page, around the
+		     instrument, drawn live and movable by hand. Over the page and not
+		     the stage: a twelfth of the stage is narrower than the instrument,
+		     and the first draft's left-hand slot covered it. -->
+		<Surface {conn} />
 
 		<!-- What Jarvis is doing, under the instrument (M76). The layout used
 		     to float this over the top of the page with the approvals; the

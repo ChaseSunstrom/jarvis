@@ -172,3 +172,17 @@ unblock it is notes — "the boot is a beat too slow", "the thinking state reads
 as an error", "the orb should breathe, not pulse" — at whatever length. A
 second pass follows; the milestone is ticked for the buildable half only, and
 `docs/motion-review/README.md` says the same thing next to the files.
+
+## n8n (M77): the key and the assistant's shape
+
+Jarvis's n8n tools are built and tested against a fake n8n. To run against the
+house's server put these in `jarvis-core/.env` (never in the repository):
+
+    N8N_URL=https://n8n.tail05d9af.ts.net
+    N8N_API_KEY=<Settings → n8n API on the n8n server>
+    N8N_ASSISTANT_URL=https://n8n.tail05d9af.ts.net/assistant   # if that is where it answers
+
+and say what `/assistant` is: a Chat Trigger's webhook (Jarvis posts
+`{chatInput, sessionId, action: "sendMessage"}` and reads `output`), or
+something else — its URL, auth and reply field decide `ask_n8n_assistant`.
+`bash scripts/verify/m77-n8n.sh` then proves the connection.

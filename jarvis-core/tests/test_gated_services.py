@@ -167,6 +167,13 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     # so an automation has no verb for it either. Landed beside M69, whose
     # agent added this table's rows while M67's agent added the tool.
     "change_setting": None,
+    # n8n (M77): a workflow acts on the world, so running, switching, making
+    # and replacing one are held. n8n's own API is the only door — there is no
+    # service form, and an automation cannot reach them.
+    "run_workflow": None,
+    "activate_workflow": None,
+    "create_workflow": None,
+    "update_workflow": None,
     # `lock_control` is Tier 3 *and* `domain="lock"`, so the service form
     # (`lock.lock` / `lock.unlock`) is already covered by GATED_DOMAINS.
     "lock_control": None,

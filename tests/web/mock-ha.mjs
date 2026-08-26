@@ -751,6 +751,9 @@ export function makeWorld() {
 		// one or all, so the panel's FORGET and REMOVE can be asserted on their
 		// effect rather than on the request having been sent.
 		people: [ownerPerson()],
+		// The voice screen's surface (M83) and the drags it received.
+		surface: [],
+		surfaceMoves: [],
 		// One connected and one not: "connected now" is the fact the panel
 		// exists to show before somebody revokes the wrong row.
 		tokens: [
@@ -3811,6 +3814,72 @@ index 1234567..89abcde 100644
 					const ids = [...taskStore.keys()];
 					for (const id of ids) removeTask(id);
 					ok(msg.id, { removed: ids.length });
+					break;
+				}
+
+				// The surface (M83): the panels Jarvis put up on the voice screen.
+				// One list for the whole mock world, like the server's one per
+				// house; every change is broadcast as `jarvis_surface_changed`.
+				case 'jarvis/surface/list': {
+					ok(msg.id, { panels: world.surface.map((p) => ({ ...p })), max: 8 });
+					break;
+				}
+				case 'jarvis/surface/place': {
+					const raw = msg.panel || {};
+					const panel = {
+						id: raw.id || `panel-${world.surface.length + 1}`,
+						kind: raw.kind || 'entity', title: raw.title || '', entity: raw.entity || '', camera: raw.camera || '',
+						area: raw.area || '', note: raw.note || '', url: raw.url || '', text: raw.text || '', limit: raw.limit || 6,
+						x: raw.x ?? (world.surface.length % 2 ? 8 : 0), y: raw.y ?? Math.floor(world.surface.length / 2) * 4,
+						w: raw.w || 4, h: raw.h || 2, placed_at: Date.now() / 1000
+					};
+					world.surface.push(panel);
+					broadcast('jarvis_surface_changed', { panels: world.surface.map((p) => ({ ...p })), max: 8 });
+					ok(msg.id, { status: 'ok', panel: { ...panel }, count: world.surface.length });
+					break;
+				}
+				case 'jarvis/surface/move': {
+					const panel = world.surface.find((p) => p.id === msg.panel);
+					if (!panel) { fail(msg.id, 'not_found', `no panel ${msg.panel}`); break; }
+					for (const key of ['x', 'y', 'w', 'h']) if (msg[key] !== undefined && msg[key] !== null) panel[key] = Number(msg[key]);
+					panel.x = Math.max(0, Math.min(panel.x, 12 - panel.w));
+					world.surfaceMoves.push({ id: panel.id, x: panel.x, y: panel.y, w: panel.w, h: panel.h });
+					broadcast('jarvis_surface_changed', { panels: world.surface.map((p) => ({ ...p })), max: 8 });
+					ok(msg.id, { status: 'ok', panel: { ...panel } });
+					break;
+				}
+				case 'jarvis/surface/remove': {
+					const index = world.surface.findIndex((p) => p.id === msg.panel);
+					if (index < 0) { fail(msg.id, 'not_found', `no panel ${msg.panel}`); break; }
+					world.surface.splice(index, 1);
+					broadcast('jarvis_surface_changed', { panels: world.surface.map((p) => ({ ...p })), max: 8 });
+					ok(msg.id, { status: 'ok', removed: msg.panel, count: world.surface.length });
+					break;
+				}
+				case 'jarvis/surface/clear': {
+					const gone = world.surface.length;
+					world.surface = [];
+					broadcast('jarvis_surface_changed', { panels: [], max: 8 });
+					ok(msg.id, { status: 'ok', removed: gone });
+					break;
+				}
+				// Test hook: what the model's `show` does, so a spec can put a
+				// thing up the way a spoken "show me the front door" would.
+				case 'jarvis/test/surface_show': {
+					const panel = {
+						id: `panel-${world.surface.length + 1}`, kind: msg.kind || 'entity', title: msg.title || '',
+						entity: msg.entity || '', camera: msg.camera || '', area: msg.area || '', note: msg.note || '',
+						url: msg.url || '', text: msg.text || '', limit: 6,
+						x: msg.x ?? (world.surface.length % 2 ? 8 : 0), y: msg.y ?? Math.floor(world.surface.length / 2) * 4,
+						w: msg.w || 4, h: msg.h || (msg.kind === 'camera' ? 3 : 2), placed_at: Date.now() / 1000
+					};
+					world.surface.push(panel);
+					broadcast('jarvis_surface_changed', { panels: world.surface.map((p) => ({ ...p })), max: 8 });
+					ok(msg.id, { placed: panel.id });
+					break;
+				}
+				case 'jarvis/test/surface_moves': {
+					ok(msg.id, { moves: world.surfaceMoves.slice() });
 					break;
 				}
 

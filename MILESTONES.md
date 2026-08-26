@@ -1215,7 +1215,12 @@ web and of Tasker. Local only. Each row here is planned in that document.
     operator's server (n8n's Chat Trigger webhook, or the editor's assistant) — its URL, auth
     and message shape decide the last tool.
   - Verify: `bash scripts/verify/m77-n8n.sh`
-
+  - 26 Aug 23:50, built, not ticked: the client of n8n's public API and the assistant endpoint,
+    seven tools (listing and asking read; running through the Webhook trigger, activating,
+    creating and replacing held with a sentence on the card), a status service, the three
+    variables through compose, config and the example env. n8n suite 6 against a fake n8n. The
+    live half waits on the operator: N8N_URL and N8N_API_KEY in jarvis-core/.env, and what
+    /assistant is (BLOCKERS.md).
 - [x] **M78 — One utterance, one turn** · size M · deps M43, M52 · parallel-ok M73
   - Scope: "I asked it to set an alarm, why did it do it twice? and why did I hear jarvis twice" —
     two schedules ("Wake up", "Wake-up alarm") and two replies: the phone's wake word and the
@@ -1288,7 +1293,12 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m83-pull-things-up.sh`
 
 ## Final
-
+  - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
+    tools, five websocket commands, the console's panels over the page around the instrument —
+    dragged, resized, closed, entering with the stagger — and the mock. Surface suite 4, the
+    surface and layout specs 4/4, gate 14/15: the last check puts a panel up on the running
+    house and waits for the rebuild. A sensor's history chart is the next step (`kind: chart`
+    draws the tile).
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,

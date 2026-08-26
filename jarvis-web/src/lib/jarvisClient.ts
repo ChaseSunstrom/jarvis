@@ -147,6 +147,54 @@ export interface PendingApproval {
 }
 
 /** A row in the chat sidebar: enough to list a conversation, not to read it. */
+/** A panel Jarvis put up on the voice screen (M83): a spec the screen draws live. */
+export interface SurfacePanel {
+	id: string;
+	kind: 'entity' | 'camera' | 'readings' | 'sky' | 'moments' | 'note' | 'page' | 'chart';
+	title: string;
+	entity: string;
+	camera: string;
+	area: string;
+	note: string;
+	url: string;
+	text: string;
+	limit: number;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	placed_at: number;
+}
+
+export function toSurfacePanels(rows: unknown): SurfacePanel[] {
+	if (!Array.isArray(rows)) return [];
+	const out: SurfacePanel[] = [];
+	for (const raw of rows) {
+		if (!raw || typeof raw !== 'object') continue;
+		const r = raw as Record<string, unknown>;
+		const kind = String(r.kind ?? '');
+		if (!['entity', 'camera', 'readings', 'sky', 'moments', 'note', 'page', 'chart'].includes(kind)) continue;
+		out.push({
+			id: String(r.id ?? ''),
+			kind: kind as SurfacePanel['kind'],
+			title: String(r.title ?? ''),
+			entity: String(r.entity ?? ''),
+			camera: String(r.camera ?? ''),
+			area: String(r.area ?? ''),
+			note: String(r.note ?? ''),
+			url: String(r.url ?? ''),
+			text: String(r.text ?? ''),
+			limit: Number(r.limit ?? 6) || 6,
+			x: Number(r.x ?? 0) || 0,
+			y: Number(r.y ?? 0) || 0,
+			w: Number(r.w ?? 4) || 4,
+			h: Number(r.h ?? 2) || 2,
+			placed_at: Number(r.placed_at ?? 0) || 0
+		});
+	}
+	return out;
+}
+
 export interface ConversationSummary {
 	id: string;
 	title: string;
@@ -1137,6 +1185,26 @@ export class JarvisClient {
 	/** The newest moments, newest first. */
 	async listMoments(limit = 6): Promise<MomentRow[]> {
 		return toMoments(await this.command({ type: 'jarvis/notifications/list', limit }), limit);
+	}
+
+	// --- the surface (M83): what Jarvis has put up on the voice screen --------
+	/** The panels on the voice screen, in order of placement. */
+	async surfaceList(): Promise<SurfacePanel[]> {
+		const payload = (await this.command({ type: 'jarvis/surface/list' })) as { panels?: unknown[] };
+		return toSurfacePanels(payload?.panels);
+	}
+
+	/** Where a drag or a resize left a panel; the server clamps and keeps it. */
+	async surfaceMove(id: string, where: Partial<Pick<SurfacePanel, 'x' | 'y' | 'w' | 'h'>>): Promise<void> {
+		await this.command({ type: 'jarvis/surface/move', panel: id, ...where });
+	}
+
+	async surfaceRemove(id: string): Promise<void> {
+		await this.command({ type: 'jarvis/surface/remove', panel: id });
+	}
+
+	async surfaceClear(): Promise<void> {
+		await this.command({ type: 'jarvis/surface/clear' });
 	}
 
 	async deleteDashboard(id: string): Promise<boolean> {

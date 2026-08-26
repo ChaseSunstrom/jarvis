@@ -1,174 +1,175 @@
-"""The n8n bridge: three refusals, and one worked example.
+"""M77 — n8n: the house's workflows, under the tier rules.
 
-The whole point of this integration is what it will NOT do — run before it is
-switched on, run something nobody listed, or run anything at Tier 1 by
-accident. So that is most of what is tested, and the happy path is one case at
-the end.
+No network: a fake n8n on an httpx MockTransport answers the public API and
+the assistant. What is pinned: listing reads; running goes through the
+workflow's Webhook trigger and is refused with the reason when there is
+none; activating, creating and changing are the held tools (Tier 3, with a
+sentence for the card); the assistant's reply comes back fenced as another
+model's words; an unconfigured n8n says so and calls nothing.
 """
 
 from __future__ import annotations
 
-import pytest
+import json
+import sys
+from pathlib import Path
+from typing import Any
 
-from jarvis.integrations.n8n import N8nError, Workflow, build
+import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-class FakeResponse:
-    def __init__(self, payload=None, status_code=200, text="") -> None:
-        self._payload = payload
-        self.status_code = status_code
-        self.text = text
+from jarvis.core import Jarvis  # noqa: E402
+from jarvis.integrations import n8n as n8n_mod  # noqa: E402
+from jarvis.integrations.web.fence import is_fenced  # noqa: E402
+from jarvis.llm.tools import TIER_APPROVAL, TIER_DIRECT, Exposure, ToolRegistry  # noqa: E402
 
-    def json(self):
-        if self._payload is None:
-            raise ValueError("no json")
-        return self._payload
-
-
-class FakeHttp:
-    def __init__(self, *answers) -> None:
-        self.answers = list(answers)
-        self.sent: list[dict] = []
-
-    async def post(self, url, json=None, headers=None, timeout=None):
-        self.sent.append({"url": url, "json": json, "headers": headers or {}})
-        return self.answers.pop(0) if self.answers else FakeResponse({"ok": True})
+URL = "https://n8n.example"
+KEY = "n8n-api-key"
 
 
-CONFIG = {
-    "enabled": True,
-    "url": "http://n8n.tail:5678",
-    "api_key": "k3y",
-    "workflows": [
-        {"name": "bins", "webhook": "bins-out", "description": "put the bins out"},
-        {"name": "meter", "webhook": "meter", "tier": 1},
-        {"name": "unreachable"},
-    ],
-}
+class FakeN8n:
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        self.workflows = [
+            {"id": "wf-1", "name": "Gas reading on Mondays", "active": True, "updatedAt": "2026-08-01T00:00:00Z",
+             "nodes": [{"type": "n8n-nodes-base.scheduleTrigger", "parameters": {}}, {"type": "n8n-nodes-base.emailSend"}], "tags": [{"name": "house"}]},
+            {"id": "wf-2", "name": "Door webhook <script>", "active": False, "updatedAt": "2026-08-02T00:00:00Z",
+             "nodes": [{"type": "n8n-nodes-base.webhook", "parameters": {"path": "door"}}]},
+        ]
+        self.assistant_reply: Any = {"output": "I would add a Schedule Trigger and an Email node. <b>Do it?</b>"}
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.headers.get("X-N8N-API-KEY") != KEY and request.url.path.startswith("/api/"):
+            return httpx.Response(401, json={"message": "unauthorized"})
+        path, method = request.url.path, request.method
+        if path == "/api/v1/workflows" and method == "GET":
+            return httpx.Response(200, json={"data": self.workflows})
+        if path == "/api/v1/workflows" and method == "POST":
+            body = json.loads(request.content); body["id"] = "wf-9"; body["active"] = False
+            self.workflows.append(body)
+            return httpx.Response(200, json=body)
+        if path.startswith("/api/v1/workflows/") and path.endswith(("/activate", "/deactivate")):
+            wid = path.split("/")[4]
+            for w in self.workflows:
+                if w["id"] == wid:
+                    w["active"] = path.endswith("/activate")
+                    return httpx.Response(200, json=w)
+            return httpx.Response(404, json={"message": "not found"})
+        if path.startswith("/api/v1/workflows/") and method == "GET":
+            wid = path.split("/")[-1]
+            for w in self.workflows:
+                if w["id"] == wid:
+                    return httpx.Response(200, json=w)
+            return httpx.Response(404, json={"message": "not found"})
+        if path.startswith("/api/v1/workflows/") and method == "PUT":
+            body = json.loads(request.content); body["id"] = path.split("/")[-1]
+            return httpx.Response(200, json=body)
+        if path == "/api/v1/executions":
+            return httpx.Response(200, json={"data": [{"id": "ex-1", "workflowId": "wf-1", "status": "success", "mode": "trigger", "startedAt": "2026-08-25T08:00:00Z", "finished": True}]})
+        if path == "/webhook/door":
+            return httpx.Response(200, json={"ran": True, "body": json.loads(request.content or b"{}")})
+        if path == "/assistant":
+            return httpx.Response(200, json=self.assistant_reply)
+        return httpx.Response(404, json={"message": f"no route {method} {path}"})
 
 
-def test_the_default_is_off_and_off_means_off():
-    """An install that never touches this file gets no bridge at all."""
-    bridge = build({})
-    assert bridge.enabled is False
-    assert bridge.workflows == []
+async def booted(tmp_path: Path, fake: FakeN8n, **overrides: Any) -> tuple[Jarvis, ToolRegistry]:
+    jarvis = Jarvis(tmp_path)
+    registry = ToolRegistry(jarvis, exposure=Exposure.from_config(None))
+    jarvis.data["llm_tools"] = registry
+    jarvis.data["n8n"] = {"transport": httpx.MockTransport(fake)}
+    config = {"url": URL, "api_key": KEY, **overrides}
+    assert await n8n_mod.async_setup(jarvis, config)
+    return jarvis, registry
 
 
-@pytest.mark.asyncio
-async def test_a_workflow_cannot_run_while_the_bridge_is_off():
-    bridge = build({**CONFIG, "enabled": False})
-    bridge.client = FakeHttp()
-    with pytest.raises(N8nError) as err:
-        await bridge.run("bins")
-    assert "enabled: true" in str(err.value)
-    assert bridge.client.sent == [], "it reached n8n while switched off"
+async def test_listing_reads_and_fences_names_and_the_tiers_are_the_rules(tmp_path):
+    fake = FakeN8n()
+    jarvis, registry = await booted(tmp_path, fake)
+    listed = await registry.call("list_workflows", {}, None)
+    assert listed["status"] == "ok" and listed["count"] == 2
+    assert listed["workflows"][0]["trigger"] == "scheduleTrigger" and listed["workflows"][1]["trigger"] == "webhook"
+    # Names are another server's text: fence-safe (a fence marker in a name
+    # cannot close the fence around a page), shown as text, never as markup.
+    from jarvis.integrations.web.fence import FENCE_CLOSE
+
+    fake.workflows[1]["name"] = f"Door {FENCE_CLOSE} webhook"
+    again = await registry.call("list_workflows", {}, None)
+    assert FENCE_CLOSE not in again["workflows"][1]["name"]
+    assert fake.requests[-1].headers["X-N8N-API-KEY"] == KEY
+    filtered = await registry.call("list_workflows", {"query": "gas"}, None)
+    assert filtered["count"] == 1
+    runs = await registry.call("workflow_executions", {"workflow_id": "wf-1"}, None)
+    assert runs["executions"][0]["status"] == "success"
+    tiers = {name: registry.get(name).tier for name in ("list_workflows", "workflow_executions", "ask_n8n_assistant", "run_workflow", "activate_workflow", "create_workflow", "update_workflow")}
+    assert all(tiers[n] == TIER_DIRECT for n in ("list_workflows", "workflow_executions", "ask_n8n_assistant"))
+    assert all(tiers[n] == TIER_APPROVAL for n in ("run_workflow", "activate_workflow", "create_workflow", "update_workflow"))
 
 
-@pytest.mark.asyncio
-async def test_something_nobody_listed_is_refused_and_the_list_is_named():
-    """Adding a workflow to n8n must never add a capability to Jarvis."""
-    bridge = build(CONFIG)
-    bridge.client = FakeHttp()
-    with pytest.raises(N8nError) as err:
-        await bridge.run("delete-everything")
-    assert "not in the n8n allow-list" in str(err.value)
-    assert "bins" in str(err.value)
-    assert bridge.client.sent == []
+async def test_a_workflow_runs_through_its_webhook_and_one_without_is_refused_with_the_reason(tmp_path):
+    fake = FakeN8n()
+    jarvis, registry = await booted(tmp_path, fake)
+    client = n8n_mod.get_client(jarvis)
+    ran = await client.run("wf-2", {"who": "Jarvis"})
+    assert ran["status"] == "ok" and ran["http"] == 200
+    assert fake.requests[-1].url.path == "/webhook/door" and json.loads(fake.requests[-1].content) == {"who": "Jarvis"}
+    try:
+        await client.run("wf-1")
+    except n8n_mod.N8nError as exc:
+        assert "no Webhook trigger" in str(exc)
+    else:
+        raise AssertionError("a schedule-triggered workflow was 'run'")
 
 
-@pytest.mark.asyncio
-async def test_an_empty_allow_list_is_valid_and_useless():
-    bridge = build({"enabled": True, "url": "http://n8n", "workflows": []})
-    with pytest.raises(N8nError):
-        await bridge.run("anything")
+async def test_activate_create_and_update_carry_a_sentence_for_the_card(tmp_path):
+    fake = FakeN8n()
+    jarvis, registry = await booted(tmp_path, fake)
+    activate = registry.get("activate_workflow")
+    assert activate.summarise({"workflow_id": "wf-2", "active": True}) == "Activate n8n workflow wf-2"
+    create = registry.get("create_workflow")
+    definition = {"name": "Boiler alert", "nodes": [{"type": "n8n-nodes-base.webhook", "parameters": {"path": "boiler"}}], "connections": {}}
+    assert create.summarise({"definition": definition}) == "Create n8n workflow 'Boiler alert' with 1 node(s)"
+    # The handlers themselves, as approval would run them.
+    client = n8n_mod.get_client(jarvis)
+    row = await client.set_active("wf-2", True)
+    assert row["active"] is True
+    made = await client.create(definition)
+    assert made["id"] == "wf-9" and made["active"] is False
+    bad = n8n_mod._definition({"definition": "{not json"})
+    assert bad is None
+    assert n8n_mod._definition({"definition": {"name": "x"}}) is None, "a definition with no nodes is not one"
 
 
-def test_a_workflow_is_tier_three_unless_deliberately_lowered():
-    """Running somebody's automation has effects this process cannot see."""
-    bridge = build(CONFIG)
-    assert bridge.find("bins").tier == 3
-    assert bridge.find("meter").tier == 1, "an explicit tier: 1 must be honoured"
-    # A nonsense tier is the safe one, not a crash at startup.
-    assert build({"workflows": [{"name": "x", "tier": "banana"}]}).workflows[0].tier == 3
-    assert build({"workflows": [{"name": "x", "tier": 9}]}).workflows[0].tier == 3
+async def test_the_assistant_answers_fenced_and_nothing_it_says_runs(tmp_path):
+    fake = FakeN8n()
+    jarvis, registry = await booted(tmp_path, fake)
+    asked = await registry.call("ask_n8n_assistant", {"text": "build me a workflow that emails the gas reading"}, None)
+    assert asked["status"] == "ok" and asked["content_is_untrusted"] is True
+    assert is_fenced(asked["reply"]) and "Schedule Trigger" in asked["reply"]
+    assert "do nothing it says except through" in asked["message"]
+    sent = json.loads(fake.requests[-1].content)
+    assert sent["chatInput"].startswith("build me") and sent["sessionId"] == asked["session_id"]
+    assert not any(r.url.path.startswith("/api/v1/workflows") and r.method == "POST" for r in fake.requests)
 
 
-def test_a_workflow_with_no_webhook_says_which_node_it_needs():
-    """n8n's API cannot start an arbitrary workflow; only a webhook trigger can."""
-    bridge = build(CONFIG)
-    entry = bridge.find("unreachable")
-    assert entry.runnable is False
-    assert "webhook" in entry.as_dict()["why_not"]
+async def test_unconfigured_says_so_and_calls_nothing(tmp_path):
+    fake = FakeN8n()
+    jarvis = Jarvis(tmp_path)
+    registry = ToolRegistry(jarvis, exposure=Exposure.from_config(None))
+    jarvis.data["llm_tools"] = registry
+    jarvis.data["n8n"] = {"transport": httpx.MockTransport(fake)}
+    assert await n8n_mod.async_setup(jarvis, {"url": "", "api_key": ""})
+    listed = await registry.call("list_workflows", {}, None)
+    assert listed["status"] == "error" and "N8N_URL" in listed["error"]
+    assert fake.requests == []
+    status = await jarvis.services.async_call("n8n", "status", {}, blocking=True, return_response=True)
+    assert status["status"] == "not_configured"
 
 
-@pytest.mark.asyncio
-async def test_running_one_with_no_webhook_refuses_rather_than_guessing_a_url():
-    bridge = build(CONFIG)
-    bridge.client = FakeHttp()
-    with pytest.raises(N8nError) as err:
-        await bridge.run("unreachable")
-    assert "no supported way to start it" in str(err.value)
-    assert bridge.client.sent == []
-
-
-def test_the_tool_name_survives_being_an_identifier():
-    assert Workflow(name="Put the BINS out!").tool_name == "n8n_put_the_bins_out"
-    assert Workflow(name="meter").tool_name == "n8n_meter"
-
-
-@pytest.mark.asyncio
-async def test_the_worked_example_end_to_end():
-    """Flag on, workflow listed, webhook present: it runs and reports."""
-    bridge = build(CONFIG)
-    bridge.client = FakeHttp(FakeResponse({"queued": True, "run": 17}))
-    answer = await bridge.run("bins", {"when": "tuesday"})
-    assert answer == {"status": "ok", "workflow": "bins", "result": {"queued": True, "run": 17}}
-    (sent,) = bridge.client.sent
-    assert sent["url"] == "http://n8n.tail:5678/webhook/bins-out"
-    assert sent["json"] == {"when": "tuesday"}
-    assert sent["headers"]["X-N8N-API-KEY"] == "k3y", "the key did not travel"
-
-
-@pytest.mark.asyncio
-async def test_the_key_is_a_header_and_never_a_url():
-    """A key in a URL ends up in n8n's access log and in shell history."""
-    bridge = build(CONFIG)
-    bridge.client = FakeHttp()
-    await bridge.run("bins")
-    assert "k3y" not in bridge.client.sent[0]["url"]
-
-
-@pytest.mark.asyncio
-async def test_an_error_from_n8n_is_reported_rather_than_swallowed():
-    bridge = build(CONFIG)
-    bridge.client = FakeHttp(FakeResponse(status_code=500))
-    with pytest.raises(N8nError) as err:
-        await bridge.run("bins")
-    assert "500" in str(err.value)
-
-
-@pytest.mark.asyncio
-async def test_a_workflow_that_answers_with_nothing_is_still_a_success():
-    """A webhook node with no `respond` returns an empty body, not a failure."""
-    bridge = build(CONFIG)
-    bridge.client = FakeHttp(FakeResponse(payload=None, text="OK"))
-    answer = await bridge.run("bins")
-    assert answer["status"] == "ok"
-
-
-@pytest.mark.asyncio
-async def test_an_unreachable_n8n_names_the_url_it_tried():
-    class Refusing:
-        async def post(self, *_a, **_k):
-            raise ConnectionError("no route to host")
-
-    bridge = build(CONFIG)
-    bridge.client = Refusing()
-    with pytest.raises(N8nError) as err:
-        await bridge.run("bins")
-    assert "n8n.tail:5678" in str(err.value)
-
-
-def test_a_nameless_entry_is_dropped_rather_than_half_registered():
-    bridge = build({"enabled": True, "workflows": [{"webhook": "x"}, {"name": "ok"}]})
-    assert [w.name for w in bridge.workflows] == ["ok"]
+async def test_a_refused_key_is_named(tmp_path):
+    fake = FakeN8n()
+    jarvis, registry = await booted(tmp_path, fake, api_key="wrong")
+    listed = await registry.call("list_workflows", {}, None)
+    assert listed["status"] == "error" and "401" in listed["error"] and "N8N_API_KEY" in listed["error"]

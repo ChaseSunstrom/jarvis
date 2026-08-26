@@ -180,6 +180,10 @@ services:
       # Settings › Voice can say what the house speaks at and where the knob
       # is, instead of a pace the screen cannot name.
       - PIPER_LENGTH_SCALE=${PIPER_LENGTH_SCALE:-0.9}
+      # n8n (M77): the workflow server and its key, read by configuration.yaml.
+      - N8N_URL=${N8N_URL:-}
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - N8N_ASSISTANT_URL=${N8N_ASSISTANT_URL:-}
       # The same pair jarvis-browser gets, and for the same reason: Jarvis is
       # the client. Keep them DIFFERENT values — holding the API token must
       # not be enough to approve a click on "Pay".

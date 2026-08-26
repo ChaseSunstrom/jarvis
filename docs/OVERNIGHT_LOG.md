@@ -755,3 +755,10 @@ is quiet. Done since:
   state now, and the image gets unzip and a proper budget. The M83 surface is under way. CI on
   0a4756b: the enrol spec had not been told about M79's heartbeat, and the voice-layout spec
   carried the wrong socket path; both fixed here.
+- 23:50 — M83 built: "show me the front door camera" puts a panel beside the instrument, drawn by
+  the dashboard's own widget for its kind, movable by hand, kept on the server; the first draft
+  used the frame's `id` for the panel (nothing moved) and put panels over the stage, whose
+  twelfth is narrower than the instrument (a panel covered it) — both found by the spec. M77
+  built against a fake n8n; the key and the assistant's shape are the operator's (BLOCKERS.md).
+  The phone's heartbeat needed `client?.` — the Kotlin compiles and its 227 unit tests pass here
+  now, which CI had caught first.

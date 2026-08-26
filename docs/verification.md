@@ -787,6 +787,37 @@ jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test
 | Against the house's real instances the client reports the tailnet SearXNG answering nothing and the stack's own answering | Scripted | the gate's last check runs the branch's client from the host with `jarvis-core/.env`'s `SEARXNG_URL` — 26 Aug: five engines timed out there, 5 results from `127.0.0.1:8888` in 4.5 s |
 | A research run on the deployed house reaches a report instead of "nothing was found" | Manual | the live rig's `research-*` scenarios after the next rebuild; recorded in `docs/OVERNIGHT_LOG.md` when run |
 
+### n8n, the house's workflows (M77)
+
+`bash scripts/verify/m77-n8n.sh`. Server: `jarvis-core/tests/test_n8n.py` (6, against a fake n8n on a mock
+transport), `test_gated_services.py`, `test_tool_tiers_contract.py`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Listing workflows and executions reads with the API key; names are fence-safe; a query filters | Automated | `test_listing_reads_and_fences_names_and_the_tiers_are_the_rules` |
+| Running goes through the workflow's Webhook trigger with the body given; a workflow with no webhook is refused with the reason | Automated | `test_a_workflow_runs_through_its_webhook_and_one_without_is_refused_with_the_reason` |
+| Activate, create and update are Tier 3 with a sentence for the card; a definition without nodes is not one | Automated | `test_activate_create_and_update_carry_a_sentence_for_the_card`; the Tier-3 table rows |
+| The assistant's reply comes back fenced and untrusted, and nothing it proposes runs except through the held tools | Automated | `test_the_assistant_answers_fenced_and_nothing_it_says_runs` |
+| Unconfigured, the tools say so and call nothing; a refused key is named | Automated | `test_unconfigured_says_so_and_calls_nothing`, `test_a_refused_key_is_named` |
+| Against the operator's n8n | **Unproven** | needs `N8N_URL` and `N8N_API_KEY` in `jarvis-core/.env` (the gate's last check says so), and what `/assistant` answers there — `BLOCKERS.md` |
+
+### Pull things up (M83)
+
+`bash scripts/verify/m83-pull-things-up.sh`. Server: `jarvis-core/tests/test_surface.py` (4); console:
+`e2e/surface.spec.ts` (2), `voice-layout.spec.ts`, `look.spec.ts`, `states.spec.ts`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A panel is placed in a free slot around the instrument, the screen is told (`jarvis_surface_changed`), and the arrangement survives a reload (one file per house) | Automated | `test_a_panel_is_placed_in_a_free_slot_and_the_screen_is_told` |
+| The same thing twice is one panel, brought to the front; past eight the oldest makes room | Automated | `test_the_same_thing_twice_is_one_panel_and_the_oldest_makes_room` |
+| `show` puts an entity up by its name through the house's own resolver, a camera by the word, and refuses a thing that is nobody's; `move_panel` takes the words a person uses for a place and a size; `clear_screen` takes one or all | Automated | `test_show_puts_an_entity_up_by_its_name_and_clear_takes_it_down` |
+| A drag from the screen is kept and clamped to the grid | Automated | `test_a_drag_from_the_screen_is_kept_and_clamped` |
+| On the console a shown entity and camera appear beside the instrument (not over it), leave on ×; a drag lands on the grid and the server is told; a clear from elsewhere empties the screen | Automated | `e2e/surface.spec.ts` |
+| A panel is the dashboard's own widget for its kind — tile, still, readings, sky, moments — so it can never show what the house cannot | Automated | the gate reads `SurfacePanel.svelte` for the five components |
+| On the running house, `show` puts a panel up and the surface lists it | Scripted | the gate's last check over the websocket, after the rebuild |
+| "Show me the front door camera" by voice, the panel appearing on the screen in the room | Manual | the operator, after the rebuild |
+| A chart of a sensor's history | **Not yet** | `kind: chart` draws the entity's tile; a history chart wants the metrics source the dashboards' metric widget reads, which is the next step |
+
 ### Not listening while you enrol (M79)
 
 `bash scripts/verify/m79-enrolling-not-listening.sh` (26 Aug 23:25: 10/10). Server: `test_voice.py`
