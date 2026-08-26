@@ -652,3 +652,6 @@ is quiet. Done since:
   thread scenarios pass both variants; memory-forget's confirmation came as "Done, Sir.",
   which the judge does not take as the word. The message names the word (a14377f); the
   seventh rebuild measures it. Each of these is a ten-minute loop of build, smoke, judge.
+- 20:35 — CI fully green on ae87e96 (seventh all-green head), compose smoke included with
+  the model cache and the first-health restart rule; 01bfb30 pushed (the placeholder, the
+  forget wording, the logs). The seventh rebuild is measuring the forget confirmation.
