@@ -1,4 +1,27 @@
 import { test, expect } from '@playwright/test';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+
+/**
+ * The numbers, kept.
+ *
+ * `docs/LIVE_TEST_REPORT.md` has a motion section that reads
+ * `.verify/motion.json` — the frame budget, the layout shift and the
+ * reduced-motion verdict as this spec measured them — so the report carries a
+ * measurement rather than a sentence. Each test writes its own key; a run
+ * that skips one leaves that key as the last run left it, and the report
+ * says "not measured" when the file is missing altogether.
+ */
+const MOTION_JSON = '../.verify/motion.json';
+function keep(patch: Record<string, unknown>): void {
+	let current: Record<string, unknown> = {};
+	try {
+		current = JSON.parse(readFileSync(MOTION_JSON, 'utf8'));
+	} catch {
+		/* first write */
+	}
+	mkdirSync('../.verify', { recursive: true });
+	writeFileSync(MOTION_JSON, JSON.stringify({ ...current, ...patch, at: new Date().toISOString() }, null, 2));
+}
 
 /**
  * M44's hard constraints, measured rather than asserted.
@@ -85,6 +108,10 @@ test('the interface holds its frame budget while things are moving', async ({ pa
 		`moving: ${moving.long.length} long of ${moving.settled.length}, worst ` +
 		`${moving.worst.toFixed(1)}ms · still: ${still.long.length} long of ` +
 		`${still.settled.length}, worst ${still.worst.toFixed(1)}ms`;
+	keep({
+		moving: { frames: moving.settled.length, long: moving.long.length, worst: Number(moving.worst.toFixed(1)) },
+		still: { frames: still.settled.length, long: still.long.length, worst: Number(still.worst.toFixed(1)) }
+	});
 	expect(moving.long.length, detail).toBeLessThanOrEqual(
 		Math.max(Math.ceil(moving.settled.length * 0.25), still.long.length + 5)
 	);
@@ -109,6 +136,7 @@ test('the page does not shift under somebody while it animates', async ({ page }
 	});
 	// 0.1 is Google's "good" CLS. An entrance animation that moved the page
 	// under a finger would blow through it.
+	keep({ cls: Number(shifted.toFixed(4)) });
 	expect(shifted, `cumulative layout shift ${shifted}`).toBeLessThan(0.1);
 });
 
@@ -149,6 +177,7 @@ test.describe('with reduced motion', () => {
 		const running = await page.evaluate(
 			() => document.getAnimations().filter((a) => a.playState === 'running').length
 		);
+		keep({ reduced_running: running });
 		expect(running, `${running} animations still running under reduced motion`).toBe(0);
 	});
 });
