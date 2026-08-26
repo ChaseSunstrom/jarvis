@@ -1053,13 +1053,25 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the console uses, with the same validation and the same audit; "demo mode" is answered
     with what the settings are called, not a guess.
   - Verify: `bash scripts/verify/m67-settings-tool.sh`
-- [ ] **M68 — Search that works** · size S · deps M31 · parallel-ok M66
+- [x] **M68 — Search that works** · size S · deps M31 · parallel-ok M66
   - Scope: "Latest news on Bitcoin — nothing was found for 4 searches": the configured SearXNG
     (the operator's, over the tailnet) times out on every engine while the local one answers.
     The web client tries the configured instance and then the local default, reports which
     engines answered and which timed out, and research says "the search engine at X answered
     nothing — every engine timed out" instead of "nothing was found".
   - Verify: `bash scripts/verify/m68-search.sh`
+  - 26 Aug 20:57: the web client tells "could not search" (unreachable, timed out, or no result
+    with every engine in SearXNG's `unresponsive_engines`) from "nothing matched", asks one more
+    SearXNG — `web: searxng_fallback_url:`, the stack's own by default whenever `SEARXNG_URL` is
+    elsewhere, never a cloud engine — and the result carries `instance` and `notes`; a research
+    step shows the note beside its count and the run's error names the cause. Against the house's
+    real instances the branch's client reports the tailnet SearXNG answering nothing (brave,
+    duckduckgo, google cse, startpage, wikipedia: timeout) and the stack's own answering 5
+    results in 4.5 s. Web suite 120 (8 new, 8:05), research suite unchanged; gate 11/11 at 21:08.
+    On the ninth rebuild (21:10) the research scenarios run 5 of 6 variants, 6/7 turns — quick
+    lookups, the JavaScript page, the document and cancel all answer through the fallback; the
+    deep report missed because the model called deep_research with no question and then told
+    the user the work was waiting on confirmation — fixed in the commit after this one.
 - [ ] **M69 — The house is editable by voice** · size M · deps M66 · parallel-ok M67
   - Scope: "Can you remove all of the elements of the house?" — "I have no tool for deleting
     entities". A `remove_entities` tool (Tier 3, entity ids pinned) and `remove_device` over
@@ -1094,6 +1106,12 @@ web and of Tasker. Local only. Each row here is planned in that document.
     services mount `../jarvis-workspace` there, config-init chowns it, and uid 10003 inside the
     running core wrote and removed a probe under it; packaging (99) and the code workspace and
     repository suites pass. The crossover's `.gitkeep` is tracked so a fresh clone has the folder.
+  - 26 Aug 21:06: a second blocker sat behind the first — with the workspace writable,
+    `create_repository` over the REST API answered "git is not installed": the core image had no
+    git. It is in the image's apt line now (pinned by packaging), and on the ninth rebuild the gate
+    is 10/10: git 2.47.3 on the core's PATH, and the operator's own request replayed through
+    `POST /api/services/code/create_repository` lands `/workspace/m72-probe` with a `.git` on the
+    host side of the crossover. The probe repository stays (nothing removes one).
 
 ## Final
 
@@ -1103,12 +1121,6 @@ web and of Tasker. Local only. Each row here is planned in that document.
     m30, m45, m58; m25/m26 re-measured after the next rebuild); the rest are M56 (no served
     vision model), M61 (six gap rows, being closed), this gate, and the smoke slice in
     m07/m08/m14/m21/m22 — the rig's stack-logs-clean check on an MQTT startup ERROR, fixed
-  - 26 Aug 21:06: a second blocker sat behind the first — with the workspace writable,
-    `create_repository` over the REST API answered "git is not installed": the core image had no
-    git. It is in the image's apt line now (pinned by packaging), and on the ninth rebuild the gate
-    is 10/10: git 2.47.3 on the core's PATH, and the operator's own request replayed through
-    `POST /api/services/code/create_repository` lands `/workspace/m72-probe` with a `.git` on the
-    host side of the crossover. The probe repository stays (nothing removes one).
     in 483d5e5. The table is in `docs/OVERNIGHT_LOG.md` (15:14).
   - 26 Aug: cannot be green on this host, and is not ticked. Three of its inputs are
     outside the repository's reach: M56's live look needs a vision model the model server

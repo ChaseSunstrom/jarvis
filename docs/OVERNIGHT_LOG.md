@@ -686,3 +686,15 @@ is quiet. Done since:
   "nothing matched", asks the stack's own SearXNG after a configured one that could not, and the
   result says which instance answered; research shows the note and names the cause. Eight new
   tests; the gate is running.
+- 21:06 — CI on 13b4fe6 (the M65 tick, the vision panel, the plan): four workflows green, the `CI`
+  workflow red on one Playwright test, "the microphone can be muted, and stays muted across a
+  reload" (`page.reload: net::ERR_ABORTED`, 294 passed). Nothing in the web tree changed but
+  Models.svelte; the test passes 8 of 8 locally in 24.5 s — the runner, not the change; watched,
+  not waived. At 20:37 one memory-pressure kill took the three agents building M66/M69, M67 and
+  M71 with it (their transcripts stop in the same minute as my own suite's exit 137, during the
+  eighth rebuild); M67's and M71's worktrees kept 552 and 566 uncommitted lines, M66/M69's
+  nothing. Respawned at 21:05 from the recovered briefs, pointed at the old worktrees, with a
+  memory rule (one suite at a time, commit at each step). M72 turned out to have a second
+  blocker behind the first: with the workspace writable, `create_repository` over the REST API
+  answered "git is not installed" — the core image had no git. Added to the image's apt line,
+  pinned by packaging; the ninth rebuild (core only) carries it with M68's client.

@@ -235,7 +235,10 @@ else is local:
   talk to the internet; firewalled.
 
 There is no cloud fallback anywhere. If SearXNG is down, `web_search` fails
-and says so; it does not quietly ask somebody's search API instead.
+and says so; it does not quietly ask somebody's search API instead. The one
+fallback it has is another SearXNG — the stack's own, when `SEARXNG_URL` names
+an instance elsewhere that cannot search — and the result says which one
+answered (`jarvis-core/docs/search.md`).
 
 Run `scripts/egress-audit.sh` against the live stack: it proves the sandbox
 has only `lo` and cannot reach the LAN gateway or the internet, and flags any

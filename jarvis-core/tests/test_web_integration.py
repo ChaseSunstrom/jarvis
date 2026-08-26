@@ -10,7 +10,8 @@ The three properties under test, in order of how much they would cost to get
 wrong:
 
 1. **No cloud fallback.** Ever. Unset, unreachable, 403, garbage JSON — all
-   of them fail loudly with one request at most, to the configured host.
+   of them fail loudly, with requests only to the SearXNGs the operator named
+   (the configured one, then the stack's own — never a cloud engine).
 2. **Everything fetched is fenced.** Search results, page text, crawled
    pages. Content cannot close its own fence.
 3. **Nothing auto-approves.** A gated browse step goes to `companion.ask`
@@ -69,6 +70,10 @@ from jarvis.integrations.web.fence import (  # noqa: E402
 from jarvis.presence import PresenceRegistry  # noqa: E402
 
 SEARXNG = "http://127.0.0.1:8888"
+#: An operator's own instance somewhere else — the case that produced "nothing
+#: was found for 4 searches" on 26 Aug 2026: a tailnet SearXNG whose engines
+#: all time out. Port 8080 so the fake stack can tell it from the local one.
+REMOTE = "http://searx.remote.test:8080"
 BROWSER = "http://127.0.0.1:8210"
 TOKEN = "browser-api-token"
 SECRET = "browser-approval-secret"
@@ -94,6 +99,12 @@ class FakeStack:
         self.search_body: str | None = None       # raw body wins over payload
         self.search_content_type = "application/json"
         self.search_error: Exception | None = None
+        #: The remote instance (REMOTE) answers from these; the local one
+        #: (SEARXNG) from the fields above, so a test can make one fail and
+        #: watch which the client asks next.
+        self.remote_payload: Any = {"results": []}
+        self.remote_status = 200
+        self.remote_error: Exception | None = None
         self.page_text = "Sunrise is at 05:12."
         self.fence_pages = True                   # the real browser does
         self.act_response: dict[str, Any] | None = None
@@ -122,6 +133,11 @@ class FakeStack:
         self.requests.append(request)
         host = request.url.host
         path = request.url.path
+
+        if host == "searx.remote.test":
+            if self.remote_error is not None:
+                raise self.remote_error
+            return httpx.Response(self.remote_status, json=self.remote_payload)
 
         if request.url.port == 8888:
             if self.search_error is not None:
@@ -382,6 +398,154 @@ async def test_search_429_names_the_limiter(jarvis, stack):
     stack.search_body = "slow down"
     result = await call(jarvis, "search", query="x")
     assert "limiter" in result["error"]
+
+
+# --- the second SearXNG ------------------------------------------------------
+ENGINES_OUT = {
+    "results": [],
+    "unresponsive_engines": [["google", "timeout"], ["duckduckgo", "timeout"], ["brave", "CAPTCHA"]],
+}
+ONE_HIT = {"results": [{"title": "Bitcoin news", "url": "https://news.example/btc", "content": "up"}]}
+
+
+async def remote_jarvis(tmp_path: Path, stack: FakeStack, **overrides: Any) -> Jarvis:
+    return await make_jarvis(tmp_path, stack, searxng_url=REMOTE, **overrides)
+
+
+def test_the_fallback_is_the_local_default_only_when_the_configured_one_differs():
+    assert WebConfig.from_config({"searxng_url": SEARXNG}).search_instances == (SEARXNG,)
+    assert WebConfig.from_config({"searxng_url": REMOTE}).search_instances == (REMOTE, SEARXNG)
+    assert WebConfig.from_config({"searxng_url": ""}).search_instances == ()
+    # An explicit empty string switches it off; an explicit URL replaces it.
+    assert WebConfig.from_config(
+        {"searxng_url": REMOTE, "searxng_fallback_url": ""}
+    ).search_instances == (REMOTE,)
+    assert WebConfig.from_config(
+        {"searxng_url": REMOTE, "searxng_fallback_url": "http://searx.two.test:8080/"}
+    ).search_instances == (REMOTE, "http://searx.two.test:8080")
+    # The same instance twice is one instance.
+    assert WebConfig.from_config(
+        {"searxng_url": REMOTE, "searxng_fallback_url": REMOTE}
+    ).search_instances == (REMOTE,)
+
+
+async def test_a_remote_searxng_that_times_out_is_followed_by_the_local_one(tmp_path):
+    stack = FakeStack()
+    stack.remote_error = httpx.ReadTimeout("slow")
+    stack.search_payload = ONE_HIT
+    jarvis = await remote_jarvis(tmp_path, stack)
+    try:
+        result = await call(jarvis, "search", query="bitcoin news")
+    finally:
+        await jarvis.async_stop()
+
+    assert result["status"] == "ok"
+    assert result["count"] == 1
+    assert result["instance"] == SEARXNG
+    assert [r.url.host for r in stack.requests] == ["searx.remote.test", "127.0.0.1"]
+    assert any("timed out" in n and REMOTE in n for n in result["notes"]), result["notes"]
+    assert any("answered 1 result" in n for n in result["notes"])
+    assert_no_cloud_calls(stack)
+
+
+async def test_a_remote_whose_engines_all_fail_is_answered_nothing_not_no_results(tmp_path):
+    stack = FakeStack()
+    stack.remote_payload = ENGINES_OUT
+    stack.search_payload = ONE_HIT
+    jarvis = await remote_jarvis(tmp_path, stack)
+    try:
+        result = await call(jarvis, "search", query="bitcoin news")
+    finally:
+        await jarvis.async_stop()
+
+    assert result["status"] == "ok" and result["count"] == 1
+    assert [r.url.host for r in stack.requests] == ["searx.remote.test", "127.0.0.1"]
+    note = result["notes"][0]
+    assert "answered nothing" in note and "every engine failed" in note
+    assert "google: timeout" in note and "brave: CAPTCHA" in note
+    assert_no_cloud_calls(stack)
+
+
+async def test_when_both_answer_nothing_the_error_names_each_instance_and_its_engines(tmp_path):
+    stack = FakeStack()
+    stack.remote_payload = ENGINES_OUT
+    stack.search_payload = {"results": [], "unresponsive_engines": [["google", "timeout"]]}
+    jarvis = await remote_jarvis(tmp_path, stack)
+    try:
+        result = await call(jarvis, "search", query="bitcoin news")
+    finally:
+        await jarvis.async_stop()
+
+    assert result["status"] == "error"
+    assert result["cloud_fallback"] is False
+    assert REMOTE in result["error"] and SEARXNG in result["error"]
+    assert result["error"].count("answered nothing") == 2
+    assert "no cloud search engine" in result["error"]
+    assert len(stack.requests) == 2
+    assert_no_cloud_calls(stack)
+
+
+async def test_a_remote_that_answers_is_not_second_guessed(tmp_path):
+    stack = FakeStack()
+    stack.remote_payload = ONE_HIT
+    jarvis = await remote_jarvis(tmp_path, stack)
+    try:
+        result = await call(jarvis, "search", query="bitcoin news")
+    finally:
+        await jarvis.async_stop()
+
+    assert result["status"] == "ok" and result["count"] == 1
+    assert result["instance"] == REMOTE and result["notes"] == []
+    assert [r.url.host for r in stack.requests] == ["searx.remote.test"]
+
+
+async def test_an_empty_answer_with_every_engine_responding_is_final(tmp_path):
+    # Nothing matched. Asking the second instance the same thing would hide
+    # an honest "no results" behind a second, equally honest one.
+    stack = FakeStack()
+    stack.remote_payload = {"results": []}
+    jarvis = await remote_jarvis(tmp_path, stack)
+    try:
+        result = await call(jarvis, "search", query="xyzzy plugh")
+    finally:
+        await jarvis.async_stop()
+
+    assert result["status"] == "ok" and result["count"] == 0
+    assert result["notes"] == []
+    assert len(stack.requests) == 1
+
+
+async def test_a_disabled_fallback_stays_disabled(tmp_path):
+    stack = FakeStack()
+    stack.remote_error = httpx.ConnectError("refused")
+    jarvis = await remote_jarvis(tmp_path, stack, searxng_fallback_url="")
+    try:
+        result = await call(jarvis, "search", query="bitcoin news")
+    finally:
+        await jarvis.async_stop()
+
+    assert result["status"] == "error"
+    assert "unreachable" in result["error"]
+    assert len(stack.requests) == 1, "the fallback ran with the knob off"
+    assert_no_cloud_calls(stack)
+
+
+def test_unresponsive_engines_parse_from_both_shapes_and_cap_the_list():
+    from jarvis.integrations.web.client import (
+        MAX_ENGINES_NAMED,
+        engines_line,
+        parse_unresponsive,
+    )
+
+    pairs = parse_unresponsive({"unresponsive_engines": [["google", "timeout"], {"engine": "bing", "reason": "Suspended"}, "junk", []]})
+    assert pairs == (("google", "timeout"), ("bing", "Suspended"))
+    assert parse_unresponsive({"unresponsive_engines": "no"}) == ()
+    assert parse_unresponsive([]) == ()
+    many = tuple((f"engine{i}", "timeout") for i in range(MAX_ENGINES_NAMED + 3))
+    line = engines_line(many)
+    assert line.count("timeout") == MAX_ENGINES_NAMED and line.endswith("… 3 more")
+    # An engine name is untrusted text from the instance: fenced-and-trimmed.
+    assert parse_unresponsive({"unresponsive_engines": [["<b>x</b>" * 50, ""]]})[0][0].__len__() <= 40
 
 
 async def test_malformed_searxng_json_is_handled(jarvis, stack):

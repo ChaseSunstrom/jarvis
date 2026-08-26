@@ -473,21 +473,27 @@ async def _run(
         per_query.append((query, results))
         registry.output(
             task_id,
-            f"{query} — {len(results)} result{'' if len(results) == 1 else 's'}\n"
-            + "\n".join(f"  {r.get('url', '')}" for r in results[:5]),
+            f"{query} — {found}\n"
+            + "\n".join(f"  {r.get('url', '')}" for r in results[:5])
+            + ("\n" + "\n".join(f"  note: {n}" for n in notes) if notes else ""),
             stream="note",
         )
         await registry.async_update(
             task_id,
             step=index,
             step_status=STATUS_DONE,
-            step_detail=f"{len(results)} result{'' if len(results) == 1 else 's'}",
+            step_detail=(found + (f" — {notes[0]}" if notes else ""))[:200],
         )
 
     if not per_query:
         # Every search failed. Saying so beats a report written from nothing,
         # and the reason is the operator's actual next action — usually that
         # SEARXNG_URL is unset or the container is down.
+        # web.search says when the configured SearXNG could not search and a
+        # second one answered; the step must say so too, or "8 results" reads
+        # as the operator's instance working when it is not.
+        notes = [str(n) for n in result.get("notes") or [] if str(n).strip()]
+        found = f"{len(results)} result{'' if len(results) == 1 else 's'}"
         await registry.async_update(
             task_id,
             status=STATUS_ERROR,
@@ -502,8 +508,11 @@ async def _run(
         await registry.async_update(
             task_id,
             status=STATUS_ERROR,
-            error=f"nothing was found for {len(queries)} search"
-            f"{'' if len(queries) == 1 else 'es'}",
+            # Every search ran and answered, and still no page is worth
+            # reading. Distinct from "answered nothing": that one is a
+            # search failure and named its cause above.
+            error=f"{len(queries)} search{'' if len(queries) == 1 else 'es'} ran and "
+            "found no page worth reading",
         )
         return
 

@@ -155,6 +155,15 @@ class WebConfig:
     """The `web:` block, parsed. Every field has a working default."""
 
     searxng_url: str = ""
+    #: A SECOND SearXNG, asked only after the first one failed to search:
+    #: unreachable, timed out, or answered with no result and every engine
+    #: listed as unresponsive. Left unset it is the stack's own instance
+    #: (``DEFAULT_SEARXNG_URL``) whenever ``searxng_url`` points somewhere
+    #: else, and nothing when it does not — so an operator who named a
+    #: remote instance whose engines all time out still gets an answer, and
+    #: the tool says which instance gave it. Only ever a SearXNG: this is
+    #: not, and must never become, a cloud engine. ``""`` disables it.
+    searxng_fallback_url: str = ""
     browser_url: str = DEFAULT_BROWSER_URL
     browser_token: str = ""
     #: The SECOND secret. Approving a gated browser step needs this and it is
@@ -186,9 +195,16 @@ class WebConfig:
             options = {}
 
         searxng = _scalar(options.get("searxng_url")).rstrip("/")
+        if options.get("searxng_fallback_url") is None:
+            fallback = DEFAULT_SEARXNG_URL if searxng and searxng != DEFAULT_SEARXNG_URL else ""
+        else:
+            fallback = _scalar(options.get("searxng_fallback_url")).rstrip("/")
+        if fallback == searxng:
+            fallback = ""
         browser = (_scalar(options.get("browser_url")) or DEFAULT_BROWSER_URL).rstrip("/")
         return cls(
             searxng_url=searxng,
+            searxng_fallback_url=fallback,
             browser_url=browser,
             browser_token=_scalar(options.get("browser_token")),
             approval_secret=_scalar(
@@ -213,6 +229,15 @@ class WebConfig:
     @property
     def search_configured(self) -> bool:
         return bool(self.searxng_url)
+
+    @property
+    def search_instances(self) -> tuple[str, ...]:
+        """The SearXNGs to ask, in order. Never anything but a SearXNG."""
+        if not self.searxng_url:
+            return ()
+        if self.searxng_fallback_url:
+            return (self.searxng_url, self.searxng_fallback_url)
+        return (self.searxng_url,)
 
     @property
     def browser_configured(self) -> bool:
@@ -301,8 +326,72 @@ def parse_results(payload: Any, limit: int) -> list[dict[str, str]]:
     return out
 
 
+#: How many failed engines a message names before "…". A SearXNG with sixty
+#: engines configured and no outbound route lists all sixty.
+MAX_ENGINES_NAMED = 8
+
+
+def parse_unresponsive(payload: Any) -> tuple[tuple[str, str], ...]:
+    """SearXNG's ``unresponsive_engines`` -> ``((engine, reason), …)``.
+
+    The list is ``[["google", "timeout"], ["brave", "CAPTCHA"]]`` upstream;
+    a dict form is tolerated. It is the difference between an instance that
+    searched and found nothing and one that could not search at all — the
+    second is what an operator sees as "nothing was found for 4 searches"
+    when in truth their SearXNG has no route to any engine.
+    """
+    if not isinstance(payload, dict):
+        return ()
+    rows = payload.get("unresponsive_engines")
+    if not isinstance(rows, list):
+        return ()
+    out: list[tuple[str, str]] = []
+    for item in rows:
+        if isinstance(item, dict):
+            name, reason = item.get("engine") or item.get("name"), item.get("reason") or item.get("error")
+        elif isinstance(item, (list, tuple)) and item:
+            name, reason = item[0], item[1] if len(item) > 1 else ""
+        else:
+            continue
+        name = _clean(name, 40)
+        if name:
+            out.append((name, _clean(reason, 60)))
+    return tuple(out)
+
+
+def engines_line(unresponsive: tuple[tuple[str, str], ...]) -> str:
+    named = [f"{name}: {reason}" if reason else name for name, reason in unresponsive]
+    if len(named) > MAX_ENGINES_NAMED:
+        named = named[:MAX_ENGINES_NAMED] + [f"… {len(unresponsive) - MAX_ENGINES_NAMED} more"]
+    return ", ".join(named)
+
+
+@dataclass(frozen=True)
+class SearchAnswer:
+    """What the SearXNG that finally answered said, and what happened first."""
+
+    instance: str
+    results: list[dict[str, str]]
+    unresponsive: tuple[tuple[str, str], ...] = ()
+    #: What went wrong on the way here — the configured instance timing out,
+    #: or answering nothing — one line each. Empty when the first instance
+    #: answered. A search that needed the fallback is still a success, but
+    #: the operator should learn which instance did the work.
+    notes: tuple[str, ...] = ()
+
+    @property
+    def answered_nothing(self) -> bool:
+        # No result AND at least one engine that failed. With every engine
+        # responding, an empty list is an honest "nothing matched".
+        return not self.results and bool(self.unresponsive)
+
+
 class SearxngClient:
-    """The JSON API of a LAN SearXNG. No fallback, ever."""
+    """The JSON API of a LAN SearXNG, and at most one more SearXNG after it.
+
+    No cloud fallback, ever. The second instance is the operator's own or the
+    stack's; a search that both fail is an error that names them.
+    """
 
     def __init__(self, config: WebConfig, client: httpx.AsyncClient) -> None:
         self.config = config
@@ -326,6 +415,16 @@ class SearxngClient:
         return params
 
     async def search(self, query: str, limit: int) -> list[dict[str, str]]:
+        return (await self.search_answer(query, limit)).results
+
+    async def search_answer(self, query: str, limit: int) -> SearchAnswer:
+        """Ask the configured SearXNG, then the fallback if it could not search.
+
+        "Could not search" is unreachable, timed out, a bad status, or an
+        answer with no result and engines listed unresponsive. An answer with
+        no result and no failed engine is final — nothing matched, and asking
+        a second instance the same thing would only hide that.
+        """
         cfg = self.config
         if not cfg.search_configured:
             raise SearchNotConfigured(SEARXNG_NOT_CONFIGURED)
@@ -334,21 +433,56 @@ class SearxngClient:
             raise SearchFailed("web.search needs a query")
         limit = max(0, min(as_int(limit, cfg.default_limit) or cfg.default_limit, MAX_LIMIT))
         if limit == 0:
-            return []
+            return SearchAnswer(cfg.searxng_url, [])
 
-        url = f"{cfg.searxng_url}/search"
+        instances = cfg.search_instances
+        notes: list[str] = []
+        for position, base in enumerate(instances):
+            last = position == len(instances) - 1
+            try:
+                answer = await self._ask(base, query, limit)
+            except SearchFailed as exc:
+                if last:
+                    raise SearchFailed("; then ".join([*notes, str(exc)])) from exc
+                notes.append(str(exc))
+                continue
+            if answer.answered_nothing:
+                nothing = (
+                    f"the search engine at {base} answered nothing — every engine failed "
+                    f"({engines_line(answer.unresponsive)})"
+                )
+                if last:
+                    raise SearchFailed(
+                        "; then ".join([*notes, nothing])
+                        + ". Check that the instance can reach the web; no cloud "
+                        "search engine is used instead."
+                    )
+                notes.append(nothing)
+                continue
+            if notes:
+                _LOGGER.warning(
+                    "web.search: %s; %s answered %d result(s)", "; then ".join(notes),
+                    base, len(answer.results),
+                )
+                notes.append(f"{base} answered {len(answer.results)} result(s) instead")
+            return SearchAnswer(base, answer.results, answer.unresponsive, tuple(notes))
+        raise SearchFailed(SEARXNG_NOT_CONFIGURED)  # pragma: no cover - instances is never empty here
+
+    async def _ask(self, base: str, query: str, limit: int) -> SearchAnswer:
+        cfg = self.config
+        url = f"{base}/search"
         try:
             response = await self.client.get(
                 url, params=self.params(query), timeout=cfg.httpx_timeout()
             )
         except httpx.TimeoutException as exc:
             raise SearchFailed(
-                f"SearXNG at {cfg.searxng_url} timed out after {cfg.timeout:g}s "
+                f"SearXNG at {base} timed out after {cfg.timeout:g}s "
                 f"({type(exc).__name__}). No cloud search engine is used instead."
             ) from exc
         except httpx.HTTPError as exc:
             raise SearchFailed(
-                f"SearXNG is unreachable at {cfg.searxng_url} "
+                f"SearXNG is unreachable at {base} "
                 f"({type(exc).__name__}). Start it with "
                 "`docker compose --profile search up -d`, or point SEARXNG_URL "
                 "at an existing instance. Jarvis will NOT fall back to a cloud "
@@ -383,7 +517,7 @@ class SearxngClient:
                 f"SearXNG returned {type(payload).__name__} at the top level; "
                 "expected a JSON object."
             )
-        return parse_results(payload, limit)
+        return SearchAnswer(base, parse_results(payload, limit), parse_unresponsive(payload))
 
 
 # ---------------------------------------------------------------------------

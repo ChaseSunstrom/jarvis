@@ -715,6 +715,22 @@ person-shaped probe asks; what the suite found, written up.
 | It reads as the first thing on the screen, on the design system, at three widths | Manual | `docs/ui-review/settings-tools/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
 | Browsing a REMOTE (https) source | **Not exercised** | as under M47: the transport is written and the offline gate cannot reach the open internet; `Catalog.read` still lists only `file://` sources |
 
+### Search that answers (M68)
+
+`bash scripts/verify/m68-search.sh`. Server: `jarvis-core/tests/test_web_integration.py` (the
+"second SearXNG" block, 8 tests), `test_research.py`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| An empty answer with every engine responding is final — one request, `count: 0`, no fallback | Automated | `test_an_empty_answer_with_every_engine_responding_is_final` |
+| An empty answer with engines in `unresponsive_engines`, a timeout or an unreachable instance is "could not search", and the stack's own SearXNG is asked next — in that order, and only when `SEARXNG_URL` is somewhere else | Automated | `test_a_remote_searxng_that_times_out_is_followed_by_the_local_one`, `test_a_remote_whose_engines_all_fail_is_answered_nothing_not_no_results`, `test_the_fallback_is_the_local_default_only_when_the_configured_one_differs`; the unreachable-does-not-fall-back test of M18 still holds for the default URL |
+| The result names the instance that answered and what happened first (`instance`, `notes`, with each failed engine and its reason) | Automated | the two tests above assert on the notes; `test_unresponsive_engines_parse_from_both_shapes_and_cap_the_list` |
+| When both cannot search, the error names each instance and its engines, and `cloud_fallback` is still `false` | Automated | `test_when_both_answer_nothing_the_error_names_each_instance_and_its_engines` |
+| An explicit `searxng_fallback_url: ""` disables the second instance | Automated | `test_a_disabled_fallback_stays_disabled` |
+| No cloud engine anywhere, fallback included | Automated | the M18 gate's grep, repeated in `m68-search.sh`; `assert_no_cloud_calls` in every new test |
+| Against the house's real instances the client reports the tailnet SearXNG answering nothing and the stack's own answering | Scripted | the gate's last check runs the branch's client from the host with `jarvis-core/.env`'s `SEARXNG_URL` — 26 Aug: five engines timed out there, 5 results from `127.0.0.1:8888` in 4.5 s |
+| A research run on the deployed house reaches a report instead of "nothing was found" | Manual | the live rig's `research-*` scenarios after the next rebuild; recorded in `docs/OVERNIGHT_LOG.md` when run |
+
 ### A writable coding workspace (M72)
 
 `bash scripts/verify/m72-workspace.sh` (26 Aug 21:06: 10/10 on the ninth rebuild). Server: `test_packaging.py`

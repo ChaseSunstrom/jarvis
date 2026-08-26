@@ -8,10 +8,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M68 — search that answers.** "Nothing was found for 4 searches" was a SearXNG that could not
+  search at all: `SEARXNG_URL` named an instance elsewhere whose every engine timed out, and its
+  empty answer read as no results. `web.search` now tells the two apart — an empty answer with
+  every engine responding is final; a timeout, an unreachable instance or an answer with every
+  engine unresponsive is "could not search" — and then asks one more SearXNG, the stack's own by
+  default (`web: searxng_fallback_url:`; `""` switches it off). Still never a cloud engine. The
+  result says which instance answered and what the first one did, a research step shows that
+  note beside its result count, and a run that finds nothing says why.
 - **M72 — a coding job can create a repository.** "Could not create the workspace
   /jarvis/workspaces: Permission denied" is gone: the coding workspace is `/workspace`, the
   `jarvis-workspace/` crossover the sandbox already shares, mounted on the core and made writable
   for its uid by the config-init one-shot; packaging pins the config, both mounts and the chown.
+  Behind it sat a second failure, "git is not installed": the core image had no git. It does now.
 - **M70 (in progress) — a faster voice.** Piper speaks at 1.1× (`PIPER_LENGTH_SCALE=0.9`, one
   knob in compose and `.env.example`, pinned equal by packaging); the rig still hears it at WER 0.
 - **M65 — something to browse.** Settings › Tools opens on a **Catalogue** — above the folds,
@@ -20,7 +29,6 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   four skills that are already in the package (`diary`, `homelab-status`, `note-taking`,
   `research-report`), read from this machine as `file://` and never from a URL, so nobody's
   server is trusted by default and M47's refusal stands (`DEVIATIONS.md` §21). Each entry says
-  Behind it sat a second failure, "git is not installed": the core image had no git. It does now.
   what it asks for and whether it is INSTALLED — the shipped ones are, on a fresh box — and an
   INSTALL goes through the same plan-then-approve dialog as before, with the ref, the hash, every
   file and every program named. A source that cannot be read shows its reason instead of

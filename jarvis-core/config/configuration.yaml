@@ -754,6 +754,13 @@ web:
   # SearXNG you already run. The JSON format must be enabled on it — it is off
   # by default upstream. See ../searxng/README.md.
   searxng_url: !env_var SEARXNG_URL http://127.0.0.1:8888
+  # A second SearXNG, asked only when the first could not search: unreachable,
+  # timed out, or answered with no result and every engine unresponsive (a
+  # remote instance with no route to the web looks exactly like "nothing was
+  # found" otherwise). Unset, it is the stack's own instance above whenever
+  # searxng_url points somewhere else. Only ever another SearXNG — never a
+  # cloud engine. An empty string switches it off.
+  # searxng_fallback_url: http://127.0.0.1:8888
   safe_search: 1               # 0 off | 1 moderate | 2 strict
 
   # jarvis-browser does the fetching, crawling and browser automation.

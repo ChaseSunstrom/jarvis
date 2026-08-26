@@ -117,6 +117,27 @@ unreachable SearXNG produces exactly **one** request — to the configured host 
 and a third greps the integration's own source for the hostname of every major
 cloud engine.
 
+## The one fallback there is: a second SearXNG
+
+`searxng_url` pointed at an instance elsewhere (a tailnet box, say) whose
+engines cannot reach the web answers every query with `results: []` and a full
+`unresponsive_engines` list — which, read as "no results", becomes a research
+report that says *nothing was found for 4 searches*. So `web.search` tells the
+two apart. An empty answer with every engine responding is final: nothing
+matched. An empty answer with engines unresponsive, a timeout, or an
+unreachable instance is *could not search*, and the client asks one more
+SearXNG: `web: searxng_fallback_url:`, which defaults to the stack's own
+`http://127.0.0.1:8888` whenever `searxng_url` is something else, and to
+nothing when it is not. `""` disables it.
+
+The result says what happened: `instance` is the SearXNG that answered, and
+`notes` carries what the first one did (`SearXNG at https://searx.example
+timed out after 20s`, or `the search engine at … answered nothing — every
+engine failed (google: timeout, duckduckgo: timeout, brave: CAPTCHA)`); a
+research step shows the note beside its result count. When both cannot search,
+the error names each instance and its engines. The fallback is a SearXNG or
+nothing — the cloud-hostname grep above covers it too.
+
 The reason for the belt and braces: a fallback is the most reasonable-looking
 patch anyone could send. "Degrade gracefully when SearXNG is down" reads like
 an improvement in a diff. What it actually does is hand your queries to a
