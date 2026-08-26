@@ -526,6 +526,12 @@ companion:
 device_control:
   timeout: 30
 
+# Anything online, locally (M59): the interval is the floor so a scenario that
+# rewrites a fixture page sees the change inside its wait.
+watch:
+  interval: 30
+  max_watches: 10
+
 sensors:
   allow_auto_register: true
   token: harness-sensor-token

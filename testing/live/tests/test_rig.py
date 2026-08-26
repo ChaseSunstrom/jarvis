@@ -225,7 +225,9 @@ def test_only_scenarios_that_need_our_own_web_leave_the_stack():
     # `vision` joined with M56: the camera the scenario looks through is a
     # JPEG this repository renders and its fixture site serves, so the answer
     # ("a red mug") is one we can assert on. No real camera is.
-    allowed = {"research", "coding", "subagents", "skills", "security", "vision"}
+    # `online` joined with M59: the page a watch notices changing is one the
+    # rig rewrites on its own fixture web; nothing on the open web is watched.
+    allowed = {"research", "coding", "subagents", "skills", "security", "vision", "online"}
     off_stack = {s.name: s.capability for s in load_all() if s.ground == "fixture"}
     strays = {name: cap for name, cap in off_stack.items() if cap not in allowed}
     assert not strays, f"these do not need the fixture web: {strays}"

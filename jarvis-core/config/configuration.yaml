@@ -506,6 +506,17 @@ notifications:
 # sensor exists — an ESP32 with nothing but a URL. Never loaded before this
 # block: the integration shipped in M08 and the deployed file had no key for
 # it, so the door was painted on. MQTT discovery does not need this block.
+# Anything online, locally (M59): watch a page and say when it changes,
+# follow feeds, "tell me when …" asked again until the answer is yes. The
+# snapshots live under config/watch/; a change is a moment (kind: watch) and
+# a bus event. Fetches go through jarvis-browser when it is configured, so a
+# page that needs its JavaScript is read properly, and through this process
+# when it is not. No watch checks faster than every 30 seconds.
+watch:
+  interval: 900
+  max_watches: 50
+  notify: true
+
 sensors:
   allow_auto_register: true
   expire_after: 0

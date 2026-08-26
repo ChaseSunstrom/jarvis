@@ -934,7 +934,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the moon's phase, the planets tonight — offline after the first download; optional ADS-B
     through readsb behind profile `radio`. Research: `docs/research/sky-satellites-and-radio.md`.
   - Verify: `bash scripts/verify/m58-sky.sh`
-- [ ] **M59 — Anything online, locally** · size L · deps M18, M31 · parallel-ok M60
+- [x] **M59 — Anything online, locally** · size L · deps M18, M31 · parallel-ok M60
   - Scope: watch a page for a change, feeds, a reader that survives JavaScript, "tell me
     when…" as scheduled research that lands as a moment — self-hosted throughout. Research:
     `docs/research/local-intelligence.md`.

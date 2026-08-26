@@ -689,6 +689,21 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### Anything online, locally (M59)
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A page that changes lands as a moment (kind `watch`, source `watch`, the page as link) and a bus event; the first check is a baseline, a rewrap is not a change | Automated | `jarvis-core/tests/test_watch.py` against an httpx MockTransport |
+| A feed with a new entry is a moment naming it; RSS 2.0 and Atom parse with the standard library; a page that is not a feed is refused | Automated | `test_watch.py` |
+| "Tell me when …" asks again every interval, judges the results with the model's no-tools call, and stops on yes | Automated | `test_watch.py` with a stub model |
+| `read_page` reads through jarvis-browser when configured and never also here; otherwise here, scripts dropped | Automated | `test_watch.py` |
+| No watch checks faster than 30 s; a bad URL is refused; a failed fetch is a recorded error, not a change | Automated | `test_watch.py` |
+| Watches survive a restart | Automated | `test_watch.py` |
+| The rig can rewrite a fixture page (`fixture_write`, only under `live/`, removed afterwards) and name the fixture web (`{{handbook}}`) | Automated | `testing/live/tests/test_rig.py`; the gate parses `watch-page-change` |
+| Asked to watch a page, the running Jarvis watches it; the page changes; the moment lands; asked what is watched, it says so | Containerised | the gate, 26 Aug ~09:55 on the harness ground: LIVE 8/8, `watch-page-change` 3/3 turns — "Watch the page at …/live/notice.html and tell me when it changes" → `watch_page` → "I'm now watching that page every 30 seconds and will let you know the moment it changes."; the rig rewrote the page; a `watch` moment landed inside 90 s; "What is being watched right now?" → `list_watches` → "One page is being watched: the live notice page at …, checked every 30 seconds — it has been checked twice and changed once, currently showing a pool notice (open 06:00–22:00 daily, with lane swimming on Tuesdays)." |
+| `watch:` is switched on in the deployed config and every key is read | Automated | `test_packaging.py`; the gate |
+| Price and stock parsing (changedetection.io) | **Not built** | `docs/research/local-intelligence.md` §3 — adopt when that is the question |
+
 ### Simpler menus everywhere (M55)
 
 | Claim | Status | Evidence |

@@ -365,6 +365,11 @@ class Runner:
                     # A sensor announcing itself and reporting, the way a
                     # Zigbee bridge or an rtl_433 does: the rig is the device.
                     await self._mqtt_publish(turn.do["mqtt_publish"])
+                if turn.do.get("fixture_write"):
+                    # A page the fixture web serves, rewritten: the rig is the
+                    # website, so a watch has something real to notice (M59).
+                    self._fixture_write(turn.do["fixture_write"], ground)
+                turn = self._expanded(turn, ground)
                 if turn.do.get("extension"):
                     # An operator flipping a switch while a conversation is
                     # already in progress, which is when they actually do it.
@@ -537,6 +542,7 @@ class Runner:
         # audit from `interactions-proactive-moment` was still the top row of
         # the task dock when `task-live-ui` looked for its own. A leftover is
         # a failure, and a running one is also a load on the next scenario.
+        self._fixture_cleanup(problems)
         since = getattr(self, "_scenario_started_at", 0.0)
         for task in await observer.tasks():
             if float(task.get("created") or 0.0) < since:
@@ -635,6 +641,59 @@ class Runner:
             timeout=timeout or TURN_TIMEOUT,
             probes=_ui_probes(turn.expect),
         )
+
+    # --- the fixture web, rewritten for a scenario (M59) -----------------------
+    def _fixture_write(self, rows: Any, ground: Any) -> None:
+        """Write pages under `<fixture site>/live/` for the fixture web to serve.
+
+        Only under `live/`: the committed fixture pages are the handbook every
+        other scenario reads, and a scenario that could rewrite them could
+        break the next one. What is written is removed when the scenario ends.
+        """
+        from testing.live.fixture_site import pages_for
+
+        if not isinstance(rows, list):
+            raise LiveError(f"fixture_write needs a list of {{site, path, content}} rows, not {rows!r}")
+        written: list[Path] = getattr(self, "_fixture_written", [])
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("site") or not row.get("path"):
+                raise LiveError(f"fixture_write needs {{site, path, content}} rows, not {row!r}")
+            rel = str(row["path"]).strip("/")
+            if not rel.startswith("live/") or ".." in rel.split("/"):
+                raise LiveError(f"fixture_write may only write under live/: {rel!r}")
+            target = pages_for(str(row["site"])) / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(self._expand_text(str(row.get("content") or ""), ground))
+            if target not in written:
+                written.append(target)
+        self._fixture_written = written
+
+    def _fixture_cleanup(self, problems: list[str]) -> None:
+        for target in getattr(self, "_fixture_written", []):
+            try:
+                target.unlink(missing_ok=True)
+            except OSError as err:
+                problems.append(f"fixture page {target} could not be removed: {err}")
+        self._fixture_written = []
+
+    def _expand_text(self, text: str, ground: Any) -> str:
+        """`{{handbook}}` and friends → the fixture web's addresses for this run."""
+        web = getattr(ground, "web", None) or {}
+        out = str(text or "")
+        for name, url in (web.items() if isinstance(web, dict) else []):
+            out = out.replace("{{" + str(name) + "}}", str(url).rstrip("/"))
+        return out
+
+    def _expanded(self, turn: Any, ground: Any) -> Any:
+        """The turn with its spoken text expanded; the scenario file keeps the placeholder."""
+        if not getattr(turn, "say", None) or "{{" not in turn.say:
+            return turn
+        import dataclasses
+
+        if dataclasses.is_dataclass(turn):
+            return dataclasses.replace(turn, say=self._expand_text(turn.say, ground))
+        turn.say = self._expand_text(turn.say, ground)
+        return turn
 
     async def _mqtt_publish(self, messages: Any) -> None:
         """Publish each `{topic, payload, retain?}` to the house's broker.

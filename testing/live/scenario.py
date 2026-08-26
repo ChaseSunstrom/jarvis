@@ -210,7 +210,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
     do = raw.get("do") or {}
     if not isinstance(do, dict):
         raise ValueError(f"{name}: turn {index}'s do is not a mapping")
-    unknown_do = set(do) - {"extension", "mqtt_publish"}
+    unknown_do = set(do) - {"extension", "mqtt_publish", "fixture_write"}
     if unknown_do:
         raise ValueError(
             f"{name}: turn {index} asks to do {', '.join(sorted(unknown_do))}, "

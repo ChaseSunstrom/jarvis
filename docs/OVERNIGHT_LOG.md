@@ -377,3 +377,7 @@ is quiet. Done since:
   dashboard editor, areas' rename/delete one click in, entity rows offering the
   one move they can make. First spec run passed against a stale build — the
   gate now builds first. Gate running; tick and commit next.
+- 09:58 — M59 built and gated 17/17 with the live run green: a watch on a
+  fixture page the rig rewrote landed as a moment inside 90 s, and "what is
+  being watched" answered with the change. Committed next; M60's gate is
+  running its full core suite (2,756 tests — slow, not stuck).

@@ -302,6 +302,24 @@ These entity ids feed the `get_user_context` tool, which is what the persona's
 routing rules read: speak while driving, notify while away, stay silent while
 asleep. Omit the ones you do not have.
 
+## `watch:`
+
+```yaml
+watch:
+  interval: 900      # seconds between checks by default; a watch may ask for its own (floor 30)
+  max_watches: 50
+  notify: true       # a change lands as a moment (kind `watch`) as well as a bus event
+```
+
+Anything online, with time in it (M59). `watch_page` keeps a snapshot of a
+page and says when it changes, with what changed; `watch_feed` follows an RSS
+2.0 or Atom feed and says what is new; `watch_for` ("tell me when …") asks a
+question of the web every interval until the answer is yes. `read_page` reads a
+page as text — through jarvis-browser when it is configured, so a page that
+draws itself with JavaScript is read properly, and through jarvis-core when it
+is not; `feed_latest` lists a feed. Snapshots live under `config/watch/`. No
+watch checks faster than every 30 seconds, whatever it asked for.
+
 ## `mqtt:`
 
 ```yaml

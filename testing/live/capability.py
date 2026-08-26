@@ -68,6 +68,16 @@ TOOL_CAPABILITY = {
     "sensor_compare": "sensors",
     "sensor_history": "sensors",
     "sensor_summary": "sensors",
+    # Anything online, locally (M59): watching a page or a feed, asking a
+    # question of the web until it is yes, reading a page. Not "research":
+    # research answers now; these come back later.
+    "watch_page": "online",
+    "watch_feed": "online",
+    "watch_for": "online",
+    "list_watches": "online",
+    "cancel_watch": "online",
+    "read_page": "online",
+    "feed_latest": "online",
 }
 
 
@@ -101,7 +111,7 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
         chosen.add("memory")
     if any(call.startswith("notes.") for call in calls):
         chosen.add("notes")
-    for capability in ("subagents", "coding", "research", "memory", "notes", "sky", "vision", "sensors"):
+    for capability in ("subagents", "coding", "research", "memory", "notes", "sky", "vision", "sensors", "online"):
         if capability in chosen:
             return capability
     if task_kinds or "run_background_task" in tools:

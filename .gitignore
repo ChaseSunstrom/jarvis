@@ -71,3 +71,5 @@ jarvis-core/wyoming/
 
 # The trace integration writes one JSONL per day here at runtime — data, not config.
 jarvis-core/config/traces/
+# Pages the live rig rewrites for a scenario (M59): written and removed per run.
+testing/live/fixtures/*/live/

@@ -8,6 +8,18 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M59 — anything online, locally.** A `watch` integration gives the web time: `watch_page` keeps
+  a snapshot and says when a page changes, with what changed; `watch_feed` follows an RSS 2.0 or
+  Atom feed (parsed with the standard library) and says what is new; `watch_for` ("tell me when
+  …") asks a question of the web every interval and judges the results with the model until the
+  answer is yes. Every change is a moment (kind `watch`) and a bus event (`jarvis_watch_changed`),
+  never only a log line. `read_page` reads a page as text through jarvis-browser when it is
+  configured (the page's JavaScript runs) and through jarvis-core when it is not; `feed_latest`
+  lists a feed; `list_watches` / `cancel_watch`. Snapshots live under `config/watch/`; no watch
+  checks faster than every 30 seconds. Switched on in the deployed config. The rig can be the
+  website: `do: fixture_write:` rewrites a page under the fixture web's `live/`, `{{handbook}}`
+  in a turn is the fixture's address, and `watch-page-change` asks for a watch, changes the page,
+  and expects the moment.
 - **M55 — simpler menus everywhere.** HOUSE, WORK, KNOWLEDGE and the tools page held to a menu
   inventory in `docs/UI_MIGRATION.md` §4 that `e2e/menus.spec.ts` reads and enforces against the
   mock: one primary control per screen at rest, no two visible controls outside rows with the same
