@@ -575,3 +575,10 @@ is quiet. Done since:
   resilience-core-restart fails, text and voice, the claimed action after the restart —
   the guard sees "do the same in the bedroom" as an action since ca6c57c, which the second
   rebuild measures. CI green on 6bf9214 (fourth all-green head); ca6c57c pushed.
+- 19:00 — on the rebuilt stack: M51 20/20 (its smoke slice passing with the reworded guard);
+  M26's scorecard scored 100 % on all five sections and measured idle latency (median 3.1 s,
+  WER 0.07) but its load job still did not start with the handbook's address — the load is
+  now the sensor audit the routing section proves starts (2dc5fdb), and the gate runs a third
+  time behind the measurement chains. Queued after M61/M64: the memory scenarios with the
+  core's forget log lines, then a second rebuild measuring the forget and guard-reference
+  fixes.
