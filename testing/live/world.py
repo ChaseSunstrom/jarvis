@@ -167,6 +167,14 @@ class Observer:
         return str((state or {}).get("state") or "")
 
     async def wait_for_state(self, entity_id: str, want: str, timeout: float = 15.0) -> bool:
+        """`want` is a state, or ``absent`` for an entity the house no longer has.
+
+        "absent" is what a removal (M69) leaves behind: `state_of` answers ""
+        for an entity the API cannot find, which is also what an entity with
+        an empty state answers — so the scenario says the word and this maps
+        it, rather than a scenario asserting on "" and reading as a typo.
+        """
+        want = "" if want == "absent" else want
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if await self.state_of(entity_id) == want:
