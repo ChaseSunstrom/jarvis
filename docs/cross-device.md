@@ -103,7 +103,8 @@ Server → device:
 ```json
 {"type": "jarvis_message", "message_id": "a1b2c3", "kind": "ask",
  "mode": "ask", "text": "Deploy to production?", "options": ["yes", "no"],
- "conversation_id": "conv-7", "importance": "high", "timeout_s": 120}
+ "conversation_id": "conv-7", "importance": "high", "timeout_s": 120,
+ "spoken": false}
 ```
 
 `kind`: `say` (aloud) · `ask` (needs an answer) · `notify` (quiet).

@@ -235,6 +235,18 @@ object CompanionMessageHandler {
         // without the model in the loop, which is exactly what this path exists
         // to keep out; those still go to the screen that can draw buttons.
         val host = speechHost
+        if (message.spoken && host != null && host.isForeground) {
+            // THE SINGLE VOICE (M66). The conversation on screen is the one
+            // speaking the reply that carries this question, and the next
+            // thing said to it is the answer — the server resolves a spoken
+            // answer from the turn itself. Asking again here, aloud, is the
+            // double the operator reported: "it says both the response and
+            // the question". `dismissed` is what "not dealt with on this
+            // device" means everywhere in this protocol; the server may then
+            // offer it on another device as a card, which is fine.
+            settle(app, message.messageId, CompanionProtocol.STATUS_DISMISSED, null)
+            return
+        }
         if (host != null && message.options.isEmpty() && host.isForeground) {
             val taken = try {
                 host.ask(message.text) { answer ->
@@ -356,6 +368,7 @@ object CompanionMessageHandler {
             .putExtra(EXTRA_IMPORTANCE, message.importance)
             .putExtra(EXTRA_CONVERSATION_ID, message.conversationId)
             .putExtra(EXTRA_TIMEOUT_MS, message.timeoutMs)
+            .putExtra(EXTRA_SPOKEN, message.spoken)
 
     // --- answering ----------------------------------------------------------
 
@@ -454,4 +467,5 @@ object CompanionMessageHandler {
     const val EXTRA_IMPORTANCE = "ai.jarvis.app.companion.IMPORTANCE"
     const val EXTRA_CONVERSATION_ID = "ai.jarvis.app.companion.CONVERSATION_ID"
     const val EXTRA_TIMEOUT_MS = "ai.jarvis.app.companion.TIMEOUT_MS"
+    const val EXTRA_SPOKEN = "ai.jarvis.app.companion.SPOKEN"
 }

@@ -97,6 +97,13 @@ class CompanionAskActivity : Activity() {
 
     /** So unlocking the phone does not re-read the question from the top. */
     private var spokeQuestion = false
+
+    /**
+     * The reply this question belongs to is being read aloud elsewhere (M66):
+     * the card is shown and answerable, and [askAloud] stays silent — on
+     * arrival and again after an unlock.
+     */
+    private var spoken = false
     private var dismissRequested = false
     private var listening = false
 
@@ -177,6 +184,7 @@ class CompanionAskActivity : Activity() {
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
         ConversationRegistry.remember(this, conversationId)
+        spoken = intent?.getBooleanExtra(CompanionMessageHandler.EXTRA_SPOKEN, false) ?: false
 
         // A question is only answerable while it is genuinely in flight, and
         // there are two different ways for that not to be true:
@@ -215,8 +223,10 @@ class CompanionAskActivity : Activity() {
                 // in a car, or across the room, which is where a voice
                 // assistant asking a question is most likely to be useful.
                 // Reported as *"it should be able to ask me questions over
-                // voice"*.
-                askAloud()
+                // voice"*. Unless the reply already says it (`spoken`, M66):
+                // then the card is enough, and reading it out again was
+                // *"it says both the response and the question"*.
+                if (!spoken) askAloud()
             }
             // A message the server wanted spoken, opened from the notification
             // it fell back to. Say it now.
@@ -628,7 +638,7 @@ class CompanionAskActivity : Activity() {
      * once, so the question is not lost — it just waits for its owner.
      */
     private fun askAloud() {
-        if (spokeQuestion || answered) return
+        if (spoken || spokeQuestion || answered) return
         if (questionText.isBlank() || !config.isConfigured) return
         if (!CompanionAskGate.textVisible(isLocked(), importance)) return
         spokeQuestion = true

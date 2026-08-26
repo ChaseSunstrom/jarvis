@@ -12,8 +12,15 @@ import java.util.Locale
  * ```json
  * {"type": "jarvis_message", "message_id": "a1b2c3", "kind": "ask",
  *  "mode": "ask", "text": "Deploy to production?", "options": ["yes", "no"],
- *  "conversation_id": "conv-7", "importance": "high", "timeout_s": 120}
+ *  "conversation_id": "conv-7", "importance": "high", "timeout_s": 120,
+ *  "spoken": false}
  * ```
+ *
+ * `spoken` (M66) says the words are already being said to the user by the
+ * reply they belong to — a question raised by a spoken turn. Like `mode` it is
+ * a PRESENTATION hint: show, do not read out. It cannot make the phone do
+ * anything, and an absent or garbled value is `false`, which is the louder
+ * reading.
  *
  * Device -> server:
  * ```json
@@ -94,6 +101,12 @@ object CompanionProtocol {
         val conversationId: String? = null,
         val importance: String = "normal",
         val timeoutMs: Long = DEFAULT_ASK_TIMEOUT_MS,
+        /**
+         * The reply that carries this question is being read aloud by the
+         * surface the user spoke to, so this phone shows it and does not say
+         * it again. The operator heard every question twice before this.
+         */
+        val spoken: Boolean = false,
     ) {
         val wantsAnswer: Boolean get() = mode == MODE_ASK
 
@@ -150,7 +163,8 @@ object CompanionProtocol {
             conversationId = conversationId,
             importance = importance,
             timeoutMs = clampTimeout(if (msg.isNull("timeout_s")) null else msg.opt("timeout_s"),
-                defaultTimeout)
+                defaultTimeout),
+            spoken = msg.optBoolean("spoken", false),
         )
     }
 
