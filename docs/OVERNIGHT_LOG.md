@@ -517,3 +517,21 @@ is quiet. Done since:
   reproduction found it: 3260 passed, 1 failed), and the new annotation step took three
   green suites down because GitHub's run shell is `bash -e` and a grep with nothing to
   find returns 1. Both fixed in df0fab8 and pushed.
+- 17:50 — M25's full live run on the rebuilt stack: 49/57 scenarios, 75/82 turns, intent
+  91.5 %, routing 95.8 %, WER 5.9 %, median 3.23 s, p95 29 s — the two thresholds still
+  missed, recorded not lowered. Eight failures read one by one: the stack had been started
+  without the `mqtt`/`search` profiles (no broker, no search engine — the Makefile exports
+  them now); two "look into the lights… tell me later" turns were routed to deep_research
+  by M60's rule (the rule and the tool now keep house jobs out of research); one thread
+  scenario inherited a light already on (it declares its state now); two research /
+  delegation scenarios named "the fixture handbook" with no address and the model asked
+  which one, as research-cancel already records is correct (they name the address now);
+  one restart scenario claimed a light on without calling (a model miss after the
+  restart, recorded); one delegation follow-up reported pending findings after 30 s.
+  Committed b4010d0 and b7543dd; measured by the next full run.
+- 18:00 — CI on df0fab8: every workflow green — CI (core on 3.12, web build + unit + e2e,
+  browser, desktop, orchestrator/evals, lint, static, android specs), Build Jarvis APK,
+  Build jarvis-desktop (wheel, three installs, the Electron shell), Compose smoke, and
+  End-to-end (harness self-test, desktop agent, and the emulator suite, whose five
+  failures were the automation master switch). The seven jobs the operator listed this
+  afternoon are all green; the fixes were the repository's, not the tests'.
