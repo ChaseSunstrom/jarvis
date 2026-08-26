@@ -594,3 +594,9 @@ is quiet. Done since:
   message says not to hint (65bf479), measured on the next rebuild. Of the report run's seven
   failures, the vision one is the M56 blocker and every other has a fix that held or a
   wording that is about to be measured.
+- 19:20 — the third rebuild (the forget message): house-light-on and chat-context-retention
+  green on both variants, median 1.7 s; memory-forget now fails one turn earlier and for a
+  new reason — turn 1 leaves TWO notes, the explicit remember ("The shed key is under the
+  second flowerpot") and the extractor's paraphrase of the same sentence ("The speaker keeps
+  the shed key…"), so "shed key" is a true tie and forget asks which. The duplicate check at
+  write time did not see a paraphrase whose words contain the other's; being fixed there.
