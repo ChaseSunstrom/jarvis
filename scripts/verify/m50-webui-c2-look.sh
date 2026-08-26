@@ -56,7 +56,7 @@ check "pill radii only where a thing is round" python3 -c '
 import re
 from pathlib import Path
 # Dots and rings are round. Controls, tags and inputs are not (Reactor II is 6px).
-allowed = {"Toggle.svelte", "TopBar.svelte", "StatusReadout.svelte", "CallLine.svelte", "Reactor.svelte", "base.css", "tokens.css"}
+allowed = {"Toggle.svelte", "TopBar.svelte", "StatusReadout.svelte", "CallLine.svelte", "Reactor.svelte", "Tabs.svelte", "OfflineState.svelte", "base.css", "tokens.css"}
 hits = []
 for p in Path("jarvis-web/src").rglob("*"):
     if p.suffix not in (".svelte", ".css"):

@@ -137,14 +137,14 @@ components allowed to have them.
 Chrome, drawn on every destination:
 
 - [x] Layout shell: header, tabs, status readout, skip link · **migrated** (M49) · the C2 top bar with the sliding underline; VOICE in the bar; the console link on the HUD gone. The MOMENTS pill is `Notifications`, below.
-- [ ] `DestinationNav` (section strip) · **partial** → C2 segmented control.
-- [ ] `CommandPalette` · **partial**
-- [ ] `Approvals` · **partial** → C2 approval bar (amber inset rule, `Held · tier 3`, APPROVE primary).
-- [ ] `Notifications` / `Moment` · **partial**
+- [x] `SectionStrip` (was `DestinationNav`, deleted) · **migrated** · C2's segmented control, in the four destination layouts with a `ScreenTitle`.
+- [x] `CommandPalette` · **migrated** · Barlow labels, mono only for the kind and the keys, the selected row washed with the inset rule.
+- [x] `Approvals` · **migrated** · C2's held bar: inset warn rule, the tool bright, args mono, APPROVE the one primary.
+- [x] `Notifications` / `Moment` · **migrated** · a flat panel whose head is the disclosure; each moment a hairline row with the kind as a tag.
 - [ ] `TaskDock` / `TaskBar` / `TaskCard` · **partial**
-- [ ] `Toasts` · **partial**
+- [x] `Toasts` · **migrated** · flat panel, inset rule by kind, Barlow.
 - [ ] `ToolActivity` · **partial** → the `.calls` line: dot, mono name, args, `ok`, ms.
-- [ ] `+error.svelte` · **partial**
+- [x] `+error.svelte` · **migrated** · `ErrorState` and two `Button`s, nothing else.
 
 Destinations and sections:
 
@@ -181,12 +181,12 @@ Views that are not routes:
 The library (`src/lib/ui`), re-skinned once so the pages inherit:
 
 - [ ] `Button` (default · primary · quiet · approve · danger · pressed) · **partial** → C2 `.btn`: uppercase Barlow, hairline, 6px, primary is the one filled control.
-- [ ] `Pill` · **old** shape → a hairline tag (radius `md`); status dots stay round.
+- [x] `Pill` · **migrated** · a hairline tag (radius `sm`, Barlow uppercase); status dots stay round.
 - [ ] `Tabs` · **partial** → the C2 sliding underline, shared with the top bar.
 - [ ] `Toggle`, `Input`, `Select`, `Field`, `Toolbar`, `Panel`, `Row`, `Dialog`, `IconButton` · **partial**
 - [ ] `SkeletonRows`, `EmptyState`, `ErrorState`, `OfflineState`, `ScreenState` · **partial**
-- [ ] New: `TopBar`, `SectionStrip`, `StatusReadout`, `StagesBar`, `CallLine`, `DayStrip`, `ProgressRing` (a `Reactor` preset), `Graph` (knowledge), `Figure` (count-up) — each with a `@component` block, a README section, tests, and a style-guide entry.
-- [ ] `chrome.css` · **old** · the grid, the brackets, the `.jv-*` pill classes and the mono defaults deleted once nothing references them; what remains is layout.
+- [x] New: `TopBar`, `SectionStrip`, `ScreenTitle`, `StatusReadout`, `StagesBar`, `CallLine`, `DayStrip`, `ProgressRing` (a `Reactor` preset), `Graph` (knowledge, with `$lib/knowledge/graph`'s seeded layout), `Figure` (count-up) — each with a `@component` block, a README section, SSR/unit tests, and a style-guide entry.
+- [x] `chrome.css` · **migrated** · the grid, the brackets, the skeleton classes and every `.console .thing` deleted; what remains is the frame, the motion primitives, the toasts and the palette.
 
 ### M51 — the phone, on the same look
 
