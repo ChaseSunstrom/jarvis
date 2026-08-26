@@ -586,3 +586,11 @@ is quiet. Done since:
   flake in home.spec — the bar's underline placed against the fallback face before the web
   font swapped in on a slow runner — fixed structurally with a ResizeObserver on the strip
   and its tabs (9b8fe2b). The memory rerun is up, then the second rebuild.
+- 19:10 — the second rebuild (forget and guard-reference fixes) measured: resilience-core-
+  restart passes on text AND voice — the guard now sees "do the same in the bedroom" — the
+  proactive moment and memory recall pass, median 1.68 s over the four. memory-forget: the
+  fact leaves the store now; the third turn's reply hinted that something had been forgotten
+  ("that's precisely what you asked me to forget"), which the judge refuses; the tool's
+  message says not to hint (65bf479), measured on the next rebuild. Of the report run's seven
+  failures, the vision one is the M56 blocker and every other has a fix that held or a
+  wording that is about to be measured.

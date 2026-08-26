@@ -1233,7 +1233,9 @@ median still miss their thresholds; both recorded. The seven failures:
   turn; the specialists' lookups run through a SearXNG whose upstream engines
   time out (the environment fault BLOCKERS records).
 - `resilience-core-restart` (voice) — the same claimed action after the
-  restart as at 17:40, now on the voice variant.
+  restart as at 17:40, now on the voice variant. The guard treats "do the
+  same in the bedroom" as an action since ca6c57c; re-measured at 19:05 on
+  the second rebuilt stack: both variants pass.
 - `vision-look-fixture` — gated on M56; the model server serves no vision
   model (BLOCKERS §4), so "there is no camera" is the true answer.
 
