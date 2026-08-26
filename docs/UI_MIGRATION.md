@@ -2,165 +2,204 @@
 
 The console is being rebuilt on **C · Reactor II** (`docs/design/c2-reactor.html`;
 the decision is in `docs/design/README.md`). This file is the checklist that
-milestone is done against, and the first half of it is not styling.
+work is done against, in two passes:
 
-## 1. The navigation, before anything moves
+* **Pass 1 (M48, done):** the structure. Eleven destinations became four plus
+  the HUD, every old path redirects, every page sits on the shared component
+  library and the generated tokens, and `token_lint.py` is at zero. That pass
+  moved the pages; it did **not** redraw them — its own commit says so.
+* **Pass 2 (M49–M51, this file's §3 onwards):** the look. Every screenshot in
+  `docs/ui-review/` still shows the pre-C2 aesthetic drawn with C2's token
+  names: monospace body text, a technical grid and corner brackets on the
+  ground, pill-shaped controls, glowing wordmarks, and on the HUD the old
+  GLSL glass sphere where C2 puts a flat instrument. The tokens were adopted;
+  the direction was not. This pass is the direction.
 
-The console has **eleven** top-level destinations. That is the defect, not a
-detail: the header wraps to two rows at 1280px because eleven tabs plus a brand
-and a status readout no longer fit on one, and the two ways out of that are
-both worse than the wrap — a horizontally scrolling nav hides SETTINGS behind a
-scrollbar nobody can see, and shrinking the items is a fight the twelfth tab
-wins anyway.
+## 1. The navigation
 
-So the structure is reduced **first**, and pages are migrated into their new
-homes rather than restyled where they are. A page restyled in place is a page
-that has to move twice.
+The console has **four destinations plus the voice screen**, decided under M48
+and kept. What changes in pass 2 is that the voice screen stops being a
+different kind of place: in C2 (`c2-reactor.html`, `?view=chat`) the top bar is
+the same on every screen and VOICE is its first tab, with the sliding accent
+underline. Today the HUD paints its own chrome and reaches the console through
+a floating CONSOLE pill, and the console reaches the HUD through the wordmark —
+two screens that do not look like one product.
 
-### The proposed structure: four, plus the HUD
+### The structure: five tabs in one bar, everywhere
 
-| Destination | What it is | Why these belong together |
+| Tab | Path | What it is | Why it belongs in the bar |
+|---|---|---|---|
+| **VOICE** | `/` | Talking to Jarvis: the reactor, the exchange, the transcript, this turn's stages, the dock. | It is the product. C2 draws it under the same bar as everything else. |
+| **HOUSE** | `/house` | The physical home: what is on, where it is, what it has been doing, the rules that run themselves. | One question — "what is my house doing" — that four tabs used to answer. |
+| **WORK** | `/work` | What Jarvis is doing or has done: tasks, research runs, coding jobs. | A coding job IS a task. |
+| **KNOWLEDGE** | `/knowledge` | What Jarvis knows: the notes it has written and what it remembers about you — drawn as one graph. | "What did you write down" and "what do you know" are the same question from two distances. |
+| **SETTINGS** | `/settings` | Configuration and capability: the assistant, its tools, what is installed, the machines it runs on, pairing. | Everything here is opened rarely and deliberately. |
+
+Five is the cap `scripts/verify/m48-webui-c2.sh` enforces, and this uses all of
+it. The bar is C2's: brand at the left (`JARVIS · v0.1 · local`), the tabs
+centred with one sliding underline (`--jv-dur-base`), the status readout at the
+right (link · model · stt · tts, or per destination: `2 running · 1 held`).
+
+**Sections** inside a destination are a second, lighter strip under the page
+title — C2's segmented control (`.seg`: hairline box, the active segment on
+`--jv-surface-2`), not a second row of tabs. Moving between sections is a
+shared-element transition; moving between tabs is the route transition.
+
+**The phone** keeps its native strip of the four console front doors
+(`ConsoleTab.kt`); VOICE on the phone is the native HUD, so `screens.ts` marks
+`/` as `hud: true` and `console_parity_test.py` binds the phone's strip to the
+`nav && !hud` screens. **The desktop app** loads the console build and gets
+all of this by construction.
+
+### Where each page lives (unchanged from M48)
+
+| Old path | Lives at | How it appears |
 |---|---|---|
-| **`/` (the HUD)** | Talking to Jarvis. Not a tab — it owns the viewport and paints its own chrome. | It is the product. Everything below is administration of it. |
-| **HOUSE** | The physical home: what is on, where it is, what it has been doing, and the rules that run themselves. | One question — "what is my house doing" — currently answered by four tabs. Somebody checking a light and somebody checking last night's temperature are the same person, thirty seconds apart. |
-| **WORK** | What Jarvis is doing or has done for you: tasks, research runs, coding jobs. | A coding job IS a task. They were two tabs because they were built in different months, not because they are different things. |
-| **KNOWLEDGE** | What Jarvis knows: notes it has written, and what it remembers about you. | Notes and memory are the same question from two distances — "what did you write down" and "what do you know". Keeping them apart makes people search twice. |
-| **SETTINGS** | Configuration and capability: the assistant's own settings, what it can call, what is installed, the machines it runs on, pairing. | Everything here is opened rarely and deliberately. That is the definition of the thing that does not belong in the top bar. |
-
-Four tabs and a HUD. The verify script fails if the top-level nav has more than
-five destinations, so this cannot quietly grow back.
-
-### Where each current page ends up
-
-Every route that exists today, and its home after the consolidation. Nothing is
-deleted: a page becomes a **section** of its new home, reachable by its own
-anchor, and its old path redirects.
-
-| Today | Becomes | How it appears |
-|---|---|---|
-| `/` | `/` | Unchanged. The HUD. |
-| `/devices` | `/house/devices` | HOUSE's default section. Entities by area, with their controls. |
-| `/areas` | `/house/areas` | A section: the rooms voice resolves against, and what is in them. |
-| `/dashboards` | `/house/dashboards` | A section: the graphs. Same page, one level in. |
-| `/automations` | `/house/automations` | A section: the rules, their traces, the editor. |
+| `/` | `/` | VOICE. The reactor is the centrepiece. |
+| `/devices` | `/house/devices` | HOUSE's default section. |
+| `/areas` | `/house/areas` | A section. |
+| `/dashboards` | `/house/dashboards` | A section, on C2's dashboard cards. |
+| `/automations` | `/house/automations` | A section. |
 | `/tasks` | `/work/tasks` | WORK's default section. |
-| `/tasks/[id]` | `/work/tasks/[id]` | A detail view, not a section — one task, opened from the list. The id is carried through the redirect, because a link to a task is the link people actually share. |
-| `/code` | `/work/code` | A section: coding jobs, repositories, diffs. |
-| `/notes` | `/knowledge/notes` | KNOWLEDGE's default section. |
-| `/memory` | `/knowledge/memory` | A section, beside the notes rather than a tab away. |
+| `/tasks/[id]` | `/work/tasks/[id]` | A detail view on C2's task layout: ring, plan, tool calls, output, approval. |
+| `/code` | `/work/code` | A section. |
+| `/notes` | `/knowledge/notes` | KNOWLEDGE's default section, beside the graph. |
+| `/memory` | `/knowledge/memory` | A section, beside the graph. |
 | `/settings` | `/settings/assistant` | SETTINGS' default section. |
-| `/tools` | `/settings/tools` | A section: what the model can call, what it is allowed to call, and — since M46/M47 — what is installed, its permission scope, and the catalog. |
-| `/desktop` | `/settings/desktop` | A section: the machines running the desktop agent. |
-| `/styleguide` | `/styleguide` | Unchanged, and still not in the nav. It is a developer surface. |
+| `/tools` | `/settings/tools` | A section: callables, exposure, extensions, catalog — behind expanders. |
+| `/desktop` | `/settings/desktop` | A section. |
+| `/styleguide` | `/styleguide` | Not in the nav. The library, every state, every token. |
 
 Every row on the left is a 308 to the row on its right. Nothing 404s.
 
-Components that are not routes keep their homes: `Approvals`, `Notifications`,
-`CommandPalette`, `TaskDock`, `Toasts` and `BootSequence` are chrome, drawn by
-the layout on every destination.
+## 2. The bar every screen is measured against
 
-### What this costs, said plainly
+Read off `docs/design/shots/c2-reactor-*.png` and `design/tokens.json`:
 
-* **A click for things that used to be a tab.** `/dashboards` is one level in
-  now. That is the trade: eleven front doors, or four and a step.
-* **The command palette matters more.** It already jumps to any page; with
-  fewer tabs it is the fast path for people who know where they are going, and
-  it must index sections, not just destinations.
-* **Deep links have to keep working.** Every old path redirects to its section
-  anchor. A bookmark, a link in a note, and the Android app's own tab strip all
-  point at these.
-* **The phone mirrors this.** `android-app/tools/console_parity_test.py` binds
-  the console's sections to `ConsoleTab.kt`; they move in the same change or
-  the mirror goes red.
+* **Ground.** Near-black `--jv-bg` with one radial lift at the bottom. Three
+  faint field circles behind the reactor. **No grid, no corner brackets** —
+  those are the previous direction and they go.
+* **The reactor is an instrument, not a lamp.** A graduated bezel of 120
+  ticks, 36 blades turning once in two minutes with a glint walking round,
+  a dashed coil counter-rotating, a level arc in the accent that carries the
+  live value (audio amplitude on VOICE, progress on a task, a figure on a
+  dashboard), a dark lens with two iris arcs and one small hot dot. It never
+  glows the screen; the glow budget is the core, the current step and the mic
+  ring.
+* **Panels are flat.** `--jv-panel` on a 1px `--jv-line-hair`, 6px radius,
+  uppercase Barlow header with a mono figure at the right. No glass, no blur,
+  no gradients as decoration, no pills — the only round things are status
+  dots and the mic ring.
+* **Type has three jobs.** Barlow for interface text and labels (uppercase +
+  tracking for chrome), Space Grotesk 300 for the one line to read first — the
+  reply, the big figure, the screen title — and JetBrains Mono only for data:
+  timestamps, ids, ms, tool names. Body text is never mono.
+* **The accent is spent, not spread.** `--jv-accent` on the current step, the
+  live value, the active tab's underline and the one primary control per
+  screen (`APPROVE`, `+ WIDGET`). Everything else is `--jv-text-dim` on
+  hairlines. Amber is held, red is broken, green is done.
+* **Density from information.** Hairlines over boxes, tabular numerals,
+  generous gutters (`--jv-space-6/7`), one primary action per surface, rare
+  controls behind expanders.
+* **Motion says what changed.** Panels rise in with a 55ms stagger; a running
+  dot pulses; the current step breathes; charts draw in and figures count up;
+  the tab underline slides. Nothing moves for decoration; nothing moves under
+  reduced motion.
 
-## 2. The inventory
+## 3. The inventory — pass 2
 
-One row per page, view and modal, found by walking `src/routes` and the
-component tree rather than remembered. **The milestone is not done while a box
-is unchecked.**
+One row per page, view and modal, found by walking `src/routes` and
+`src/lib` rather than remembered. Status is what the current screenshot shows:
+**old** — pre-C2 styling or a pre-C2 component; **partial** — on the tokens and
+the library, not on the look; **migrated** — C2, with its screenshot in
+`docs/ui-review/<page>/`. **The pass is not done while a box is unchecked.**
 
-Each row is done when: it is built on the C2 tokens and the shared component
-library, it has no hard-coded style value (`scripts/verify/token_lint.py`), it
-implements loading, empty, error and offline as real states, it renders at
-mobile, tablet and desktop widths, its motion comes from the M44 primitives,
-and a headless screenshot of it lands in `docs/ui-review/<page>/<breakpoint>.png`.
+Each row is done when: it is drawn to §2 on the tokens and the shared library
+(no ad-hoc colour, spacing or one-off component), `token_lint.py` is clean for
+it, loading / empty / error / offline are real states, it holds at 390 / 834 /
+1440, its motion is the M44 primitives, and its screenshot at all three widths
+is in `docs/ui-review/`. A visual-consistency check (`web_look_check.mjs`,
+M50) asserts the rendered result: body text in Barlow, no `.jv-grid` or
+`.jv-bracket` in the DOM, the tab underline present, pill radii only on the
+components allowed to have them.
 
-### Destinations
+### M49 — the signature surface
 
-- [x] `/` — the voice HUD
-- [x] **HOUSE** — shell, section switching, deep-link anchors
-- [x] **WORK** — shell, section switching, deep-link anchors
-- [x] **KNOWLEDGE** — shell, section switching, deep-link anchors
-- [x] **SETTINGS** — shell, section switching, deep-link anchors
+- [ ] `/` VOICE · **old** · GLSL `Orb.svelte` sphere, grid, brackets, tagline, pill PTT, mono readout → C2 chat view: `Reactor` (instrument) centred with the level arc on real audio amplitude; idle → listening → thinking → speaking as distinct states on the `--jv-rx-*` clock; caption line (`listening · hands-free · kitchen`); the exchange under it (Barlow question, Space Grotesk reply with caret, tool-call line); transcript panel left; this-turn panel right (stages bar, wake/transcribe/first-token/speak ms, tool calls); the dock (mic ring, "Say or type", VOICE | CHAT, key hints). Loading = boot; empty = "Say something"; error = the turn's; offline = the link's.
+- [ ] `Reactor` (`lib/ui`) · **partial** · C2 geometry, but state only tints the rim; needs per-state palette from `color.orb.*`, an amplitude-driven level, thinking's dashed inner ring, speaking's cadence, error, and a `figure` slot for the task ring and dashboard hero.
+- [ ] `Orb.svelte`, `orb-shader.spec.ts` · **old** → deleted once nothing references them; `design/build.py --check` and `reactor_orb_test.py` re-pointed at the instrument's geometry table (`tests/contracts/reactor_geometry.json`).
+- [ ] `BootSequence` · **partial** · re-staged on the instrument: bezel → blades → coil → level → core, subsystems named as they come up.
+- [ ] `ModeToggle` · **old** (pill) → the dock's VOICE | CHAT underline pair.
+- [ ] `ChatPanel` / `ChatMessage` · **partial** · pills and mono body → the chat mode as the same C2 view with the transcript expanded and the exchange as a list.
 
-### Sections
+### M50 — the console
 
-- [x] HOUSE · Devices (from `/devices`)
-- [x] HOUSE · Areas (from `/areas`)
-- [x] HOUSE · Dashboards (from `/dashboards`)
-- [x] HOUSE · Automations (from `/automations`)
-- [x] WORK · Tasks (from `/tasks`)
-- [x] WORK · Task detail (from `/tasks/[id]`)
-- [x] WORK · Code (from `/code`)
-- [x] KNOWLEDGE · Notes (from `/notes`)
-- [x] KNOWLEDGE · Memory (from `/memory`)
-- [x] SETTINGS · Assistant (from `/settings`)
-- [x] SETTINGS · Tools (from `/tools`)
-- [x] SETTINGS · Extensions and catalog (M46, M47)
-- [x] SETTINGS · Desktop (from `/desktop`)
-- [x] SETTINGS · Pairing and devices (`Pairing.svelte`)
+Chrome, drawn on every destination:
 
-### Chrome, drawn on every destination
+- [ ] Layout shell: header, tabs, status readout, skip link · **partial** · pill tabs and a glowing wordmark → C2 top bar with the sliding underline; VOICE joins the bar; the console link on the HUD and the MOMENTS pill go.
+- [ ] `DestinationNav` (section strip) · **partial** → C2 segmented control.
+- [ ] `CommandPalette` · **partial**
+- [ ] `Approvals` · **partial** → C2 approval bar (amber inset rule, `Held · tier 3`, APPROVE primary).
+- [ ] `Notifications` / `Moment` · **partial**
+- [ ] `TaskDock` / `TaskBar` / `TaskCard` · **partial**
+- [ ] `Toasts` · **partial**
+- [ ] `ToolActivity` · **partial** → the `.calls` line: dot, mono name, args, `ok`, ms.
+- [ ] `+error.svelte` · **partial**
 
-- [x] Layout shell: header, nav, status readout, skip link
-- [x] `CommandPalette` — and it must index sections, not only destinations
-- [x] `Approvals`
-- [x] `Notifications`
-- [x] `TaskDock` / `TaskBar` / `TaskCard`
-- [x] `Toasts`
-- [x] `BootSequence`
-- [x] `Orb` / `Reactor`
+Destinations and sections:
 
-### Views and modals
+- [ ] HOUSE shell · **partial**
+- [ ] HOUSE · Devices · **partial** · pill controls, mono names → hairline rows, Barlow names, one control per row lit.
+- [ ] HOUSE · Areas · **partial**
+- [ ] HOUSE · Dashboards · **partial** → C2 dashboard: title in Space Grotesk, range segmented control, `+ WIDGET` primary, cards with count-up figures, area charts with gradient fills that draw in, bars, sparkline tables, a hero with the mini reactor.
+- [ ] HOUSE · Automations · **partial**
+- [ ] WORK shell · **partial**
+- [ ] WORK · Tasks · **partial** → the day strip (C2 `.strip`) over the list.
+- [ ] WORK · Task detail · **partial** → C2 task view: progress ring (blades as plan steps), plan panel with the current step washed, tool calls live, output pane, approval bar, CANCEL / DIFF.
+- [ ] WORK · Code · **partial**
+- [ ] KNOWLEDGE shell · **partial** → the graph is the hero: notes and memory entries as nodes, `[[links]]` and back-links as edges, force-laid, drawn in with the stagger; a node lights and its edges pulse when a turn's `memory_used` names it or a note tool touches it (`jarvis_tool_*` events), and settles again on `--jv-dur-slow`.
+- [ ] KNOWLEDGE · Notes · **partial** → list + editor beside the graph, selected node ↔ open note.
+- [ ] KNOWLEDGE · Memory · **partial** → entries as the graph's other node kind; edit / pin / forget in a side panel.
+- [ ] SETTINGS shell · **partial**
+- [ ] SETTINGS · Assistant · **partial**
+- [ ] SETTINGS · Tools · **partial** · seven panels stacked, `EXPOSED` pills on every row → sections behind expanders (Callables · Exposure · Extensions · MCP · Skills · Catalog), one primary action.
+- [ ] SETTINGS · Extensions and catalog (`Extensions` + its three dialogs) · **partial**
+- [ ] SETTINGS · Desktop · **partial**
+- [ ] SETTINGS · Pairing (`Pairing`) and `EnrolVoice` · **partial**
+- [ ] `/styleguide` · **partial** · every primitive and every state re-rendered on the new look; the reactor's states and the graph documented.
 
-- [x] `ChatPanel` / `ChatMessage`
-- [x] `ModeToggle`
-- [x] `EntityRow`
-- [x] `TaskTimeline` / `TaskOutput` / `ToolActivity`
-- [x] `CodeDiff`
-- [x] `ScheduledJobs`
-- [x] `SkillsPanel`
-- [x] `McpServers`
-- [x] `Extensions` (the row, the scope editor, the catalog and install dialogs)
-- [x] `EnrolVoice`
-- [x] `Moment`
-- [x] `Pairing`
-- [x] `/styleguide` — every token group and every state, on the new structure
+Views that are not routes:
 
-### What stayed a raw `<button>`, and why
+- [ ] `EntityRow` · **partial**
+- [ ] `TaskTimeline` / `TaskOutput` · **partial**
+- [ ] `CodeDiff` · **partial**
+- [ ] `ScheduledJobs` · **partial**
+- [ ] `SkillsPanel` · **partial**
+- [ ] `McpServers` · **partial**
+- [ ] `Chart` (dashboards) · **partial** → area fill, draw-in, tabular axis.
 
-Eighty-four controls became `<Button>`. The library grew twice on the way —
-`pressed` (a toggle is a button state, and two pages were keeping raw markup
-purely for a `class:on` directive) and the `approve` variant (the yes half of a
-held action; three more raw buttons existed only to wear it) — plus attribute
-forwarding, so an `aria-expanded` no longer forces a page to hand-roll one.
+The library (`src/lib/ui`), re-skinned once so the pages inherit:
 
-What is left is not a button in this library's sense, and converting it would
-be worse than leaving it:
+- [ ] `Button` (default · primary · quiet · approve · danger · pressed) · **partial** → C2 `.btn`: uppercase Barlow, hairline, 6px, primary is the one filled control.
+- [ ] `Pill` · **old** shape → a hairline tag (radius `md`); status dots stay round.
+- [ ] `Tabs` · **partial** → the C2 sliding underline, shared with the top bar.
+- [ ] `Toggle`, `Input`, `Select`, `Field`, `Toolbar`, `Panel`, `Row`, `Dialog`, `IconButton` · **partial**
+- [ ] `SkeletonRows`, `EmptyState`, `ErrorState`, `OfflineState`, `ScreenState` · **partial**
+- [ ] New: `TopBar`, `SectionStrip`, `StatusReadout`, `StagesBar`, `CallLine`, `DayStrip`, `ProgressRing` (a `Reactor` preset), `Graph` (knowledge), `Figure` (count-up) — each with a `@component` block, a README section, tests, and a style-guide entry.
+- [ ] `chrome.css` · **old** · the grid, the brackets, the `.jv-*` pill classes and the mono defaults deleted once nothing references them; what remains is layout.
 
-| Control | Why it stays |
-|---|---|
-| `ChatPanel`'s mic, send, chip and drawer | Purpose-built shapes, not actions on a page. A mic is a mic. |
-| `TaskCard`'s disclosure and act rows | A disclosure triangle and a clickable row, styled as rows. |
-| `EntityRow`'s manage affordance | Sits inside the row's grid and is styled by it. |
-| `Extensions`' expander | The whole row is the control; it has no button chrome. |
-| `SkillsPanel`, `Moment`, `Notifications`, `Toasts`, `ModeToggle` | One bespoke control each, each drawn by its own component's CSS and using tokens throughout. |
+### M51 — the phone, on the same look
 
-Each of these is on the tokens — `token_lint.py` is at zero across the console
-— and each is a control this library does not have a shape for. Adding one
-component per one-off would be the same duplication in a different place.
+- [ ] HUD (`MainActivity`, `JarvisOrbView` / `ReactorOrb.kt` / `SiriOrbView`) · **old** · GLSL sphere, pill PAIR / SETTINGS → the instrument drawn on Canvas from the same geometry table, the same four states from `color.orb.*`, the same dock.
+- [ ] Console frame strip (`ConsoleFrame.kt`) · **partial** → C2 tabs with the underline.
+- [ ] Approval (`ApprovalActivity`, `ApprovalBridge` banner) · **partial** → the C2 approval bar.
+- [ ] Task overlay (`ToolActivityView`, task frames) · **partial**
+- [ ] PHONE settings (`SettingsActivity`), `SystemCheckActivity`, `VoiceIdentityActivity`, `PermissionRequestActivity`, `CompanionAskActivity`, `CrashLogActivity` · **partial** · `JarvisUi` pills and brackets → hairline panels, Barlow, one primary.
+- [ ] Boot (`JarvisBootAnimation`, `BootTimeline`) · **partial** → the staged instrument.
+- [ ] `JarvisUi.kt` `pill()` / `ghost()` / `CornerBrackets` · **old** → replaced; Roborazzi goldens re-rendered; `docs/ANDROID_DEVICE_TESTS.md` gains what only a device can confirm.
+- [ ] Desktop app (`jarvis-desktop-app`) · loads the console build — nothing to restyle beyond the tray icon; verified by its existing Playwright `_electron` run.
 
-## 3. What "clean" means here
+## 4. What "clean" means here
 
 Not a mood. Four things a check can ask about:
 
@@ -168,26 +207,27 @@ Not a mood. Four things a check can ask about:
   be pressed, one of them is a section of its own or belongs behind an
   expander.
 * **Progressive disclosure.** Advanced and rare controls are behind an
-  expander, not crowding the main view. The M46 extension row is the pattern:
+  expander, not crowding the main view. The extension row is the pattern:
   name, state and one switch on the row; the tool list, the permission scope
   and the provenance one click in.
-* **Space over density.** Where the two conflict, spacing wins. A console
-  somebody reads at a glance beats one that fits more.
+* **Space over density.** Where the two conflict, spacing wins.
 * **Understandable without explanation.** A first-time user should know what a
   screen is for from the screen. That is the one a test cannot check, and it is
   what the `docs/ui-review/` screenshots are for.
 
-## 4. Motion, in service of the structure
+## 5. Motion, in service of the structure
 
 The M44 tokens and primitives, applied so that motion answers "where did that
-go" rather than decorating:
+go" rather than decorating: sections of one destination are a shared-element
+transition; destinations are the route transition; the reactor's clock is
+`--jv-rx-*`; the graph's activity is `--jv-dur-pulse` in and `--jv-dur-slow`
+out; everything stays inside the M44 frame budget and the reduced-motion path.
 
-* moving between sections of one destination is a **shared-element**
-  transition — the section stays, its content changes, and the eye is told
-  which;
-* moving between destinations is the existing route transition;
-* everything stays inside the M44 frame budget and the reduced-motion path,
-  both of which are already measured.
+## 6. What stayed a raw `<button>`, and why
 
-**Non-negotiable**: this refines structure and polish. It does not restyle. The
-C2 look and its tokens are the constraint, not the subject.
+Eighty-four controls became `<Button>` under M48. What is left is not a button
+in this library's sense: `ChatPanel`'s mic, send, chip and drawer;
+`TaskCard`'s disclosure and act rows; `EntityRow`'s manage affordance;
+`Extensions`' expander; one bespoke control each in `SkillsPanel`, `Moment`,
+`Notifications`, `Toasts`, `ModeToggle`. Pass 2 re-skins each in place (or,
+for `ModeToggle`, replaces it) and keeps the list here current.
