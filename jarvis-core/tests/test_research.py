@@ -630,6 +630,109 @@ async def test_the_tool_tells_the_model_it_has_no_findings_yet(jarvis):
     await finish(jarvis, answer["task_id"])
 
 
+async def test_a_call_with_no_question_researches_what_the_user_said(jarvis):
+    """The 26 Aug 2026 deep-report miss: after a skill told the model when to
+    research, it called deep_research with nothing, got "nothing started", and
+    told the user the work was waiting on their confirmation. The user's own
+    sentence this turn IS the question, so the tool uses it and says so."""
+    from jarvis.api.devices import remember_utterance
+    from jarvis.bus import Context
+
+    class Registry:
+        def __init__(self) -> None:
+            self.tools: dict[str, Any] = {}
+
+        def register(self, *, name, handler, **kw) -> None:
+            self.tools[name] = (handler, kw)
+
+    registry = Registry()
+    jarvis.data["llm_tools"] = registry
+    web = FakeWeb()
+    web.default_search = web.results("https://a.test/1")
+    web.pages["https://a.test/1"] = web.page("text")
+    model = FakeModel(['["one"]', "note", "answer [1]"])
+    await setup_research(jarvis, web, model)
+    handler, _spec = registry.tools["deep_research"]
+
+    context = Context(origin="llm")
+    remember_utterance(jarvis, context, "Do some deep research on the boiler's flow temperature")
+    answer = await handler({}, context)
+    assert answer["status"] == "started", answer
+    assert "named no question" in answer["message"]
+    assert "flow temperature" in answer["message"]
+    assert "Do not invent findings" in answer["message"]
+    await finish(jarvis, answer["task_id"])
+
+    # With nothing said this turn either, there is nothing to research, and
+    # the refusal still tells the model not to call it "queued".
+    nothing = await handler({}, Context(origin="llm"))
+    assert nothing["status"] == "error"
+    assert "Do not tell the user it is queued" in nothing["error"]
+
+
+def test_the_users_words_decide_whether_a_note_is_asked_for():
+    from jarvis.integrations.research import asks_for_a_note
+
+    for said in (
+        "Do some deep research on the heating and save it as a note.",
+        "Research the boiler — everything you can find — and write it all up.",
+        "Look into heat pumps and make a note of what you find",
+        "find out the tariff and save the report",
+    ):
+        assert asks_for_a_note(said), said
+    for said in (
+        "What did my note about the boiler say?",
+        "Research the boiler's flow temperature",
+        "",
+    ):
+        assert not asks_for_a_note(said), said
+
+
+async def test_a_note_asked_for_in_the_users_words_is_kept_even_when_the_flag_is_dropped(jarvis):
+    """The other half of the 26 Aug deep-report miss: the model set no
+    `remember`, the report was right, and the note the user asked for never
+    existed. Their sentence is the consent the rule wants, so it decides."""
+    from jarvis.api.devices import remember_utterance
+    from jarvis.bus import Context
+
+    stored: list[dict] = []
+
+    async def remember(call) -> dict:
+        stored.append(dict(call.data))
+        return {"created": True}
+
+    jarvis.services.register("notes", "create", remember, supports_response=True)
+
+    class Registry:
+        def __init__(self) -> None:
+            self.tools: dict[str, Any] = {}
+
+        def register(self, *, name, handler, **kw) -> None:
+            self.tools[name] = (handler, kw)
+
+    registry = Registry()
+    jarvis.data["llm_tools"] = registry
+    web = FakeWeb()
+    web.default_search = web.results("https://a.test/1")
+    web.pages["https://a.test/1"] = web.page("text")
+    model = FakeModel(['["one"]', "a note", "answer [1]", '["one"]', "a note", "answer [1]"])
+    await setup_research(jarvis, web, model)
+    handler, _spec = registry.tools["deep_research"]
+
+    context = Context(origin="llm")
+    remember_utterance(jarvis, context, "Deep research on the heating, and save it as a note.")
+    answer = await handler({"question": "the heating"}, context)
+    await finish(jarvis, answer["task_id"])
+    assert len(stored) == 1, "the note the user asked for was not kept"
+
+    # And a sentence that asks for no note keeps the default: nothing stored.
+    other = Context(origin="llm")
+    remember_utterance(jarvis, other, "Deep research on the heating.")
+    answer = await handler({"question": "the heating"}, other)
+    await finish(jarvis, answer["task_id"])
+    assert len(stored) == 1
+
+
 # --- config ---------------------------------------------------------------------
 
 def test_config_clamps_rather_than_trusting_the_yaml():

@@ -698,3 +698,12 @@ is quiet. Done since:
   blocker behind the first: with the workspace writable, `create_repository` over the REST API
   answered "git is not installed" — the core image had no git. Added to the image's apt line,
   pinned by packaging; the ninth rebuild (core only) carries it with M68's client.
+- 21:21 — M68 committed (8c9bf26) and the research scenarios re-run on the ninth rebuild: 5 of 6
+  variants. The miss, `research-deep-report`, was the model twice over: first it called
+  `deep_research` with no question and told the user the work was "waiting on your
+  confirmation"; re-run, it asked properly (turn 1 passed) and then wrote a correct report — 55 °C,
+  12 % — with no note, although the user had said "save it as a note": the `remember` flag was
+  never set. Both fall back to the user's own sentence now — the question when the call names
+  none, the note when their words ask for one — with the rule unchanged that the model's
+  initiative alone never stores a page's claims. Research suite 32 (3 new). Reaches the house
+  at the tenth rebuild, with the agents' work.

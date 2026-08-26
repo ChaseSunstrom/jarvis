@@ -280,10 +280,28 @@ def _register_tools(jarvis: "Jarvis") -> None:
             (str(args[key]) for key in ("question", "query", "topic", "text") if args.get(key)),
             "",
         )
+        from ...api.devices import utterance_of
+
+        said = utterance_of(jarvis, context).strip()
+        borrowed = False
+        if not question.strip():
+            # Called with nothing at all — a 27B model does that after a skill
+            # has told it *when* to research and it forgets *what*. The user's
+            # own sentence this turn is the question they asked; refusing it
+            # cost the turn on 26 Aug 2026 (the model then reported the work
+            # "waiting on your confirmation", which nothing was).
+            question = said
+            borrowed = bool(question)
+        # The flag is the model's to set and it drops it: "…and save it as a
+        # note" ran to a correct report and no note on 26 Aug 2026. The user
+        # asking, in their own words, is exactly the consent the docstring's
+        # rule demands — so their sentence decides too, and the model's
+        # forgetting cannot cost them the note they asked for.
+        remember = bool(args.get("remember")) or asks_for_a_note(said)
         task = await async_start(
             jarvis,
             question,
-            remember=bool(args.get("remember")),
+            remember=remember,
             source="conversation",
             mode=str(args.get("mode") or "deep"),
         )
@@ -304,7 +322,13 @@ def _register_tools(jarvis: "Jarvis") -> None:
             "task_id": task.id,
             "steps": len(task.steps),
             "message": (
-                "Research has started and is running now. Tell the user it is "
+                (
+                    f"The call named no question, so the research is on what the "
+                    f"user asked this turn: {question[:200]!r}. "
+                    if borrowed
+                    else ""
+                )
+                + "Research has started and is running now. Tell the user it is "
                 "under way and will take a minute or two, and that its progress "
                 "is on the Tasks page. Do not invent findings — you have none "
                 "yet. Answer the user now, in this turn: do not call task_status "
@@ -356,6 +380,26 @@ def _register_tools(jarvis: "Jarvis") -> None:
 # ---------------------------------------------------------------------------
 # starting a run
 # ---------------------------------------------------------------------------
+_NOTE_ASKED = re.compile(
+    r"\b(?:as|in|into) a note\b"
+    r"|\bsave (?:it|this|that|them|the (?:report|results?|findings|answer))\b"
+    r"|\bwrite (?:it|this|that|them|everything|it all) (?:up|down)\b"
+    r"|\b(?:make|take|leave|keep) a note\b"
+    r"|\bnote it\b",
+    re.I,
+)
+
+
+def asks_for_a_note(said: str) -> bool:
+    """Did the user, in their own words, ask for the report to be kept?
+
+    Only their sentence counts — never a page's, which is why this reads the
+    turn's utterance and not the report. Spelled out rather than "any mention
+    of a note", so "what did my note say" does not turn a lookup into a save.
+    """
+    return bool(said) and bool(_NOTE_ASKED.search(said))
+
+
 async def async_start(
     jarvis: "Jarvis",
     question: str,
@@ -471,6 +515,11 @@ async def _run(
             continue
         results = [r for r in result.get("results") or [] if isinstance(r, dict)]
         per_query.append((query, results))
+        # web.search says when the configured SearXNG could not search and a
+        # second one answered; the step must say so too, or "8 results" reads
+        # as the operator's instance working when it is not.
+        notes = [str(n) for n in result.get("notes") or [] if str(n).strip()]
+        found = f"{len(results)} result{'' if len(results) == 1 else 's'}"
         registry.output(
             task_id,
             f"{query} — {found}\n"
@@ -489,11 +538,6 @@ async def _run(
         # Every search failed. Saying so beats a report written from nothing,
         # and the reason is the operator's actual next action — usually that
         # SEARXNG_URL is unset or the container is down.
-        # web.search says when the configured SearXNG could not search and a
-        # second one answered; the step must say so too, or "8 results" reads
-        # as the operator's instance working when it is not.
-        notes = [str(n) for n in result.get("notes") or [] if str(n).strip()]
-        found = f"{len(results)} result{'' if len(results) == 1 else 's'}"
         await registry.async_update(
             task_id,
             status=STATUS_ERROR,

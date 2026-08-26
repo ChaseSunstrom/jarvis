@@ -538,7 +538,9 @@ person-shaped probe asks; what the suite found, written up.
 | A page's leads are followed, once | Automated | `tests/test_research.py::test_a_lead_from_the_pages_is_followed_once` |
 | Quick and deep are one engine with two budgets, and a mode cannot raise a configured limit | Automated | `test_quick_mode_does_not_follow_leads_and_stays_small`, `test_a_mode_cannot_raise_a_configured_limit` |
 | Each key claim says how many of the sources read support it | Automated | `tests/test_research_plan.py` (cross-check), and the `## Confidence` section of every report |
-| No cloud search fallback exists anywhere | Automated | `scripts/verify/m18-research.sh` greps for one; `web.search` fails saying SearXNG is not configured |
+| No cloud search fallback exists anywhere | Automated | `scripts/verify/m18-research.sh` greps for one; `web.search` fails saying SearXNG is not configured. The one fallback there is (M68) is a second SearXNG — the stack's own — and the grep covers it |
+| A `deep_research` call that names no question researches what the user said this turn, and says so; with nothing said either it refuses and tells the model not to call it "queued" | Automated | `test_a_call_with_no_question_researches_what_the_user_said` — the 26 Aug deep-report miss on the ninth rebuild |
+| "…and save it as a note" in the user's own words keeps the report as a note even when the model drops the `remember` flag; a sentence that asks for none keeps the default (nothing stored) | Automated | `test_a_note_asked_for_in_the_users_words_is_kept_even_when_the_flag_is_dropped`, `test_the_users_words_decide_whether_a_note_is_asked_for` — the re-run of the same scenario at 21:19 |
 | The report is a markdown file a person can open | Automated | `test_the_report_is_written_to_a_file_somebody_can_open` — `<config>/research/<date>-<slug>.md` |
 | Research against the **real** SearXNG and the open web | **Scripted** | `SEARXNG_URL=… python3 evals/research_eval.py --backend live` — needs the operator's SearXNG, which `jarvisdev` cannot start here (`BLOCKERS.md`). The command refuses clearly rather than pretending when the URL is unset |
 | jarvis-browser's own guards (SSRF, robots, JavaScript rendering) | Automated *in its own suite* | `python3 -m pytest jarvis-browser/tests -q` — 337 tests |
@@ -1413,7 +1415,10 @@ because every upstream engine timed out (Brave, DuckDuckGo, Google CSE — the
 search box's own egress), so `deep_research` on the stack ended "nothing was
 found for 3 searches". The research scenarios run on the fixture ground with
 the fixture search and are unaffected; a stack-ground scenario that needs the
-open web fails until the search box can reach it.
+open web fails until the search box can reach it. Since M68 (8c9bf26) the client
+tells that answer — every engine unresponsive — from "no results" and asks the
+stack's own SearXNG next, saying which instance answered; the search box's own
+egress is still the operator's to mend.
 
 ## Known failures, as of 2026-08-26 (this host)
 
