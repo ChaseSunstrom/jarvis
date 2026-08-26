@@ -16,7 +16,7 @@ This document is the spine. Each numbered item is a milestone in
 
 ## What is true now
 
-- 63 milestones ticked as of 18:08 on the 26th (M27, M50–M55, M57–M60 this
+- 64 milestones ticked as of 20:10 on the 26th (M65, something to browse, the last) (M27, M50–M55, M57–M60 this
   morning; M62, the dashboard as the first console tab, and M63, the dashboard
   showing the house, in the afternoon); M61 (18:03, gate 20/20) and M64 (18:08,
   gate 64/64) ticked from the main checkout with their live slices; M56 and

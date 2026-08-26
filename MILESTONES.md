@@ -1015,7 +1015,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 18:08: gate 64/64 from the main checkout on the rebuilt stack, live smoke slice
     included; goldens re-recorded on the merged tree (console-frame with DASHBOARDS first
     under M64's bar) and looked at. What only a phone shows is ADT-047…051, Unproven.
-- [ ] **M65 — Something to browse** · size M · deps M47, M55 · parallel-ok M64
+- [x] **M65 — Something to browse** · size M · deps M47, M55 · parallel-ok M64
   - Scope: the operator's "I can't browse the tools/mcp servers from the settings, no way to
     browse". Two things were true: BROWSE CATALOG sat inside the Extensions fold, and
     `jarvis/extensions/browse` answered "no catalog source is configured" because M47 ships no
@@ -1030,6 +1030,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     in `configuration.yaml` with `allow_stdio` — a catalogue cannot offer one, by design. NEW
     SKILL stays the page's one lit control. Loading, empty, error and offline as real states.
   - Verify: `bash scripts/verify/m65-catalogue.sh`
+  - 26 Aug 20:10: built by an agent in a worktree from the operator's report ("no way to browse"),
+    cherry-picked (ddec4bc) and verified on the branch — gate 27/27, core 181, vitest 757, the
+    look and menu specs 36/36; the pictures of Settings › Tools looked at: the catalogue is
+    the first panel after the one search box. Remote https sources stay unexercised (as
+    under M47).
 
 ## Final
 
