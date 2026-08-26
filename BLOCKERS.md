@@ -48,8 +48,10 @@ stable-first, the first sentence spoken before the reply is finished, whisper
 int8, `llm.fast_model` on the voice path when the operator sets one, and a
 switch to drop the reasoning block on a spoken turn (measured: 3.1 s median
 at 87 % intent against 5.9 s at 93 %, so it ships on) — and the full-mode
-median moved from 6.67 s to 2.87 s with reasoning kept (11:54, the record) (10:27; the rig measures to
-`run-end`, so early speech is not in that number). What remains is hardware,
+median moved from 6.67 s to 2.87 s with reasoning kept (11:54, the record;
+the rig measures to `run-end`, so early speech is not in that number), and
+measured 3.17 s at 18:32 on the stack with the broker and the search engine
+up beside it — the smoke set alone runs at 2.5 s. What remains is hardware,
 and still needs one of:
 
 * a small model (3–8 B class) served at the same endpoint for the voice path,
@@ -67,7 +69,10 @@ the task engine takes one model round trip per sensor, and on the night of
 26 August the job was a third of the way through when the budget ran out
 (it finishes, minutes later — the moment then arrives, now that the inbox is
 switched on). The budget is the scenario author's idea of a small job and is
-left as it is: a faster model is the fix, not a longer wait.
+left as it is: a faster model is the fix, not a longer wait. One thing that
+was not hardware is fixed: on the evening's report run the job ended
+`jarvis_task_failed` because a later scenario restarted the core under it;
+a restart turn now waits for running tasks first (23a8d5b).
 
 ## 3. Everything that needs a phone, a wall panel or a microphone
 
