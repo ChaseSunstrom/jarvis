@@ -50,6 +50,20 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: jarvis-web/package-lock.json
+      # M61's gate builds, tests and lints the phone and checks its goldens;
+      # none of that can run where there is no JDK and no SDK (the dev box has
+      # neither — BLOCKERS §3), so the nightly is where it actually happens.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10"
 
       - name: The repo-local venv, the way every other job builds it
         run: |
