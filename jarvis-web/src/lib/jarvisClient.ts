@@ -134,6 +134,7 @@ export interface PendingApproval {
 	 * the field's name to the tier contract.
 	 */
 	summary?: string;
+	/**
 	 * The clock this request is on, in seconds: `llm.question_ttl` for a
 	 * question, `llm.approval_ttl` for an action (M66). Count THIS down, so the
 	 * bar and the voice — which says "expired after 30 minutes" — agree.

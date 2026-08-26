@@ -162,6 +162,11 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     # verb for it.
     "remove_entities": None,
     "remove_device": None,
+    # Changing a setting (M67) writes through the one function the console's
+    # `config/settings/set` websocket command is — a command, not a service —
+    # so an automation has no verb for it either. Landed beside M69, whose
+    # agent added this table's rows while M67's agent added the tool.
+    "change_setting": None,
     # `lock_control` is Tier 3 *and* `domain="lock"`, so the service form
     # (`lock.lock` / `lock.unlock`) is already covered by GATED_DOMAINS.
     "lock_control": None,
