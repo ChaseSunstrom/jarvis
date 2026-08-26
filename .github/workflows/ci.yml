@@ -81,7 +81,10 @@ jobs:
           # reproduced from the public API. (`-rf`: pytest's own FAILED lines.)
           python -m pytest ${{ matrix.suite.paths }} -q -rf --timeout=120 --timeout-method=signal 2>&1 | tee pytest.log
           status=${PIPESTATUS[0]}
-          grep -E '^(FAILED|ERROR) ' pytest.log | head -n 30 | sed 's/^/::error::/'
+          # `|| true`: the default shell here is `bash -e`, and with pipefail a
+          # grep that finds no FAILED line — every green run — returned 1 and
+          # took the job down with it (three green suites went red on 69da624).
+          grep -E '^(FAILED|ERROR) ' pytest.log | head -n 30 | sed 's/^/::error::/' || true
           exit "$status"
 
   legacy-suites:

@@ -90,6 +90,9 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/dashboards/delete` | `id`; refuses one this token does not own |
 | `jarvis/metrics/sources` | what can be graphed, per source, with each source's health |
 | `jarvis/metrics/query` | `source`, `series`, and either `range` (`1h`…`7d`) or `start`/`end`/`step`; the points. A source that is down answers with an error per series rather than failing the request |
+| `jarvis/sensors/readings` | optional `area`, `limit`; every sensor's newest reading with its room and age, newest first — what the dashboard's readings widget draws (M63) |
+| `jarvis/sky/summary` | the next ISS pass and the moon tonight from the sky integration's cached elements, each saying how old the elements are; `fetched: false` with a sentence when there are none yet, never a guess |
+| `jarvis/vision/still` | `camera`, optional `reason`; one JPEG frame as a data URL through the vision integration's own consent, rate limit and audit — the requester is this socket's token, never a field of the payload. A camera whose consent is `never` answers with the refusal; no camera configured answers with a sentence saying so |
 | `jarvis/tasks/cancel` | `task_id`; **asks** the worker to stop. The registry is a record, not a scheduler — it cannot reach into the coroutine — so the reply carries `cancelled` and a `note` saying a worker that does not check may still be running |
 | `jarvis/tasks/delete` | `task_id`; forgets one task. Does not stop it |
 | `jarvis/tasks/clear_finished` | forgets every finished task, leaving the live ones |
