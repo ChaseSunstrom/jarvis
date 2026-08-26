@@ -293,12 +293,14 @@ latency:
 #: fixture handbook" routed to a CODING job on the repository called `fixture`,
 #: and "research the handbook website" made it ask which site was meant — a
 #: question that goes through the same approval channel this eval denies, so
-#: the load never started. The third rewrite names the handbook by its
-#: address: since M60's rules "the fixture handbook" with no address also made
-#: it ask which one was meant (correct — research-cancel records it), and the
-#: scenario it was copied from says `{{handbook}}` now too. `run.py` expands
-#: the placeholder from the fixture web.
+#: the load never started. The third rewrite named the handbook by its
+#: address, and still no job started (what it said is not in the gate's log;
+#: a page with an address is also a thing the model may simply read and
+#: answer in the turn, which is right and is no load). The fourth is the
+#: sensor audit the routing section already proves reaches
+#: `run_background_task` in one turn: one model round trip per sensor, minutes
+#: of exactly the load a person generates, on the same server the probe needs.
 load:
   say: >
-    Do some deep research on what the household handbook at {{handbook}} says
-    about heating — the flow temperature and why — and save it as a note.
+    Go through every sensor in the house one at a time, work out which look
+    wrong, and write it up. Don't wait for it — tell me when it's done.
