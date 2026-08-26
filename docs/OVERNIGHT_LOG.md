@@ -442,3 +442,6 @@ is quiet. Done since:
   first look) all green here; the six gap rows are the one open check. The smoke
   failure named: "Done, Sir — the bed light is off" with nothing called; a guard
   now sends that back to call or to say so.
+- 12:50 — The console's whole suite 282/284 with the knowledge reset (the two
+  misses are motion frame budgets under a concurrent verify-all). verify-all is
+  past m24; its table lands when it ends.
