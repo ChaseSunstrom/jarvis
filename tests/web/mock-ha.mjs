@@ -2367,6 +2367,14 @@ index 1234567..89abcde 100644
 					// The approvals banner asks for what is already waiting when it
 					// mounts, so a reload does not lose a held action.
 					if (domain === 'llm' && service === 'pending_requests') {
+						// Purged before listing, as jarvis-core purges (M66): a
+						// request that lapsed is announced as such, once, and never
+						// handed back as pending — a client mounting later must not
+						// inherit another test's dead question.
+						for (const gone of world.approvals.filter((a) => a.expires_at <= Date.now() / 1000)) {
+							world.approvals.splice(world.approvals.indexOf(gone), 1);
+							broadcast('jarvis_approval_expired', { ...gone, expired: true });
+						}
 						ok(msg.id, { response: world.approvals });
 						break;
 					}
