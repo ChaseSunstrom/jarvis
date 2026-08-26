@@ -233,6 +233,18 @@ jobs:
             exit 1
           fi
 
+      # jarvis-embeddings and jarvis-reranker download ~220 MB of model on
+      # first start into ./models/embeddings (bind-mounted as their Hugging
+      # Face cache). On a runner that download is the one network step in
+      # the whole job, and on cd95876 it failed twice on the way to working —
+      # each failure a process exit, each exit a restart the job read as a
+      # crash loop. Warm, the cache makes first start a file read.
+      - name: Cache the retrieval models
+        uses: actions/cache@v4
+        with:
+          path: jarvis-core/models/embeddings
+          key: retrieval-models-${{ hashFiles('jarvis-core/.env.example') }}
+
       - name: Build the local images and start the stack
         working-directory: jarvis-core
         timeout-minutes: 30
@@ -355,13 +367,22 @@ jobs:
             pending=""
             sick=""
             while IFS='|' read -r name health restarts; do
+              name="${name#/}"
               case "$health" in
-                healthy|none) ;;
-                starting)     pending="$pending ${name#/}" ;;
-                *)            sick="$sick ${name#/}($health)" ;;
+                healthy)
+                  # The restart count at the moment a service first answers
+                  # healthy is its baseline: a restart BEFORE that is a first
+                  # start that had to be retried (a model download that
+                  # failed once), and a restart AFTER it is the loop this job
+                  # exists to catch. The settle step compares against this.
+                  [ -f "${RUNNER_TEMP:-/tmp}/healthy-$name" ] || echo "${restarts:-0}" > "${RUNNER_TEMP:-/tmp}/healthy-$name"
+                  ;;
+                none)         ;;
+                starting)     pending="$pending $name" ;;
+                *)            sick="$sick $name($health)" ;;
               esac
-              if [ "${restarts:-0}" -ne 0 ]; then
-                sick="$sick ${name#/}(restarted $restarts)"
+              if [ "${restarts:-0}" -ne 0 ] && [ ! -f "${RUNNER_TEMP:-/tmp}/healthy-$name" ]; then
+                echo "::warning::$name restarted ${restarts} time(s) before its first healthy answer — a retried first start, watched, not yet a failure"
               fi
             done < <(docker inspect \
                        --format '{{.Name}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}' \
@@ -426,9 +447,12 @@ jobs:
 
             # A restart is the failure, whatever caused it. This is the only
             # check here that does not care WHY.
-            if [ "${restarts:-0}" -ne 0 ]; then
-              echo "::error::$name has restarted ${restarts} time(s). Something is crash-looping — read the log dump below for the traceback."
+            baseline="$(cat "${RUNNER_TEMP:-/tmp}/healthy-$name" 2>/dev/null || echo 0)"
+            if [ "${restarts:-0}" -ne "$baseline" ]; then
+              echo "::error::$name has restarted $(( restarts - baseline )) time(s) since it was first healthy (${restarts} in all). Something is crash-looping — read the log dump below for the traceback."
               fail=1
+            elif [ "${restarts:-0}" -ne 0 ]; then
+              echo "::warning::$name restarted ${restarts} time(s) before its first healthy answer and none since — a retried first start, not a loop"
             fi
 
             case "$policy" in

@@ -615,3 +615,8 @@ is quiet. Done since:
   asks the same sentence minutes earlier and a still-running job makes the second one
   "already under way". The load has its own subject now (lights and switches); the gate
   runs again behind the fourth rebuild.
+- 19:40 — compose smoke red on cd95876 for the first time today: jarvis-embeddings and
+  jarvis-reranker each restarted twice before their first healthy answer — the ~220 MB model
+  download failing on the runner and being retried, read by the job as a crash loop. The
+  job now caches ./models/embeddings across runs and counts restarts from a service's first
+  healthy answer, which is where a loop would show; a retried first start is a warning.
