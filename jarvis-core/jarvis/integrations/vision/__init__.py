@@ -2,18 +2,30 @@
 
 ```yaml
 vision:
-  model: qwen2.5vl:7b                 # any local Ollama vision model
-  ollama_url: http://127.0.0.1:11434
+  # The model server. Left out, it is the `llm:` block's url — the gateway or
+  # llama-swap the chat model already uses — on the OpenAI wire.
+  backend: openai                     # openai | ollama (inferred from the url)
+  url: http://127.0.0.1:4000/v1       # a GGUF VLM behind llama-swap / the gateway
+  model: house-vision                 # the name THAT server serves it under
+  api_key_env: LLM_API_KEY            # env var holding the key, if the proxy wants one
+  local_only: true                    # refuse a url that resolves off the LAN
   min_interval: 10                    # seconds between model calls per camera
   max_concurrent: 2
+  go2rtc_url: http://127.0.0.1:1984   # where `platform: go2rtc` cameras are read
   cameras:
     - name: Front Door
-      platform: still                 # still | mjpeg | rtsp | mqtt
-      url: http://192.168.1.64/snapshot.jpg
-      username: !secret camera_user
-      password: !secret camera_pass
+      platform: go2rtc                # go2rtc | still | mjpeg | rtsp | mqtt
+      stream: front_door              # a stream in jarvis-core/go2rtc/go2rtc.yaml
       area: Front Porch
       consent: ask                    # always | ask | never  (default: ask)
+    - name: Garden
+      platform: still
+      url: http://192.168.1.71/snapshot.jpg
+      username: !secret camera_user
+      password: !secret camera_pass
+      consent: always
+  frigate:                            # optional: an NVR's events become moments
+    mqtt: true                        # subscribe to frigate/events; kind `camera`
 ```
 
 Services, three of which are also LLM tools:
@@ -45,7 +57,14 @@ being fed back in as an instruction to look.
 allowed or denied — in `vision.audit`, and on the bus as events so a console
 can show a live "the assistant is looking" indicator. The trail stores no
 frames and no descriptions; an audit log that accumulates a transcript of
-everything the cameras saw is worse than the thing it audits.
+everything the cameras saw is worse than the thing it audits. The events'
+shape is `tests/contracts/vision_events.json`, which the console reads too.
+
+The model server is the same kind of thing as the chat model's: the OpenAI
+wire to a GGUF vision model on llama-swap, through the gateway, and it is
+held to the same `local_only` rule. Ollama's wire is still there for an
+install that runs one. `analyze.py` is the two wires; `frigate.py` is the
+optional listener that turns an NVR's events into moments.
 """
 
 from __future__ import annotations
@@ -73,6 +92,7 @@ from .analyze import (
 from .camera import (
     CAMERA_DOMAIN,
     DEFAULT_FRAME_TTL,
+    DEFAULT_GO2RTC_URL,
     DEFAULT_MAX_FRAME_BYTES,
     CameraConfig,
     CameraEntity,
@@ -98,6 +118,7 @@ from .consent import (
     clean_reason,
 )
 from .fence import fence, is_fenced
+from .frigate import FrigateConfig, FrigateEvents
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...core import Jarvis
@@ -111,11 +132,15 @@ DOMAIN = "vision"
 DEPENDENCIES = ["llm", "companion"]
 
 DATA_MANAGER = "manager"
+DATA_FRIGATE = "frigate"
 
 #: Fired when a look is authorised and a frame is about to be fetched, and
 #: again when it finishes. A console can light an indicator on the first and
 #: clear it on the second, which is what "the assistant can see" should look
-#: like from the outside.
+#: like from the outside. Every one carries the audit row (`id`, `camera`,
+#: `allowed`, …) plus the cleaned `question`; the finish carries `ok` and
+#: `duration_ms`. `tests/contracts/vision_events.json` is the table the
+#: console's activity strip reads from.
 EVENT_LOOK_STARTED = "vision_look_started"
 EVENT_LOOK_FINISHED = "vision_look_finished"
 EVENT_LOOK_DENIED = "vision_look_denied"
@@ -356,11 +381,18 @@ class VisionManager:
 
     # --- events -----------------------------------------------------------
     def _fire(self, event: str, record: LookRecord, **extra: Any) -> None:
-        self.jarvis.bus.fire(event, {**record.as_dict(), **extra})
+        """One event, in the contract's shape. `question` is always present —
+        empty for a snapshot — so a consumer keyed on it never sees `undefined`."""
+        self.jarvis.bus.fire(event, {**record.as_dict(), "question": "", **extra})
 
     # --- the gate ---------------------------------------------------------
     async def authorize(
-        self, source: CameraSource, action: str, reason: str, requester: str
+        self,
+        source: CameraSource,
+        action: str,
+        reason: str,
+        requester: str,
+        question: str = "",
     ) -> tuple[Decision, LookRecord]:
         """Rate limit, then consent. Nothing is fetched by either."""
         cfg = source.config
@@ -377,7 +409,7 @@ class VisionManager:
         # rate-limit slot, and the answer never depends on anything else.
         if cfg.consent == CONSENT_NEVER:
             decision = Decision(False, "policy_never", cfg.consent)
-            return self._record_denial(decision, record)
+            return self._record_denial(decision, record, question)
 
         # The limiter guards two scarce things: the GPU, and the user's
         # attention. A snapshot makes no model call, so it is free on the
@@ -390,20 +422,20 @@ class VisionManager:
         if limited is not None:
             decision = Decision(False, RATE_LIMITED, cfg.consent)
             record.error = limited
-            return self._record_denial(decision, record)
+            return self._record_denial(decision, record, question)
 
         # The slot stays spent whatever the human says. Nothing was looked at,
         # but they were interrupted, and a refusal that can be retried in a
         # loop is a doorbell rather than a decision.
         decision = await self.broker.authorize(cfg.name, cfg.consent, record.reason)
         if not decision.allowed:
-            return self._record_denial(decision, record)
+            return self._record_denial(decision, record, question)
         record.decision = decision.decision
         record.allowed = True
         return decision, record
 
     def _record_denial(
-        self, decision: Decision, record: LookRecord
+        self, decision: Decision, record: LookRecord, question: str = ""
     ) -> tuple[Decision, LookRecord]:
         record.decision = decision.decision
         record.allowed = False
@@ -413,7 +445,7 @@ class VisionManager:
         # caller has to be findable in `vision.audit`, and the id of a record
         # that was merged away is not.
         record = self.audit.add(record)
-        self._fire(EVENT_LOOK_DENIED, record)
+        self._fire(EVENT_LOOK_DENIED, record, question=question)
         return decision, record
 
     def _refuse(
@@ -424,6 +456,7 @@ class VisionManager:
         decision_name: str,
         reason: str = "",
         error: str = "",
+        question: str = "",
     ) -> tuple[Decision, LookRecord]:
         """Record and announce a refusal made before any camera was involved.
 
@@ -448,16 +481,17 @@ class VisionManager:
             consent=source.config.consent if source is not None else "",
             error=clean_reason(error),
         )
-        return self._record_denial(Decision(False, decision_name), record)
+        return self._record_denial(Decision(False, decision_name), record, question)
 
     def _unknown_camera(
-        self, camera: Any, action: str, requester: str
+        self, camera: Any, action: str, requester: str, question: str = ""
     ) -> dict[str, Any]:
         """A look at a camera that does not exist — refused, and on the record."""
         _, refused = self._refuse(
             camera, action, requester, UNKNOWN_CAMERA,
             reason="a camera that is not configured",
             error=f"asked for {str(camera)[:120]!r}",
+            question=question,
         )
         return _error(
             f"no camera called {str(camera)!r}. Known cameras: "
@@ -530,7 +564,9 @@ class VisionManager:
         """The whole path: resolve, gate, fetch, analyse, fence, audit."""
         # The tripwire runs on the RAW text, before cleaning: `clean_question`
         # neutralises fence markers, so cleaning first would erase the very
-        # evidence this check is looking for.
+        # evidence this check is looking for. The event for this refusal
+        # carries no question at all — the one thing it must not do is put
+        # the fenced text on the bus for a console to render.
         if is_fenced(str(question or "")) or is_fenced(str(reason or "")):
             _, refused = self._refuse(
                 camera, action, requester, FENCED_QUESTION,
@@ -548,15 +584,16 @@ class VisionManager:
 
         source = self.resolve(camera)
         if source is None:
-            return self._unknown_camera(camera, action, requester)
+            return self._unknown_camera(camera, action, requester, question_text)
 
         decision, record = await self.authorize(
-            source, action, str(reason or question_text), requester
+            source, action, str(reason or question_text), requester, question_text
         )
         if not decision.allowed:
             return self.denial_result(decision, record)
 
         self._fire(EVENT_LOOK_STARTED, record, question=question_text)
+        started = time.monotonic()
 
         previous = (
             self.previous_description(source.config.name)
@@ -568,21 +605,25 @@ class VisionManager:
             try:
                 frame, cached = await self._grab(source, record, max_age)
             except CameraError as exc:
-                return self._failed(record, "camera_error", str(exc))
+                return self._failed(record, "camera_error", str(exc), started, question_text)
 
             try:
                 analysis = await self.model.analyze(frame, question_text, previous)
             except ModelError as exc:
-                return self._failed(record, "model_error", str(exc))
+                return self._failed(record, "model_error", str(exc), started, question_text)
             except Exception as exc:  # never let a model bug become a traceback
                 _LOGGER.exception("vision: the model call blew up")
                 return self._failed(
-                    record, "model_error", f"{type(exc).__name__}: {exc}"
+                    record, "model_error", f"{type(exc).__name__}: {exc}",
+                    started, question_text,
                 )
 
         record.outcome = "ok"
         self.audit.add(record)
-        self._fire(EVENT_LOOK_FINISHED, record, ok=True)
+        self._fire(
+            EVENT_LOOK_FINISHED, record,
+            ok=True, question=question_text, duration_ms=_elapsed_ms(started),
+        )
 
         fenced = fence(analysis.text, source=source.config.name)
         if action == ACTION_CHANGE:

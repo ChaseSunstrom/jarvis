@@ -1382,6 +1382,9 @@ def test_compose_has_the_whole_stack(compose: dict[str, Any]) -> None:
         # themselves.
         "jarvis-radicale",
         "jarvis-mailsink",
+        # Camera ingest (M56), behind `--profile cameras`: go2rtc turns any
+        # camera into the snapshot URL `vision` reads.
+        "go2rtc",
     }
     assert "homeassistant" not in services, "jarvis-core replaces it; it must not be here"
 
@@ -1483,9 +1486,11 @@ def test_only_optional_extras_are_profile_gated(compose: dict[str, Any]) -> None
     # should spend their disk on.
     # And the two M39 fixtures, which exist for the tests rather than for the
     # house: a CalDAV server and a mailbox with nothing real in either.
+    # go2rtc (M56) is a camera restreamer: a box with no cameras has no use
+    # for one, and a box WITH cameras is a decision somebody makes.
     assert gated == {
         "searxng", "mosquitto", "photon", "jarvis-tts",
-        "jarvis-radicale", "jarvis-mailsink",
+        "jarvis-radicale", "jarvis-mailsink", "go2rtc",
     }
 
 

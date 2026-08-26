@@ -77,7 +77,10 @@ MAX_BODY = 1000
 #: What can produce a notification, and whether it does by default. Named
 #: rather than free-form so a surface can group them and an operator can turn
 #: one off without turning off the feature.
-KINDS = ("task", "reminder", "briefing", "approval", "note")
+#: `camera` is an NVR's event — "a person at the front door" from Frigate
+#: (`vision.frigate`) — recorded so a household can see what the cameras
+#: noticed while nobody was asking.
+KINDS = ("task", "reminder", "briefing", "approval", "note", "camera")
 
 
 def _clip(value: Any, limit: int) -> str:

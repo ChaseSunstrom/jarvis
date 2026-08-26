@@ -402,6 +402,7 @@ class OpenAICompatClient:
         keep_alive: str | float | None = None,
         think: bool | None = None,
         format: str | dict[str, Any] | None = None,
+        privacy: str = "",
     ) -> ChatStream:
         """Start a chat exchange. Same contract as the Ollama client's.
 
@@ -409,6 +410,12 @@ class OpenAICompatClient:
         own, and a caller that sets one should not have to know which backend
         it ended up talking to. Accepting-and-ignoring is the honest option —
         the alternative is a TypeError from a keyword that used to work.
+
+        `privacy` is for a caller that KNOWS what it is sending is private —
+        the vision integration, whose prompt is a picture of the inside of
+        the house. The classifier reads text markers, and a JPEG has none, so
+        without this the one request that most needs the `local-only` tag
+        would be the one that never got it.
         """
         payload: dict[str, Any] = {
             "model": model or self.model,
@@ -429,7 +436,7 @@ class OpenAICompatClient:
             payload.update(extra)
             if body:
                 payload.setdefault("extra_body", {}).update(body)
-        _tag_privacy(payload)
+        _tag_privacy(payload, force=privacy)
         return OpenAICompatStream(self, payload)
 
     # --- the tool loop's wire shape ---------------------------------------
@@ -555,7 +562,7 @@ class OpenAICompatClient:
         return [[float(x) for x in (r.get("embedding") or [])] for r in ordered]
 
 
-def _tag_privacy(payload: dict[str, Any]) -> None:
+def _tag_privacy(payload: dict[str, Any], force: str = "") -> None:
     """Mark a request whose prompt carries private content (M40).
 
     The tag travels in `metadata` and is enforced by the gateway, which refuses
@@ -565,12 +572,17 @@ def _tag_privacy(payload: dict[str, Any]) -> None:
     well-behaved client.
 
     A prompt with nothing private in it is not tagged at all, so an install
-    with no gateway sends exactly what it sent before.
+    with no gateway sends exactly what it sent before. `force` is a caller's
+    own verdict (`chat(privacy=...)`), applied instead of the classifier's —
+    the only way a prompt whose private content is an image gets the tag.
     """
     try:
         from ..security.privacy import HEADER, classify
 
-        tag, _why = classify(payload.get("messages"))
+        if force:
+            tag = str(force)
+        else:
+            tag, _why = classify(payload.get("messages"))
         if not tag:
             return
         metadata = payload.setdefault("metadata", {})

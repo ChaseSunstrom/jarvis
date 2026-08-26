@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -50,7 +50,23 @@ PLATFORM_STILL = "still"
 PLATFORM_MJPEG = "mjpeg"
 PLATFORM_RTSP = "rtsp"
 PLATFORM_MQTT = "mqtt"
-PLATFORMS = (PLATFORM_STILL, PLATFORM_MJPEG, PLATFORM_RTSP, PLATFORM_MQTT)
+#: A stream go2rtc restreams (`jarvis-core/go2rtc/go2rtc.yaml`), read through
+#: its snapshot endpoint. Underneath it is `still`: one GET, one JPEG. The
+#: platform exists so a camera is named by its stream rather than by a URL an
+#: operator has to assemble — and so the downscale go2rtc does on the way in
+#: (`w=`) is the default rather than something to know about.
+PLATFORM_GO2RTC = "go2rtc"
+PLATFORMS = (PLATFORM_STILL, PLATFORM_MJPEG, PLATFORM_RTSP, PLATFORM_MQTT, PLATFORM_GO2RTC)
+
+#: Where go2rtc listens when it is the one this stack ships: its API is bound
+#: to loopback on purpose (it skips authentication for localhost requests, and
+#: says so in bold), so the only address that can reach it is this one.
+DEFAULT_GO2RTC_URL = "http://127.0.0.1:1984"
+#: The width go2rtc scales a snapshot to. The same number `max_edge` defaults
+#: to, so a look costs the same whether or not Pillow is installed here.
+DEFAULT_GO2RTC_WIDTH = 1280
+GO2RTC_FRAME_PATH = "/api/frame.jpeg"
+_STREAM_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 CAMERA_DOMAIN = "camera"
 STATE_STREAMING = "streaming"
@@ -284,6 +300,23 @@ def decode_payload(payload: Any, limit: int = DEFAULT_MAX_FRAME_BYTES) -> bytes:
 # ---------------------------------------------------------------------------
 # configuration
 # ---------------------------------------------------------------------------
+def go2rtc_snapshot_url(base: str, stream: str, width: int = DEFAULT_GO2RTC_WIDTH) -> str:
+    """go2rtc's snapshot endpoint for one stream.
+
+    `frame.jpeg` exists only when a stream carries an MJPEG codec, which is
+    why the shipped `go2rtc.yaml` gives every H.264 camera a second
+    `ffmpeg:<name>#video=mjpeg` source: go2rtc transcodes on demand and stops
+    when nobody is asking. `w=` is the downscale; `0` leaves it out.
+    """
+    root = str(base or DEFAULT_GO2RTC_URL).strip().rstrip("/")
+    if root.lower().endswith(GO2RTC_FRAME_PATH):
+        root = root[: -len(GO2RTC_FRAME_PATH)]
+    query: dict[str, str] = {"src": stream}
+    if width > 0:
+        query["w"] = str(int(width))
+    return f"{root}{GO2RTC_FRAME_PATH}?{urlencode(query)}"
+
+
 @dataclass(frozen=True)
 class CameraConfig:
     """One entry under ``vision: cameras:``."""
@@ -297,12 +330,15 @@ class CameraConfig:
     area: str = ""
     consent: str = DEFAULT_CONSENT
     topic: str = ""               # mqtt only
+    stream: str = ""              # go2rtc only
     timeout: float = DEFAULT_TIMEOUT
     verify_ssl: bool = True
     max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES
 
     @classmethod
-    def from_config(cls, options: Any) -> "CameraConfig":
+    def from_config(cls, options: Any, go2rtc_url: str = DEFAULT_GO2RTC_URL) -> "CameraConfig":
+        """One camera. `go2rtc_url` is the `vision: go2rtc_url:` default for
+        `platform: go2rtc` cameras that name no `url` of their own."""
         if not isinstance(options, dict):
             raise ValueError("each camera must be a mapping")
         name = _scalar(options.get("name"))
@@ -318,9 +354,25 @@ class CameraConfig:
 
         url = _scalar(options.get("url") or options.get("still_url") or options.get("stream_url"))
         topic = _scalar(options.get("topic") or options.get("state_topic"))
+        stream = _scalar(options.get("stream") or options.get("src"))
         if platform == PLATFORM_MQTT:
             if not topic:
                 raise ValueError(f"camera {name!r} is mqtt but has no topic")
+        elif platform == PLATFORM_GO2RTC:
+            # The stream name is the whole address. It goes into a query
+            # string, so anything outside a plain identifier is a typo rather
+            # than something to encode and send.
+            if not stream:
+                raise ValueError(f"camera {name!r} is go2rtc but names no stream")
+            if not _STREAM_NAME.match(stream):
+                raise ValueError(
+                    f"camera {name!r}: go2rtc stream {stream!r} is not a plain name "
+                    "(letters, digits, '_', '-', '.')"
+                )
+            url = go2rtc_snapshot_url(
+                url or go2rtc_url, stream,
+                _int(options.get("width"), DEFAULT_GO2RTC_WIDTH),
+            )
         elif not url:
             raise ValueError(f"camera {name!r} ({platform}) has no url")
 
@@ -338,6 +390,7 @@ class CameraConfig:
             area=_scalar(options.get("area")),
             consent=normalise_consent(options.get("consent")),
             topic=topic,
+            stream=stream,
             timeout=max(1.0, _float(options.get("timeout"), DEFAULT_TIMEOUT)),
             verify_ssl=bool(options.get("verify_ssl", True)),
             max_frame_bytes=max(
@@ -540,7 +593,8 @@ class CameraSource:
         """One frame, or :class:`CameraError` with something actionable in it."""
         platform = self.config.platform
         try:
-            if platform == PLATFORM_STILL:
+            if platform in (PLATFORM_STILL, PLATFORM_GO2RTC):
+                # go2rtc's snapshot endpoint IS a still: one GET, one JPEG.
                 frame = await self._fetch_still()
             elif platform == PLATFORM_MJPEG:
                 frame = await self._fetch_mjpeg()
@@ -855,10 +909,13 @@ class CameraEntity(Entity):
 __all__ = [
     "CAMERA_DOMAIN",
     "DEFAULT_FRAME_TTL",
+    "DEFAULT_GO2RTC_URL",
+    "DEFAULT_GO2RTC_WIDTH",
     "DEFAULT_MAX_FRAME_BYTES",
     "FFMPEG_MISSING",
     "MAX_MARKER_STEPS",
     "PLATFORMS",
+    "PLATFORM_GO2RTC",
     "PLATFORM_MJPEG",
     "PLATFORM_MQTT",
     "PLATFORM_RTSP",
@@ -873,6 +930,7 @@ __all__ = [
     "JpegScanner",
     "decode_payload",
     "extract_jpeg",
+    "go2rtc_snapshot_url",
     "iso",
     "jpeg_dimensions",
     "redact_url",

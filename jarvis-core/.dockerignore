@@ -26,6 +26,8 @@ fixtures/
 ollama/
 searxng/
 mosquitto/
+# go2rtc's stream list (M56), mounted read-only into the restreamer.
+go2rtc/
 tests/
 docs/
 *.md

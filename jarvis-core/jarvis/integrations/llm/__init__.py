@@ -331,9 +331,12 @@ def _build_model_client(
     )
 
 
-#: Public alias. `integrations/vision` builds its own model client and had no
-#: way to honour `backend:`/`api_key:` without duplicating the logic above.
+#: Public aliases. `integrations/vision` builds its own model client and had no
+#: way to honour `backend:`/`api_key:` without duplicating the logic above; it
+#: infers the wire from a url with the same rule, so the two blocks cannot read
+#: one `LLM_URL` two ways.
 build_model_client = _build_model_client
+detect_backend = _detect_backend
 
 
 

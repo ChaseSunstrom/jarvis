@@ -1,0 +1,39 @@
+{
+  "$comment": [
+    "The wire contract for watching Jarvis look through a camera.",
+    "",
+    "Two surfaces read this file: jarvis-core's tests/test_vision_openai.py",
+    "asserts the server fires exactly these events with these fields, and the",
+    "console's activity reducer (src/lib/activity.svelte.ts) draws a camera row",
+    "from them — a 'looking · <camera>' caption under the reactor while a look",
+    "is live, then 'looked' or the reason it was refused. A shared table rather",
+    "than a comment saying 'keep in step', because a comment has never once",
+    "kept anything in step.",
+    "",
+    "`id` is the audit row's id, so a console can pair started with finished",
+    "and a person can find the look in `vision.audit`. `question` is the",
+    "cleaned question — never the fenced text a refused one arrived with.",
+    "`duration_ms` is the whole look: fetch, downscale, model.",
+    "",
+    "No event ever carries a frame or a description. The trail stores neither,",
+    "and the bus is not the place to start."
+  ],
+  "version": 1,
+  "events": {
+    "vision_look_started": {
+      "when": "A look was authorised — consent given or not needed — and a frame is about to be fetched.",
+      "required": ["id", "camera", "question", "allowed", "action", "reason", "requester", "consent", "decision", "at"],
+      "never": ["frame", "description", "text", "image"]
+    },
+    "vision_look_finished": {
+      "when": "The look ended, successfully (`ok: true`) or not (`ok: false`, `outcome` says why).",
+      "required": ["id", "camera", "question", "allowed", "ok", "duration_ms", "outcome", "error", "at"],
+      "never": ["frame", "description", "text", "image"]
+    },
+    "vision_look_denied": {
+      "when": "A look was refused before any fetch: policy, a human's no, a rate limit, a fenced question, an unknown camera.",
+      "required": ["id", "camera", "question", "allowed", "reason", "decision", "error", "at"],
+      "never": ["frame", "description", "text", "image"]
+    }
+  }
+}

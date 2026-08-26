@@ -1,0 +1,55 @@
+# go2rtc — camera ingest for Jarvis (`docker compose --profile cameras up -d`).
+#
+# One process that speaks to every camera protocol — RTSP, ONVIF, HTTP
+# JPEG/MJPEG, USB (V4L2), HomeKit, the vendor P2P ones — and republishes each
+# stream as a snapshot URL the `vision` integration reads:
+#
+#     http://127.0.0.1:1984/api/frame.jpeg?src=<stream>&w=1280
+#
+# That is what `platform: go2rtc` in `vision: cameras:` resolves to, so a
+# camera is configured here ONCE, by its stream name, and Jarvis needs only:
+#
+#     vision:
+#       cameras:
+#         - name: Front Door
+#           platform: go2rtc
+#           stream: front_door
+#           consent: always
+#
+# LAN-only, enforced not assumed: the API skips authentication for localhost
+# requests even when a password is set (the README says so in bold), so it
+# listens on loopback and nothing else. The container is on host networking
+# so ONVIF discovery works and so "loopback" means this box. Do not change
+# `listen` to 0.0.0.0 — that is a camera feed for anyone on the LAN.
+api:
+  listen: "127.0.0.1:1984"
+rtsp:
+  listen: "127.0.0.1:8554"     # restream for an NVR (Frigate) on the same box
+webrtc:
+  listen: ""                   # off: nothing in this stack watches live video
+# `frame.jpeg` exists only when a stream carries an MJPEG codec. An H.264 or
+# H.265 camera therefore gets a second source that transcodes on demand —
+# go2rtc starts ffmpeg when a client asks for a frame and stops it when nobody
+# is watching, so an idle camera costs nothing.
+streams:
+  # An RTSP camera (Hikvision/Dahua/Reolink/Amcrest shape). Use the SUBSTREAM
+  # — a look does not need 4K, and decoding the main stream to hand back one
+  # JPEG is a core for nothing. Credentials go in .env and are referenced as
+  # ${...}: go2rtc expands environment variables in this file.
+  front_door:
+    - rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.1.64:554/Streaming/Channels/102
+    - ffmpeg:front_door#video=mjpeg
+  # A USB camera on the host. Uncomment the `devices:` line in
+  # docker-compose.yml for it. A webcam that emits MJPEG natively costs no
+  # CPU; one that only does raw YUYV gets transcoded, which does.
+  workshop:
+    - v4l2:device?video=/dev/video0&input_format=mjpeg&video_size=1280x720&framerate=10
+  # An ONVIF camera: go2rtc asks the camera for its RTSP URL itself. Add the
+  # ffmpeg line as for front_door if the stream is not MJPEG.
+  garden:
+    - onvif://${CAMERA_USER}:${CAMERA_PASS}@192.168.1.71
+    - ffmpeg:garden#video=mjpeg
+  # A camera that already offers an HTTP snapshot URL needs no go2rtc at all:
+  # point `platform: still` at it directly. This entry exists for a camera
+  # whose only HTTP output is an MJPEG stream.
+  # porch: http://192.168.1.80:8081/stream.mjpeg

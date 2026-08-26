@@ -770,6 +770,48 @@ services:
     # A broker with a handful of devices on it.
     mem_limit: 256m
     cpus: 0.5
+
+  # --- Camera ingest, behind `--profile cameras` (M56) -----------------------
+  # go2rtc turns any RTSP / ONVIF / USB / HTTP camera into a snapshot URL the
+  # `vision` integration reads (`platform: go2rtc`, `stream: <name>`); the
+  # streams are declared in ./go2rtc/go2rtc.yaml. Behind a profile because a
+  # camera restreamer is a thing a household chooses, not something `up -d`
+  # should start on a box with no cameras.
+  #
+  # LAN-only, enforced: go2rtc's API skips authentication for localhost
+  # requests, so go2rtc.yaml binds it to 127.0.0.1 and the container is on
+  # host networking so that loopback is this box's loopback (and so ONVIF
+  # discovery can see the LAN). ufw is the authority for everything else, as
+  # for 11434 — see docs/security.md.
+  go2rtc:
+    image: alexxit/go2rtc:1.9.14
+    container_name: go2rtc
+    restart: unless-stopped
+    profiles: [cameras]
+    network_mode: host
+    environment:
+      - TZ=${TZ:-Europe/London}
+      # Camera credentials, expanded by go2rtc inside go2rtc.yaml. Empty by
+      # default; put the real ones in .env, never in the YAML.
+      - CAMERA_USER=${CAMERA_USER:-}
+      - CAMERA_PASS=${CAMERA_PASS:-}
+    volumes:
+      - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+    # devices:                    # only for a USB camera (the `workshop` example)
+    #   - /dev/video0:/dev/video0
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      # The stream list answers only once the API is up and the config parsed.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1984/api/streams > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # A few hundred ms of one core per snapshot of an H.264 camera; nothing
+    # while idle. The ceiling is for a webcam that has to be transcoded.
+    mem_limit: 512m
+    cpus: 1.5
   searxng:
     image: searxng/searxng:2026.8.22-9fea41204
     container_name: searxng
