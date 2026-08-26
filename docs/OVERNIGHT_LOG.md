@@ -609,3 +609,9 @@ is quiet. Done since:
   catalogue source, so browse answers "no catalog source is configured" — M65 (an agent in a
   worktree): a built-in source of the repository's own bundled skills, the catalogue at the
   top of Settings › Tools through the one search box, MCP add-by-URL visible.
+- 19:30 — the scorecard, run directly with its output kept: every section 100 %, and the
+  load job STARTED with the sensor-audit prompt — whole turn 4.8 s idle → 5.2 s under load,
+  first word 3.1 → 3.4 s, STT 0.6 s both. The gate's failure was timing: the routing section
+  asks the same sentence minutes earlier and a still-running job makes the second one
+  "already under way". The load has its own subject now (lights and switches); the gate
+  runs again behind the fourth rebuild.

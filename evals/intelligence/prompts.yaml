@@ -298,9 +298,15 @@ latency:
 #: a page with an address is also a thing the model may simply read and
 #: answer in the turn, which is right and is no load). The fourth is the
 #: sensor audit the routing section already proves reaches
-#: `run_background_task` in one turn: one model round trip per sensor, minutes
+#: `run_background_task` in one turn: one model round trip per device, minutes
 #: of exactly the load a person generates, on the same server the probe needs.
+#: Its own subject, though: the routing section asks for the SENSOR audit
+#: minutes earlier, and when that job was still running the model answered
+#: "already under way" and started nothing — a run that measured under load
+#: and a run that could not, from the same file, depending on how fast the
+#: first job went. Lights and switches are not sensors.
 load:
   say: >
-    Go through every sensor in the house one at a time, work out which look
-    wrong, and write it up. Don't wait for it — tell me when it's done.
+    Go through every light and switch in the house one at a time, check each
+    one's state and its history for the last day, and write up which look
+    wrong. Don't wait for it — tell me when it's done.
