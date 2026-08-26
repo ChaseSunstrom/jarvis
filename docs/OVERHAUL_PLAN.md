@@ -16,11 +16,11 @@ This document is the spine. Each numbered item is a milestone in
 
 ## What is true now
 
-- 62 milestones ticked as of 18:30 on the 26th (M27, M50–M55, M57–M60 this
+- 63 milestones ticked as of 18:40 on the 26th (M27, M50–M55, M57–M60 this
   morning; M62, the dashboard as the first console tab, and M63, the dashboard
-  showing the house, in the afternoon); M61 ticked at 18:30 (gate 20/20 from the main
-  checkout, live slice included); M64 (the phone's look, merged) waits on the
-  same slice; M56 and M23 are open. M56 is built and on the branch,
+  showing the house, in the afternoon); M61 (18:30, gate 20/20) and M64 (18:40,
+  gate 64/64) ticked from the main checkout with their live slices; M56 and
+  M23 are open — M23's one open check is M56. M56 is built and on the branch,
   its gate 27/28: the one open check is a live look through a served vision
   model, and the model server serves none. M60 is ticked (gate 13/13, the
   full core suite green). M61's phone work compiles, lints and passes its JVM tests here (M08's

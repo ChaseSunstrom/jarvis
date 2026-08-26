@@ -994,7 +994,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the branch: gate 32/32, the eight touched core suites 513, vitest 757, M62 17/17 and
     M55 21/21 again with the tile's one switch allowed at rest. A real camera's still and
     the sky from real elements are Unproven here (no camera, fixture elements).
-- [ ] **M64 — The phone looks like the console** · size L · deps M51, M61 · parallel-ok M56, M63
+- [x] **M64 — The phone looks like the console** · size L · deps M51, M61 · parallel-ok M56, M63
   - Scope: an audit put the phone's native screens beside the console and found fourteen
     mismatches; each is closed by copying the console, not by inventing. The tab strip is
     `TopBar.svelte` under 720px — the mark and JARVIS, the readout, ONE measured underline
@@ -1012,6 +1012,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     ground and memories are not gold; lists enter staggered on `motion.stagger.*` and
     nothing decorative moves under reduced motion. Build, unit, lint and goldens — no device.
   - Verify: `bash scripts/verify/m64-phone-look.sh`
+  - 26 Aug 18:40: gate 64/64 from the main checkout on the rebuilt stack, live smoke slice
+    included; goldens re-recorded on the merged tree (console-frame with DASHBOARDS first
+    under M64's bar) and looked at. What only a phone shows is ADT-047…051, Unproven.
 
 ## Final
 
