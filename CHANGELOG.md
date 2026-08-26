@@ -7,6 +7,29 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 
 ## Unreleased
 
+### Changed
+- **M49 — the voice screen is Reactor II.** The reactor is an instrument now — a graduated
+  bezel, thirty-six blades with a glint walking round, a counter-rotating coil, a level arc that
+  carries the microphone's amplitude while listening and the player's while speaking, and a
+  dark lens with two iris arcs and one hot dot — with five distinct states (idle breathes on the
+  deep accent; listening lifts the level and the rim; thinking turns amber and spins the fine
+  inner ring; speaking is gold and keeps time with the voice; an error is red) drawn from the
+  same `color.orb.*` palette the phone uses, and a geometry that is a contract
+  (`tests/contracts/reactor_geometry.json`) rather than two files retuned by hand. Around it,
+  C2's chat view: the exchange under the instrument (the question in Barlow, the reply in
+  Space Grotesk with its caret, the tool calls as a line), the TRANSCRIPT panel, the THIS TURN
+  panel with the stages bar and the measured cost of transcribe / first token / speak, and the
+  dock. Chat mode is the same view with the transcript expanded. One bar on every screen —
+  brand, five tabs under one sliding underline (VOICE is the first), a readout — drawn by the
+  layout; the floating CONSOLE pill, the technical grid, the corner brackets, the tagline and
+  every pill on the voice screen are gone. The boot sequence assembles the instrument bezel →
+  blades → coil → level → core. The GLSL sphere (`Orb.svelte`, 1,019 lines) and its shader
+  spec are deleted; `design/build.py --check` pins the geometry contract instead of a
+  shader's comments; `reactor_orb_test.py` pins the web to the contract and the phone's two
+  views to one renderer, with the phone's own reading of the contract landing in M51.
+  `motion.reactor.think` (9 s) joins the tokens. Under reduced motion nothing on the
+  instrument turns and the level rests at zero.
+
 ### Fixed
 - **A model this install could not use, named nowhere.** Putting the LiteLLM gateway in front of
   the model server (M40) renamed every model, and an `llm.model` an operator had chosen in the

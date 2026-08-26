@@ -141,10 +141,10 @@ describe('where colours may be written', () => {
 	 *
 	 * Scope: stylesheets, and the `<style>` block of every component — which is
 	 * where the design system actually lives. Script bodies are deliberately not
-	 * scanned: `Orb.svelte` carries a GLSL shader that cannot read a custom
-	 * property and says so at length, and `qr.ts` emits SVG fills for a code that
-	 * has to survive being photographed. Both are documented exceptions to a rule
-	 * about CSS, not quiet ones about colour.
+	 * scanned: `qr.ts` emits SVG fills for a code that has to survive being
+	 * photographed, a documented exception to a rule about CSS, not a quiet one
+	 * about colour. (The GLSL shader that used to be the other exception is gone
+	 * with M49; the reactor is an SVG whose every colour is a custom property.)
 	 *
 	 * Black and white pass. Neither is a palette colour: the two in the tree are
 	 * a mask stencil (only its alpha is read) and the paper a QR is printed on.

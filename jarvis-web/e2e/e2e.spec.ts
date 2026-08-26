@@ -61,10 +61,11 @@ test("a turn runs with nothing clicked, and renders transcript and response", as
     },
   );
 
-  // latency readout shows measured timings
-  await expect(page.getByTestId("latency")).toContainText("stt", {
+  // the THIS TURN panel shows measured timings
+  await expect(page.getByTestId("latency")).toContainText("transcribe", {
     timeout: 10_000,
   });
+  await expect(page.getByTestId("latency")).toContainText("ms");
 
   // no pipeline error surfaced
   await expect(page.getByTestId("error")).toHaveCount(0);
@@ -102,10 +103,11 @@ test("the tts proxy only reaches media paths", async ({ request }) => {
 
 // --- management UI ---------------------------------------------------------
 
-test("console nav links the HUD to the four destinations", async ({ page }) => {
+test("the bar links the voice screen to the four destinations", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("console-link").click();
-  // The console link lands in HOUSE, which redirects to its first section.
+  // One bar everywhere (M49): HOUSE is a tab on the voice screen, and it
+  // lands in HOUSE's first section because a destination's path is a redirect.
+  await page.getByTestId("nav-house").click();
   await expect(page).toHaveURL(/\/house\/devices$/);
 
   // Four destinations, not eleven (M48). Each lands on its own first section,
@@ -1128,7 +1130,7 @@ test("the console header stays put when the page scrolls", async ({ page }) => {
   // hides SETTINGS behind an invisible scroll, which is worse — so the header
   // is two rows for now (M48 owns the nav's real overflow answer) and this
   // asserts the thing in its own name.
-  const header = (await page.locator(".console-top").boundingBox())!;
+  const header = (await page.getByTestId("top-bar").boundingBox())!;
   expect(header.y).toBe(0);
   const nav = (await page.getByTestId("nav-house").boundingBox())!;
   expect(nav.y).toBeGreaterThanOrEqual(0);

@@ -1,14 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { PipelineClient, type PipelineState } from '$lib/pipeline';
+	import { PipelineClient, type PipelineEvent, type PipelineState } from '$lib/pipeline';
 	import { MicCapture } from '$lib/audio/capture';
 	import { Player } from '$lib/audio/playback';
 	import { EnergyVAD } from '$lib/wake';
-	import Orb from '$lib/components/Orb.svelte';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
-	import ModeToggle from '$lib/components/ModeToggle.svelte';
-	import { ScreenState } from '$lib/ui';
-	import { accentFor } from '$lib/tokens';
+	import { Panel, Reactor, ScreenState } from '$lib/ui';
+	import { setHudStatus } from '$lib/hudStatus.svelte';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 	import {
 		assistantPlaceholder,
@@ -41,7 +39,7 @@
 	let statusMsg = $state('booting');
 	let errorMsg = $state('');
 	let capturing = $state(false);
-	// Muting is the only voice control this HUD has left. There is no
+	// Muting is the only voice control this screen has. There is no
 	// push-to-talk: the mic opens when the page does and the VAD decides when a
 	// turn starts, so the one thing a person needs from a button is a way to be
 	// sure nothing is listening. Remembered across reloads, because a kill
@@ -49,7 +47,7 @@
 	let muted = $state(false);
 	// Why the mic is not open, when it is not. Distinguishes "you muted it" from
 	// "the browser said no" from "this machine has no microphone", which all
-	// look identical from a dead orb.
+	// look identical from a still reactor.
 	let micError = $state('');
 	let orbLevel = $state(0);
 	let latText = $state('');
@@ -108,17 +106,75 @@
 	let e2eMode = false;
 	let micLevel = 0;
 
-	// Latency instrumentation (P9): ms from end-of-audio to key events.
+	// Latency instrumentation: ms from end-of-audio to key events.
 	let tAudioEnd = 0;
 	let lat: { stt?: number; firstDelta?: number; tts?: number } = {};
 
+	/*
+	 * --- this turn ---------------------------------------------------------
+	 *
+	 * The stamp of every pipeline event, so the THIS TURN panel can say what
+	 * each stage cost — transcribe, first token, speak — from the events the
+	 * page already receives rather than from a number somebody typed. Reset
+	 * when a turn starts; read by the panel as durations between stamps.
+	 */
+	let stamps = $state<Record<string, number>>({});
+	let turnStartedAt = $state<number | null>(null);
+	let turnAt = $state('');
+	let replyAt = $state('');
+
+	function clock(d = new Date()): string {
+		const p = (n: number) => n.toString().padStart(2, '0');
+		return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+	}
+
+	function beginTurn(): void {
+		stamps = {};
+		turnStartedAt = performance.now();
+		turnAt = clock();
+		replyAt = '';
+	}
+
+	function stamp(type: string): void {
+		if (stamps[type] === undefined) stamps = { ...stamps, [type]: performance.now() };
+	}
+
+	/** ms between two stamps, or null while either is missing. */
+	function between(from: string, to: string): number | null {
+		const a = stamps[from];
+		const b = stamps[to];
+		return a !== undefined && b !== undefined && b >= a ? b - a : null;
+	}
+
+	/** The four stages C2 names, each a measured duration or a dash. */
+	const stages = $derived([
+		{ key: 'listen', label: 'listen · vad', ms: between('run-start', 'audio-end') },
+		{ key: 'transcribe', label: 'transcribe · whisper', ms: between('audio-end', 'stt-end') ?? between('stt-start', 'stt-end') },
+		{
+			key: 'first-token',
+			label: 'first token · model',
+			ms: between('stt-end', 'first-delta') ?? between('intent-start', 'first-delta')
+		},
+		{ key: 'speak', label: 'speak · piper', ms: between('tts-start', 'tts-end') }
+	]);
+	const turnTotalMs = $derived(between('run-start', 'run-end'));
+	const turnLive = $derived(turnStartedAt !== null && stamps['run-end'] === undefined);
+	const fmtMs = (ms: number | null): string => (ms === null ? '—' : `${Math.round(ms)} ms`);
+	const fmtS = (ms: number | null): string => (ms === null ? '' : `${(ms / 1000).toFixed(2)} s`);
+
 	function fmtLat(): string {
 		const parts: string[] = [];
-		if (lat.stt != null) parts.push(`stt ${lat.stt.toFixed(0)}ms`);
-		if (lat.firstDelta != null) parts.push(`first-delta ${lat.firstDelta.toFixed(0)}ms`);
-		if (lat.tts != null) parts.push(`tts-start ${lat.tts.toFixed(0)}ms`);
+		if (lat.stt != null) parts.push(`transcribe ${lat.stt.toFixed(0)} ms`);
+		if (lat.firstDelta != null) parts.push(`first token ${lat.firstDelta.toFixed(0)} ms`);
+		if (lat.tts != null) parts.push(`speak ${lat.tts.toFixed(0)} ms`);
 		return parts.join(' · ');
 	}
+
+	/** The tools this turn called: the ones on the reply being written or just written. */
+	const turnTools = $derived.by(() => {
+		const last = messages[messages.length - 1];
+		return last && last.role === 'assistant' ? last.tools : [];
+	});
 
 	// The dial that is currently in flight, so a click that lands while the
 	// on-mount connect is still handshaking joins it instead of opening a second
@@ -170,12 +226,15 @@
 						if (lat.firstDelta == null) {
 							lat.firstDelta = performance.now() - tAudioEnd;
 							latText = fmtLat();
+							stamp('first-delta');
+							replyAt = clock();
 						}
 						response += d;
 						messages = withDelta(messages, d);
 					},
 					onResponse: (text) => {
 						if (text) response = text;
+						if (!replyAt) replyAt = clock();
 						messages = withFinal(messages, text);
 					},
 					onMemoryUsed: (notes) => {
@@ -190,7 +249,8 @@
 					onThinking: (delta) => {
 						messages = withThinking(messages, delta);
 					},
-					onEvent: (ev) => {
+					onEvent: (ev: PipelineEvent) => {
+						stamp(ev.type);
 						if (ev.type === 'tts-start') {
 							lat.tts = performance.now() - tAudioEnd;
 							latText = fmtLat();
@@ -225,8 +285,8 @@
 						errorMsg = `${code}: ${message}`;
 						capturing = false;
 						statusMsg = 'error';
-						// On the message rather than only in the HUD's error line:
-						// by the time a second question has been asked, a banner is
+						// On the message rather than only in the error line: by
+						// the time a second question has been asked, a banner is
 						// about neither of them.
 						messages = withError(messages, code, message);
 					}
@@ -259,15 +319,15 @@
 					// half a phrase from before the mute when it comes back.
 					vad.reset();
 				} else if (!capturing && turnState === 'idle') {
-					// The orb listens to the room; chat mode does not.
+					// The reactor listens to the room; chat mode does not.
 					//
-					// Standing in front of the orb, an always-on VAD is the whole
-					// point — you speak and it answers. In front of a keyboard it is
-					// the opposite: every remark made in the room becomes a turn, and
-					// each one lands in the transcript and the history sidebar as
-					// though it had been asked. Chat mode takes voice on the button
-					// instead, so speech is still a first-class way in and only ever
-					// when it was meant.
+					// Standing in front of the reactor, an always-on VAD is the
+					// whole point — you speak and it answers. In front of a
+					// keyboard it is the opposite: every remark made in the room
+					// becomes a turn, and each one lands in the transcript and the
+					// history sidebar as though it had been asked. Chat mode takes
+					// voice on the button instead, so speech is still a first-class
+					// way in and only ever when it was meant.
 					if (!chatMode && vad.feed(r) === 'speech-start') void startInteraction();
 				} else if (capturing) {
 					if (vad.feed(r) === 'speech-end') stopCapture();
@@ -292,6 +352,7 @@
 		lat = {};
 		latText = '';
 		pendingEnd = false;
+		beginTurn();
 		try {
 			await connectWs();
 		} catch {
@@ -326,23 +387,24 @@
 	/**
 	 * Ask by typing.
 	 *
-	 * The HUD had no `<input>` at all, so somebody who denied the microphone
-	 * prompt — or is on a machine with none — could not say anything to Jarvis by
-	 * any means. This is the same pipeline the voice path uses, entered one stage
-	 * later: `startTextRun` sets `start_stage: 'intent'`, so the answer still
-	 * streams back and is still spoken.
+	 * The voice screen had no `<input>` at all, so somebody who denied the
+	 * microphone prompt — or is on a machine with none — could not say anything
+	 * to Jarvis by any means. This is the same pipeline the voice path uses,
+	 * entered one stage later: `startTextRun` sets `start_stage: 'intent'`, so
+	 * the answer still streams back and is still spoken.
 	 */
 	async function sendText(text = draft.trim()): Promise<void> {
 		if (!text || sending) return;
 		sending = true;
 		errorMsg = '';
-		// Echoed straight into the readout, because there is no stt-end coming to
-		// fill it in and the HUD's whole layout assumes the top line says what you
-		// asked. It is also already true — you typed it.
+		// Echoed straight into the exchange, because there is no stt-end coming
+		// to fill it in and the layout assumes the top line says what you asked.
+		// It is also already true — you typed it.
 		transcript = text;
 		response = '';
 		lat = {};
 		latText = '';
+		beginTurn();
 		// Both messages up front, before the socket work: the placeholder is
 		// where the tool rows and the reasoning land, and a turn that spends
 		// nine seconds in tool calls with nothing on screen reads as a page
@@ -366,11 +428,12 @@
 		// The same baseline the spoken path measures from: the moment there is
 		// nothing left for the human to do and the wait begins.
 		tAudioEnd = performance.now();
+		stamp('audio-end');
 		client?.startTextRun(text, {
 			pipeline: pipelineId,
 			conversationId: openConversationId,
-			// In chat mode the toggle decides. Outside it the HUD has always
-			// spoken its replies, and that stays true.
+			// In chat mode the toggle decides. Outside it the voice screen has
+			// always spoken its replies, and that stays true.
 			speak: chatMode ? speakReplies : true
 		});
 		draft = '';
@@ -383,8 +446,8 @@
 	 * Reload the conversation list.
 	 *
 	 * Only in chat mode: the sidebar is the only thing that reads it, and the
-	 * orb should not spend a round trip per turn maintaining a list nobody is
-	 * looking at. An older jarvis-core answers `unknown_command`, which is a
+	 * reactor should not spend a round trip per turn maintaining a list nobody
+	 * is looking at. An older jarvis-core answers `unknown_command`, which is a
 	 * missing feature and not an error worth a banner — the sidebar just says
 	 * so and everything else works.
 	 */
@@ -446,10 +509,11 @@
 	/**
 	 * Chat mode's microphone: press, speak, and it stops when you do.
 	 *
-	 * The orb's mic is a mute switch over an always-on VAD. That is right in
-	 * front of the orb and wrong in front of a keyboard, so here the same
-	 * hardware is driven the other way round: nothing is captured until this is
-	 * pressed, and the VAD's job is only to notice when the sentence has ended.
+	 * The reactor's mic is a mute switch over an always-on VAD. That is right
+	 * in front of the reactor and wrong in front of a keyboard, so here the
+	 * same hardware is driven the other way round: nothing is captured until
+	 * this is pressed, and the VAD's job is only to notice when the sentence
+	 * has ended.
 	 *
 	 * Nothing leaves the browser in between — `MicCapture.onChunk` sends only
 	 * while `capturing` — so the button is the privacy boundary as well as the
@@ -461,7 +525,7 @@
 			return;
 		}
 		// A press is consent to listen, so it also lifts a mute left over from
-		// the orb — otherwise the button would appear to do nothing.
+		// the reactor — otherwise the button would appear to do nothing.
 		if (muted) {
 			muted = false;
 			try {
@@ -501,6 +565,7 @@
 
 	function markAudioEnd(): void {
 		tAudioEnd = performance.now();
+		stamp('audio-end');
 		client?.endAudio();
 	}
 
@@ -560,22 +625,19 @@
 		muted ? 'MUTED — CLICK TO LISTEN' : micError ? micError : 'LISTENING — CLICK TO MUTE'
 	);
 
-	// --- presentation: accent colour + labels that track pipeline state ---
-	// The colours come from `$lib/tokens` (STATE_ACCENT), the same table the
-	// design tokens declare — the HUD does not own a private palette.
+	// --- presentation: labels that track pipeline state ----------------------
 	const LABEL: Record<string, string> = {
 		idle: 'STANDBY',
 		listening: 'LISTENING',
 		thinking: 'PROCESSING',
 		speaking: 'RESPONDING'
 	};
-	let accent = $derived(accentFor(turnState, Boolean(errorMsg)));
 	// `booting` is not a pipeline state. It is the window between the server
 	// rendering this page and the browser having run any of it: no handler is
-	// bound to the PTT button yet and there is no socket. Reporting STANDBY
-	// there — the word this HUD uses for "ready, say something" — is a claim the
-	// markup makes before anything can act on it, and a press in that window
-	// goes nowhere. `online` already knew the difference; the label did not.
+	// bound yet and there is no socket. Reporting STANDBY there — the word this
+	// screen uses for "ready, say something" — is a claim the markup makes
+	// before anything can act on it. `online` already knew the difference; the
+	// label did not.
 	let stateLabel = $derived(
 		statusMsg === 'booting'
 			? 'CONNECTING'
@@ -585,19 +647,52 @@
 	);
 	let online = $derived(statusMsg !== 'disconnected' && statusMsg !== 'booting');
 
-	// The HUD's four states. Loading is the boot sequence, which owns the whole
+	/*
+	 * The taste checkpoint's handle. `docs/motion-review/2-orb-states.webm` is
+	 * recorded by dispatching `jarvis:orb-demo` with a state name; while a demo
+	 * state is set the instrument wears it and breathes a synthetic level, so a
+	 * person can watch the four states without a microphone. Nothing else
+	 * dispatches it, and it never touches the pipeline.
+	 */
+	let demoState = $state<PipelineState | null>(null);
+	let demoPhase = 0;
+
+	/** What the instrument wears: an error outranks everything, a demo the pipeline. */
+	const reactorState = $derived<'idle' | 'listening' | 'thinking' | 'speaking' | 'error'>(
+		errorMsg ? 'error' : (demoState ?? turnState)
+	);
+
+	// The bar's readout, written from here: the page owns the pipeline and the
+	// layout owns the bar (see hudStatus.svelte.ts).
+	$effect(() => {
+		setHudStatus({
+			label: stateLabel,
+			tone: !online ? 'off' : turnState === 'idle' ? 'neutral' : 'live',
+			busy: statusMsg === 'booting' || statusMsg === 'connecting',
+			state: turnState
+		});
+	});
+
+	/** The caption under the instrument: state · how it is listening. */
+	const caption = $derived(
+		[
+			stateLabel.toLowerCase(),
+			muted ? 'muted' : micReady ? 'hands-free' : micError ? 'mic closed' : 'mic opening'
+		].join(' · ')
+	);
+
+	// The four states. Loading is the boot sequence, which owns the whole
 	// viewport; what is left for the status region is the link being down (the
-	// HUD had an OFFLINE label and no way back) and a turn that failed.
+	// screen had an OFFLINE label and no way back) and a turn that failed.
 	let screen = $derived<'ready' | 'error' | 'offline'>(
 		statusMsg === 'disconnected' ? 'offline' : errorMsg ? 'error' : 'ready'
 	);
-	let clock = $state('--:--:--');
 
-	function tickClock(): void {
-		const d = new Date();
-		const p = (n: number) => n.toString().padStart(2, '0');
-		clock = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-	}
+	/** The mic ring's arc: a little at rest, all the way round at full level. */
+	const RING_C = 2 * Math.PI * 20;
+	const ringDash = $derived(`${(RING_C * (0.15 + 0.85 * orbLevel)).toFixed(1)} ${RING_C.toFixed(1)}`);
+
+	const sessionMeta = $derived(openConversationId ? `session ${openConversationId.slice(0, 6)}` : 'this session');
 
 	onMount(() => {
 		const params = new URLSearchParams(location.search);
@@ -643,7 +738,7 @@
 
 		// Open the microphone with the page. There is no button that does this
 		// any more, so if it does not happen here it does not happen — and the
-		// HUD would sit at STANDBY looking attentive and deaf.
+		// screen would sit at STANDBY looking attentive and deaf.
 		//
 		// getUserMedia resolves without a prompt once this origin has been
 		// granted, which is the second visit onward; the first shows the
@@ -657,18 +752,27 @@
 			});
 		}
 
-		tickClock();
-		const clk = setInterval(tickClock, 1000);
+		const onDemo = (e: Event) => {
+			const wanted = (e as CustomEvent<string>).detail;
+			demoState = (['idle', 'listening', 'thinking', 'speaking'] as const).includes(wanted as any)
+				? (wanted as PipelineState)
+				: null;
+		};
+		window.addEventListener('jarvis:orb-demo', onDemo);
 
 		// The audio level, followed frame by frame. This is the other half of the
-		// orb's motion — it swells the ball with the voice, and it scales the
-		// no-WebGL fallback outright — so it stops when the orb does. Left running
-		// under reduced motion it would be a per-frame loop feeding a picture that
-		// is only ever redrawn on a state change, which costs a wall panel its
-		// battery to animate nothing.
+		// instrument's motion — the arc carries the voice — so it stops when the
+		// instrument does. Left running under reduced motion it would be a
+		// per-frame loop feeding a picture that is only ever redrawn on a state
+		// change, which costs a wall panel its battery to animate nothing.
 		let raf = 0;
 		const tick = () => {
-			orbLevel = turnState === 'speaking' ? player.level() * 2 : Math.min(micLevel * 4, 1);
+			if (demoState && demoState !== 'idle') {
+				demoPhase += 0.06;
+				orbLevel = 0.45 + 0.4 * Math.abs(Math.sin(demoPhase)) * (0.6 + 0.4 * Math.abs(Math.sin(demoPhase * 2.7)));
+			} else {
+				orbLevel = turnState === 'speaking' ? player.level() * 2 : Math.min(micLevel * 4, 1);
+			}
 			raf = requestAnimationFrame(tick);
 		};
 		const follow = (reduced: boolean) => {
@@ -684,11 +788,13 @@
 		const unwatchMotion = watchReducedMotion(follow);
 		return () => {
 			if (raf) cancelAnimationFrame(raf);
-			clearInterval(clk);
+			window.removeEventListener('jarvis:orb-demo', onDemo);
 			unwatchMotion();
 		};
 	});
 </script>
+
+<svelte:head><title>Jarvis</title></svelte:head>
 
 {#if chatMode}
 	<ChatPanel
@@ -697,12 +803,11 @@
 		conversationId={openConversationId}
 		{historyError}
 		busy={sending || turnState === 'thinking'}
-		{turnState}
+		turnState={reactorState}
 		{muted}
 		{micLabel}
 		{orbLevel}
 		{capturing}
-		{accent}
 		speak={speakReplies}
 		onSend={(text) => void sendText(text)}
 		onNew={newConversation}
@@ -713,497 +818,734 @@
 		onToggleMode={toggleChatMode}
 	/>
 {:else}
-<main class="hud" style="--jv-state-accent: {accent}" data-state={turnState}>
-	<div class="jv-grid" aria-hidden="true"></div>
-	<span class="jv-bracket tl" aria-hidden="true"></span>
-	<span class="jv-bracket tr" aria-hidden="true"></span>
-	<span class="jv-bracket bl" aria-hidden="true"></span>
-	<span class="jv-bracket br" aria-hidden="true"></span>
-
-	<header class="topbar">
-		<div class="brand">
-			<span class="logo">JARVIS</span>
-			<span class="tag">Just A Rather Very Intelligent System</span>
-		</div>
-		<div class="sysinfo">
-			<span
-				class="status"
-				data-testid="status"
-				role="status"
-				aria-live="polite"
-				aria-busy={statusMsg === "booting" || statusMsg === "connecting"}
-			>
-				<span class="dot {turnState}" class:off={!online} aria-hidden="true"></span>
-				{stateLabel}
-			</span>
-			<div class="sysrow">
-				<ModeToggle chat={chatMode} onToggle={toggleChatMode} />
-				<span class="clock" aria-label="Local time">{clock}</span>
+	<main class="voice" data-state={reactorState} data-testid="voice-screen">
+		<!-- The stage: the instrument, over three faint field lines. -->
+		<section class="stage" aria-hidden="true">
+			<svg class="field" viewBox="0 0 1400 1400">
+				<circle cx="700" cy="700" r="320" />
+				<circle cx="700" cy="700" r="480" stroke-dasharray="1 10" />
+				<circle cx="700" cy="700" r="660" />
+			</svg>
+			<div class="instrument">
+				<Reactor size={360} fluid level={orbLevel} state={reactorState} testid="reactor" label="Jarvis" />
 			</div>
-		</div>
-	</header>
+			<p class="cap" data-testid="caption">{caption}</p>
+		</section>
 
-	<section class="stage" aria-hidden="true">
-		<div class="orb-frame">
-			<div class="orb-wrap">
-				<Orb level={orbLevel} orbState={turnState} />
-			</div>
-		</div>
-	</section>
-
-	<section class="readout" aria-label="Conversation">
-		<p class="transcript" data-testid="transcript" aria-live="polite" aria-label="What you said">
-			{transcript}
-		</p>
-		<p class="response" data-testid="response" aria-live="polite" aria-label="Jarvis says">
-			{response}{#if turnState === 'thinking' || turnState === 'listening'}<span
-					class="caret"
-					aria-hidden="true"
-				></span>{/if}
-		</p>
-		<ScreenState
-			status={screen}
-			errorTitle="That turn did not finish"
-			errorDetail={errorMsg}
-			onretry={() => void connectWs()}
-			onreconnect={() => void connectWs()}
-			errorTestid="error"
-			offlineBody="The link to Jarvis closed. Nothing is being heard until it is back — the next thing you say will not arrive."
-		/>
-	</section>
-
-	<footer class="controls">
-		<!--
-		  No `aria-label`. One used to sit here saying "Mute the microphone",
-		  which OVERRODE the visible text — so when the button read
-		  MIC BLOCKED — ALLOW IT IN THE BROWSER, a screen reader announced a
-		  working mute button and the one thing the sighted user could see was the
-		  one thing the blind user could not. `aria-pressed` still carries the
-		  mute state, which is the part the label cannot say.
-		-->
-		<button
-			type="button"
-			class="ptt"
-			class:active={capturing}
-			class:muted
-			data-testid="mic"
-			data-mic={micReady ? 'open' : 'closed'}
-			onclick={toggleMute}
-			aria-pressed={muted}
-		>
-			<span class="ptt-ring" aria-hidden="true"></span>
-			{micLabel}
-		</button>
-
-		<!--
-		  Type instead of speaking.
-		  A denied microphone prompt used to end the conversation permanently:
-		  there was no `<input>` on this page at all, so there was no second way
-		  to ask Jarvis anything. This runs the same pipeline — see sendText().
-		-->
-		<form
-			class="say"
-			data-testid="text-form"
-			onsubmit={(e) => {
-				e.preventDefault();
-				void sendText();
-			}}
-		>
-			<label class="jv-sr-only" for="hud-text">Type what you want to say to Jarvis</label>
-			<input
-				id="hud-text"
-				type="text"
-				class="say-input"
-				data-testid="text-input"
-				placeholder="or type it…"
-				autocomplete="off"
-				bind:value={draft}
+		<section class="exchange" aria-label="Conversation">
+			{#if transcript}
+				<span class="who" aria-hidden="true">you · {turnAt}</span>
+			{/if}
+			<p class="q" data-testid="transcript" aria-live="polite" aria-label="What you said">
+				{transcript}
+			</p>
+			{#if response || turnState === 'thinking'}
+				<span class="who j" aria-hidden="true">jarvis{replyAt ? ` · ${replyAt}` : ''}</span>
+			{/if}
+			<p class="a" data-testid="response" aria-live="polite" aria-label="Jarvis says">
+				{response}{#if turnState === 'thinking' || turnState === 'listening'}<span
+						class="caret"
+						aria-hidden="true"
+					></span>{/if}
+			</p>
+			{#if turnTools.length}
+				<ul class="calls" data-testid="turn-calls" aria-label="Tools this turn used">
+					{#each turnTools as tool (tool.key)}
+						<li class={tool.state}>
+							<i aria-hidden="true"></i><b>{tool.name}</b>
+							<span class="args">{Object.values(tool.arguments ?? {}).join(' · ')}</span>
+							{#if tool.state === 'ok'}<em class="ok">ok</em>{:else if tool.state === 'failed'}<em class="bad">{tool.error ?? 'failed'}</em>{/if}
+							{#if tool.durationMs}<span class="ms">· {tool.durationMs} ms</span>{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if !transcript && !response && screen === 'ready'}
+				<p class="empty" data-testid="voice-empty">
+					Say something. The reactor is listening; the answer and what it did to the house appear here.
+				</p>
+			{/if}
+			<ScreenState
+				status={screen}
+				errorTitle="That turn did not finish"
+				errorDetail={errorMsg}
+				onretry={() => void connectWs()}
+				onreconnect={() => void connectWs()}
+				errorTestid="error"
+				offlineBody="The link to Jarvis closed. Nothing is being heard until it is back — the next thing you say will not arrive."
 			/>
-			<button type="submit" class="say-send" data-testid="text-send" disabled={!draft.trim()}
-				title={draft.trim() ? 'Send this to Jarvis' : 'Type something to send'}>
-				SEND
-			</button>
-		</form>
+		</section>
 
-		<div class="meta">
-			<span class="hint" aria-hidden="true">
-				{muted ? 'NOTHING IS BEING HEARD' : 'JUST SPEAK'}
-			</span>
-			{#if latText}<span class="latency" data-testid="latency" aria-label="Pipeline latency"
-					>{latText}</span
-				>{/if}
-		</div>
-	</footer>
-</main>
+		<aside class="side transcript-panel">
+			<Panel title="Transcript" meta={sessionMeta} testid="transcript-panel">
+				{#snippet children()}
+					{#if messages.length}
+						<ol class="rows">
+							{#each messages as message, i (message.id)}
+								<li class:j={message.role === 'assistant'} class:last={i === messages.length - 1}>
+									<span class="who" class:j={message.role === 'assistant'}>{message.role === 'assistant' ? 'jarvis' : 'you'}</span>
+									<p>{message.content || (message.tools.length ? message.tools.map((t) => t.name).join(' · ') : message.pending ? '…' : '')}</p>
+								</li>
+							{/each}
+						</ol>
+					{:else}
+						<p class="none">Nothing said yet.</p>
+					{/if}
+				{/snippet}
+			</Panel>
+		</aside>
+
+		<aside class="side turn-panel">
+			<Panel title="This turn" meta={turnTotalMs !== null ? fmtS(turnTotalMs) : turnLive ? 'live' : '—'} live={turnLive || turnTotalMs !== null} testid="turn-panel">
+				{#snippet children()}
+					<div class="stages" aria-hidden="true">
+						{#each stages as stage (stage.key)}
+							<i style:flex={Math.max(1, stage.ms ?? 1)} class:live={stage.ms === null && turnLive} class:done={stage.ms !== null}></i>
+						{/each}
+					</div>
+					<dl class="k" data-testid="latency" aria-label="Pipeline latency">
+						{#each stages as stage (stage.key)}
+							<div><dt>{stage.label}</dt><dd class:live={stage.ms === null && turnLive}>{fmtMs(stage.ms)}</dd></div>
+						{/each}
+					</dl>
+					{#if turnTools.length}
+						<ul class="calls small" aria-label="Tool calls">
+							{#each turnTools as tool (tool.key)}
+								<li class={tool.state}><i aria-hidden="true"></i><b>{tool.name}</b>{#if tool.state === 'ok'}<em class="ok">ok</em>{/if}{#if tool.durationMs}<span class="ms">{tool.durationMs} ms</span>{/if}</li>
+							{/each}
+						</ul>
+					{/if}
+				{/snippet}
+			</Panel>
+		</aside>
+
+		<footer class="dock" data-testid="dock">
+			<!--
+			  No `aria-label`. One used to sit here saying "Mute the microphone",
+			  which OVERRODE the visible text — so when the button read
+			  MIC BLOCKED — ALLOW IT IN THE BROWSER, a screen reader announced a
+			  working mute button and the one thing the sighted user could see
+			  was the one thing the blind user could not. `aria-pressed` still
+			  carries the mute state, which is the part the label cannot say.
+			-->
+			<button
+				type="button"
+				class="mic"
+				class:active={capturing}
+				class:muted
+				data-testid="mic"
+				data-mic={micReady ? 'open' : 'closed'}
+				onclick={toggleMute}
+				aria-pressed={muted}
+			>
+				<span class="ring" aria-hidden="true">
+					<svg viewBox="0 0 44 44">
+						<circle cx="22" cy="22" r="20" class="track" />
+						<circle cx="22" cy="22" r="20" class="arc" stroke-dasharray={ringDash} transform="rotate(-90 22 22)" />
+					</svg>
+					<span class="g"></span>
+				</span>
+				<span class="mic-label">{micLabel}</span>
+			</button>
+
+			<!--
+			  Type instead of speaking.
+			  A denied microphone prompt used to end the conversation permanently:
+			  there was no `<input>` on this page at all, so there was no second way
+			  to ask Jarvis anything. This runs the same pipeline — see sendText().
+			-->
+			<form
+				class="say"
+				data-testid="text-form"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void sendText();
+				}}
+			>
+				<label class="jv-sr-only" for="hud-text">Type what you want to say to Jarvis</label>
+				<input
+					id="hud-text"
+					type="text"
+					class="say-input"
+					data-testid="text-input"
+					placeholder="Say it, or type it"
+					autocomplete="off"
+					bind:value={draft}
+				/>
+				<button type="submit" class="send" data-testid="text-send" disabled={!draft.trim()}
+					title={draft.trim() ? 'Send this to Jarvis' : 'Type something to send'}>
+					SEND
+				</button>
+			</form>
+
+			<button
+				type="button"
+				class="mode"
+				data-testid="mode-toggle"
+				data-mode="orb"
+				aria-pressed={false}
+				aria-label="Switch to text chat"
+				title="Read the conversation instead of hearing it"
+				onclick={toggleChatMode}
+			>
+				<span class="on">Voice</span><span>Chat</span>
+			</button>
+
+			<span class="keys" aria-hidden="true">↵ send · g d devices · g k tasks</span>
+		</footer>
+	</main>
 {/if}
 
 <style>
-	.sysrow {
-		display: flex;
-		align-items: center;
-		gap: var(--jv-space-2);
-	}
-
 	/*
-	 * The HUD's one liberty with the design system: `--jv-state-accent` is a *live*
-	 * colour that tracks the pipeline state (see STATE_ACCENT in $lib/tokens),
-	 * so the shared line/dim tokens are re-derived from it here. Every shared
-	 * utility below — .jv-grid, .jv-bracket — then picks the state colour up by
-	 * inheritance instead of needing a HUD-specific copy.
+	 * Reactor II's chat view (docs/design/c2-reactor.html?view=chat), as a grid:
+	 * the transcript at the left, the instrument and the exchange in the
+	 * middle, this turn at the right, the dock along the bottom. Under the
+	 * shared bar, on the ground, with no chrome of its own.
 	 */
-	.hud {
-		--chrome: var(--jv-font-chrome);
-		--body: var(--jv-font-body);
-		--jv-state-dim: color-mix(in srgb, var(--jv-state-accent) 60%, var(--jv-text-faint));
-		--jv-state-line: color-mix(in srgb, var(--jv-state-accent) 32%, transparent);
-		--jv-state-line-soft: color-mix(in srgb, var(--jv-state-accent) 14%, transparent);
-
-		--jv-line: var(--jv-state-line);
-		--jv-line-soft: var(--jv-state-line-soft);
-		/* #000 here is a mask stencil, not a colour — only its alpha is read. */
-		--jv-grid-mask: radial-gradient(ellipse 75% 75% at 50% 50%, var(--jv-bg) 40%, transparent 88%);
-		--jv-bracket-size: clamp(22px, 4vw, 46px);
-		--jv-bracket-inset: 14px;
-
+	.voice {
+		--side: calc(var(--jv-space-7) * 6.6667);
 		position: relative;
-		/*
-		 * MIN-height, and nothing hidden.
-		 *
-		 * This was `height: 100dvh; overflow: hidden` on a four-row grid, which is
-		 * correct exactly while the content fits. A long answer, or a laptop in
-		 * landscape at 500 px tall, pushed the readout and the mute button past the
-		 * bottom edge — and with the overflow hidden there was no scroll path to
-		 * them at all: the one control on the page became unreachable at the moment
-		 * there was most to read. The rows still fill the viewport when there is
-		 * room, because `min-height` and `1fr` do that on their own.
-		 */
-		min-height: 100vh;
-		min-height: 100dvh;
 		display: grid;
+		grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
+		grid-template-rows: auto minmax(0, 1fr) auto;
+		grid-template-areas:
+			'transcript stage turn'
+			'transcript exchange turn'
+			'dock dock dock';
+		gap: var(--jv-space-4) var(--jv-space-6);
 		/*
-		 * `min-content` as the stage row's floor: the orb is a fixed square, and a
-		 * 1fr row is free to squeeze a track below its content, which would slide
-		 * the orb over the readout instead of making the page taller.
+		 * MIN-height, and nothing hidden. A long answer or a laptop in
+		 * landscape at 500px tall pushes the dock past the bottom edge, and with
+		 * the overflow hidden there was no scroll path to it — the one control
+		 * on the page became unreachable at the moment there was most to read.
 		 */
-		grid-template-rows: auto minmax(min-content, 1fr) auto auto;
-		padding: clamp(var(--jv-space-4), 2.5vw, var(--jv-space-6));
-		gap: clamp(var(--jv-space-2), 2vh, var(--jv-space-5));
-		color: var(--jv-text);
-		font-family: var(--body);
-		/* Sideways is still forbidden — nothing here is wider than the viewport. */
+		min-height: calc(100vh - var(--jv-space-7) - var(--jv-space-2));
+		min-height: calc(100dvh - var(--jv-space-7) - var(--jv-space-2));
+		padding: var(--jv-space-4) var(--jv-space-6) var(--jv-space-6);
 		overflow-x: hidden;
-		background:
-			radial-gradient(
-				ellipse 70% 55% at 50% 44%,
-				color-mix(in srgb, var(--jv-state-accent) 16%, transparent),
-				transparent 70%
-			),
-			var(--jv-bg);
-		transition: background var(--jv-dur-pulse) ease;
+		color: var(--jv-text);
+		font-family: var(--jv-font-body);
+		background: radial-gradient(ellipse 90% 70% at 50% 110%, var(--jv-bg-raised), transparent 70%), var(--jv-bg);
 	}
 
-	/* --- top bar --- */
-	.topbar {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		z-index: 1;
-	}
-	.brand {
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-1);
-	}
-	.logo {
-		font-family: var(--chrome);
-		font-size: var(--jv-fs-display);
-		font-weight: 600;
-		letter-spacing: var(--jv-track-logo);
-		color: var(--jv-state-accent);
-		text-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-state-accent) 55%, transparent);
-		transition: color var(--jv-dur-pulse) ease;
-	}
-	.tag {
-		font-family: var(--chrome);
-		font-size: clamp(var(--jv-fs-2xs), 1.4vw, var(--jv-fs-sm));
-		letter-spacing: var(--jv-track-wide);
-		text-transform: uppercase;
-		color: var(--jv-state-dim);
-		opacity: 0.7;
-	}
-	.sysinfo {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		gap: var(--jv-space-1);
-		font-family: var(--chrome);
-	}
-	.status {
-		display: flex;
-		align-items: center;
-		gap: var(--jv-space-2);
-		font-size: clamp(var(--jv-fs-xs), 1.6vw, var(--jv-fs-md));
-		letter-spacing: var(--jv-track-wide);
-		color: var(--jv-state-accent);
-	}
-	.clock {
-		font-size: clamp(var(--jv-fs-xs), 1.6vw, var(--jv-fs-md));
-		letter-spacing: var(--jv-track-wide);
-		color: var(--jv-state-dim);
-		font-variant-numeric: tabular-nums;
-		opacity: 0.8;
-	}
-	.dot {
-		width: var(--jv-space-2);
-		height: var(--jv-space-2);
-		border-radius: 50%;
-		background: var(--jv-state-accent);
-		box-shadow: 0 0 calc(var(--jv-space-1) * 2.5) var(--jv-state-accent);
-		animation: blink var(--jv-dur-blink) var(--jv-ease-in-out) infinite;
-	}
-	.dot.listening, .dot.thinking { animation-duration: 0.9s; }
-	.dot.speaking { animation-duration: 1.3s; }
-	.dot.off {
-		background: color-mix(in srgb, var(--jv-text-faint) 45%, var(--jv-bg));
-		box-shadow: none;
-		animation: none;
-	}
-	@keyframes blink {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.35; }
-	}
-
-	/* --- centre stage --- */
+	/* --- the stage --- */
 	.stage {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 1;
-	}
-	.orb-frame {
+		grid-area: stage;
 		position: relative;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: min(58vmin, var(--jv-measure-orb));
-		height: min(58vmin, var(--jv-measure-orb));
-	}
-	/* slowly rotating outer ring behind the canvas for depth */
-	.orb-frame::before {
-		content: '';
-		position: absolute;
-		inset: -3%;
-		border-radius: 50%;
-		border: 1px solid var(--jv-state-line-soft);
-		border-top-color: var(--jv-state-line);
-		border-right-color: var(--jv-state-line);
-		animation: spin var(--jv-amb-drift) linear infinite;
-	}
-	.orb-frame::after {
-		content: '';
-		position: absolute;
-		inset: 6%;
-		border-radius: 50%;
-		border: 1px dashed var(--jv-state-line-soft);
-		animation: spin var(--jv-amb-drift-slow) linear infinite reverse;
-	}
-	@keyframes spin { to { transform: rotate(360deg); } }
-	.orb-wrap {
-		position: relative;
-		width: 100%;
-		height: 100%;
-		filter: drop-shadow(0 0 26px color-mix(in srgb, var(--jv-state-accent) 35%, transparent));
-	}
-	/* --- readout --- */
-	.readout {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: flex-start;
-		gap: var(--jv-space-2);
-		min-height: calc(var(--jv-space-7) * 2.16667);
-		max-width: min(86vw, calc(var(--jv-space-7) * 17.3333));
-		margin: 0 auto;
-		text-align: center;
+		gap: var(--jv-space-4);
+		padding-top: var(--jv-space-2);
 		z-index: 1;
 	}
-	.transcript {
-		font-family: var(--chrome);
-		color: var(--jv-state-dim);
-		font-size: clamp(var(--jv-fs-md), 2vw, var(--jv-fs-lg));
-		letter-spacing: var(--jv-track-snug);
-		min-height: var(--jv-space-5);
+	.field {
+		position: absolute;
+		left: 50%;
+		top: calc(var(--jv-measure-boot) / 2);
+		width: calc(var(--jv-measure-orb) * 2.7);
+		height: calc(var(--jv-measure-orb) * 2.7);
+		transform: translate(-50%, -50%);
+		pointer-events: none;
+		z-index: -1;
+	}
+	.field circle {
+		fill: none;
+		stroke: var(--jv-line-hair);
+		stroke-width: 1;
+	}
+	.instrument {
+		width: min(38vmin, var(--jv-measure-boot));
+		aspect-ratio: 1;
+	}
+	.cap {
 		margin: 0;
-		opacity: 0.9;
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-accent-deep);
+		white-space: nowrap;
+		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
 	}
-	.transcript:not(:empty)::before {
-		content: '‹ ';
-		opacity: 0.55;
+
+	/* --- the exchange --- */
+	.exchange {
+		grid-area: exchange;
+		display: grid;
+		align-content: start;
+		gap: var(--jv-space-2);
+		width: min(100%, calc(var(--jv-space-7) * 12.5));
+		margin: 0 auto;
+		z-index: 1;
 	}
-	.transcript:not(:empty)::after {
-		content: ' ›';
-		opacity: 0.55;
+	.who {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		text-transform: uppercase;
+		color: var(--jv-text-faint);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 	}
-	.response {
-		color: var(--jv-text-bright);
+	.who.j {
+		color: var(--jv-accent-deep);
+		margin-top: var(--jv-space-2);
+	}
+	.q {
+		margin: 0;
+		font-size: var(--jv-fs-lg);
+		color: var(--jv-text-dim);
+		min-height: var(--jv-rel-line);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+	}
+	.a {
+		margin: 0;
+		font-family: var(--jv-font-display);
+		font-weight: var(--jv-weight-display);
 		font-size: var(--jv-fs-2xl);
-		line-height: 1.45;
-		font-weight: 300;
-		min-height: var(--jv-space-6);
-		margin: 0;
-		text-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-state-accent) 40%, transparent);
+		line-height: 1.38;
+		letter-spacing: var(--jv-track-snug);
+		color: var(--jv-text-bright);
+		min-height: var(--jv-rel-line);
+		overflow-wrap: anywhere;
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 	}
 	.caret {
 		display: inline-block;
-		width: 0.5ch;
+		width: var(--jv-rule-live);
 		height: var(--jv-rel-caret);
-		margin-left: 0.15em;
+		margin-left: var(--jv-space-1);
 		vertical-align: -0.15em;
-		background: var(--jv-state-accent);
-		box-shadow: 0 0 calc(var(--jv-space-1) * 2) var(--jv-state-accent);
-		animation: caret var(--jv-dur-enter) steps(2) infinite;
+		background: var(--jv-accent);
+		animation: blink var(--jv-dur-enter) steps(2) infinite;
 	}
-	@keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-	.error {
-		font-family: var(--chrome);
-		color: var(--jv-danger);
-		font-size: var(--jv-fs-md);
-		letter-spacing: var(--jv-track-snug);
-		margin: var(--jv-space-1) 0 0;
+	.empty {
+		margin: 0 auto;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-faint);
+		max-width: 44ch;
+		text-align: center;
+		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
 	}
 
-	/* --- controls --- */
-	.controls {
+	/* The tool-call line: dot, name, arguments, verdict, time. */
+	.calls {
+		list-style: none;
+		margin: var(--jv-space-1) 0 0;
+		padding: 0;
+		display: grid;
+		gap: var(--jv-space-1);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.9;
+		color: var(--jv-text-faint);
+	}
+	.calls li {
 		display: flex;
-		flex-direction: column;
+		align-items: baseline;
+		gap: var(--jv-space-2);
+		min-width: 0;
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+	}
+	.calls i {
+		flex: none;
+		width: var(--jv-space-1);
+		height: var(--jv-space-1);
+		border-radius: 50%;
+		background: var(--jv-ok);
+		align-self: center;
+	}
+	.calls li.running i {
+		background: var(--jv-accent);
+		box-shadow: 0 0 var(--jv-radius-md) var(--jv-glow);
+		animation: jv-blink var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
+	}
+	.calls li.failed i {
+		background: var(--jv-danger);
+	}
+	.calls b {
+		font-weight: var(--jv-weight-body);
+		color: var(--jv-text-dim);
+	}
+	.calls .args {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+	.calls em {
+		font-style: normal;
+	}
+	.calls .ok {
+		color: var(--jv-ok);
+	}
+	.calls .bad {
+		color: var(--jv-danger-text);
+	}
+	.calls .ms {
+		font-variant-numeric: tabular-nums;
+	}
+	.calls.small li {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	/* --- the side panels --- */
+	.side {
+		z-index: 1;
+		min-width: 0;
+		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
+	}
+	.transcript-panel {
+		grid-area: transcript;
+	}
+	.turn-panel {
+		grid-area: turn;
+	}
+	.side :global(.body) {
+		padding: 0;
+	}
+	.rows {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		max-height: calc(var(--jv-space-7) * 12);
+		overflow-y: auto;
+	}
+	.rows li {
+		padding: var(--jv-space-3) var(--jv-space-4);
+		border-bottom: 1px solid var(--jv-line-hair);
+		font-size: var(--jv-fs-sm);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+	}
+	.rows li p {
+		margin: var(--jv-space-1) 0 0;
+		color: var(--jv-text-dim);
+		overflow-wrap: anywhere;
+	}
+	.rows li.j p {
+		color: var(--jv-text);
+	}
+	.rows li.last {
+		background: var(--jv-wash);
+	}
+	.none {
+		margin: 0;
+		padding: var(--jv-space-4);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.stages {
+		display: flex;
+		gap: var(--jv-rule-live);
+		height: var(--jv-space-1);
+		margin: var(--jv-space-4) var(--jv-space-4) var(--jv-space-2);
+	}
+	.stages i {
+		background: var(--jv-line);
+		border-radius: var(--jv-radius-sm);
+		transform-origin: left;
+		transition: flex var(--jv-dur-base) var(--jv-ease-out);
+	}
+	.stages i.done {
+		background: var(--jv-text-dim);
+	}
+	.stages i.live {
+		background: var(--jv-accent);
+		box-shadow: 0 0 var(--jv-radius-md) var(--jv-glow);
+		animation: jv-blink var(--jv-dur-pulse) var(--jv-ease-in-out) infinite;
+	}
+	.k {
+		margin: 0;
+	}
+	.k div {
+		display: flex;
+		justify-content: space-between;
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-2) var(--jv-space-4);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.k dt {
+		margin: 0;
+	}
+	.k dd {
+		margin: 0;
+		font-family: var(--jv-font-chrome);
+		color: var(--jv-text);
+		font-variant-numeric: tabular-nums;
+	}
+	.k dd.live {
+		color: var(--jv-accent);
+	}
+	.turn-panel .calls {
+		padding: var(--jv-space-2) var(--jv-space-4) var(--jv-space-3);
+	}
+
+	/* --- the dock --- */
+	.dock {
+		grid-area: dock;
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto auto;
+		align-items: center;
+		gap: var(--jv-space-4);
+		min-height: calc(var(--jv-space-7) + var(--jv-space-4));
+		padding: var(--jv-space-2) var(--jv-space-4) var(--jv-space-2) var(--jv-space-3);
+		background: var(--jv-panel);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		z-index: 2;
+		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
+	}
+	.mic {
+		display: inline-flex;
 		align-items: center;
 		gap: var(--jv-space-3);
-		z-index: 1;
-	}
-	.ptt {
-		position: relative;
-		background: color-mix(in srgb, var(--jv-state-accent) 12%, var(--jv-bg-raised));
-		border: 1px solid var(--jv-state-line);
-		color: var(--jv-state-accent);
-		padding: var(--jv-space-4) var(--jv-space-7);
-		border-radius: var(--jv-radius-pill);
-		font-family: var(--chrome);
-		font-size: clamp(var(--jv-fs-sm), 1.8vw, var(--jv-fs-md));
-		letter-spacing: var(--jv-track-wide);
+		background: transparent;
+		border: 0;
+		padding: 0;
 		cursor: pointer;
-		transition: background var(--jv-dur-fast), box-shadow var(--jv-dur-fast), color var(--jv-dur-fast), transform var(--jv-dur-instant);
-		box-shadow: 0 0 0 color-mix(in srgb, var(--jv-state-accent) 40%, transparent);
+		color: var(--jv-text-dim);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-chrome);
+		text-transform: uppercase;
+		white-space: nowrap;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out);
 	}
-	.ptt:hover {
-		background: color-mix(in srgb, var(--jv-state-accent) 22%, var(--jv-bg-raised));
-		box-shadow: 0 0 calc(var(--jv-space-1) * 6) color-mix(in srgb, var(--jv-state-accent) 30%, transparent);
+	.mic:hover {
+		color: var(--jv-text);
 	}
-	.ptt:active { transform: scale(0.98); }
-	.ptt.active {
-		background: color-mix(in srgb, var(--jv-state-accent) 35%, var(--jv-bg-raised));
-		color: var(--jv-text-bright);
-		box-shadow: 0 0 calc(var(--jv-space-1) * 8.5) color-mix(in srgb, var(--jv-state-accent) 55%, transparent);
+	.mic .ring {
+		position: relative;
+		display: grid;
+		place-items: center;
+		width: calc(var(--jv-space-7) - var(--jv-space-1));
+		height: calc(var(--jv-space-7) - var(--jv-space-1));
+		flex: none;
 	}
-	.ptt.active .ptt-ring {
+	.mic .ring svg {
 		position: absolute;
-		inset: -4px;
-		border-radius: var(--jv-radius-pill);
-		border: 1px solid var(--jv-state-accent);
-		opacity: 0.6;
-		animation: ptt-pulse var(--jv-dur-sweep) var(--jv-ease-out) infinite;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
 	}
-	@keyframes ptt-pulse {
-		0% { transform: scale(1); opacity: 0.6; }
-		100% { transform: scale(1.25); opacity: 0; }
+	.mic .track {
+		fill: none;
+		stroke: var(--jv-line);
+		stroke-width: 1;
 	}
-	/*
-	 * The type-instead row. Deliberately quieter than the mute button: speaking
-	 * is still the way this thing is meant to be used, and a text box drawn as
-	 * loudly as the orb's own control would say otherwise. It is always present
-	 * rather than appearing when the microphone fails, because "there is another
-	 * way to do this" is not a message worth hiding until the moment somebody is
-	 * already stuck.
-	 */
+	.mic .arc {
+		fill: none;
+		stroke: var(--jv-accent);
+		stroke-width: 1.5;
+		stroke-linecap: round;
+		transition: stroke-dasharray var(--jv-dur-fast) linear, stroke var(--jv-dur-base) var(--jv-ease-out);
+	}
+	/* The capsule: a small rounded glyph is the one round control on this screen. */
+	.mic .g {
+		width: calc(var(--jv-space-2) + var(--jv-space-1));
+		height: var(--jv-space-4);
+		border: 1.5px solid var(--jv-accent);
+		border-radius: var(--jv-radius-md);
+		position: relative;
+		transition: border-color var(--jv-dur-base) var(--jv-ease-out);
+	}
+	.mic .g::after {
+		content: '';
+		position: absolute;
+		left: calc(-1 * var(--jv-space-1) - 1px);
+		right: calc(-1 * var(--jv-space-1) - 1px);
+		bottom: calc(-1 * var(--jv-space-2));
+		height: var(--jv-space-2);
+		border: 1.5px solid var(--jv-accent);
+		border-top: 0;
+		border-radius: 0 0 var(--jv-radius-lg) var(--jv-radius-lg);
+		transition: border-color var(--jv-dur-base) var(--jv-ease-out);
+	}
+	.mic.active .arc {
+		filter: drop-shadow(0 0 var(--jv-space-1) var(--jv-glow));
+	}
+	/* Muted is a state the eye should catch without reading the label. */
+	.mic.muted {
+		color: var(--jv-text-faint);
+	}
+	.mic.muted .arc {
+		stroke: var(--jv-tick);
+	}
+	.mic.muted .g,
+	.mic.muted .g::after {
+		border-color: var(--jv-tick);
+	}
 	.say {
 		display: flex;
 		align-items: center;
 		gap: var(--jv-space-2);
-		width: min(86vw, calc(var(--jv-space-7) * 11.3333));
+		min-width: 0;
 	}
 	.say-input {
 		flex: 1 1 auto;
 		min-width: 0;
-		font-family: var(--chrome);
-		font-size: var(--jv-fs-sm);
-		letter-spacing: var(--jv-track-tight);
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-md);
 		color: var(--jv-text-bright);
-		background: color-mix(in srgb, var(--jv-state-accent) 6%, var(--jv-bg-raised));
-		border: 1px solid var(--jv-state-line-soft);
-		border-radius: var(--jv-radius-pill);
-		padding: var(--jv-space-2) var(--jv-space-4);
-		transition: border-color var(--jv-dur-fast) var(--jv-ease-out),
-			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
+		background: transparent;
+		border: 0;
+		border-bottom: 1px solid transparent;
+		padding: var(--jv-space-2) 0;
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.say-input::placeholder {
-		color: var(--jv-state-dim);
-		opacity: 0.7;
+		color: var(--jv-text-faint);
 	}
-	.say-input:hover,
 	.say-input:focus {
-		border-color: var(--jv-state-line);
-		box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-state-accent) 18%, transparent);
+		outline: none;
+		border-bottom-color: var(--jv-line);
 	}
-	.say-send {
+	.send {
 		flex: none;
-		font-family: var(--chrome);
-		font-size: var(--jv-fs-xs);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
-		color: var(--jv-state-accent);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
 		background: transparent;
-		border: 1px solid var(--jv-state-line);
-		border-radius: var(--jv-radius-pill);
+		border: 1px solid var(--jv-line);
+		border-radius: var(--jv-radius-md);
 		padding: var(--jv-space-2) var(--jv-space-4);
 		cursor: pointer;
-		transition: background var(--jv-dur-fast) var(--jv-ease-out),
-			box-shadow var(--jv-dur-fast) var(--jv-ease-out);
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
-	.say-send:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--jv-state-accent) 16%, transparent);
-		box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-state-accent) 24%, transparent);
+	.send:hover:not(:disabled) {
+		color: var(--jv-text-bright);
+		border-color: var(--jv-text-dim);
 	}
-	.say-send:disabled {
-		opacity: 0.4;
+	.send:disabled {
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
-
-	.meta {
-		display: flex;
-		align-items: center;
-		gap: var(--jv-space-5);
-		font-family: var(--chrome);
-		font-size: var(--jv-fs-sm);
+	/* VOICE | CHAT: two words, the current one underlined. One control. */
+	.mode {
+		display: inline-flex;
+		gap: var(--jv-space-4);
+		background: transparent;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
-		color: var(--jv-state-dim);
 		text-transform: uppercase;
-	}
-	/* Muted is a state the eye should catch without reading the label. */
-	.ptt.muted {
-		border-color: color-mix(in srgb, var(--jv-text-faint) 60%, transparent);
 		color: var(--jv-text-faint);
-		box-shadow: none;
+		white-space: nowrap;
 	}
-	.ptt.muted .ptt-ring { animation: none; opacity: 0; }
-	.hint {
-		opacity: 0.55;
+	.mode span {
+		padding-bottom: var(--jv-space-1);
+		border-bottom: 1px solid transparent;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
-	.latency {
-		opacity: 0.7;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: var(--jv-track-tight);
-		text-transform: none;
+	.mode span.on {
+		color: var(--jv-text-bright);
+		border-bottom-color: var(--jv-accent);
+	}
+	.mode:hover span:not(.on) {
+		color: var(--jv-text);
+	}
+	.keys {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-snug);
+		color: var(--jv-text-faint);
+		border-left: 1px solid var(--jv-line-hair);
+		padding-left: var(--jv-space-4);
+		white-space: nowrap;
 	}
 
-	@media (max-width: 560px) {
-		.tag { display: none; }
+	@keyframes blink {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0;
+		}
+	}
+
+	/* --- narrower: the panels drop under the exchange, then stack --- */
+	@media (max-width: 1180px) {
+		/* The dock's hints go before its input does. */
+		.keys {
+			display: none;
+		}
+		.dock {
+			grid-template-columns: auto minmax(0, 1fr) auto;
+		}
+		.voice {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+			grid-template-rows: auto auto auto auto;
+			grid-template-areas:
+				'stage stage'
+				'exchange exchange'
+				'transcript turn'
+				'dock dock';
+			gap: var(--jv-space-4);
+			padding: var(--jv-space-4) var(--jv-space-5) var(--jv-space-5);
+		}
+		.instrument {
+			width: min(44vmin, var(--jv-measure-boot));
+		}
+		.rows {
+			max-height: calc(var(--jv-space-7) * 6);
+		}
+	}
+	@media (max-width: 900px) {
+		.mic-label {
+			display: none;
+		}
+	}
+	@media (max-width: 720px) {
+		.voice {
+			grid-template-columns: minmax(0, 1fr);
+			grid-template-areas:
+				'stage'
+				'exchange'
+				'dock'
+				'turn'
+				'transcript';
+			padding: var(--jv-space-3) var(--jv-space-3) var(--jv-space-5);
+		}
+		.dock {
+			grid-template-columns: auto minmax(0, 1fr);
+			grid-template-rows: auto auto;
+			gap: var(--jv-space-3);
+		}
+		.mic-label {
+			display: none;
+		}
+		.mode {
+			grid-column: 2;
+			justify-self: end;
+		}
+		.keys {
+			display: none;
+		}
+		.field {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.mic .arc,
+		.stages i {
+			transition: none;
+		}
 	}
 </style>

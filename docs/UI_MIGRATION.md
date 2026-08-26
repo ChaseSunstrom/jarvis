@@ -125,18 +125,18 @@ components allowed to have them.
 
 ### M49 — the signature surface
 
-- [ ] `/` VOICE · **old** · GLSL `Orb.svelte` sphere, grid, brackets, tagline, pill PTT, mono readout → C2 chat view: `Reactor` (instrument) centred with the level arc on real audio amplitude; idle → listening → thinking → speaking as distinct states on the `--jv-rx-*` clock; caption line (`listening · hands-free · kitchen`); the exchange under it (Barlow question, Space Grotesk reply with caret, tool-call line); transcript panel left; this-turn panel right (stages bar, wake/transcribe/first-token/speak ms, tool calls); the dock (mic ring, "Say or type", VOICE | CHAT, key hints). Loading = boot; empty = "Say something"; error = the turn's; offline = the link's.
-- [ ] `Reactor` (`lib/ui`) · **partial** · C2 geometry, but state only tints the rim; needs per-state palette from `color.orb.*`, an amplitude-driven level, thinking's dashed inner ring, speaking's cadence, error, and a `figure` slot for the task ring and dashboard hero.
-- [ ] `Orb.svelte`, `orb-shader.spec.ts` · **old** → deleted once nothing references them; `design/build.py --check` and `reactor_orb_test.py` re-pointed at the instrument's geometry table (`tests/contracts/reactor_geometry.json`).
-- [ ] `BootSequence` · **partial** · re-staged on the instrument: bezel → blades → coil → level → core, subsystems named as they come up.
-- [ ] `ModeToggle` · **old** (pill) → the dock's VOICE | CHAT underline pair.
-- [ ] `ChatPanel` / `ChatMessage` · **partial** · pills and mono body → the chat mode as the same C2 view with the transcript expanded and the exchange as a list.
+- [x] `/` VOICE · **migrated** · GLSL `Orb.svelte` sphere, grid, brackets, tagline, pill PTT, mono readout → C2 chat view: `Reactor` (instrument) centred with the level arc on real audio amplitude; idle → listening → thinking → speaking as distinct states on the `--jv-rx-*` clock; caption line (`listening · hands-free · kitchen`); the exchange under it (Barlow question, Space Grotesk reply with caret, tool-call line); transcript panel left; this-turn panel right (stages bar, wake/transcribe/first-token/speak ms, tool calls); the dock (mic ring, "Say or type", VOICE | CHAT, key hints). Loading = boot; empty = "Say something"; error = the turn's; offline = the link's.
+- [x] `Reactor` (`lib/ui`) · **migrated** · C2 geometry, but state only tints the rim; needs per-state palette from `color.orb.*`, an amplitude-driven level, thinking's dashed inner ring, speaking's cadence, error, and a `figure` slot for the task ring and dashboard hero.
+- [x] `Orb.svelte`, `orb-shader.spec.ts` · deleted once nothing references them; `design/build.py --check` and `reactor_orb_test.py` re-pointed at the instrument's geometry table (`tests/contracts/reactor_geometry.json`).
+- [x] `BootSequence` · **migrated** · re-staged on the instrument: bezel → blades → coil → level → core, subsystems named as they come up.
+- [x] `ModeToggle` · deleted → the dock's VOICE | CHAT underline pair.
+- [x] `ChatPanel` / `ChatMessage` · **migrated** · pills and mono body → the chat mode as the same C2 view with the transcript expanded and the exchange as a list.
 
 ### M50 — the console
 
 Chrome, drawn on every destination:
 
-- [ ] Layout shell: header, tabs, status readout, skip link · **partial** · pill tabs and a glowing wordmark → C2 top bar with the sliding underline; VOICE joins the bar; the console link on the HUD and the MOMENTS pill go.
+- [x] Layout shell: header, tabs, status readout, skip link · **migrated** (M49) · the C2 top bar with the sliding underline; VOICE in the bar; the console link on the HUD gone. The MOMENTS pill is `Notifications`, below.
 - [ ] `DestinationNav` (section strip) · **partial** → C2 segmented control.
 - [ ] `CommandPalette` · **partial**
 - [ ] `Approvals` · **partial** → C2 approval bar (amber inset rule, `Held · tier 3`, APPROVE primary).

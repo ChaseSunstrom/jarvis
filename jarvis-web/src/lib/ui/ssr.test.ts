@@ -30,7 +30,9 @@ const props: Record<string, Record<string, unknown>> = {
 	ErrorState: { title: "Couldn't load" },
 	OfflineState: {},
 	ScreenState: { status: 'loading', children: undefined },
-	Reactor: { size: 120 }
+	Reactor: { size: 120 },
+	TopBar: { tabs: [{ href: '/', label: 'VOICE', testid: 'nav-voice' }], isCurrent: () => false },
+	StatusReadout: { items: [{ label: 'link', tone: 'live' }] }
 };
 
 /** A snippet that renders a word, for the components that take children. */

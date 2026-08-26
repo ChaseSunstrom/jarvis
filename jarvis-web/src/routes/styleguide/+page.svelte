@@ -33,7 +33,9 @@
 		ErrorState,
 		OfflineState,
 		ScreenState,
-		Reactor
+		Reactor,
+		TopBar,
+		StatusReadout
 	} from '$lib/ui';
 
 	type Row = { name: TokenName; value: string };
@@ -87,6 +89,7 @@
 	let demoTab = $state('running');
 	let demoDialog = $state(false);
 	let demoStatus = $state<'loading' | 'ready' | 'empty' | 'error' | 'offline'>('ready');
+	let demoBarTab = $state('#voice');
 	const STATUSES = ['loading', 'ready', 'empty', 'error', 'offline'] as const;
 </script>
 
@@ -304,18 +307,61 @@
 			<article class="demo wide">
 				<h3>Reactor</h3>
 				<p class="sw-value">
-					One instrument at every size: the voice orb, a task's progress ring, a dashboard figure.
+					One instrument at every size: the voice screen's centrepiece, a task's progress ring, a
+					dashboard figure. Five states, each a palette from <code>color.orb.*</code>; the geometry is
+					<code>tests/contracts/reactor_geometry.json</code>, which the phone reads too.
 				</p>
 				<div class="stack-h reactors">
-					<Reactor size={160} level={0.38} state="listening" label="Listening" />
+					<Reactor size={140} level={0.3} state="idle" label="Idle" testid="sg-reactor-idle" />
+					<Reactor size={140} level={0.62} state="listening" label="Listening" testid="sg-reactor-listening" />
+					<Reactor size={140} level={0.5} state="thinking" label="Thinking" testid="sg-reactor-thinking" />
+					<Reactor size={140} level={0.8} state="speaking" label="Speaking" testid="sg-reactor-speaking" />
+					<Reactor size={140} level={0.4} state="error" label="Error" testid="sg-reactor-error" />
 					<Reactor
-						size={160}
+						size={140}
 						level={0.61}
 						segments={{ done: 2, running: 1, total: 5 }}
 						breathing={false}
 						label="Step 3 of 5"
+						testid="sg-reactor-ring"
 					/>
-					<Reactor size={110} level={0.62} state="thinking" label="Thinking" />
+				</div>
+			</article>
+
+			<article class="demo wide">
+				<h3>TopBar · StatusReadout</h3>
+				<p class="sw-value">
+					The one bar every screen wears: brand, five tabs under one sliding underline, and a
+					readout whose dots say what is live. Drawn by the root layout; shown here in a frame.
+				</p>
+				<div class="bar-demo">
+					<TopBar
+						tabs={[
+							{ href: '#voice', label: 'VOICE', testid: 'sg-tab-voice' },
+							{ href: '#house', label: 'HOUSE', testid: 'sg-tab-house', count: 3 },
+							{ href: '#work', label: 'WORK', testid: 'sg-tab-work', live: true },
+							{ href: '#knowledge', label: 'KNOWLEDGE', testid: 'sg-tab-knowledge' },
+							{ href: '#settings', label: 'SETTINGS', testid: 'sg-tab-settings' }
+						]}
+						isCurrent={(href) => href === demoBarTab}
+						testid="sg-top-bar"
+					>
+						{#snippet status()}
+							<StatusReadout
+								items={[
+									{ label: 'link', tone: 'live' },
+									{ label: 'qwen3-8b', tone: 'live' },
+									{ label: '1 held', tone: 'warn' },
+									{ label: 'tts', tone: 'off' }
+								]}
+							/>
+						{/snippet}
+					</TopBar>
+				</div>
+				<div class="sg-toolbar">
+					{#each ['#voice', '#house', '#work', '#knowledge', '#settings'] as href (href)}
+						<Button onclick={() => (demoBarTab = href)} testid="sg-bar-{href.slice(1)}">{href.slice(1)}</Button>
+					{/each}
 				</div>
 			</article>
 		</div>
@@ -419,5 +465,7 @@
 	.stack-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jv-space-3); }
 	.stack-v { display: grid; gap: var(--jv-space-4); }
 	.reactors { justify-content: space-around; }
+	.bar-demo { position: relative; border: 1px solid var(--jv-line-hair); border-radius: var(--jv-radius-md); overflow: hidden; margin-bottom: var(--jv-space-3); }
+	.bar-demo :global(.top) { position: static; }
 	.state-stage { min-height: var(--jv-space-7); margin-bottom: var(--jv-space-4); }
 </style>

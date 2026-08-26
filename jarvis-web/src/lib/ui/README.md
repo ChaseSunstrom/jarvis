@@ -104,7 +104,43 @@ forget a state by not writing it. Required on every routed page by
 
 ## Reactor
 
-The arc reactor as an instrument: bezel, blades, coil, level arc, lens with two
-iris arcs. `level` fills the arc; `segments` (`{ done, running, total }`) groups
-the blades into plan steps, which is what makes the task ring a progress ring;
-`state` colours the core; `breathing={false}` (or reduced motion) stills it.
+The arc reactor, as an instrument: a graduated bezel, a ring of blades with a
+glint walking round, a counter-rotating coil, a level arc, and a dark lens with
+two iris arcs and one hot dot. One component at every size. `level` (0–1) fills
+the arc — real audio amplitude on the voice screen, progress on a task;
+`state` is one of `idle · listening · thinking · speaking · error`, each a
+distinct palette from `color.orb.*`; `segments` groups the blades into plan
+steps; `reveal` is the boot sequence's per-layer handle; `fluid` scales to the
+container. The geometry is `tests/contracts/reactor_geometry.json`, held by
+`reactor.test.ts` here and `reactor_orb_test.py` on the phone. Under reduced
+motion nothing turns; the level still follows its prop.
+
+```svelte
+<Reactor size={360} fluid level={amplitude} state="listening" />
+```
+
+## TopBar
+
+Reactor II's top bar, the same on every screen: the brand at the left, the
+tabs centred under one accent underline that slides to the current one, and a
+`status` snippet at the right. `tabs` is `NAV_SCREENS`; `isCurrent` decides
+which is lit. Drawn by the root layout on the voice screen and the console
+alike. Inside the Android console frame the layout hides the brand and the
+tabs (the native strip already draws them) and keeps the readout.
+
+```svelte
+<TopBar tabs={NAV} isCurrent={(href) => here.startsWith(href)}>
+	{#snippet status()}<StatusReadout items={…} />{/snippet}
+</TopBar>
+```
+
+## StatusReadout
+
+The mono readout at the right of the bar: a few words, each with a dot whose
+`tone` says whether the thing is live (`live · warn · off · neutral`). One item
+may carry `role: 'status'` and a `testid`, for the state a screen reader
+follows; `status` renders as `data-status`.
+
+```svelte
+<StatusReadout items={[{ label: 'link', tone: 'live' }, { label: '1 held', tone: 'warn' }]} />
+```

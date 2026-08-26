@@ -27,5 +27,7 @@ export { default as ErrorState } from './ErrorState.svelte';
 export { default as OfflineState } from './OfflineState.svelte';
 export { default as ScreenState } from './ScreenState.svelte';
 export { default as Reactor } from './Reactor.svelte';
+export { default as TopBar } from './TopBar.svelte';
+export { default as StatusReadout } from './StatusReadout.svelte';
 
 export type { Status } from './ScreenState.svelte';

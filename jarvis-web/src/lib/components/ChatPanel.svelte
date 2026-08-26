@@ -2,27 +2,29 @@
 	/**
 	 * Chat mode: the same assistant, read instead of heard.
 	 *
-	 * The orb is the right surface when you are across the room and talking. It
-	 * is the wrong one when you want to read an answer, scroll back to what you
-	 * asked on Tuesday, or see which tools a turn actually ran. That is what
-	 * this is — and it is a *mode*, not a second app: the same socket, the same
-	 * pipeline run, the same microphone. Speaking while chat mode is open starts
-	 * a turn and lands it in the transcript, because "I switched to typing" is
-	 * not "stop listening to me".
+	 * The reactor is the right surface when you are across the room and
+	 * talking. It is the wrong one when you want to read an answer, scroll back
+	 * to what you asked on Tuesday, or see which tools a turn actually ran. That
+	 * is what this is — and it is a *mode*, not a second app: the same socket,
+	 * the same pipeline run, the same microphone. Speaking while chat mode is
+	 * open starts a turn and lands it in the transcript, because "I switched to
+	 * typing" is not "stop listening to me".
 	 *
 	 * Everything here is presentation. The socket, the pipeline client and the
 	 * microphone belong to the page (`routes/+page.svelte`), which owns the one
 	 * connection both modes share; this component is handed the transcript and
 	 * a set of callbacks. That split is what lets the toggle be instant and
 	 * lossless — switching modes does not tear down a run in flight.
+	 *
+	 * On Reactor II it is the voice screen with the transcript expanded: past
+	 * conversations in the left panel, the thread in the middle under a small
+	 * instrument, the composer in the dock.
 	 */
 	import { onMount, tick } from 'svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import ModeToggle from './ModeToggle.svelte';
-	import Orb from './Orb.svelte';
+	import { Reactor } from '$lib/ui';
 	import { relativeTime, type ChatMessage as Message } from '$lib/chat';
 	import type { ConversationSummary } from '$lib/jarvisClient';
-	import type { PipelineState } from '$lib/pipeline';
 
 	let {
 		messages,
@@ -30,13 +32,12 @@
 		conversationId = null,
 		historyError = '',
 		busy = false,
-		turnState = 'idle' as PipelineState,
+		turnState = 'idle',
 		muted = false,
 		micLabel = '',
 		orbLevel = 0,
 		speak = false,
 		capturing = false,
-		accent = '',
 		onSend,
 		onNew,
 		onOpen,
@@ -50,15 +51,13 @@
 		conversationId?: string | null;
 		historyError?: string;
 		busy?: boolean;
-		turnState?: PipelineState;
+		turnState?: 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
 		muted?: boolean;
 		micLabel?: string;
 		orbLevel?: number;
 		speak?: boolean;
 		/** True while this surface is recording a spoken question. */
 		capturing?: boolean;
-		/** The HUD's live state colour, so both surfaces move together. */
-		accent?: string;
 		onSend: (text: string) => void;
 		onNew: () => void;
 		onOpen: (id: string) => void;
@@ -83,11 +82,12 @@
 	 * 80px of slack, so "near the bottom" survives a half-line of new text.
 	 */
 	let pinned = $state(true);
+	const SLACK_PX = 80;
 
 	function onScroll(): void {
 		if (!scroller) return;
 		const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-		pinned = gap < 80;
+		pinned = gap < SLACK_PX;
 	}
 
 	// Depends on the message array AND on the streaming message's length, so a
@@ -133,35 +133,25 @@
 		sidebarOpen = false;
 	}
 
+	const title = $derived(
+		conversations.find((c) => c.id === conversationId)?.title ?? 'New conversation'
+	);
+
 	onMount(() => {
 		composer?.focus();
 	});
 </script>
 
-<section
-	class="chat"
-	data-testid="chat-panel"
-	data-state={turnState}
-	style={accent ? `--jv-state-accent: ${accent}` : undefined}
->
-	<!-- The same two pieces of chrome every other surface draws, so chat mode
-	     reads as part of the HUD rather than a plain document pasted over it:
-	     the faint scan grid, and the corner brackets. Both are shared utilities
-	     from chrome.css and inherit the live state accent. -->
-	<div class="jv-grid" aria-hidden="true"></div>
-	<span class="jv-bracket tl" aria-hidden="true"></span>
-	<span class="jv-bracket br" aria-hidden="true"></span>
-	<!-- Off-canvas below the breakpoint, docked above it. `inert` rather than
-	     `display: none` when hidden, so a closed drawer's links are not in the
-	     tab order on a phone. -->
+<section class="chat" data-testid="chat-panel" data-state={turnState}>
+	<!-- Off-canvas below the breakpoint, docked above it. -->
 	<aside
 		class="past"
 		class:open={sidebarOpen}
 		data-testid="chat-history"
 		aria-label="Past conversations"
 	>
-		<div class="past-top">
-			<span class="past-title">CONVERSATIONS</span>
+		<header class="past-top">
+			<span class="past-title">Conversations</span>
 			<button
 				type="button"
 				class="new"
@@ -171,9 +161,9 @@
 					sidebarOpen = false;
 				}}
 			>
-				+ NEW
+				+ New
 			</button>
-		</div>
+		</header>
 
 		{#if historyError}
 			<p class="past-empty" data-testid="chat-history-error">{historyError}</p>
@@ -226,12 +216,10 @@
 			>
 				☰
 			</button>
-			<div class="mini-orb" aria-hidden="true">
-				<Orb level={orbLevel} orbState={turnState} />
+			<div class="mini" aria-hidden="true">
+				<Reactor size={120} fluid level={orbLevel} state={turnState} testid="chat-reactor" label="" />
 			</div>
-			<span class="thread-title" data-testid="chat-title">
-				{conversations.find((c) => c.id === conversationId)?.title ?? 'New conversation'}
-			</span>
+			<span class="thread-title" data-testid="chat-title">{title}</span>
 			<button
 				type="button"
 				class="chip"
@@ -243,7 +231,18 @@
 			>
 				{speak ? 'SPEAKS' : 'SILENT'}
 			</button>
-			<ModeToggle chat={true} onToggle={onToggleMode} />
+			<button
+				type="button"
+				class="mode"
+				data-testid="mode-toggle"
+				data-mode="chat"
+				aria-pressed={true}
+				aria-label="Switch to the voice screen"
+				title="Hear the conversation instead of reading it"
+				onclick={onToggleMode}
+			>
+				<span>Voice</span><span class="on">Chat</span>
+			</button>
 		</header>
 
 		<div
@@ -257,11 +256,9 @@
 		>
 			{#if !messages.length}
 				<div class="empty" data-testid="chat-empty">
-					<span class="empty-mark" aria-hidden="true"></span>
 					<p class="empty-head">Good evening.</p>
 					<p class="empty-sub">
-						Ask by typing, or hold the microphone to speak. Nothing is heard
-						until you press it.
+						Ask by typing, or press the microphone to speak. Nothing is heard until you press it.
 					</p>
 				</div>
 			{:else}
@@ -271,18 +268,19 @@
 			{/if}
 		</div>
 
-		<form class="composer" onsubmit={submit}>
+		<form class="dock" onsubmit={submit}>
 			<!--
-			  Press to speak. The orb's button is a mute switch over an always-on
-			  VAD, which is right across a room and wrong at a keyboard; here the
-			  same hardware is driven the other way round. Nothing leaves the
-			  browser until this is pressed, so it is the privacy boundary too and
-			  chat mode needs no separate mute.
+			  Press to speak. The reactor's button is a mute switch over an
+			  always-on VAD, which is right across a room and wrong at a keyboard;
+			  here the same hardware is driven the other way round. Nothing leaves
+			  the browser until this is pressed, so it is the privacy boundary
+			  too, and chat mode needs no separate mute.
 			-->
 			<button
 				type="button"
 				class="mic"
 				class:live={capturing}
+				class:muted
 				data-testid="chat-mic"
 				aria-pressed={capturing}
 				aria-label={capturing ? 'Stop listening' : 'Speak instead of typing'}
@@ -315,102 +313,83 @@
 
 <style>
 	.chat {
-		/*
-		 * The accent is LIVE — it tracks the pipeline state exactly as the orb's
-		 * does, so a turn being thought about looks the same on both surfaces.
-		 * The line and dim tokens are re-derived from it, which is what lets the
-		 * shared .jv-* utilities pick the state colour up by inheritance.
-		 */
-		--jv-state-accent: var(--jv-accent);
-		--jv-state-line: color-mix(in srgb, var(--jv-state-accent) 30%, transparent);
-		--jv-state-line-soft: color-mix(in srgb, var(--jv-state-accent) 13%, transparent);
-		--jv-line: var(--jv-state-line);
-		--jv-line-soft: var(--jv-state-line-soft);
-		--jv-grid-mask: radial-gradient(ellipse 90% 70% at 50% 30%, var(--jv-bg) 35%, transparent 92%);
-		--jv-bracket-size: clamp(18px, 2.6vw, 34px);
-		--jv-bracket-inset: 10px;
-
 		position: relative;
 		display: grid;
-		grid-template-columns: 17rem minmax(0, 1fr);
-		height: 100vh;
-		height: 100dvh;
+		grid-template-columns: calc(var(--jv-space-7) * 6.6667) minmax(0, 1fr);
+		gap: var(--jv-space-5);
+		height: calc(100vh - var(--jv-space-7) - var(--jv-space-2));
+		height: calc(100dvh - var(--jv-space-7) - var(--jv-space-2));
 		min-height: 0;
+		padding: var(--jv-space-4) var(--jv-space-6) var(--jv-space-6);
 		font-family: var(--jv-font-body);
 		color: var(--jv-text);
-		background:
-			radial-gradient(
-				ellipse 60% 45% at 78% 0%,
-				color-mix(in srgb, var(--jv-state-accent) 10%, transparent),
-				transparent 72%
-			),
-			var(--jv-bg);
-		transition: background var(--jv-dur-slow) ease;
-	}
-	/* The chrome sits behind everything and takes no clicks. */
-	.chat > :global(.jv-grid),
-	.chat > :global(.jv-bracket) {
-		position: absolute;
-		pointer-events: none;
+		background: radial-gradient(ellipse 90% 70% at 50% 110%, var(--jv-bg-raised), transparent 70%), var(--jv-bg);
 	}
 	.past,
 	.thread {
 		position: relative;
 		z-index: 1;
+		min-height: 0;
 	}
 
-	/* --- past conversations --- */
+	/* --- past conversations: a panel --- */
 	.past {
 		display: flex;
 		flex-direction: column;
-		min-height: 0;
-		border-right: 1px solid var(--jv-line-soft);
-		background: linear-gradient(180deg, var(--jv-bg-raised), var(--jv-bg));
+		background: var(--jv-panel);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		overflow: hidden;
+		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
 	}
 	.past-top {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: var(--jv-space-2);
-		padding: var(--jv-space-4) var(--jv-space-3) var(--jv-space-3);
+		padding: var(--jv-space-3) var(--jv-space-4);
 		border-bottom: 1px solid var(--jv-line-hair);
 	}
 	.past-title {
-		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
-		color: var(--jv-text-faint);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
 	}
 	.new {
-		font-family: var(--jv-font-chrome);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-chrome);
-		color: var(--jv-accent);
-		background: var(--jv-wash);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
+		background: transparent;
 		border: 1px solid var(--jv-line);
-		border-radius: var(--jv-radius-pill);
+		border-radius: var(--jv-radius-md);
 		padding: var(--jv-space-1) var(--jv-space-3);
 		cursor: pointer;
 		white-space: nowrap;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.new:hover {
-		background: var(--jv-wash-strong);
-		box-shadow: var(--jv-glow-sm);
+		color: var(--jv-text-bright);
+		border-color: var(--jv-text-dim);
 	}
 	.past ul {
 		list-style: none;
 		margin: 0;
-		padding: var(--jv-space-2);
+		padding: 0;
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-rule-live);
 		min-height: 0;
 	}
 	.past li {
 		position: relative;
 		display: flex;
 		align-items: stretch;
+		border-bottom: 1px solid var(--jv-line-hair);
 	}
 	.row {
 		flex: 1;
@@ -420,31 +399,31 @@
 		gap: var(--jv-space-1) var(--jv-space-2);
 		text-align: left;
 		background: transparent;
-		border: 1px solid transparent;
-		border-radius: var(--jv-radius-sm);
-		padding: var(--jv-space-2) var(--jv-space-3);
+		border: 0;
+		padding: var(--jv-space-3) var(--jv-space-4);
 		cursor: pointer;
 		min-width: 0;
+		color: inherit;
+		font: inherit;
+		transition: background var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.row:hover {
 		background: var(--jv-wash);
-		border-color: var(--jv-line-hair);
 	}
 	li.current .row {
 		background: var(--jv-wash);
-		border-color: var(--jv-line);
-		box-shadow: var(--jv-glow-sm) inset;
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	}
 	.row-title {
 		grid-area: title;
-		font-size: var(--jv-fs-xs);
+		font-size: var(--jv-fs-sm);
 		color: var(--jv-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	li.current .row-title {
-		color: var(--jv-state-accent);
+		color: var(--jv-text-bright);
 	}
 	.row-meta {
 		grid-area: meta;
@@ -457,12 +436,11 @@
 	}
 	.row-preview {
 		grid-area: preview;
-		font-size: var(--jv-fs-2xs);
-		color: var(--jv-text-faint);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		opacity: 0.75;
 	}
 	.forget {
 		flex: 0 0 auto;
@@ -484,11 +462,11 @@
 		opacity: 1;
 	}
 	.forget:hover {
-		color: var(--jv-danger);
+		color: var(--jv-danger-text);
 	}
 	.past-empty {
 		margin: 0;
-		padding: var(--jv-space-4) var(--jv-space-3);
+		padding: var(--jv-space-4);
 		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-faint);
 	}
@@ -497,22 +475,17 @@
 	.thread {
 		display: grid;
 		grid-template-rows: auto minmax(0, 1fr) auto;
-		min-height: 0;
+		gap: var(--jv-space-3);
 		min-width: 0;
 	}
 	.thread-top {
 		display: flex;
 		align-items: center;
 		gap: var(--jv-space-3);
-		padding: var(--jv-space-3) var(--jv-space-4);
-		border-bottom: 1px solid var(--jv-state-line-soft);
-		background: linear-gradient(
-			180deg,
-			color-mix(in srgb, var(--jv-state-accent) 6%, transparent),
-			transparent
-		);
+		padding: 0 var(--jv-space-2) var(--jv-space-3);
+		border-bottom: 1px solid var(--jv-line-hair);
 	}
-	.mini-orb {
+	.mini {
 		width: var(--jv-space-6);
 		height: var(--jv-space-6);
 		flex: 0 0 auto;
@@ -520,39 +493,67 @@
 	.thread-title {
 		flex: 1;
 		min-width: 0;
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
-		letter-spacing: var(--jv-track-chrome);
-		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.chip {
-		font-family: var(--jv-font-chrome);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
+		text-transform: uppercase;
 		color: var(--jv-text-faint);
 		background: transparent;
 		border: 1px solid var(--jv-line-hair);
-		border-radius: var(--jv-radius-pill);
+		border-radius: var(--jv-radius-md);
 		padding: var(--jv-space-1) var(--jv-space-3);
 		cursor: pointer;
 		white-space: nowrap;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.chip:hover {
-		color: var(--jv-state-accent);
-		border-color: var(--jv-state-line);
+		color: var(--jv-text);
+		border-color: var(--jv-line);
 	}
 	.chip.on {
 		color: var(--jv-gold);
 		border-color: color-mix(in srgb, var(--jv-gold) 40%, transparent);
 	}
+	.mode {
+		display: inline-flex;
+		gap: var(--jv-space-4);
+		background: transparent;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-chrome);
+		text-transform: uppercase;
+		color: var(--jv-text-faint);
+		white-space: nowrap;
+	}
+	.mode span {
+		padding-bottom: var(--jv-space-1);
+		border-bottom: 1px solid transparent;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.mode span.on {
+		color: var(--jv-text-bright);
+		border-bottom-color: var(--jv-accent);
+	}
+	.mode:hover span:not(.on) {
+		color: var(--jv-text);
+	}
 	.drawer {
 		display: none;
 		background: transparent;
 		border: 1px solid var(--jv-line-hair);
-		border-radius: var(--jv-radius-sm);
+		border-radius: var(--jv-radius-md);
 		color: var(--jv-text-dim);
 		padding: var(--jv-space-1) var(--jv-space-2);
 		cursor: pointer;
@@ -560,7 +561,7 @@
 
 	.scroll {
 		overflow-y: auto;
-		padding: var(--jv-space-4);
+		padding: var(--jv-space-2) var(--jv-space-2);
 		display: flex;
 		flex-direction: column;
 		gap: var(--jv-space-3);
@@ -570,91 +571,84 @@
 	.empty {
 		margin: auto;
 		text-align: center;
-		max-width: calc(var(--jv-space-7) * 9.33333);
-	}
-	.empty-mark {
-		display: block;
-		width: calc(var(--jv-space-1) * 8.5);
-		height: calc(var(--jv-space-1) * 8.5);
-		margin: 0 auto var(--jv-space-4);
-		border: 1px solid var(--jv-state-line);
-		border-radius: 50%;
-		box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-state-accent) 30%, transparent),
-			inset 0 0 var(--jv-radius-lg) color-mix(in srgb, var(--jv-state-accent) 22%, transparent);
+		max-width: 44ch;
 	}
 	.empty-head {
 		margin: 0 0 var(--jv-space-2);
+		font-family: var(--jv-font-display);
+		font-weight: var(--jv-weight-display);
 		font-size: var(--jv-fs-display);
-		font-weight: 300;
 		color: var(--jv-text-bright);
-		text-shadow: var(--jv-glow-md);
 	}
 	.empty-sub {
 		margin: 0;
 		font-size: var(--jv-fs-sm);
-		color: var(--jv-text-faint);
+		color: var(--jv-text-dim);
 	}
 
-	/* --- composer --- */
-	.composer {
+	/* --- the dock: the composer --- */
+	.dock {
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: end;
-		gap: var(--jv-space-2);
-		padding: var(--jv-space-3) var(--jv-space-4) var(--jv-space-4);
-		border-top: 1px solid var(--jv-line-hair);
-		background: var(--jv-bg-raised);
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-3) var(--jv-space-3);
+		background: var(--jv-panel);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
 	}
 	textarea {
 		resize: none;
-		min-height: var(--jv-space-7);
+		min-height: var(--jv-space-6);
 		max-height: calc(var(--jv-space-7) * 4);
 		/* `field-sizing` grows the box with its content where it is supported and
 		   is ignored where it is not, which is why max-height is set above and
 		   the rows attribute is 1: the fallback is a one-line box that scrolls. */
 		field-sizing: content;
-		padding: var(--jv-space-3) var(--jv-space-3);
+		padding: var(--jv-space-2) var(--jv-space-2);
 		font-family: var(--jv-font-body);
-		font-size: var(--jv-fs-sm);
+		font-size: var(--jv-fs-md);
 		line-height: 1.45;
 		color: var(--jv-text-bright);
-		background: var(--jv-field);
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-md);
+		background: transparent;
+		border: 0;
+		border-bottom: 1px solid transparent;
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	textarea:focus {
 		outline: none;
-		border-color: var(--jv-line);
-		box-shadow: var(--jv-glow-sm);
+		border-bottom-color: var(--jv-line);
 	}
 	textarea::placeholder {
 		color: var(--jv-text-faint);
-		opacity: 0.7;
 	}
 	.send,
 	.mic {
-		font-family: var(--jv-font-chrome);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-chrome);
-		border-radius: var(--jv-radius-pill);
-		padding: var(--jv-space-3) var(--jv-space-4);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-4);
 		cursor: pointer;
 		white-space: nowrap;
 		transition: background var(--jv-dur-fast) var(--jv-ease-out),
-			box-shadow var(--jv-dur-fast) var(--jv-ease-out),
+			border-color var(--jv-dur-fast) var(--jv-ease-out),
 			color var(--jv-dur-fast) var(--jv-ease-out);
 	}
+	/* The one filled control on the screen. */
 	.send {
 		color: var(--jv-accent-ink);
-		background: linear-gradient(180deg, var(--jv-accent-lift), var(--jv-accent));
+		background: var(--jv-accent);
 		border: 1px solid var(--jv-accent);
-		font-weight: 600;
 	}
 	.send:hover:not(:disabled) {
-		box-shadow: var(--jv-glow-md);
+		background: var(--jv-accent-lift);
+		border-color: var(--jv-accent-lift);
 	}
 	.send:disabled {
-		opacity: 0.4;
+		opacity: 0.45;
 		cursor: default;
 	}
 	.mic {
@@ -663,16 +657,15 @@
 		gap: var(--jv-space-2);
 		color: var(--jv-text-dim);
 		background: transparent;
-		border: 1px solid var(--jv-state-line-soft);
+		border: 1px solid var(--jv-line);
 	}
 	.mic:hover {
-		color: var(--jv-state-accent);
-		border-color: var(--jv-state-line);
-		background: var(--jv-wash);
+		color: var(--jv-text-bright);
+		border-color: var(--jv-text-dim);
 	}
 	.mic-dot {
-		width: calc(var(--jv-space-1) * 1.75);
-		height: calc(var(--jv-space-1) * 1.75);
+		width: var(--jv-radius-md);
+		height: var(--jv-radius-md);
 		border-radius: 50%;
 		background: currentColor;
 		opacity: 0.55;
@@ -685,27 +678,18 @@
 	.mic.live {
 		color: var(--jv-danger-text);
 		border-color: color-mix(in srgb, var(--jv-danger) 55%, transparent);
-		background: color-mix(in srgb, var(--jv-danger) 12%, transparent);
+		background: color-mix(in srgb, var(--jv-danger) 10%, transparent);
 	}
 	.mic.live .mic-dot {
 		background: var(--jv-danger);
 		opacity: 1;
-		box-shadow: 0 0 calc(var(--jv-space-1) * 2) var(--jv-danger);
-		animation: mic-live var(--jv-dur-enter) ease-in-out infinite;
-	}
-	@keyframes mic-live {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.3;
-		}
+		animation: jv-blink var(--jv-dur-enter) var(--jv-ease-in-out) infinite;
 	}
 
 	@media (max-width: 800px) {
 		.chat {
 			grid-template-columns: minmax(0, 1fr);
+			padding: var(--jv-space-3);
 		}
 		.drawer {
 			display: block;
@@ -718,7 +702,6 @@
 			transform: translateX(-102%);
 			transition: transform var(--jv-dur-base) var(--jv-ease-out);
 			box-shadow: var(--jv-elev-float);
-			background: var(--jv-panel-solid);
 		}
 		.past.open {
 			transform: translateX(0);
@@ -729,12 +712,8 @@
 		.scroll {
 			scroll-behavior: auto;
 		}
-		.past,
-		.chat {
+		.past {
 			transition: none;
-		}
-		.mic.live .mic-dot {
-			animation: none;
 		}
 	}
 </style>

@@ -806,7 +806,7 @@ the room to take them: VOICE joins the top bar as its first tab (five, the M48 c
 instrument, because that is what the chosen direction means by "reactor"; the knowledge
 screens become one animated graph, because the brief asked for one by name.
 
-- [ ] **M49 — Home screen + reactor: the signature surface, on Reactor II** · size L · deps M44, M48
+- [x] **M49 — Home screen + reactor: the signature surface, on Reactor II** · size L · deps M44, M48
   - Scope: `/` is `docs/design/c2-reactor.html` `?view=chat`, built from the library. The
     `Reactor` instrument (`lib/ui/Reactor.svelte`) is the centrepiece at up to
     `--jv-measure-orb`: the level arc carries **real audio amplitude** (the mic while

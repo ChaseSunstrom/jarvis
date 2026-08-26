@@ -75,7 +75,11 @@ def console_nav() -> list[tuple[str, str]]:
         path = re.search(r"path: '([^']+)'", block)
         name = re.search(r"name: '([^']+)'", block)
         nav = re.search(r"nav: (true|false)", block)
-        if path and name and nav and nav.group(1) == "true":
+        # The voice screen is in the browser's bar (M49) and is NOT a console
+        # front door: on the phone it is the native HUD, and a WebView tab for
+        # it would open the browser's copy of the reactor behind the phone's own.
+        hud = re.search(r"hud: true", block)
+        if path and name and nav and nav.group(1) == "true" and not hud:
             out.append((name.group(1).upper(), path.group(1)))
     return out
 

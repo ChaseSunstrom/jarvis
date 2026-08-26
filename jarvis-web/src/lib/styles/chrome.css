@@ -534,134 +534,6 @@
 }
 
 /* ===================================================================== *
- * Boot sequence
- * ===================================================================== */
-
-.jv-boot {
-	position: fixed;
-	inset: 0;
-	z-index: 80;
-	/* Never blocks the app underneath: the sequence is decoration, not a gate. */
-	pointer-events: none;
-	display: grid;
-	place-items: center;
-	background: var(--jv-bg);
-	overflow: hidden;
-}
-.jv-boot-scan {
-	position: absolute;
-	left: 0;
-	right: 0;
-	height: 1px;
-	background: linear-gradient(90deg, transparent, var(--jv-accent), transparent);
-	box-shadow: var(--jv-glow-md);
-}
-.jv-boot-stage {
-	position: relative;
-	display: grid;
-	place-items: center;
-	width: min(52vmin, var(--jv-measure-boot));
-	height: min(52vmin, var(--jv-measure-boot));
-}
-.jv-boot-core {
-	position: absolute;
-	width: 15%;
-	height: 15%;
-	border-radius: 50%;
-	background: radial-gradient(circle, var(--jv-text-bright) 0%, var(--jv-accent) 58%, transparent 74%);
-	box-shadow: var(--jv-glow-md);
-}
-.jv-boot-flare {
-	position: absolute;
-	width: 100%;
-	height: 100%;
-	border-radius: 50%;
-	background: radial-gradient(circle, color-mix(in srgb, var(--jv-accent) 40%, transparent) 0%, transparent 48%);
-}
-.jv-boot-ring {
-	position: absolute;
-	border-radius: 50%;
-	border: 1px solid var(--jv-line);
-}
-/* Rim, dashed mid ring, fine dashes, gauge ticks — outward, distinct. */
-.jv-boot-ring[data-ring='0'] {
-	width: 38%;
-	height: 38%;
-	border-color: var(--jv-accent);
-	box-shadow: var(--jv-glow-sm);
-}
-.jv-boot-ring[data-ring='1'] {
-	width: 62%;
-	height: 62%;
-	border-style: dashed;
-}
-.jv-boot-ring[data-ring='2'] {
-	width: 82%;
-	height: 82%;
-	border-color: var(--jv-line-soft);
-}
-.jv-boot-ring[data-ring='3'] {
-	width: 100%;
-	height: 100%;
-	border-style: dotted;
-	border-color: var(--jv-line);
-}
-.jv-boot-word {
-	position: absolute;
-	bottom: -3.2rem;
-	display: flex;
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xl);
-	font-weight: 600;
-	color: var(--jv-accent);
-	text-shadow: var(--jv-glow-md);
-}
-.jv-boot-checks {
-	position: absolute;
-	bottom: -7.6rem;
-	display: flex;
-	flex-direction: column;
-	gap: var(--jv-space-1);
-	font-family: var(--jv-font-chrome);
-	font-size: var(--jv-fs-2xs);
-	letter-spacing: var(--jv-track-chrome);
-	text-transform: uppercase;
-	color: var(--jv-text-dim);
-	min-width: calc(var(--jv-space-7) * 4);
-}
-.jv-boot-checks span:not(:empty)::before {
-	content: '› ';
-	color: var(--jv-accent);
-}
-
-/* ===================================================================== *
- * The alert dock — the two global surfaces, on the voice HUD
- * ===================================================================== */
-
-/*
- * Approvals and tool activity are drawn on the HUD as well as in the console.
- * The HUD is not `.console` and must not become it, so they get a dock instead
- * of a page: fixed under the CONSOLE link, as wide as it needs to be and no
- * wider, and gone entirely when neither component has anything to say (both
- * render nothing when idle, so the dock collapses to zero height).
- *
- * `pointer-events` is off on the dock and back on for its contents, or an empty
- * dock would sit over the top of the HUD swallowing clicks meant for the orb.
- */
-.jv-alerts {
-	position: fixed;
-	top: var(--jv-space-7);
-	left: 50%;
-	transform: translateX(-50%);
-	z-index: 50;
-	width: min(calc(var(--jv-space-7) * 15.3333), calc(100vw - var(--jv-space-5)));
-	pointer-events: none;
-}
-.jv-alerts > * {
-	pointer-events: auto;
-}
-
-/* ===================================================================== *
  * Console furniture — the management pages' shared vocabulary
  * ===================================================================== */
 
@@ -888,14 +760,12 @@
 }
 
 /*
- * These few are also what the approvals banner is built from, and that banner
- * is drawn on the HUD as well — which is not `.console` and must not become it.
- * So the buttons, the field and the error line name `.jv-alerts` too; anything
- * that only ever appears on a management page stays scoped to `.console` alone.
+ * The approvals banner draws the library's own `<Button>`, on the voice screen
+ * and in the console alike; these rules are the console furniture for the raw
+ * `.btn` classes that remain on management pages (M50 removes them).
  */
 .console button.btn,
-.console .btn,
-.jv-alerts .btn {
+.console .btn {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-xs);
 	letter-spacing: var(--jv-track-chrome);
@@ -914,43 +784,36 @@
 		transform var(--jv-dur-instant) var(--jv-ease-out);
 }
 .console button.btn:hover,
-.console .btn:hover,
-.jv-alerts .btn:hover {
+.console .btn:hover {
 	background: var(--jv-wash-strong);
 	box-shadow: var(--jv-glow-md);
 }
 /* A press you can feel. 60 ms of 2% is enough; more reads as a bug. */
 .console button.btn:active:not(:disabled),
-.console .btn:active,
-.jv-alerts .btn:active:not(:disabled) {
+.console .btn:active {
 	transform: translateY(1px) scale(0.98);
 }
-.console button.btn:disabled,
-.jv-alerts .btn:disabled {
+.console button.btn:disabled {
 	opacity: 0.45;
 	cursor: not-allowed;
 	box-shadow: none;
 	transform: none;
 }
-.console button.btn.ghost,
-.jv-alerts .btn.ghost {
+.console button.btn.ghost {
 	color: var(--jv-text-dim);
 	background: transparent;
 	border-color: var(--jv-line-soft);
 }
-.console button.btn.ghost:hover,
-.jv-alerts .btn.ghost:hover {
+.console button.btn.ghost:hover:hover {
 	color: var(--jv-text-bright);
 	border-color: var(--jv-line);
 }
-.console button.btn.danger,
-.jv-alerts .btn.danger {
+.console button.btn.danger {
 	color: var(--jv-danger-text);
 	border-color: color-mix(in srgb, var(--jv-danger) 40%, transparent);
 	background: color-mix(in srgb, var(--jv-danger) 8%, transparent);
 }
-.console button.btn.danger:hover,
-.jv-alerts .btn.danger:hover {
+.console button.btn.danger:hover:hover {
 	background: color-mix(in srgb, var(--jv-danger) 18%, transparent);
 	box-shadow: 0 0 calc(var(--jv-space-1) * 4.5) color-mix(in srgb, var(--jv-danger) 25%, transparent);
 }
@@ -1067,8 +930,7 @@
 .console input[type='number'],
 .console input[type='search'],
 .console select,
-.console textarea,
-.jv-alerts input[type='text'] {
+.console textarea {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-sm);
 	color: var(--jv-text-bright);
@@ -1081,8 +943,7 @@
 		box-shadow var(--jv-dur-fast) var(--jv-ease-out);
 }
 .console input::placeholder,
-.console textarea::placeholder,
-.jv-alerts input::placeholder {
+.console textarea::placeholder {
 	color: var(--jv-text-dim);
 	opacity: 0.8;
 }
@@ -1135,8 +996,7 @@
 	margin-bottom: var(--jv-space-3);
 	animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 }
-.console .err,
-.jv-alerts .err {
+.console .err {
 	font-family: var(--jv-font-chrome);
 	font-size: var(--jv-fs-xs);
 	letter-spacing: var(--jv-track-tight);

@@ -538,7 +538,7 @@ house's summary is a fraction of a real one's.
 | Claim | Level | Proof |
 |---|---|---|
 | One token source: `design/tokens.json` is the only file where a colour, size, font, radius, shadow or duration is typed; every surface's token file is generated from it | Automated | `python3 design/build.py --check` — seven generated files current (web CSS + TS, desktop `tokens.py`, Android `JarvisTokens.kt`, `JarvisTheme.kt`, `tokens.xml`, `colors.xml`) |
-| The orb palette on all three surfaces equals `color.orb.*` | Automated | the same command (drift check over `SiriPalette.kt` and `Orb.svelte`) + `python3 android-app/tools/reactor_orb_test.py` |
+| The reactor's palette on every surface is `color.orb.*`, and its geometry is one contract | Automated | the same command (drift check over `SiriPalette.kt`; `Reactor.svelte`'s constants against `tests/contracts/reactor_geometry.json`) + `python3 android-app/tools/reactor_orb_test.py` (the web against the contract; the phone's two views draw one renderer; the phone's own reading of the contract lands with M51) |
 | **No** hard-coded colour/spacing/type/motion value in web, Android or desktop app code | Automated | `python3 scripts/verify/token_lint.py` — the ratchet (`design/token-lint.baseline.json`) started at 340 hits across 38 files (2026-08-24) and is now **empty**: every file it walks is clean, so any raw value fails rather than fitting under an allowance. 4 documented exceptions. Re-measured under M44, where a planted `transition: all 240ms ease-in-out` had slipped through on `base.css`'s stale allowance |
 | Phone, desktop and console draw one palette, every text colour AA on its ground | Automated | `python3 android-app/tools/design_token_test.py` · `cd jarvis-desktop && python3 -m pytest tests/test_theme.py -q` · `cd jarvis-web && npx vitest run src/lib/tokens.test.ts` — all three read `design/tokens.json` |
 | `/styleguide` renders every token group and the four screen states, headless | Automated | `cd jarvis-web && E2E_PORT=8299 npx playwright test e2e/styleguide.spec.ts` (screenshot under `.verify/styleguide.png`) |
@@ -629,6 +629,24 @@ house's summary is a fraction of a real one's.
 | 84 controls use the shared component library | Automated *as a count* | and the library grew `pressed`, an `approve` variant and attribute forwarding rather than the pages working around it |
 | What is still a raw `<button>` | **Deliberate, and listed** | a mic, a disclosure triangle, a clickable row and five other one-offs — `docs/UI_MIGRATION.md` names each with its reason. All on tokens; none is a button in this library's sense |
 | Whether it is *good* | **Needs eyes** | 48 screenshots in `docs/ui-review/`, 16 screens at three widths. The harness can prove structure, states and spacing; "would a first-time user understand this" is not a test |
+
+### The voice screen (M49)
+
+`bash scripts/verify/m49-home-reactor.sh`. The signature surface, on Reactor II.
+
+| Claim | Level | Proof |
+|---|---|---|
+| The reactor is the instrument — bezel, blades, coil, level, lens — drawn as an SVG from one geometry contract, not a shader | Automated | the gate: `Orb.svelte` and `orb-shader.spec.ts` are gone and nothing imports them; `reactor.test.ts` renders `Reactor.svelte` and counts 120 ticks, 36 blades and the radii against `tests/contracts/reactor_geometry.json`; `e2e/home.spec.ts` counts them in a real browser |
+| Five distinct states, each a palette from `color.orb.*`, and an error state | Automated | `home.spec.ts` drives idle → listening → thinking → speaking and asserts four different computed stroke colours on the level arc; the gate asserts every state has its own rule |
+| The level arc follows real amplitude | Automated *for the plumbing* | `home.spec.ts` samples `data-level` twelve times while a synthetic amplitude runs and asserts it moves; in use the number is the microphone's RMS while listening and the player's while speaking. Whether it *reads* as the voice is the operator's, on `docs/motion-review/2-orb-states.webm` |
+| C2's chat layout: transcript left, exchange under the instrument, this turn right, the dock | Automated | `home.spec.ts` asserts the three regions' boxes at 1440px, the exchange filling from a turn, the timings in the THIS TURN panel, the reply in Space Grotesk, the question in Barlow, the timings in mono |
+| One bar on every screen; the voice screen is its first tab; the underline is under it | Automated | `home.spec.ts` counts five tabs and polls the underline's box against VOICE's; `e2e.spec.ts` walks the four destinations from the voice screen and back |
+| Nothing pre-C2 on the voice screen: no grid, brackets, tagline, pill, glowing text | Automated | the gate reads the page and chat mode for each; `home.spec.ts` asserts the DOM has no `.jv-grid`/`.jv-bracket` and no `<canvas>` |
+| Reduced motion stops the instrument and rests the level | Automated | `hud.spec.ts` under `emulateMedia`: zero running animations in the reactor's subtree, `data-level` 0.00; the counter-test asserts the blades turn otherwise |
+| The screen still works as a surface: approvals answerable, tools visible, mic mutable, palette left to the browser, scrolls on a short screen, a refused mic leaves typing | Automated | `hud.spec.ts`, unchanged in what it claims |
+| The pictures are current | Automated *by construction* | the gate regenerates `docs/ui-review/hud/*.png` and `docs/motion-review/1-boot.webm` / `2-orb-states.webm` itself |
+| A spoken turn and a typed one, through THIS screen in a real browser, against the running stack | Automated | `house-light-on` (voice, the fake capture device into the page's own VAD) and `chat-context-retention` (typed into chat mode) from the live suite |
+| Whether it is *excellent* | **Needs eyes** | `docs/ui-review/hud/` at three widths and the two recordings. The harness proves geometry, palette, layout and motion; it cannot prove taste |
 
 ### Motion (M44)
 

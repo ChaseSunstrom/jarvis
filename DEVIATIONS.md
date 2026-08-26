@@ -348,6 +348,27 @@ that drifts with every Docker release, and a stale copy of a syscall allowlist
 is worse than a documented absence. If you maintain one, point `security_opt`
 at it; nothing else has to change.
 
+## 14. The reactor is an instrument, and the voice screen is a tab
+
+The chosen direction (C · Reactor II, `docs/design/README.md`) draws the arc reactor as a
+flat instrument — bezel, blades, coil, level arc, lens — and draws the voice screen under the
+same top bar as every other screen, with VOICE as its first tab. Two things in the repository
+disagreed with that: the GLSL glass sphere (`Orb.svelte` on the web, `ReactorOrb.kt` on the
+phone), a considerable piece of work that M01 deliberately kept and pinned; and the M48
+decision that the voice screen "owns the viewport and paints its own chrome", reached by
+the console through a floating CONSOLE pill.
+
+M49 follows the direction on both counts, because that is what "the chosen visual direction"
+means and because a reactor that looks different from the reference on the one screen that
+carries the product is the deviation, not the fix. The sphere's proportions, lighting and
+seam tests go with it; what replaces them is a geometry contract both surfaces read. The
+phone's own instrument lands in M51 — until then the phone still draws the sphere, and
+`reactor_orb_test.py` says so in a note rather than failing a milestone that has not started.
+
+Five tabs is the cap M48's verify script set, and VOICE uses the fifth. On the phone the voice
+screen is native, so `console_parity_test.py` binds the phone's strip to the four console
+front doors (`nav && !hud`) rather than to all five.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

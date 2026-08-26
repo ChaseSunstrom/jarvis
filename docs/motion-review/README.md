@@ -6,18 +6,20 @@ accessible; it cannot prove any of it feels good, and no test will.
 
 | | What it shows |
 |---|---|
-| [1-boot.webm](1-boot.webm) | The boot sequence, from a cold session to the interface settled. Skippable with any key or click, and it never blocks typing |
-| [2-orb-states.webm](2-orb-states.webm) | idle → listening → thinking → speaking. In the running app the level is real audio: the microphone's amplitude while listening, the player's while speaking |
+| [1-boot.webm](1-boot.webm) | The boot sequence: the instrument assembles bezel → blades → coil → level → core, the wordmark resolves, three checks type on, and the screen settles under the bar. Skippable with any key or click, and it never blocks typing |
+| [2-orb-states.webm](2-orb-states.webm) | idle → listening → thinking → speaking on the instrument: the level arc carries a synthetic amplitude here and real audio in the running app — the microphone's while listening, the player's while speaking |
 | [3-task-running.webm](3-task-running.webm) | A task arriving and working: the bar, the steps opening, tool calls appearing while it runs |
 | [4-navigation.webm](4-navigation.webm) | Moving between pages — entrances, staggered lists, and what a route change looks like |
 
 ## Re-record them
 
 ```bash
-cd jarvis-web && npx playwright test motion-review.spec.ts
-python3 - <<'PY'   # copies them here; see the milestone's verify script
-PY
+cd jarvis-web && npx playwright test motion-review.spec.ts && node scripts/collect-motion-review.mjs
 ```
+
+`scripts/verify/m49-home-reactor.sh` re-records the first two and
+`scripts/verify/m50-webui-c2-look.sh` all four, so what is here is what the
+tree draws.
 
 ## What is already proved, and what is not
 

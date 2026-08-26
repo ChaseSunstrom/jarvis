@@ -17,8 +17,17 @@ export interface Screen {
 	name: string;
 	/** One line: what somebody comes to this screen to do. */
 	purpose: string;
-	/** In the console's TOP-LEVEL tab strip? A section is not; its destination is. */
+	/** In the TOP-LEVEL tab strip? A section is not; its destination is. */
 	nav: boolean;
+	/**
+	 * The voice screen.
+	 *
+	 * In the bar — it is the first tab, as Reactor II draws it — but not a
+	 * console front door the phone mirrors: on the phone the voice screen is
+	 * native, so `console_parity_test.py` binds the phone's strip to the
+	 * `nav && !hud` four.
+	 */
+	hud?: boolean;
 	/**
 	 * The destination this is a section of, e.g. `/house`.
 	 *
@@ -51,12 +60,13 @@ export const SCREENS: Screen[] = [
 		path: '/',
 		name: 'Voice',
 		purpose: 'Talk to Jarvis, and watch the turn it is taking.',
-		nav: false,
+		nav: true,
+		hud: true,
 		probe: 'status',
 		chord: 'g h'
 	},
 
-	// --- the four destinations ------------------------------------------
+	// --- the four console destinations -----------------------------------
 	{
 		path: '/house',
 		name: 'House',
@@ -195,8 +205,11 @@ export const SCREENS: Screen[] = [
 	}
 ];
 
-/** The console's top-level destinations, in order. Four of them, by design. */
+/** The top-level tabs, in order: the voice screen and the four console destinations. */
 export const NAV_SCREENS = SCREENS.filter((screen) => screen.nav);
+
+/** The console's front doors — what the phone's native strip mirrors. */
+export const CONSOLE_SCREENS = NAV_SCREENS.filter((screen) => !screen.hud);
 
 /** The sections of one destination, in declaration order. */
 export function sectionsOf(destination: string): Screen[] {

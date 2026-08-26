@@ -13,11 +13,13 @@ actually consumes, and ``--check`` refuses to let any of those outputs drift:
     android-app/app/src/main/res/values/tokens.xml colour + dimen resources
     android-app/app/src/main/res/values/colors.xml aliases the themes read
 
-Two files are checked but not rewritten, because a 1,400-line executable spec
-(``android-app/tools/reactor_orb_test.py``) already pins them to each other and
-to the shader's arithmetic: ``SiriPalette.kt`` and the palette comments in
-``Orb.svelte``. Their values must equal ``color.orb.*`` here; ``--check`` says
-which one moved.
+Two things are checked but not rewritten. ``SiriPalette.kt`` is pinned to
+``color.orb.*`` here rather than generated, because ``reactor_orb_test.py``
+reads it as the phone's one table of the reactor's five states. And the
+reactor's geometry is a contract — ``tests/contracts/reactor_geometry.json`` —
+which the web component types as constants and the phone reads through the
+same mirror; ``--check`` refuses the web drifting from the file, and refuses a
+period in the contract that is not a ``motion.reactor`` token.
 
     python3 design/build.py            write every output
     python3 design/build.py --check    exit 1 if any output or pinned file differs
@@ -56,7 +58,8 @@ RES = ROOT / "android-app/app/src/main/res/values"
 XML_TOKENS = RES / "tokens.xml"
 XML_COLORS = RES / "colors.xml"
 SIRI = ROOT / "android-app/app/src/main/kotlin/ai/jarvis/app/ui/SiriPalette.kt"
-ORB = ROOT / "jarvis-web/src/lib/components/Orb.svelte"
+WEB_REACTOR = ROOT / "jarvis-web/src/lib/ui/Reactor.svelte"
+GEOMETRY = ROOT / "tests/contracts/reactor_geometry.json"
 
 #: Desktop constant -> token. ``theme.py`` imports these names from ``tokens.py``;
 #: ``tests/test_theme.py`` reads the same lines back and checks AA contrast.
@@ -598,25 +601,29 @@ def check_siri_palette(tokens: dict) -> list[str]:
     return problems
 
 
-def check_orb_shader(tokens: dict) -> list[str]:
-    src = ORB.read_text(encoding="utf-8")
-    want = orb_expected(tokens)
+def check_reactor_geometry(tokens: dict) -> list[str]:
+    """The instrument's periods are tokens, and the web's constants are the contract's.
+
+    The reactor used to be a fragment shader whose palette comments were pinned
+    here. It is an instrument now (Reactor II): its geometry is
+    `tests/contracts/reactor_geometry.json`, its clock is `motion.reactor.*`,
+    and what this refuses is either of those drifting from the component.
+    """
     problems = []
-    for name, key in (("SUBSTRATE", "substrate"), ("HOUSING", "housing"), ("HUB_METAL", "hub-metal")):
-        m = re.search(rf"const vec3 {name}\s*=\s*vec3\([^)]*\);\s*//\s*#([0-9A-Fa-f]{{6}})", src)
-        if not m:
-            problems.append(f"Orb.svelte: no hex comment beside {name}")
-        elif want[key] != "#" + m.group(1).lower():
-            problems.append(f"Orb.svelte {name} is #{m.group(1).lower()}, tokens.json says {want[key]}")
-    for tone in ("idle", "listening", "thinking", "speaking"):
-        m = re.search(rf"//\s*{tone}\s+#([0-9A-Fa-f]{{6}})\s+#([0-9A-Fa-f]{{6}})\s+#([0-9A-Fa-f]{{6}})\s*/\s*#([0-9A-Fa-f]{{6}})", src)
-        if not m:
-            problems.append(f"Orb.svelte: no palette comment for {tone}")
-            continue
-        for i, key in enumerate(("blob-0", "blob-1", "blob-2", "core")):
-            got = "#" + m.group(i + 1).lower()
-            if want[f"{tone}.{key}"] != got:
-                problems.append(f"Orb.svelte {tone} {key} is {got}, tokens.json says {want[tone + '.' + key]}")
+    geo = json.loads(GEOMETRY.read_text(encoding="utf-8"))
+    reactor = tokens["motion"]["reactor"]
+    for what, ref in geo.get("periods", {}).items():
+        parts = ref.split(".")
+        if parts[:2] != ["motion", "reactor"] or parts[2] not in reactor:
+            problems.append(f"reactor_geometry.json: period {what} names {ref}, not a motion.reactor token")
+    src = WEB_REACTOR.read_text(encoding="utf-8")
+    web = {m.group(1): float(m.group(2)) for m in re.finditer(r"const ([A-Z_]+) = ([0-9.]+);", src)}
+    for key, name in (("ticks", "TICKS"), ("blades", "BLADES"), ("r_blade", "R_BLADE"), ("r_coil", "R_COIL"),
+                      ("r_level", "R_LEVEL"), ("r_core", "R_CORE"), ("r_think", "R_THINK")):
+        if name not in web:
+            problems.append(f"Reactor.svelte declares no {name}")
+        elif abs(web[name] - float(geo[key])) > 1e-9:
+            problems.append(f"Reactor.svelte {name} is {web[name]}, reactor_geometry.json says {geo[key]}")
     return problems
 
 
@@ -648,17 +655,17 @@ def main(argv: list[str]) -> int:
             elif path.read_text(encoding="utf-8") != text:
                 problems.append(f"stale: {path.relative_to(ROOT)} (run python3 design/build.py)")
         problems += check_siri_palette(tokens)
-        problems += check_orb_shader(tokens)
+        problems += check_reactor_geometry(tokens)
         if problems:
             print("\n".join(problems))
             return 1
-        print(f"{len(generated)} generated files current; SiriPalette.kt and Orb.svelte match color.orb.*")
+        print(f"{len(generated)} generated files current; SiriPalette.kt matches color.orb.*, Reactor.svelte matches the geometry contract")
         return 0
     for path, text in generated.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         print(f"wrote {path.relative_to(ROOT)}")
-    for problem in check_siri_palette(tokens) + check_orb_shader(tokens):
+    for problem in check_siri_palette(tokens) + check_reactor_geometry(tokens):
         print(f"DRIFT: {problem}")
     return 0
 

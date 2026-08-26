@@ -68,10 +68,11 @@ for (const screen of STATEFUL) {
 	});
 }
 
-// The console screens only. The HUD has no loading state and should not: it
-// dials when you speak, so it is ready the moment it paints — and its own
-// first-paint sequence is the boot animation, which the other tests skip.
-for (const screen of STATEFUL.filter((s) => s.within || s.nav)) {
+// The console screens only. The voice screen has no loading state and should
+// not: it dials when you speak, so it is ready the moment it paints — and its
+// own first-paint sequence is the boot animation, which the other tests skip.
+// It is in the bar now (M49), so it is excluded by its `hud` flag, not by `nav`.
+for (const screen of STATEFUL.filter((s) => (s.within || s.nav) && !s.hud)) {
 	test(`${screen.name} shows it is loading rather than a blank`, async ({ page }) => {
 		// Connected, and told nothing: the exact window a skeleton is for.
 		await page.routeWebSocket(/\/ws$/, () => {

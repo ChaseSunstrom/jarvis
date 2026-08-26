@@ -25,7 +25,8 @@ test('the style guide renders every token group', async ({ page }) => {
 	// Every component of the library is on the page, live.
 	const gallery = page.locator('[data-components]');
 	await expect(gallery).toBeVisible();
-	await expect(gallery.getByTestId('reactor').first()).toBeVisible();
+	await expect(gallery.getByTestId('sg-reactor-idle')).toBeVisible();
+	await expect(gallery.getByTestId('sg-top-bar')).toBeVisible();
 
 	// And ScreenState really drives all four states, not four static pictures.
 	for (const state of ['loading', 'empty', 'error', 'offline'] as const) {
