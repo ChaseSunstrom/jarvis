@@ -18,7 +18,14 @@ export default defineConfig({
 	timeout: 60_000,
 	fullyParallel: false,
 	workers: 1,
-	reporter: [['list']],
+	// On CI the `github` reporter annotates every failed test on the check run
+	// — readable through the public API without a token, which the job log is
+	// not — and the html report is what the workflow's upload-artifact step
+	// has been looking for (with `list` alone it found nothing, twice). Locally,
+	// the list is enough and an html report would open a browser tab.
+	reporter: process.env.CI
+		? [['list'], ['github'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
+		: [['list']],
 	use: {
 		baseURL: `http://127.0.0.1:${port}`,
 		browserName: 'chromium',
