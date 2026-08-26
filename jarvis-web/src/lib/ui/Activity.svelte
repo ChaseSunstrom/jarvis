@@ -1,5 +1,6 @@
 <!--
-	The activity strip: what Jarvis is doing, as hairline rows — newest first.
+@component
+The activity strip: what Jarvis is doing, as hairline rows — newest first.
 
 	Each row is one thing (`$lib/activity`): the kind as a tag, the one line to
 	read, the datum in mono, and a state dot that pulses while the thing is

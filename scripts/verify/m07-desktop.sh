@@ -19,14 +19,18 @@ check_sh "the shell serves the console build — parity by construction" 'grep -
 # The layout builds its tab strip from `screens.ts` now, so grepping it for
 # the word found nothing — and desktop had not gone anywhere, it had become
 # a section of SETTINGS.
-check "the console reaches the desktop page" python3 -c '
+# The desktop page moved into SETTINGS › Console with M54 (its two panels —
+# this window, paired computers — live there) and its old address redirects,
+# so what the console has to reach is Console, and the old address has to
+# still answer.
+check "the console reaches the desktop panels (SETTINGS › Console) and the old address still answers" python3 -c '
 import re
 from pathlib import Path
 src = Path("jarvis-web/src/lib/screens.ts").read_text()
-entry = [b for b in re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S) if "/desktop" in b][0]
-within = re.search(r"within: .([^\x27]+).", entry)
-assert within, "desktop belongs to no destination, so nothing links to it"
-print("desktop: a section of " + within.group(1))
+assert "/settings/console" in src, "no Console section in screens.ts"
+redirect = Path("jarvis-web/src/routes/settings/desktop/+page.ts").read_text()
+assert "/settings/console" in redirect and "redirect" in redirect, "/settings/desktop no longer answers"
+print("desktop: SETTINGS > Console; /settings/desktop redirects there")
 '
 require_file jarvis-desktop/jarvis_desktop/ipc.py
 check "consent prompts can be answered by the shell" grep -qE 'class ShellConsentGateway' jarvis-desktop/jarvis_desktop/consent.py

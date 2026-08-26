@@ -9,6 +9,14 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 verify_begin "M61" "the phone: the equal of the web, and of Tasker"
+# The toolchain M08 installs under $HOME (bootstrap-toolchain.sh): a JDK and
+# an SDK this host does have, which the first run of this gate did not look
+# for and reported as absent.
+use_venv 2>/dev/null || true
+use_local_bin 2>/dev/null || true
+export JAVA_HOME="${JAVA_HOME:-$HOME/.local/jdk}"
+[ -d "$JAVA_HOME/bin" ] && export PATH="$JAVA_HOME/bin:$PATH"
+export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 
 KT=android-app/app/src/main/kotlin/ai/jarvis/app
 require_file docs/ANDROID_TASKER_PARITY.md

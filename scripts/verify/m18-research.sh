@@ -24,7 +24,8 @@ check "reports are written as markdown files" grep -qE '_write_report_file' "$R"
 check "reports are saved as notes" grep -qE 'note_create|notes' "$R"
 check_not "no cloud search fallback anywhere" grep -rniE 'duckduckgo|bing\.com|google\.com/search|serpapi|brave\.com/api' jarvis-core/jarvis/integrations/web jarvis-browser/jarvis_browser
 check "SearXNG is a service in the stack" grep -qE '^\s*searxng:' jarvis-core/docker-compose.yml
-check "task detail shows the report" grep -rqiE 'report' jarvis-web/src/routes/tasks
+# The tasks pages moved under WORK (M48): the detail page is routes/work/tasks/[id].
+check "task detail shows the report" grep -rqiE 'report' jarvis-web/src/routes/work/tasks
 require_file evals/research_questions.yaml
 require_file evals/research_eval.py
 check_sh "scripted eval, offline (recorded search/fetch): a report per question, >= min distinct cited sources, links checked" \

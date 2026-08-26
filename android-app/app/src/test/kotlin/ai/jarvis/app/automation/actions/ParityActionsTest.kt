@@ -87,7 +87,7 @@ class ParityActionsTest {
     }
 
     @Test
-    fun `send_intent refuses a bare word and keeps the extras in order`() {
+    fun `send_intent refuses a bare word and keeps every extra`() {
         assertEquals("action is required", SendIntent.parse(JSONObject()).second)
         assertTrue(SendIntent.parse(JSONObject().put("action", "VIEW")).second!!.contains("fully qualified"))
         val (parsed, error) = SendIntent.parse(
@@ -100,7 +100,9 @@ class ParityActionsTest {
         assertNull(error)
         assertEquals("android.intent.action.VIEW", parsed!!.action)
         assertEquals("com.android.chrome", parsed.pkg)
-        assertEquals(listOf("b", "a"), parsed.extras.keys.toList())
+        // org.json keeps no order a test may rely on; the extras are all there.
+        assertEquals(setOf("a", "b"), parsed.extras.keys)
+        assertEquals("1", parsed.extras["a"])
     }
 
     @Test
