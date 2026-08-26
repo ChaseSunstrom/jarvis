@@ -16,9 +16,14 @@ intent: >
   rather than a claim.
 variants: [text]
 turns:
+  # The handbook by its address. "The fixture handbook" alone is a name the
+  # house has no note or memory of, and the model asked which one was meant —
+  # correct, as research-cancel.yaml records, and not what this scenario is
+  # about. `{{handbook}}` is the fixture web's address for this run.
   - say: >
-      Do some deep research on what the fixture handbook says about heating —
-      the flow temperature and why — and save it as a note.
+      Do some deep research on what the household handbook at {{handbook}}
+      says about heating — the flow temperature and why — and save it as a
+      note.
     expect:
       task: {kind: research, within: 60}
       capability: research
