@@ -640,3 +640,11 @@ is quiet. Done since:
   rules say the same in words (7a16547). A sixth rebuild measures it behind the clean M26
   run. The scorecard gate's fourth run: 13/14, the scorecard itself passing with the load
   measured; the fifth run keeps its smoke slice's detail.
+- 20:20 — the clean M26 run: the scorecard passes (every section, idle and under load); its
+  smoke slice lost chat-context-retention on both variants — "now turn it off again"
+  answered with turn_on (voice, the call written out and recovered) and with no call
+  (text) — after four passes of the same slice today on the same rules. The mechanism is
+  sound; the reading was wrong twice. `llm: temperature: 0.6` is the sampling knob the
+  routing runs under; measuring the smoke set at a lower value is the next intelligence
+  experiment, recorded here rather than tuned blind. CI green on ae87e96 so far (desktop,
+  compose smoke with the cache, CI, APK).
