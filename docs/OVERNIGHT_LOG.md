@@ -426,3 +426,7 @@ is quiet. Done since:
   87.2 %, routing 84.6 % (47/58). Worse tool choices on voice; the brief puts
   intelligence first, so the default is back to reasoning and the switch stays
   with both numbers beside it. Rebuilding; the final full run follows.
+- 11:54 — The record: 49/58, 79/88, intent 89.8 %, routing 96.2 %, WER 5.9 %,
+  median round trip 2.87 s (6.67 s at 06:54), p95 20.3 s. Intent and the 2 s
+  median still missed, recorded. docs/LIVE_TEST_REPORT.md is this run.
+  `make verify-all` starts as M23's whole-state record.

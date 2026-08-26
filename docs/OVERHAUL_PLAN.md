@@ -16,12 +16,11 @@ This document is the spine. Each numbered item is a milestone in
 
 ## What is true now
 
-- 58 milestones ticked as of 10:40 on the 26th (M27, M50–M55, M57–M59 this
-  morning); M56, M60, M61 and M23 are open. M56 is built and on the branch,
+- 59 milestones ticked as of 11:54 on the 26th (M27, M50–M55, M57–M60 this
+  morning); M56, M61 and M23 are open. M56 is built and on the branch,
   its gate 27/28: the one open check is a live look through a served vision
-  model, and the model server serves none. M60 is built; its gate runs the
-  full core suite (2,756 tests) and the live round trip is re-measured after
-  it. M61's first stage is committed and cannot be compiled here (no Android
+  model, and the model server serves none. M60 is ticked (gate 13/13, the
+  full core suite green). M61's first stage is committed and cannot be compiled here (no Android
   SDK). M23 is the final gate and cannot be green on this host for those two
   reasons and the round-trip threshold (BLOCKERS §2, §3, §4).
 - Cameras: the `vision` integration speaks the OpenAI wire to the same model
@@ -53,10 +52,10 @@ This document is the spine. Each numbered item is a milestone in
   int8, `llm.fast_model` is the voice path's when set, and a spoken turn does
   not reason unless `voice: think: true`; a small model's narrated tool call
   is retried under a schema, and a turn that repeats the same call is ended
-  and told to answer. Measured: the full-mode median round trip 5.90 s
-  (10:27, before the last two of those) from 6.67 s (06:54), to `run-end`,
-  which does not credit the early first sentence; the 2 s threshold is
-  hardware (BLOCKERS §2) and is recorded missed, not lowered.
+  and told to answer. Measured: the full-mode median round trip 2.87 s
+  (11:54, the record) from 6.67 s (06:54), to `run-end`, which does not
+  credit the early first sentence; the 2 s threshold and the 95 % intent
+  floor (89.8 %) are recorded missed, not lowered (verification.md).
 
 ## The milestones, in order
 

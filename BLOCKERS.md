@@ -48,7 +48,7 @@ stable-first, the first sentence spoken before the reply is finished, whisper
 int8, `llm.fast_model` on the voice path when the operator sets one, and a
 switch to drop the reasoning block on a spoken turn (measured: 3.1 s median
 at 87 % intent against 5.9 s at 93 %, so it ships on) — and the full-mode
-median moved from 6.67 s to 5.90 s (10:27; the rig measures to
+median moved from 6.67 s to 2.87 s with reasoning kept (11:54, the record) (10:27; the rig measures to
 `run-end`, so early speech is not in that number). What remains is hardware,
 and still needs one of:
 

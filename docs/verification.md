@@ -1132,6 +1132,28 @@ callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
 **A test that cannot tell a slow machine from a slow app should not claim
 either.**
 
+## Known failures, as of 2026-08-26 11:54 (this host) — the record after the overhaul
+
+The full-mode live run against the stack rebuilt with everything to `647af5a`
+(`docs/LIVE_TEST_REPORT.md` is this run): 49 of 58 scenario variants, 79 of
+88 turns, WER 5.9 %, routing 96.2 %, median round trip **2.87 s** (6.67 s at
+06:54, 5.90 s at 10:27), p95 20.3 s. Two thresholds missed, recorded rather
+than lowered:
+
+| Threshold | Measured | Why |
+|---|---|---|
+| intent accuracy ≥ 95 % | 89.8 % (79/88 turns) | nine turns, named below; five are the model's choices on this run, three are background work that had not finished inside the scenario's window, one is the vision model this server does not serve |
+| median round trip ≤ 2 s | 2.87 s | STT on shared vCPUs and the model's own generation with its reasoning block, which the house keeps (DEVIATIONS §19); the rig measures to `run-end`, so the early first sentence is not in it. `BLOCKERS.md` §2: the rest is hardware |
+
+The nine: `chat-context-retention` and `resilience-core-restart` (the model
+answered without acting on the one bed light), `house-light-on` ("Done, Sir."
+— the judge wanted the light named), `memory-forget` (two notes matched and it
+asked which), `task-live-ui`, `research-deep-report`, `subagents-parallel-work`
+and `delegation-across-backends` (the work started and was still running when
+the scenario's window closed — 30 s, 120 s, 100 s, 60 s), and
+`vision-look-fixture` (no vision model on the server, BLOCKERS §4). Routing,
+WER and every other scenario are inside their thresholds.
+
 ## Measured, 2026-08-26 11:24: spoken turns without their reasoning block
 
 One full-mode run with `voice: think: false` (the switch M60 added), against
