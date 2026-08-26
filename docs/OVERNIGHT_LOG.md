@@ -600,3 +600,12 @@ is quiet. Done since:
   second flowerpot") and the extractor's paraphrase of the same sentence ("The speaker keeps
   the shed key…"), so "shed key" is a true tie and forget asks which. The duplicate check at
   write time did not see a paraphrase whose words contain the other's; being fixed there.
+- 19:35 — the duplicate: a note whose words contain another's is the same note (d3570cb);
+  from the extractor it is not kept and the user's wording stays, from the user it replaces
+  the old wording; digits are kept in the comparison so "note 3" and "note 4" stay two. A
+  fourth rebuild measures memory-forget with it. CI green on e651a4c (fifth head); cd95876
+  pushed. The operator reported no way to browse tools/MCP servers from Settings: the
+  BROWSE CATALOG control is inside a collapsed fold and the deployed config lists no
+  catalogue source, so browse answers "no catalog source is configured" — M65 (an agent in a
+  worktree): a built-in source of the repository's own bundled skills, the catalogue at the
+  top of Settings › Tools through the one search box, MCP add-by-URL visible.
