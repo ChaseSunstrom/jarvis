@@ -112,7 +112,12 @@ export class ConsoleLink {
 	}
 
 	constructor(opts: ConsoleLinkOptions = {}) {
-		this.setTimeoutFn = opts.setTimeoutFn ?? setTimeout;
+		// Bound: stored as a method and called as `this.setTimeoutFn(…)`, the
+		// browser's setTimeout sees a ConsoleLink as `this` and throws "Illegal
+		// invocation" — on the reconnect path, the first time the link ever
+		// dropped against a real core. Node's setTimeout does not care, which is
+		// why no unit test had seen it.
+		this.setTimeoutFn = opts.setTimeoutFn ?? (setTimeout.bind(globalThis) as typeof setTimeout);
 		this.clearTimeoutFn = opts.clearTimeoutFn ?? clearTimeout;
 		this.random = opts.random ?? Math.random;
 		this.connect = opts.connect ?? openConnection;

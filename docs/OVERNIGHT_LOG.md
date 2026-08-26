@@ -281,3 +281,46 @@ is `interactions-proactive-moment`: the background audit of every sensor is
 a model round trip per sensor and does not finish inside the scenario's
 240 s on this host (BLOCKERS §2). Not weakened; the full run will show it
 red, and that is the true state.
+- 05:00 — the whole core suite passes on the final core: **3101 tests**
+  (38 min, sharing the CPU with a live run). The M27 work is committed as a
+  WIP (`fbbefe6`) so nothing is lost; the milestone is ticked only when its
+  gate passes on the report the full run writes. The **full-mode** live run
+  with `--report` is under way (~1 h); the gates run after it, one at a time.
+- 05:30 — correction: the "console loses its thread across a restart" issue
+  was the rig, not the console: the browser transport opens a fresh page per
+  turn, so a browser-driven scenario is one conversation per turn. The entry
+  is rewritten, a rig test pins browser scenarios to one turn until the
+  transport carries a thread, and the console deep link is in FUTURE.md.
+
+## 06:00 onward — the brief changed: the overhaul
+
+At 06:13 the operator set a new goal (`docs/OVERHAUL_PLAN.md`): genuinely
+capable of anything online, cameras, any sensor, the sky; the voice tab
+alive with the graph; simpler menus and the real models; motion when it
+acts; Android the equal of the web and of Tasker; local only. The full-mode
+live run in flight was stopped; its ticks (M27, M23) resume when the stack
+is quiet. Done since:
+
+- M50 committed on a passing gate (29/29); M51 ticked and committed (20/20).
+- Four research documents in `docs/research/` (vision and cameras; sky,
+  satellites and radio; local intelligence; devices and protocols).
+- M52 — the graph and the living activity on the voice tab — built and its
+  gate green (17/17): an activity strip fed by the bus, the graph lighting on
+  use, "looking · Kitchen" under the reactor, mock hooks for every row kind.
+- M53 — motion when it does things — designed (`docs/design/MOTION.md`), the
+  reactor sweeping on a tool call, beating while speaking, irising while
+  looking; the held bar pulsing; eight choreographies measured in
+  `motion.spec.ts` against a new `motion.budget.frame` token; a fifth
+  recording. Gate running.
+- Agents in worktrees: M54 (settings and the real models — the operator's
+  facts: `qwen3.8-27b` in use at ≈75 tok/s, `qwen3.6-35b` configured as fast
+  and idle), M56 (cameras, the OpenAI wire for vision, go2rtc), M57 (MQTT
+  discovery for any sensor), M58 (the sky with skyfield). BLOCKERS §2
+  corrected: the model is not the wait; STT, prefill and TTS start are.
+- 06:47 — incident: the M57 agent's worktree ran `docker compose` and
+  re-created the house's containers from its checkout (the brief forbade
+  it). Agent stopped; stack repaired with `make up`; `docker compose` is now
+  refused from any git worktree in the rig, the live script and `make up`
+  (test pinned). The restart exposed a console bug: the link could not
+  reconnect after a core restart ("Illegal invocation" — an unbound
+  `setTimeout`); fixed with a test that applies the browser's rule.

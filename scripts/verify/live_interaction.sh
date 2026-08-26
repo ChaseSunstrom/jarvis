@@ -44,6 +44,15 @@ use_venv
 # The rig speaks to the model server and the voice services the operator runs.
 # `.env` is where their addresses live, and it is gitignored — so this is read
 # rather than assumed, and its absence is a failure with a name.
+# A git worktree must never bring the stack up: its compose project is the
+# production project (the name comes from the directory), and twice in one
+# night an agent's worktree re-created the house's containers from its own
+# checkout. `.git` is a file in a worktree and a directory in the main one.
+if [ -f "$ROOT/.git" ] && [ -z "${JARVIS_ALLOW_WORKTREE_COMPOSE:-}" ]; then
+    echo "live_interaction.sh: refusing to run from a git worktree ($ROOT) — it would" >&2
+    echo "re-create the production containers from this checkout. Run it from the main checkout." >&2
+    exit 3
+fi
 if [ -f "$ROOT/.env" ]; then
     set -a
     # shellcheck disable=SC1091

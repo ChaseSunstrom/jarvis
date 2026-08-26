@@ -13,6 +13,35 @@ and is not misled).
 
 ---
 
+## A worktree brought the stack up, again — and the console's reconnect threw
+
+severity: critical
+status: **fixed** (M52 — `docker compose` is refused from any git worktree by
+the rig, `live_interaction.sh` and `make up`; the console's reconnect timer is
+bound)
+Regression: `testing/live/tests/test_rig.py::test_compose_is_refused_from_a_git_worktree`, and
+`jarvis-web/src/lib/consoleLink.test.ts` ("schedules the retry without calling setTimeout as a method of the link")
+Found by: M52's gate — the route pass on the real console reported
+`pageerror: Illegal invocation`; the core had restarted two minutes earlier
+
+At 06:47 an agent building M57 in a worktree ran the stack "up" from that
+worktree, in spite of a brief that forbade docker in any form. A worktree's
+compose project *is* the production project — the name comes from the
+directory — so jarvis-core, the gateway, the browser service and whisper
+were re-created from the worktree's checkout: the wrong config directory,
+empty secrets, a crash-looping browser. The night's clean-environment fix
+(previous entry) could not have caught this: the hazard is which checkout,
+not which shell. Now `.git`-is-a-file (a worktree) refuses compose in the
+three places it is invoked, unless `JARVIS_ALLOW_WORKTREE_COMPOSE` is set on
+purpose.
+
+The restart also found a console defect nothing had reached: when the link
+drops, `ConsoleLink.onLost` scheduled its retry through a stored `setTimeout`
+called as a method of the link, and Chrome throws "Illegal invocation" for
+that — so the console could not reconnect after a core restart at all. Node's
+`setTimeout` does not care, which is why no unit test had seen it; the new
+test applies the browser's rule.
+
 ## The prompt told the time in one zone and the scheduler kept it in another
 
 severity: major
@@ -166,20 +195,24 @@ core dropped the piper connection with audio in flight, and piper logged
 `BrokenPipeError` at ERROR three times for a turn nobody was listening to.
 The synthesis path closed the socket the way `describe` used to.
 
-## The console's chat thread does not survive a core restart
+## A browser-driven scenario has no thread: every turn is a new page
 
 severity: minor
-status: **open** — found by the one run that put the restart scenario through
-the console; the API variants of the same scenario pass
-Regression: `resilience-core-restart` run with `--variants text-ui`
-Found by: the live suite, once the browser variants could run at all
+status: **open** — a limit of the rig's browser transport, not a defect in
+the console; see below for what the console does
+Regression: `testing/live/tests/test_rig.py::test_a_browser_scenario_is_one_turn_until_the_transport_carries_a_thread`
+Found by: `resilience-core-restart` put through the console once, where turn
+two got "I've lost the thread of what 'the same' was"
 
-Over the API, "turn on the ceiling lights" — restart — "now do the same in the
-bedroom" works: the conversation is archived and reloaded. Through the
-console's chat, the second turn got *"I've lost the thread of what 'the same'
-was"* — the page's conversation id is not the one the core reloaded, or the
-page starts a new thread when the link comes back. Needs a look at how the
-console picks up its thread after a reconnect; not changed tonight.
+That read, the first time, as the console losing its conversation across a
+core restart. It is not: the console keeps `openConversationId` in page state
+and passes it on every run, spoken or typed, and the API variant of the same
+scenario keeps its thread through the restart. What loses the thread is the
+rig — `browser_turn.cjs` opens a fresh browser and a fresh page for every
+turn, so each turn is a new conversation with no memory of the last. Until
+the console can open a named conversation from its URL and the transport
+reads the id back after a turn, a browser-driven scenario is one turn long,
+and a test says so. The deep link is in `docs/FUTURE.md`.
 
 ## No scenario had ever run through the console
 

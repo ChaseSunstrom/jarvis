@@ -100,9 +100,31 @@ def _compose_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def in_worktree(root: Path | None = None) -> bool:
+    """True when `root` (the repo root by default) is a git worktree.
+
+    In a worktree `.git` is a file that points at the common directory; in the
+    main checkout it is the directory itself. The root is read at call time,
+    not bound as a default, so a test can point it somewhere else.
+    """
+    return ((root or REPO_ROOT) / ".git").is_file()
+
+
 def _run(argv: list[str], timeout: float = 600.0, check: bool = True,
          env: dict[str, str] | None = None) -> str:
     compose = argv[:2] == ["docker", "compose"]
+    if compose and in_worktree() and not os.environ.get("JARVIS_ALLOW_WORKTREE_COMPOSE"):
+        # Twice in one night an agent's worktree brought the stack "up" and
+        # re-created the house's containers from its own checkout — wrong
+        # config directory, empty secrets, a crash-looping browser service.
+        # The compose project name is the directory's, so a worktree's compose
+        # IS the production project. Refused here, where every compose call
+        # of the rig passes; the Makefile and live_interaction.sh refuse too.
+        raise LiveError(
+            "refusing to run docker compose from a git worktree: it would re-create the "
+            "production containers from this checkout. Run the live rig from the main "
+            "checkout (or set JARVIS_ALLOW_WORKTREE_COMPOSE=1 if you really mean it)."
+        )
     try:
         done = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT),

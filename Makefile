@@ -99,6 +99,7 @@ eval-decomp: ## task-decomposition ship/no-ship gate (BACKEND=ollama|orchestrato
 # --- running things ---------------------------------------------------------
 .PHONY: up
 up: ## start jarvis-core, then the companion stack (HUD/orchestrator/sandbox)
+	@if [ -f .git ] && [ -z "$$JARVIS_ALLOW_WORKTREE_COMPOSE" ]; then echo "make up: refusing from a git worktree — it would re-create the production containers from this checkout" >&2; exit 3; fi
 	cd jarvis-core && $(COMPOSE) up -d --build
 	$(COMPOSE) up -d --build
 
