@@ -66,6 +66,9 @@ class SiriOrbView @JvmOverloads constructor(
     /** Free-running chrome rotation, degrees. Same. */
     private var spinDeg = 0f
 
+    /** The reactor's own clock, in seconds — every period is read off it against the tokens. */
+    private var timeSeconds = 0f
+
     /** Raw and smoothed microphone level, 0..1. */
     private var amplitude = 0f
     private var smoothed = 0f
@@ -158,6 +161,9 @@ class SiriOrbView @JvmOverloads constructor(
         val hz = SiriPalette.orbitHz(tone) * (1f + 0.6f * smoothed)
         phase = (phase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
         spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
+        // The reactor's own clock: the renderer reads every period off it
+        // against the tokens, so the overlay turns at the home screen's rate.
+        timeSeconds += dt
 
         entrance = ((nowMs - entranceStartMs).toFloat() / ENTRANCE_MS).coerceIn(0f, 1f)
         applyBlend(nowMs)
@@ -203,11 +209,18 @@ class SiriOrbView @JvmOverloads constructor(
             (0.4f + 0.6f * arrive) * (1f + AMPLITUDE_SWELL * smoothed)
         f.alpha = arrive
         f.level = smoothed
+        f.time = timeSeconds
         f.phase = phase
         f.spinDeg = spinDeg
         f.blobs = colors
         f.core = coreColor
         f.rim = rimColor
+        f.idle = tone == SiriPalette.Tone.IDLE
+        f.rimAlpha = if (tone == SiriPalette.Tone.LISTENING || tone == SiriPalette.Tone.SPEAKING) {
+            ReactorOrb.RIM_ALPHA_LIT
+        } else {
+            ReactorOrb.RIM_ALPHA_REST
+        }
         f.maxRadius = span
         f.turbulence = tone == SiriPalette.Tone.THINKING
         reactor.draw(canvas, f)

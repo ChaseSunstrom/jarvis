@@ -5,7 +5,6 @@ import ai.jarvis.app.ui.ConsentGate
 import ai.jarvis.app.ui.JarvisUi
 import android.app.Activity
 import android.app.KeyguardManager
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -234,13 +233,16 @@ class ApprovalActivity : Activity() {
         val root = FrameLayout(ctx).apply { setBackgroundColor(JarvisTokens.Color.SCRIM_APPROVAL) }
         val column = JarvisUi.column(ctx, padDp = JarvisUi.Space.WIDE)
 
+        // The tier, in the held colour: this is a HELD action, which on every
+        // other surface is gold with a rule beside it — not red, which is what
+        // a refusal looks like, and nothing has been refused yet.
         column.addView(
             TextView(ctx).apply {
                 text = tierLabel
-                setTextColor(JarvisUi.DENY)
-                textSize = JarvisUi.Type.HINT
-                letterSpacing = 0.24f
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                setTextColor(JarvisUi.GOLD)
+                textSize = JarvisUi.Type.LABEL
+                letterSpacing = JarvisUi.TRACK_WIDE
+                typeface = JarvisUi.LABEL_FACE
                 gravity = Gravity.CENTER
             }
         )
@@ -250,7 +252,8 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 text = "Jarvis wants to do something that cannot be quietly undone."
                 setTextColor(JarvisUi.DIM)
-                textSize = JarvisUi.Type.MONO
+                textSize = JarvisUi.Type.BODY
+                typeface = JarvisUi.BODY_FACE
                 gravity = Gravity.CENTER
             }
         )
@@ -259,8 +262,10 @@ class ApprovalActivity : Activity() {
         column.addView(
             TextView(ctx).apply {
                 text = actionId.ifEmpty { "(no action id)" }
-                setTextColor(Color.WHITE)
+                setTextColor(JarvisTokens.Color.TEXT_BRIGHT)
                 textSize = JarvisUi.Type.RESPONSE
+                // Mono: an action id is data, and it is the one line on this
+                // screen a reader has to match character for character.
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 setTextIsSelectable(true)
                 // AN ACTION ID IS NOT A SENTENCE. TalkBack reads
@@ -295,8 +300,9 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 // Remote text. Rendered as text and nothing else.
                 text = reason.ifEmpty { "(no reason given — treat that as suspicious)" }
-                setTextColor(if (reason.isEmpty()) JarvisUi.DENY else Color.WHITE)
+                setTextColor(if (reason.isEmpty()) JarvisUi.DENY else JarvisTokens.Color.TEXT_BRIGHT)
                 textSize = JarvisUi.Type.FIELD
+                typeface = JarvisUi.BODY_FACE
                 setTextIsSelectable(true)
                 setLineSpacing(JarvisUi.dp(ctx, JarvisUi.Space.TIGHT).toFloat(), 1f)
             }
@@ -310,7 +316,7 @@ class ApprovalActivity : Activity() {
             JarvisUi.label(ctx, "Exactly what will run"),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        paramsHeader.addView(JarvisUi.ghost(ctx, "RAW") { toggleRaw() })
+        paramsHeader.addView(JarvisUi.button(ctx, "RAW") { toggleRaw() })
         column.addView(paramsHeader)
 
         // Starts hidden; refreshGate() fills it in once the device is unlocked.
@@ -384,13 +390,6 @@ class ApprovalActivity : Activity() {
         }
         root.addView(
             scroll,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        root.addView(
-            JarvisUi.CornerBrackets(ctx, JarvisUi.DENY),
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT

@@ -61,7 +61,7 @@ class VoiceIdentityActivity : Activity() {
      *
      * It was `lateinit`, assigned after the unconfigured early return — and
      * that return disabled the record button only, because the other two are
-     * built by `JarvisUi.ghost`, which does not touch `isEnabled`. So on a
+     * built by `JarvisUi.button`, which does not touch `isEnabled`. So on a
      * phone that had never been paired, FORGET MY VOICE was live, read an
      * uninitialised property inside a worker thread, and killed the process.
      *
@@ -250,7 +250,7 @@ class VoiceIdentityActivity : Activity() {
         // gives no feedback of its own, so the one broken indicator was the
         // entire interface. Tap to start, tap to stop, and the countdown below
         // is a backstop rather than the normal way a capture ends.
-        recordButton = JarvisUi.pill(this, RECORD_START) { toggleRecording() }
+        recordButton = JarvisUi.primary(this, RECORD_START) { toggleRecording() }
         column.addView(recordButton, matchWidth())
 
         statusView = JarvisUi.mono(this, "")
@@ -259,11 +259,11 @@ class VoiceIdentityActivity : Activity() {
         column.addView(detailView)
 
         column.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
-        redoButton = JarvisUi.ghost(this, "SAY THAT ONE AGAIN") { redo() }
+        redoButton = JarvisUi.button(this, "SAY THAT ONE AGAIN") { redo() }
         column.addView(redoButton, matchWidth())
-        testButton = JarvisUi.ghost(this, "TEST MY VOICE") { startTest() }
+        testButton = JarvisUi.button(this, "TEST MY VOICE") { startTest() }
         column.addView(testButton, matchWidth())
-        forgetButton = JarvisUi.ghost(this, "FORGET MY VOICE") { forget() }
+        forgetButton = JarvisUi.button(this, "FORGET MY VOICE") { forget() }
         column.addView(forgetButton, matchWidth())
 
         column.addView(JarvisUi.spacer(this, 12))

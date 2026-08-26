@@ -1,8 +1,8 @@
 # What still needs a phone
 
 Everything in `android-app/` that can be proved without hardware now is: the
-app builds (`./gradlew assembleDebug`), 178 JVM unit tests pass, lint is
-blocking and clean, six screens are captured as Robolectric screenshots and
+app builds (`./gradlew assembleDebug`), 185 JVM unit tests pass, lint is
+blocking and clean, ten screens are captured as Robolectric screenshots and
 compared against goldens, and thirty-odd Python mirrors read the Kotlin and
 assert the logic it is supposed to implement.
 
@@ -54,4 +54,9 @@ Then follow the check. Record the result in the PR, or file what happened.
 | ADT-028 | PHONE_AUTOMATION | With that build, confirm an injected tap lands on the control it was aimed at in three different apps | Node geometry and focus behaviour differ per app and per OEM skin | M22 |
 | ADT-029 | PHONE_AUTOMATION | With that build, turn the master switch off and confirm every phone action is refused while the service stays enabled | Two independent switches, and the point is that either one stops it | M22 |
 | ADT-030 | PHONE_AUTOMATION | Confirm a notification's content never reaches jarvis-core in a default build, by watching the wire while messages arrive | Only a real phone receives real notifications | M22 |
-| ADT-026 | Screens | Compare the six screenshot goldens with the same screens on a real device; note any difference the JVM renderer hid | Robolectric's Canvas is not a GPU; the goldens prove structure, not fidelity | M08 |
+| ADT-026 | Screens | Compare the ten screenshot goldens with the same screens on a real device; note any difference the JVM renderer hid | Robolectric's Canvas is not a GPU; the goldens prove structure, not fidelity | M08 |
+| ADT-031 | Reactor | Open the app on an AMOLED panel at real brightness in a dark room and in daylight; confirm the instrument's hairlines (ticks, coil, iris arcs) are visible at both, and that the lens reads as a lens rather than a black hole | The goldens are drawn on a JVM canvas with no panel, no gamma and no ambient light; the tokens' dimmest greys were chosen against a monitor | M51 |
+| ADT-032 | Reactor | Speak to the phone and watch the level arc: it must follow the voice with no visible lag and rest at zero in silence; then say nothing for a minute and confirm the idle breath is the only movement | The arc is driven by the real microphone's RMS through the real gain; the JVM tests feed it a number | M51 |
+| ADT-033 | Reactor | Trigger the wake word with another app in the foreground; confirm the floating instrument draws whole (bezel to bezel, nothing clipped square) over that app, and that its blades turn at the same rate as the home screen's | The overlay window's bounds and z-order are the system's; `siri_overlay_test.py` proves the arithmetic, not the pixels | M51 |
+| ADT-034 | Reactor | Watch a cold start: the instrument assembles lens → level → coil → blades, the wordmark resolves, the checks type, and the settled screen is the same picture with nothing snapping on at the handoff | Robolectric cannot play the boot's animator against a real vsync; the handoff is a timing question | M51 |
+| ADT-035 | Chrome | On the console frame, confirm the accent underline sits under the current tab and moves with it; on the approval screen, that APPROVE is the one filled control and DENY is the quiet one; on the home screen, that MANAGE is the one filled control | Layout and colour are asserted on the JVM; whether the hierarchy READS at arm's length is a person's call | M51 |

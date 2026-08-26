@@ -435,7 +435,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         transcriptView = JarvisUi.transcriptView(this)
         responseView = JarvisUi.responseView(this)
         toolActivityView = ToolActivityView(this)
-        muteButton = JarvisUi.pill(this, "LISTENING — TAP TO MUTE") { toggleMute() }
+        muteButton = JarvisUi.button(this, "LISTENING — TAP TO MUTE") { toggleMute() }
 
         // The always-on listener's actual state, on the screen the user opens.
         //
@@ -445,7 +445,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         // said whether the listener was running. So the app both LOOKED
         // stateless and gave no way to change the state — and every diagnosis
         // of it was guesswork about somebody else's phone.
-        listenButton = JarvisUi.ghost(this, "…") { toggleListening() }
+        listenButton = JarvisUi.button(this, "…") { toggleListening() }
         listenReason = TextView(this).apply {
             setTextColor(JarvisUi.DIM)
             textSize = JarvisUi.Type.LABEL
@@ -472,7 +472,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, JarvisUi.dp(this@MainActivity, 14), 0, 0)
-            addView(JarvisUi.ghost(this@MainActivity, "MANAGE") { openConsole(ConsoleTab.DEFAULT) })
+            addView(JarvisUi.primary(this@MainActivity, "MANAGE") { openConsole(ConsoleTab.DEFAULT) })
             addView(
                 android.view.View(this@MainActivity),
                 LinearLayout.LayoutParams(JarvisUi.dp(this@MainActivity, 10), 1)
@@ -491,7 +491,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             // Two buttons is not a grid, and the thing people open the app to
             // change should not be two taps and a horizontal scroll away.
             addView(
-                JarvisUi.ghost(this@MainActivity, ConsoleTab.PHONE_LABEL) { openSettings() }
+                JarvisUi.button(this@MainActivity, ConsoleTab.PHONE_LABEL) { openSettings() }
             )
         }
 

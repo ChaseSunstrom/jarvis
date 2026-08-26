@@ -1,9 +1,9 @@
 package ai.jarvis.app.screenshot
 
+import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
-import android.view.ViewGroup
 import android.widget.LinearLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import ai.jarvis.app.tasks.TaskBoard
 import ai.jarvis.app.tasks.TaskProgressView
+import ai.jarvis.app.ui.ConsoleFrame
+import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.ReactorOrb
 import ai.jarvis.app.ui.SiriPalette
@@ -26,6 +28,7 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -46,6 +49,16 @@ import org.robolectric.annotation.GraphicsMode
  * that stopped being read from `design/tokens.json` and became a literal.
  * `design_token_test.py` proves the *values* agree; this proves they are what
  * actually gets drawn.
+ *
+ * ## What the ten goldens are
+ *
+ * The instrument in its four states (`orb-*`), because that is the picture
+ * the whole look is built around and the one that changed most with
+ * Reactor II; the console frame's strip with its underline; the widgets every
+ * screen is built from; the held bar; the task overlay; the settings widgets;
+ * and the generated Compose theme. Each is one nameable moment — the
+ * animations are frozen at a fixed time — or it would record the scheduler's
+ * mood.
  *
  * ## What it is not
  *
@@ -99,8 +112,15 @@ class ScreenshotTest {
         return view
     }
 
-    // --- the orb, in the two states a person can tell apart ------------------
+    // --- the instrument, in the four states a person can tell apart ---------
 
+    /**
+     * The reactor at one fixed instant.
+     *
+     * `time` is the renderer's clock: the blades, coil, irises, glint and idle
+     * breath are all read off it against the motion tokens, so pinning it
+     * pins every one of them. `level` is what a microphone would have said.
+     */
     private fun orb(tone: SiriPalette.Tone, level: Float, turbulence: Boolean): Bitmap {
         val size = 480
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -110,22 +130,36 @@ class ScreenshotTest {
         val frame = ReactorOrb.Frame().apply {
             cx = size / 2f
             cy = size / 2f
-            radius = size / 5f
+            radius = size / 2.6f
             alpha = 1f
             this.level = level
             // Fixed, not free-running: a golden of an animation has to be of
             // one nameable moment, or it records the scheduler's mood.
+            time = 1.2f
             phase = 1.2f
             spinDeg = 42f
             blobs = SiriPalette.blobs(tone)
             core = SiriPalette.core(tone)
             rim = SiriPalette.rim(tone)
+            idle = tone == SiriPalette.Tone.IDLE
+            rimAlpha =
+                if (tone == SiriPalette.Tone.LISTENING || tone == SiriPalette.Tone.SPEAKING) {
+                    ReactorOrb.RIM_ALPHA_LIT
+                } else {
+                    ReactorOrb.RIM_ALPHA_REST
+                }
             this.turbulence = turbulence
             maxRadius = size / 2f
             settleRings()
         }
         orb.draw(canvas, frame)
         return bitmap
+    }
+
+    @Test
+    fun `the orb idle`() {
+        orb(SiriPalette.Tone.IDLE, level = 0f, turbulence = false)
+            .captureRoboImage(golden("orb-idle"))
     }
 
     @Test
@@ -140,21 +174,50 @@ class ScreenshotTest {
             .captureRoboImage(golden("orb-thinking"))
     }
 
+    @Test
+    fun `the orb speaking`() {
+        orb(SiriPalette.Tone.SPEAKING, level = 0.6f, turbulence = false)
+            .captureRoboImage(golden("orb-speaking"))
+    }
+
     // --- the widgets every screen is built from ------------------------------
 
     @Test
     fun `the component sheet`() {
         val column = JarvisUi.column(context).apply {
             setBackgroundColor(JarvisUi.BG)
-            addView(JarvisUi.title(context, "JARVIS"))
+            addView(JarvisUi.title(context, "Jarvis"))
             addView(JarvisUi.label(context, "STATUS"))
             addView(JarvisUi.hint(context, "Listening for the wake word"))
             addView(JarvisUi.mono(context, "wake 0.62  ·  vad 550 ms"))
-            addView(JarvisUi.spacer(context, 8))
-            addView(JarvisUi.pill(context, "PAIR") {})
-            addView(JarvisUi.ghost(context, "SETTINGS") {})
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            // The one filled control on a screen, and the quiet one beside it.
+            addView(JarvisUi.primary(context, "PAIR") {})
+            addView(JarvisUi.spacer(context, JarvisUi.Space.TIGHT))
+            addView(JarvisUi.button(context, "SETTINGS") {})
         }
         bitmapOf(column).captureRoboImage(golden("components"))
+    }
+
+    /**
+     * The strip the console screens share, with HOUSE current.
+     *
+     * The frame wants an Activity (it starts one for PHONE), so this is the
+     * one golden hung off a host. A bare [Activity], not one of ours: what is
+     * being pictured is the strip, and the app's activities each bring a
+     * service binding or a channel the picture does not need.
+     */
+    @Test
+    fun `the console frame`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val strip = ConsoleFrame.tabBar(activity, ConsoleTab.DEFAULT) {}
+        val holder = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(JarvisUi.BG)
+            addView(strip)
+            addView(JarvisUi.spacer(activity, JarvisUi.Space.SECTION))
+        }
+        bitmapOf(holder, width = 1233).captureRoboImage(golden("console-frame"))
     }
 
     @Test
@@ -162,7 +225,8 @@ class ScreenshotTest {
         val holder = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(JarvisUi.BG)
-            setPadding(24, 24, 24, 24)
+            val p = JarvisUi.dp(context, JarvisUi.Space.GAP)
+            setPadding(p, p, p, p)
         }
         holder.addView(
             JarvisUi.banner(
@@ -204,6 +268,51 @@ class ScreenshotTest {
         )
         view.visibility = View.VISIBLE
         bitmapOf(view).captureRoboImage(golden("task-overlay"))
+    }
+
+    /**
+     * The settings screen's parts: a labelled field, a secret one, a chooser,
+     * and the two kinds of check row. The screen itself binds to the
+     * service; its widgets are what a golden can hold still.
+     */
+    @Test
+    fun `the settings fields`() {
+        val column = JarvisUi.column(context).apply {
+            setBackgroundColor(JarvisUi.BG)
+            addView(JarvisUi.label(context, "SERVER"))
+            addView(JarvisUi.field(context, "https://jarvis.local", "https://jarvis.tail1234.ts.net"))
+            addView(JarvisUi.spacer(context, JarvisUi.Space.TIGHT))
+            addView(JarvisUi.field(context, "token", "hunter2", secret = true))
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            addView(JarvisUi.label(context, "WAKE WORD"))
+            addView(JarvisUi.chooser(context, "Wake word", listOf("hey jarvis", "ok jarvis"), 0) {})
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            addView(JarvisUi.label(context, "CHECKS"))
+            addView(
+                JarvisUi.checkRow(
+                    context,
+                    satisfied = true,
+                    essential = true,
+                    label = "Microphone",
+                    why = "Hearing the wake word.",
+                    onClick = null,
+                )
+            )
+            addView(JarvisUi.spacer(context, JarvisUi.Space.TIGHT))
+            addView(
+                JarvisUi.checkRow(
+                    context,
+                    satisfied = false,
+                    essential = false,
+                    label = "Notifications",
+                    why = "Saying when a job finishes.",
+                    onClick = {},
+                )
+            )
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            addView(JarvisUi.primary(context, "SAVE") {})
+        }
+        bitmapOf(column).captureRoboImage(golden("settings-fields"))
     }
 
     // --- and the generated Compose theme -------------------------------------

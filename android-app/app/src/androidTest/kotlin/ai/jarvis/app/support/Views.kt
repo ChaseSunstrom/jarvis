@@ -75,7 +75,7 @@ object Views {
     /**
      * A case-insensitive UiAutomator text pattern.
      *
-     * Load-bearing, not tidiness. `JarvisUi.pill` and `JarvisUi.ghost` set
+     * Load-bearing, not tidiness. `JarvisUi.primary` and `JarvisUi.button` set
      * `isAllCaps = true`, which is a *display* transformation: the button reads
      * "YES" on screen while `TextView.getText()` — and therefore the
      * accessibility node UiAutomator matches against — still holds the original

@@ -94,11 +94,11 @@ class CrashLogActivity : Activity() {
             }
             col.addView(JarvisUi.spacer(this, 16))
             col.addView(
-                JarvisUi.ghost(this, "COPY ALL") { copy(records.joinToString("\n\n---\n\n") { it.toText() }) },
+                JarvisUi.button(this, "COPY ALL") { copy(records.joinToString("\n\n---\n\n") { it.toText() }) },
                 matchWidth()
             )
             col.addView(
-                JarvisUi.ghost(this, "CLEAR") { clearAll() },
+                JarvisUi.button(this, "CLEAR") { clearAll() },
                 matchWidth().apply { topMargin = JarvisUi.dp(this@CrashLogActivity, 8) }
             )
         }
@@ -150,9 +150,9 @@ class CrashLogActivity : Activity() {
         col.addView(JarvisUi.spacer(this, 12))
         col.addView(JarvisUi.mono(this, record.toText()), matchWidth())
         col.addView(JarvisUi.spacer(this, 16))
-        col.addView(JarvisUi.ghost(this, "COPY") { copy(record.toText()) }, matchWidth())
+        col.addView(JarvisUi.button(this, "COPY") { copy(record.toText()) }, matchWidth())
         col.addView(
-            JarvisUi.ghost(this, "BACK TO LIST") {
+            JarvisUi.button(this, "BACK TO LIST") {
                 showing = null
                 showList()
             },

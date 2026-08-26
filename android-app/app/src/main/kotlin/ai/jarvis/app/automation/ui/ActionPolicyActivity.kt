@@ -84,7 +84,7 @@ class ActionPolicyActivity : Activity() {
 
         column.addView(JarvisUi.spacer(this, 16))
         column.addView(
-            JarvisUi.ghost(this, "BACK TO ASK FOR EVERYTHING") {
+            JarvisUi.button(this, "BACK TO ASK FOR EVERYTHING") {
                 store?.clearAllPolicies()
                 toast("Every action is back to ASK.")
                 refresh()

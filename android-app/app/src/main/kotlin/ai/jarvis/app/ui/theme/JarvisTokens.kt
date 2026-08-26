@@ -152,5 +152,24 @@ object JarvisTokens {
             const val STEP = 26
             const val CAP = 320
         }
+
+        /** The reactor's own clock — rotation periods and the breath — in milliseconds. */
+        object Reactor {
+            const val BLADES = 120000
+            const val COIL = 80000
+            const val IRIS_A = 26000
+            const val IRIS_B = 41000
+            const val BREATHE = 5000
+            const val GLINT = 14000
+            const val LEVEL = 3400
+            const val THINK = 9000
+        }
+
+        /** Ambient drift: rotations slow enough to read as alive rather than as motion. */
+        object Ambient {
+            const val BLINK_SLOW = 2600
+            const val DRIFT = 18000
+            const val DRIFT_SLOW = 40000
+        }
     }
 }

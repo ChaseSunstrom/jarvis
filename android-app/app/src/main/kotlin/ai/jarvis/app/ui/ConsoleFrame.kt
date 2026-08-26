@@ -8,6 +8,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import ai.jarvis.app.ui.theme.JarvisTokens
 
 /**
  * The console's nav, as one strip that every screen behind it wears.
@@ -29,16 +30,23 @@ import android.widget.LinearLayout
  *
  * So there is one strip, built here, and both screens that need it use it.
  *
+ * ## The look (M51)
+ *
+ * Reactor II's tabs: uppercase labels on a hairline, and ONE accent underline
+ * under whichever is current — not a lit button among dim ones. The strip is
+ * what the browser's bar draws above the same pages, so a person moving from
+ * the phone to the console sees the same idea in the same place.
+ *
  * ## Why PHONE is a tab here but not a [ConsoleTab]
  *
  * The phone's own settings sit in this strip beside the console's sections, so
  * that the mobile half and the house's half are one frame with one nav instead
  * of a native screen reached from somewhere else entirely. But it is NOT an
  * entry in [ConsoleTab], because that enum is pinned tab-for-tab against
- * `jarvis-web/src/routes/+layout.svelte` by `console_parity_test.py` and the
- * browser has no PHONE page — it cannot, since what is on it is Android
- * permissions, the wake word and which server this handset talks to. Adding it
- * to the enum would make the parity spec either wrong or a lie.
+ * `jarvis-web/src/lib/screens.ts` by `console_parity_test.py` and the browser
+ * has no PHONE page — it cannot, since what is on it is Android permissions,
+ * the wake word and which server this handset talks to. Adding it to the enum
+ * would make the parity spec either wrong or a lie.
  *
  * That is also the honest limit of this dedup. The phone's settings cannot BE a
  * web page; a page in a WebView cannot ask for RECORD_AUDIO, take a battery
@@ -68,18 +76,18 @@ object ConsoleFrame {
         val strip = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             val p = JarvisUi.dp(activity, JarvisUi.Space.GAP)
-            setPadding(p, 0, p, JarvisUi.dp(activity, JarvisUi.Space.ROW))
+            setPadding(p, 0, p, 0)
         }
 
         val buttons = mutableListOf<Pair<Button, Boolean>>()
         for (entry in ConsoleTab.entries) {
-            val button = JarvisUi.ghost(activity, entry.label) { onTab(entry) }
+            val button = JarvisUi.tab(activity, entry.label) { onTab(entry) }
             buttons += button to (!onPhone && entry == current)
-            strip.addView(button)
+            strip.addView(withUnderline(activity, button, !onPhone && entry == current))
             strip.addView(gap(activity))
         }
 
-        // The console's five scroll. PHONE does NOT.
+        // The console's four scroll. PHONE does NOT.
         //
         // It used to be the sixth button inside this scroller, and six
         // monospace labels do not fit a phone's width — so the one entry that
@@ -91,10 +99,10 @@ object ConsoleFrame {
         // and not the fact that you cannot tap what you cannot see.
         //
         // So it is pinned outside the scroller, always on screen, at the end
-        // where a settings affordance belongs. The five that scroll are the
+        // where a settings affordance belongs. The four that scroll are the
         // console's, which is also the honest visual grouping: they are one
         // thing and this is another.
-        val phone = JarvisUi.ghost(activity, PHONE_LABEL) {
+        val phone = JarvisUi.tab(activity, PHONE_LABEL) {
             if (!onPhone) {
                 activity.startActivity(
                     Intent(activity, ai.jarvis.app.SettingsActivity::class.java)
@@ -104,8 +112,9 @@ object ConsoleFrame {
         buttons += phone to onPhone
 
         for ((button, here) in buttons) {
-            button.setTextColor(if (here) JarvisUi.ACCENT else JarvisUi.DIM)
-            button.alpha = if (here) 1f else 0.75f
+            button.setTextColor(
+                if (here) JarvisTokens.Color.TEXT_BRIGHT else JarvisTokens.Color.TEXT_DIM
+            )
         }
 
         val scroller = HorizontalScrollView(activity).apply {
@@ -125,10 +134,10 @@ object ConsoleFrame {
             )
         }
 
-        return LinearLayout(activity).apply {
+        val bar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             val pad = JarvisUi.dp(activity, JarvisUi.Space.GAP)
-            setPadding(0, 0, pad, JarvisUi.dp(activity, JarvisUi.Space.ROW))
+            setPadding(0, 0, pad, 0)
             // Weight 0 on the width so the scroller takes what is left rather
             // than pushing PHONE off the edge it was just rescued from.
             addView(
@@ -136,16 +145,67 @@ object ConsoleFrame {
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
             addView(
-                phone,
+                withUnderline(activity, phone, onPhone),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             )
         }
+
+        // The hairline the whole strip sits on, with the underline drawn over
+        // it under the current tab: the bar's own edge, not a box per tab.
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                bar,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                View(activity).apply { setBackgroundColor(JarvisTokens.Color.LINE_HAIR) },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    JarvisUi.dp(activity, JarvisUi.Space.HAIRLINE)
+                ).apply { bottomMargin = JarvisUi.dp(activity, JarvisUi.Space.ROW) }
+            )
+        }
     }
+
+    /**
+     * A tab over its underline. The rule is drawn for every tab so the strip
+     * does not reflow when the current one changes — it is transparent under
+     * the others and the accent under this one.
+     */
+    private fun withUnderline(activity: Activity, tab: Button, here: Boolean): View =
+        LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                tab,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            val underline = View(activity).apply {
+                setBackgroundColor(if (here) JarvisTokens.Color.ACCENT else android.graphics.Color.TRANSPARENT)
+                tag = if (here) UNDERLINE_TAG else null
+            }
+            addView(
+                underline,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    JarvisUi.dp(activity, JarvisUi.Space.MICRO)
+                )
+            )
+        }
 
     private fun gap(activity: Activity): View = View(activity).apply {
         layoutParams = LinearLayout.LayoutParams(JarvisUi.dp(activity, JarvisUi.Space.STEP), 1)
     }
+
+    /** The view tag on the one lit underline, for a test to find it by. */
+    const val UNDERLINE_TAG = "underline"
 }

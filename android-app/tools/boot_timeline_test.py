@@ -1236,10 +1236,12 @@ def test_the_orb_keeps_a_frame_clock_when_the_animator_scale_is_zero():
 def test_the_orbs_edge_light_fades_in_with_the_rest_of_its_chrome():
     """Nothing may appear whole on the frame the boot lets go of the orb.
 
-    The edge light is a rounded rectangle traced around the WHOLE view. It was
+    The edge light used to be a rounded rectangle traced around the WHOLE
+    view; since M51 it is Reactor II's field — three hairline circles behind
+    the instrument — but the failure is the same shape either way: it was
     suppressed for the entire power-on and then drawn at full strength the
-    instant `bootDrive` went null — a box snapping on around the screen while
-    everything beside it was still fading up.
+    instant `bootDrive` went null, snapping on while everything beside it was
+    still fading up.
     """
     src = KOTLIN_ORB.read_text()
     code = code_only(KOTLIN_ORB)
@@ -1308,18 +1310,17 @@ def test_orb_guards_the_zero_radius_the_boot_starts_from():
     assert core_scale(0) == 0.0, "the premise: the boot starts the core at zero"
     src = KOTLIN_REACTOR.read_text()
     assert "MIN_DRAW_PX" in src, "ReactorOrb has no degenerate-geometry guard"
+    # The instrument's layers (M51). The previous list named the glass ball's
+    # primitives; what is pinned is unchanged — every function that builds a
+    # shader or a path effect bails out below MIN_DRAW_PX first.
     for fn in (
-        "drawSubstrate",
-        "drawBlob",
-        "drawSpokes",
-        "drawCore",
-        "drawGlass",
-        "drawHalo",
-        "drawRim",
-        "drawRing",
+        "drawBezel",
+        "drawBlades",
+        "drawCoil",
+        "drawLevel",
+        "drawLens",
+        "drawDot",
         "drawDashedRing",
-        "drawTicks",
-        "drawAnnulusSweep",
     ):
         body = src.split(f"private fun {fn}(", 1)[1][:900]
         assert "MIN_DRAW_PX" in body, f"{fn} does not guard against a sub-pixel radius"

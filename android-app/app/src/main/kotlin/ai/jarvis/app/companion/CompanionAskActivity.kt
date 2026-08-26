@@ -400,7 +400,7 @@ class CompanionAskActivity : Activity() {
             else column.addView(buildFreeAnswer())
         }
 
-        dismissButton = JarvisUi.ghost(
+        dismissButton = JarvisUi.button(
             ctx,
             if (mode == CompanionProtocol.MODE_ASK) "NOT NOW" else "CLOSE"
         ) { answer(CompanionProtocol.STATUS_DISMISSED) }
@@ -448,13 +448,6 @@ class CompanionAskActivity : Activity() {
                 Gravity.CENTER
             )
         )
-        root.addView(
-            JarvisUi.CornerBrackets(ctx, JarvisUi.ACCENT),
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
         return root
     }
 
@@ -465,7 +458,7 @@ class CompanionAskActivity : Activity() {
             gravity = Gravity.CENTER
         }
         for (option in options) {
-            val button = JarvisUi.pill(ctx, option) {
+            val button = JarvisUi.button(ctx, option) {
                 // Belt and braces: the enabled state is the gate, and this is
                 // the same question asked again at the moment of the tap.
                 if (CompanionAskGate.answerEnabled(isLocked(), armed, answered, importance)) {
@@ -503,7 +496,7 @@ class CompanionAskActivity : Activity() {
         // Tap to start, tap again when you have finished — not press-and-hold.
         // The label used to say HOLD, which is a control this screen does not
         // have: holding does nothing and the user gets no transcript.
-        val mic = JarvisUi.pill(ctx, MIC_IDLE_LABEL) { toggleListening() }.apply {
+        val mic = JarvisUi.button(ctx, MIC_IDLE_LABEL) { toggleListening() }.apply {
             isEnabled = false
             alpha = 0.4f
             filterTouchesWhenObscured = true
@@ -532,7 +525,7 @@ class CompanionAskActivity : Activity() {
             )
         )
 
-        val send = JarvisUi.ghost(ctx, "SEND") {
+        val send = JarvisUi.primary(ctx, "SEND") {
             submitTyped(answerField?.text?.toString().orEmpty())
         }.apply {
             isEnabled = false

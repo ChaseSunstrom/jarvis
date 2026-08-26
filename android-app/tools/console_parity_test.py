@@ -189,7 +189,10 @@ def check_the_mobile_half_is_named_for_itself() -> list[str]:
             "lives in the console frame (see ConsoleFrame); a second copy of it on "
             "the home screen is the thing that has to be kept in step by hand."
         )
-    if not re.search(r'JarvisUi\.ghost\([^,]+, "MANAGE"\)', main):
+    # `button` or `primary`: the pill and the ghost went with the previous
+    # look (M51). What is pinned is that the home screen reaches the console
+    # through ONE control, whatever its shape.
+    if not re.search(r'JarvisUi\.(?:button|primary)\([^,]+, "MANAGE"\)', main):
         failures.append(
             "the home screen has no MANAGE button, so the console is unreachable "
             "from the first screen of the app"
@@ -373,8 +376,10 @@ def check_the_phones_own_half_is_reachable() -> list[str]:
                 "how it came to be reported missing twice."
             )
         # PHONE has to be added somewhere other than `strip`, and the outer row
-        # is the only other container in this function.
-        if "addView(\n                phone," not in frame:
+        # is the only other container in this function. Since M51 each tab is
+        # wrapped in its underline before it is added, so the wrapper carrying
+        # `phone` into that addView is accepted too; the property is the same.
+        if not re.search(r"addView\(\n\s+(?:withUnderline\(activity, )?phone,", frame):
             failures.append("ConsoleFrame no longer adds a PHONE button to the outer row")
 
     # 2. On the home screen, one tap from opening the app.

@@ -82,7 +82,7 @@ class SystemCheckActivity : Activity() {
             )
         )
         col.addView(
-            JarvisUi.ghost(this, "CRASH LOGS") {
+            JarvisUi.button(this, "CRASH LOGS") {
                 startActivity(Intent(this, CrashLogActivity::class.java))
             },
             LinearLayout.LayoutParams(
@@ -91,7 +91,7 @@ class SystemCheckActivity : Activity() {
             ).apply { topMargin = JarvisUi.dp(this@SystemCheckActivity, 8) }
         )
         col.addView(
-            JarvisUi.ghost(this, "APP INFO") { GrapheneCompat.openAppDetails(this) },
+            JarvisUi.button(this, "APP INFO") { GrapheneCompat.openAppDetails(this) },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT

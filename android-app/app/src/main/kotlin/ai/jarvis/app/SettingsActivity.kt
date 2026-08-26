@@ -108,7 +108,7 @@ class SettingsActivity : Activity() {
         )
 
         // One control for the fourteen paragraphs below it. See [explain].
-        explanationsToggle = JarvisUi.ghost(ctx, explanationsLabel()) { toggleExplanations() }
+        explanationsToggle = JarvisUi.button(ctx, explanationsLabel()) { toggleExplanations() }
         col.addView(
             explanationsToggle,
             LinearLayout.LayoutParams(
@@ -131,8 +131,8 @@ class SettingsActivity : Activity() {
         col.addView(tokenField, matchWidth())
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "PASTE") { pasteToken() },
-                JarvisUi.ghost(ctx, "SCAN QR") { scanToken() },
+                JarvisUi.button(ctx, "PASTE") { pasteToken() },
+                JarvisUi.button(ctx, "SCAN QR") { scanToken() },
             )
         )
         col.addView(
@@ -170,8 +170,8 @@ class SettingsActivity : Activity() {
         col.addView(listenStatus)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
-                JarvisUi.ghost(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
+                JarvisUi.button(ctx, "ALLOW BACKGROUND") { requestBackgroundStart() },
+                JarvisUi.button(ctx, "DISPLAY OVER APPS") { openOverlaySetting() },
             )
         )
         overlayStatus = TextView(ctx).apply {
@@ -200,8 +200,8 @@ class SettingsActivity : Activity() {
         col.addView(modelStatus)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "DOWNLOAD MODELS") { downloadModels() },
-                JarvisUi.ghost(ctx, "DELETE MODELS") { deleteModels() },
+                JarvisUi.button(ctx, "DOWNLOAD MODELS") { downloadModels() },
+                JarvisUi.button(ctx, "DELETE MODELS") { deleteModels() },
             )
         )
 
@@ -244,7 +244,7 @@ class SettingsActivity : Activity() {
             explain(ctx, getString(R.string.settings_voice_identity_explain))
         )
         col.addView(
-            JarvisUi.ghost(ctx, "TEACH JARVIS MY VOICE") {
+            JarvisUi.button(ctx, "TEACH JARVIS MY VOICE") {
                 startActivity(Intent(this, VoiceIdentityActivity::class.java))
             },
             matchWidth()
@@ -317,10 +317,10 @@ class SettingsActivity : Activity() {
         col.addView(permissionStatus)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "SYSTEM CHECK") {
+                JarvisUi.button(ctx, "SYSTEM CHECK") {
                     startActivity(Intent(this, ai.jarvis.app.ui.SystemCheckActivity::class.java))
                 },
-                JarvisUi.ghost(ctx, "APP INFO") { openAppInfo() },
+                JarvisUi.button(ctx, "APP INFO") { openAppInfo() },
             )
         )
         col.addView(
@@ -338,10 +338,10 @@ class SettingsActivity : Activity() {
                 // itself, which is a different thing that happened to share a
                 // word — and sharing it made the app feel like a slightly wrong
                 // copy of the console rather than the other half of it.
-                JarvisUi.ghost(ctx, "PHONE TASKS") {
+                JarvisUi.button(ctx, "PHONE TASKS") {
                     JarvisScreens.open(this, JarvisScreens.AUTOMATIONS, "Phone tasks")
                 },
-                JarvisUi.ghost(ctx, "AUDIT LOG") {
+                JarvisUi.button(ctx, "AUDIT LOG") {
                     JarvisScreens.open(this, JarvisScreens.AUDIT_LOG, "The audit log")
                 },
             )
@@ -351,7 +351,7 @@ class SettingsActivity : Activity() {
         )
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "CRASH LOGS") {
+                JarvisUi.button(ctx, "CRASH LOGS") {
                     startActivity(Intent(this, ai.jarvis.app.ui.CrashLogActivity::class.java))
                 },
                 // SHARES A ROW rather than taking one of its own.
@@ -365,7 +365,7 @@ class SettingsActivity : Activity() {
                 // that introduced them, over something none of them tests. A
                 // row that already exists costs no height, and the sentence
                 // explaining it goes in the hint that was already here.
-                JarvisUi.ghost(ctx, "APPROVALS") {
+                JarvisUi.button(ctx, "APPROVALS") {
                     JarvisScreens.open(this, JarvisScreens.ACTION_POLICY, "Action approvals")
                 },
             )
@@ -388,15 +388,15 @@ class SettingsActivity : Activity() {
         col.addView(prereleaseUpdates)
         col.addView(
             row(
-                JarvisUi.ghost(ctx, "CHECK FOR UPDATES") { checkForUpdates() },
-                JarvisUi.ghost(ctx, "RELEASES") { openReleasesPage() },
+                JarvisUi.button(ctx, "CHECK FOR UPDATES") { checkForUpdates() },
+                JarvisUi.button(ctx, "RELEASES") { openReleasesPage() },
             )
         )
         // The grant without which none of the above can finish. Declared in the
         // manifest since the app was written, and a per-app user decision since
         // Android 8 — so it is another one that looked handled and was not.
         col.addView(
-            JarvisUi.ghost(ctx, "INSTALL PERMISSION") { openInstallPermission() },
+            JarvisUi.button(ctx, "INSTALL PERMISSION") { openInstallPermission() },
             matchWidth()
         )
 
@@ -404,7 +404,7 @@ class SettingsActivity : Activity() {
 
         col.addView(JarvisUi.spacer(ctx, 16))
         col.addView(
-            JarvisUi.pill(ctx, "SAVE") { save() },
+            JarvisUi.primary(ctx, "SAVE") { save() },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT

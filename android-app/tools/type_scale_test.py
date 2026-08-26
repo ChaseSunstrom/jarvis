@@ -60,8 +60,11 @@ SHARED_BUILDERS = (
     "hint",
     "mono",
     "field",
-    "pill",
-    "ghost",
+    # `button` and `primary` replaced `ghost` and `pill` with Reactor II (M51):
+    # a quiet hairline control and the one filled control per screen.
+    "button",
+    "primary",
+    "tab",
     "consentButton",
     "checkRow",
     "banner",
@@ -72,7 +75,15 @@ def builder_bodies() -> dict[str, str]:
     src = code(UI)
     out: dict[str, str] = {}
     for name in SHARED_BUILDERS:
-        match = re.search(rf"\n    fun {name}\((.*?)\n    \}}", src, re.S)
+        # A builder ends where the next member begins, not at a `    }` on its
+        # own line: an expression-bodied builder (`= Button(context).apply {`)
+        # closes at eight spaces, and the last one in the object closed nowhere
+        # this pattern could see — so it went unchecked while looking checked.
+        match = re.search(
+            rf"\n    fun {name}\((.*?)(?=\n    (?:fun |private |internal |const |object |val )|\n\}})",
+            src,
+            re.S,
+        )
         if match:
             out[name] = match.group(0)
     return out

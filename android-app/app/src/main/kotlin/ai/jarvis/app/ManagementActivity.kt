@@ -246,7 +246,7 @@ class ManagementActivity : Activity() {
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        bar.addView(JarvisUi.ghost(this, "RELOAD") { reload() })
+        bar.addView(JarvisUi.button(this, "RELOAD") { reload() })
         root.addView(
             bar,
             LinearLayout.LayoutParams(
@@ -340,7 +340,7 @@ class ManagementActivity : Activity() {
         panel.addView(statusTitle)
         statusDetail = JarvisUi.hint(this, "").apply { gravity = Gravity.CENTER }
         panel.addView(statusDetail)
-        statusRetry = JarvisUi.ghost(this, "TRY AGAIN") { reload() }.apply {
+        statusRetry = JarvisUi.button(this, "TRY AGAIN") { reload() }.apply {
             visibility = android.view.View.GONE
         }
         panel.addView(

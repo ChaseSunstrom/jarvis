@@ -179,13 +179,13 @@ class AuditLogActivity : Activity() {
 
         col.addView(JarvisUi.spacer(this, 16))
         col.addView(
-            JarvisUi.ghost(this, "COPY ALL") {
+            JarvisUi.button(this, "COPY ALL") {
                 copy(entries.joinToString("\n") { oneLine(it) })
             },
             matchWidth()
         )
         col.addView(
-            JarvisUi.ghost(this, if (clearArmed) "TAP AGAIN TO CLEAR" else "CLEAR") { clearAll() },
+            JarvisUi.button(this, if (clearArmed) "TAP AGAIN TO CLEAR" else "CLEAR") { clearAll() },
             matchWidth().apply { topMargin = JarvisUi.dp(this@AuditLogActivity, 8) }
         )
         col.addView(JarvisUi.spacer(this, 24))
@@ -243,9 +243,9 @@ class AuditLogActivity : Activity() {
         col.addView(JarvisUi.spacer(this, 12))
         col.addView(JarvisUi.mono(this, detailText(entry)), matchWidth())
         col.addView(JarvisUi.spacer(this, 16))
-        col.addView(JarvisUi.ghost(this, "COPY") { copy(detailText(entry)) }, matchWidth())
+        col.addView(JarvisUi.button(this, "COPY") { copy(detailText(entry)) }, matchWidth())
         col.addView(
-            JarvisUi.ghost(this, "BACK TO LIST") {
+            JarvisUi.button(this, "BACK TO LIST") {
                 showing = null
                 refresh()
             },

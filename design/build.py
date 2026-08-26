@@ -438,6 +438,22 @@ def gen_kotlin_tokens(tokens: dict) -> str:
     for path, _kind, value in leaves(tokens["motion"]["stagger"]):
         lines.append(f"            const val {const_name(path)} = {ms_of(value)}")
     lines.append("        }")
+    lines.append("")
+    # The reactor's clock (M51). The web reads `--jv-rx-*`; the phone draws
+    # the same instrument on Canvas and used to turn its rings at rates
+    # somebody typed — two reactors turning at two speeds is the one drift a
+    # person notices first, so the periods are generated like everything else.
+    lines.append("        /** The reactor's own clock — rotation periods and the breath — in milliseconds. */")
+    lines.append("        object Reactor {")
+    for path, _kind, value in leaves(tokens["motion"]["reactor"]):
+        lines.append(f"            const val {const_name(path)} = {ms_of(value)}")
+    lines.append("        }")
+    lines.append("")
+    lines.append("        /** Ambient drift: rotations slow enough to read as alive rather than as motion. */")
+    lines.append("        object Ambient {")
+    for path, _kind, value in leaves(tokens["motion"]["ambient"]):
+        lines.append(f"            const val {const_name(path)} = {ms_of(value)}")
+    lines.append("        }")
     lines.append("    }")
     lines.append("}")
     return "\n".join(lines) + "\n"

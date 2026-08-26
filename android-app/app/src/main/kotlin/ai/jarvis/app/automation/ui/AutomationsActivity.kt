@@ -215,7 +215,7 @@ class AutomationsActivity : Activity() {
 
         if (store != null && !store.panic) {
             col.addView(
-                JarvisUi.ghost(this, if (live) "PAUSE AUTOMATIONS" else "RESUME AUTOMATIONS") {
+                JarvisUi.button(this, if (live) "PAUSE AUTOMATIONS" else "RESUME AUTOMATIONS") {
                     store.automationEnabled = !store.automationEnabled
                     runCatching {
                         JarvisAutomationService.ensureRunning(this, "automations-screen")
@@ -237,7 +237,7 @@ class AutomationsActivity : Activity() {
         // rather than somewhere else.
         if (store != null) {
             col.addView(
-                JarvisUi.ghost(this, if (store.panic) "CLEAR PANIC" else "PANIC") {
+                JarvisUi.button(this, if (store.panic) "CLEAR PANIC" else "PANIC") {
                     val turningOn = !store.panic
                     JarvisAutomationService.panic(this, turningOn)
                     notice = if (turningOn) {
@@ -339,7 +339,7 @@ class AutomationsActivity : Activity() {
             }
 
             addView(
-                JarvisUi.ghost(this@AutomationsActivity, if (task.enabled) "ON" else "OFF") {
+                JarvisUi.button(this@AutomationsActivity, if (task.enabled) "ON" else "OFF") {
                     toggleEnabled(task)
                 },
                 LinearLayout.LayoutParams(
@@ -418,7 +418,7 @@ class AutomationsActivity : Activity() {
 
         col.addView(JarvisUi.spacer(this, 16))
         col.addView(
-            JarvisUi.ghost(this, if (task.enabled) "SWITCH OFF" else "SWITCH ON") {
+            JarvisUi.button(this, if (task.enabled) "SWITCH OFF" else "SWITCH ON") {
                 toggleEnabled(task)
             },
             matchWidth()
@@ -429,11 +429,11 @@ class AutomationsActivity : Activity() {
         // nothing.
         if (task.enabled) {
             col.addView(
-                JarvisUi.ghost(this, "RUN NOW") { runNow(task) },
+                JarvisUi.button(this, "RUN NOW") { runNow(task) },
                 matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
             )
             col.addView(
-                JarvisUi.ghost(this, "CANCEL RUN") {
+                JarvisUi.button(this, "CANCEL RUN") {
                     val cancelled = runtime?.engine?.cancel(task.id) ?: false
                     toast(if (cancelled) "Cancelled" else "That task is not running")
                 },
@@ -441,7 +441,7 @@ class AutomationsActivity : Activity() {
             )
         }
         col.addView(
-            JarvisUi.ghost(this, "BACK TO LIST") {
+            JarvisUi.button(this, "BACK TO LIST") {
                 showing = null
                 refresh()
             },
