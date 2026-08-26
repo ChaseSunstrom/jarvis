@@ -3878,6 +3878,17 @@ index 1234567..89abcde 100644
 					ok(msg.id, { placed: panel.id });
 					break;
 				}
+				case 'jarvis/sensors/history': {
+					// A day of a sensor, as the recorder would answer: a gentle
+					// curve so a chart has a shape, in the entity's own unit.
+					const id = String(msg.entity_id || '');
+					const state = world.states.get(id);
+					const now = Date.now() / 1000;
+					const base = Number(state?.state) || 20;
+					const points = Array.from({ length: 48 }, (_, i) => [now - (47 - i) * 1800, Math.round((base + Math.sin(i / 6) * 2) * 10) / 10]);
+					ok(msg.id, { series: [{ key: id, label: state?.attributes?.friendly_name || id, unit: state?.attributes?.unit_of_measurement || '', aggregate: '', points }], hours: 24 });
+					break;
+				}
 				case 'jarvis/test/surface_moves': {
 					ok(msg.id, { moves: world.surfaceMoves.slice() });
 					break;

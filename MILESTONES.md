@@ -1297,8 +1297,8 @@ web and of Tasker. Local only. Each row here is planned in that document.
     tools, five websocket commands, the console's panels over the page around the instrument —
     dragged, resized, closed, entering with the stagger — and the mock. Surface suite 4, the
     surface and layout specs 4/4, gate 14/15: the last check puts a panel up on the running
-    house and waits for the rebuild. A sensor's history chart is the next step (`kind: chart`
-    draws the tile).
+    house and waits for the rebuild. `kind: chart` draws the sensor's history from the recorder
+    (`jarvis/sensors/history`), in its unit.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,

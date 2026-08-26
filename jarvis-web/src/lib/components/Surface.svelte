@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import SurfacePanel from './SurfacePanel.svelte';
 	import type { CameraStill, MomentRow, ReadingsPayload, SkySummary } from '$lib/dashboards/widgets';
+	import type { SeriesData } from '$lib/dashboards/series';
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
 	import type { BusEvent, EntityState, Subscription, SurfacePanel as Panel } from '$lib/jarvisClient';
@@ -21,6 +22,7 @@
 	let readings = $state<Record<string, ReadingsPayload>>({});
 	let sky = $state<SkySummary | null>(null);
 	let moments = $state<MomentRow[]>([]);
+	let series = $state<Record<string, SeriesData[]>>({});
 	let errors = $state<Record<string, string>>({});
 	let now = $state(Date.now());
 	let width = $state(0);
@@ -57,6 +59,17 @@
 						.visionStill(p.camera)
 						.then((still) => {
 							stills[p.id] = still;
+						})
+						.catch((e) => {
+							errors[p.id] = describeError(e);
+						})
+				);
+			} else if (p.kind === 'chart') {
+				jobs.push(
+					client
+						.sensorHistory(p.entity)
+						.then((rows) => {
+							series[p.id] = rows;
 						})
 						.catch((e) => {
 							errors[p.id] = describeError(e);
@@ -177,6 +190,7 @@
 				readings={readings[panel.id] ?? null}
 				{sky}
 				{moments}
+				series={series[panel.id] ?? []}
 				error={errors[panel.id] ?? ''}
 				{onmove}
 				{onremove}

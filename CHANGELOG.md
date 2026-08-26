@@ -16,7 +16,8 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   means off, and the tools say so.
 - **M83 — pull things up.** "Show me the front door camera", "put the living room readings up",
   "show the bed light" put a panel on the voice screen beside the instrument — an entity's tile,
-  a camera's still, a room's readings, a note, a page's text, the sky, the moments — drawn live
+  a camera's still, a room's readings, a sensor's history as a chart, a note, a page's text, the
+  sky, the moments — drawn live
   from the house, never from a copy. Panels enter with the stagger, are dragged and resized by
   hand on a grid over the stage, closed with × or "clear the screen", nudged with "put the camera
   on the left" / "make it bigger"; the server keeps where they were left, so every screen shows

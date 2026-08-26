@@ -736,6 +736,16 @@ class WebSocketHandler:
     async def _cmd_surface_clear(self, msg: dict[str, Any]) -> Any:
         return await self._surface().async_clear()
 
+    async def _cmd_sensors_history(self, msg: dict[str, Any]) -> Any:
+        """An entity's recent numeric history as a chart's series (M83)."""
+        from ..integrations.surface import async_history_series
+
+        try:
+            hours = float(msg.get("hours") or 24.0)
+        except (TypeError, ValueError):
+            hours = 24.0
+        return await async_history_series(self.jarvis, str(msg.get("entity_id") or ""), hours)
+
     async def _cmd_metrics_sources(self, msg: dict[str, Any]) -> Any:
         return await common.async_metrics_sources(self.jarvis)
 
@@ -1388,6 +1398,7 @@ WebSocketHandler._HANDLERS = {
     "jarvis/surface/move": WebSocketHandler._cmd_surface_move,
     "jarvis/surface/remove": WebSocketHandler._cmd_surface_remove,
     "jarvis/surface/clear": WebSocketHandler._cmd_surface_clear,
+    "jarvis/sensors/history": WebSocketHandler._cmd_sensors_history,
     "jarvis/metrics/sources": WebSocketHandler._cmd_metrics_sources,
     "jarvis/metrics/query": WebSocketHandler._cmd_metrics_query,
     # What the dashboard's house widgets read (M63). All three are reads; the

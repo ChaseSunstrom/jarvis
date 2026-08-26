@@ -1199,6 +1199,11 @@ export class JarvisClient {
 		await this.command({ type: 'jarvis/surface/move', panel: id, ...where });
 	}
 
+	/** An entity's recent numeric history, as a chart's series (M83). */
+	async sensorHistory(entityId: string, hours = 24): Promise<SeriesData[]> {
+		return toSeries(await this.command({ type: 'jarvis/sensors/history', entity_id: entityId, hours }));
+	}
+
 	async surfaceRemove(id: string): Promise<void> {
 		await this.command({ type: 'jarvis/surface/remove', panel: id });
 	}

@@ -803,8 +803,8 @@ transport), `test_gated_services.py`, `test_tool_tiers_contract.py`.
 
 ### Pull things up (M83)
 
-`bash scripts/verify/m83-pull-things-up.sh`. Server: `jarvis-core/tests/test_surface.py` (4); console:
-`e2e/surface.spec.ts` (2), `voice-layout.spec.ts`, `look.spec.ts`, `states.spec.ts`.
+`bash scripts/verify/m83-pull-things-up.sh`. Server: `jarvis-core/tests/test_surface.py` (5); console:
+`e2e/surface.spec.ts` (3), `voice-layout.spec.ts`, `look.spec.ts`, `states.spec.ts`.
 
 | Claim | Status | Evidence |
 |---|---|---|
@@ -816,7 +816,7 @@ transport), `test_gated_services.py`, `test_tool_tiers_contract.py`.
 | A panel is the dashboard's own widget for its kind — tile, still, readings, sky, moments — so it can never show what the house cannot | Automated | the gate reads `SurfacePanel.svelte` for the five components |
 | On the running house, `show` puts a panel up and the surface lists it | Scripted | the gate's last check over the websocket, after the rebuild |
 | "Show me the front door camera" by voice, the panel appearing on the screen in the room | Manual | the operator, after the rebuild |
-| A chart of a sensor's history | **Not yet** | `kind: chart` draws the entity's tile; a history chart wants the metrics source the dashboards' metric widget reads, which is the next step |
+| A chart of a sensor's history: `kind: chart` draws the entity's numeric history from the same recorder the history tools read (`jarvis/sensors/history`), in the sensor's unit; no recorder means one point, a level | Automated | `test_a_chart_panel_draws_the_entitys_history_in_its_unit`; `e2e/surface.spec.ts` "a sensor's history draws as a chart" |
 
 ### Not listening while you enrol (M79)
 

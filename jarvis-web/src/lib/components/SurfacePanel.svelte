@@ -8,6 +8,8 @@
 -->
 <script lang="ts">
 	import { groupReadings, type CameraStill, type MomentRow, type ReadingsPayload, type SkySummary } from '$lib/dashboards/widgets';
+	import Chart from '$lib/dashboards/Chart.svelte';
+	import type { SeriesData } from '$lib/dashboards/series';
 	import CameraStillView from '$lib/dashboards/CameraStill.svelte';
 	import EntityTile from '$lib/dashboards/EntityTile.svelte';
 	import Moments from '$lib/dashboards/Moments.svelte';
@@ -26,6 +28,7 @@
 		readings?: ReadingsPayload | null;
 		sky?: SkySummary | null;
 		moments?: MomentRow[];
+		series?: SeriesData[];
 		error?: string;
 		now: number;
 		index: number;
@@ -43,6 +46,7 @@
 		readings = null,
 		sky = null,
 		moments = [],
+		series = [],
 		error = '',
 		now,
 		index,
@@ -131,7 +135,9 @@
 	<div class="body" data-no-drag={panel.kind === 'entity' ? '' : undefined}>
 		{#if error}
 			<p class="bad" role="alert">{error}</p>
-		{:else if panel.kind === 'entity' || panel.kind === 'chart'}
+		{:else if panel.kind === 'chart'}
+			<div class="chart" data-testid="surface-chart-{panel.id}"><Chart type="line" {series} live /></div>
+		{:else if panel.kind === 'entity'}
 			<EntityTile entityId={panel.entity} state={entityState ?? undefined} live {now} onswitch={onswitch ? (service) => onswitch(panel.entity, service) : undefined} />
 		{:else if panel.kind === 'camera'}
 			<CameraStillView {still} camera={panel.camera} />
@@ -233,6 +239,10 @@
 		min-height: 0;
 		overflow: auto;
 		padding: var(--jv-space-2) var(--jv-space-3);
+	}
+	.chart {
+		height: 100%;
+		min-height: 0;
 	}
 	.text {
 		font-family: var(--jv-font-body);

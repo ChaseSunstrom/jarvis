@@ -180,6 +180,49 @@ class Surface:
         return {"status": "ok", "removed": gone}
 
 
+async def async_history_series(jarvis: "Jarvis", entity_id: str, hours: float = 24.0) -> dict[str, Any]:
+    """An entity's recent history as the chart's series: `[[at, value], …]`,
+    oldest first, numeric states only. The same recorder the history tools
+    read; with no recorder, the current state as one point, which a chart
+    draws as a level rather than nothing."""
+    from datetime import datetime
+
+    from ..history import get_history
+
+    entity_id = str(entity_id or "").strip().lower()
+    if not entity_id:
+        return {"series": []}
+    end = time.time()
+    hours = max(0.25, min(float(hours or 24.0), 24.0 * 14))
+    rows = (await get_history(jarvis, [entity_id], start=end - hours * 3600, end=end)).get(entity_id) or []
+    points: list[list[float]] = []
+    for row in rows:
+        try:
+            value = float(row.get("state"))
+        except (TypeError, ValueError):
+            continue
+        stamp = row.get("last_changed") or row.get("last_updated")
+        try:
+            at = float(stamp) if isinstance(stamp, (int, float)) else datetime.fromisoformat(str(stamp)).timestamp()
+        except (TypeError, ValueError):
+            continue
+        points.append([at, value])
+    state = jarvis.states.get(entity_id)
+    attributes = state.attributes if state is not None else {}
+    return {
+        "series": [
+            {
+                "key": entity_id,
+                "label": str(attributes.get("friendly_name") or entity_id),
+                "unit": str(attributes.get("unit_of_measurement") or ""),
+                "aggregate": "",
+                "points": points,
+            }
+        ],
+        "hours": hours,
+    }
+
+
 def get_surface(jarvis: "Jarvis") -> Surface | None:
     return (jarvis.data.get(DOMAIN) or {}).get("surface")
 

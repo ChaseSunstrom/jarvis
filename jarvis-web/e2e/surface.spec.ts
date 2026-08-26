@@ -86,3 +86,12 @@ test('a drag moves a panel on the grid and the server is told where it landed', 
 	await expect(panel).toHaveCount(0, { timeout: 10_000 });
 	await expect(page.getByTestId('surface')).toHaveAttribute('data-count', '0');
 });
+
+test("a sensor's history draws as a chart, in the sensor's unit", async ({ page }) => {
+	await tell(page, { type: 'jarvis/test/surface_show', kind: 'chart', entity: 'sensor.lab_temperature', title: 'Lab temperature' });
+	const panel = page.locator('[data-testid^="surface-panel-"][data-kind="chart"]').first();
+	await expect(panel).toBeVisible({ timeout: 10_000 });
+	await expect(panel.locator('svg').first()).toBeVisible({ timeout: 10_000 });
+	await expect(panel.locator('svg path').first()).toBeVisible();
+	await tell(page, { type: 'jarvis/surface/clear' });
+});

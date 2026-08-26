@@ -110,3 +110,25 @@ async def test_a_drag_from_the_screen_is_kept_and_clamped(tmp_path):
         assert missing["status"] == "error"
     finally:
         await jarvis.async_stop()
+
+
+async def test_a_chart_panel_draws_the_entitys_history_in_its_unit(tmp_path):
+    """The chart is the sensor's numeric history from the same recorder the
+    history tools read; with no recorder the current state is one point, so
+    a chart draws a level rather than nothing; a state that is not a number
+    is not a point; an unknown entity is an empty series, not an error."""
+    jarvis, _registry, _surface = await booted(tmp_path)
+    try:
+        sensor = next(e.entity_id for e in jarvis.entities.entities.values() if e.entity_id.startswith("sensor."))
+        state = jarvis.states.get(sensor)
+        payload = await surface_mod.async_history_series(jarvis, sensor, hours=6)
+        series = payload["series"][0]
+        assert series["key"] == sensor and series["unit"] == (state.attributes.get("unit_of_measurement") or "")
+        assert len(series["points"]) >= 1 and series["points"][-1][1] == float(state.state)
+        assert payload["hours"] == 6
+        light = next(e.entity_id for e in jarvis.entities.entities.values() if e.entity_id.startswith("light."))
+        assert (await surface_mod.async_history_series(jarvis, light))["series"][0]["points"] == []
+        assert (await surface_mod.async_history_series(jarvis, "sensor.nothing"))["series"][0]["points"] == []
+        assert (await surface_mod.async_history_series(jarvis, ""))["series"] == []
+    finally:
+        await jarvis.async_stop()

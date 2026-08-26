@@ -93,6 +93,7 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/surface/move` | `panel` (its id — never the frame's `id`), `x`, `y`, `w`, `h`: where a drag or a resize left it; clamped to the twelve-column grid |
 | `jarvis/surface/remove` | `panel`: take one down |
 | `jarvis/surface/clear` | take everything down |
+| `jarvis/sensors/history` | `entity_id`, `hours` (24; up to 336): the entity's numeric history as a chart's series `{series: [{key, label, unit, points: [[at, value], …]}], hours}` — what a `chart` panel draws (M83) |
 | `jarvis/metrics/sources` | what can be graphed, per source, with each source's health |
 | `jarvis/metrics/query` | `source`, `series`, and either `range` (`1h`…`7d`) or `start`/`end`/`step`; the points. A source that is down answers with an error per series rather than failing the request |
 | `jarvis/sensors/readings` | optional `area`, `limit`; every sensor's newest reading with its room and age, newest first — what the dashboard's readings widget draws (M63) |
