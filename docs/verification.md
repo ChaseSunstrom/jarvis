@@ -1201,6 +1201,45 @@ callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
 **A test that cannot tell a slow machine from a slow app should not claim
 either.**
 
+## Known failures, as of 2026-08-26 17:40 (this host) — after the CI pass and the merges
+
+The full live suite in M25's gate against the stack rebuilt with everything to
+`4c9fda3` (M62, M63, M61's six rows, M64's look, the MQTT and taint fixes):
+49 of 57 scenario variants, 75 of 82 turns, intent 91.5 %, routing 95.8 %,
+WER 5.9 %, median round trip **3.23 s**, p95 29.3 s. The same two thresholds
+missed as at 11:54, recorded rather than lowered: intent (≥ 95 %) and the
+median (≤ 2 s). The eight failures, read one by one from `results.json`:
+
+- `sensors-discovered` — the rig's MQTT publish was refused: the stack had
+  been started with no compose profile, so mosquitto (and searxng) never
+  ran while the deployed config has `mqtt:` and `sensors:` on. The Makefile
+  exports `COMPOSE_PROFILES=mqtt,search` now (b4010d0); the run after this
+  one has a broker.
+- `task-live-ui`, `task-cancel-mid-run` — "look into which lights are still
+  on downstairs and tell me later" went to `deep_research` (the web) by
+  M60's "asked to research, call deep_research first" rule, which found
+  nothing. The rule and the tool's description now keep the house's own
+  jobs out of research (b4010d0).
+- `interactions-thread-continuity` — the bed light was still on from an
+  earlier scenario and the first turn was answered, truthfully, with "it is
+  already on" and no service call. The scenario declares its starting state
+  now (b4010d0).
+- `research-deep-report`, `delegation-across-backends` — "the fixture
+  handbook" with no address: the model searched its notes, found nothing and
+  asked which handbook, which `research-cancel` already records as correct.
+  Both name the handbook's address now (b7543dd).
+- `subagents-parallel-work` — the follow-up 30 s later reported the two
+  findings as still pending; the delegated researcher had no search engine
+  (above). Re-measured with the broker and searxng up.
+- `resilience-core-restart` — after the container restart the model said the
+  bedroom light was on without calling anything (the claimed-action guard
+  keys on an action request, and "now do the same in the bedroom" is not
+  phrased as one). A model miss, recorded; the guard's reach is a decision
+  for the next intelligence pass, not a threshold.
+
+The report run (`--report`) that follows the gate sequence is the next
+record; its numbers replace these when `docs/LIVE_TEST_REPORT.md` is written.
+
 ## Known failures, as of 2026-08-26 11:54 (this host) — the record after the overhaul
 
 The full-mode live run against the stack rebuilt with everything to `647af5a`
