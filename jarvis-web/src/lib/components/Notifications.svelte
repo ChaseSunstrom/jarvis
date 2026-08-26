@@ -100,9 +100,11 @@
 			aria-expanded={open}
 			data-testid="notifications-toggle"
 		>
-			<span>MOMENTS</span>
+			<span class="disclose" aria-hidden="true">{open ? '▾' : '▸'}</span>
+			<span class="word">Moments</span>
+			<span class="count">{notes.length} · what Jarvis said while nobody was looking</span>
 			{#if unread}
-				<span class="badge" data-testid="notifications-unread">{unread}</span>
+				<span class="badge" data-testid="notifications-unread" title="{unread} unread">{unread}</span>
 			{/if}
 		</button>
 
@@ -142,48 +144,93 @@
 {/if}
 
 <style>
+	/*
+	 * The inbox is a flat panel whose head is the disclosure: collapsed by
+	 * default with the unread count, because these arrive when you are not at
+	 * the screen and a toast is the wrong shape for them.
+	 */
 	.inbox {
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-space-2);
-		margin-bottom: var(--jv-space-3);
+		margin-bottom: var(--jv-space-4);
+		background: var(--jv-panel);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		overflow: hidden;
 	}
 	.head {
 		display: flex;
 		align-items: center;
-		gap: var(--jv-space-2);
+		gap: var(--jv-space-3);
+		width: 100%;
 		background: none;
 		border: none;
-		padding: 0;
+		padding: var(--jv-space-3) var(--jv-space-4);
 		color: var(--jv-text-dim);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
-		letter-spacing: var(--jv-track-chrome);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		text-align: left;
 		cursor: pointer;
+		transition: color var(--jv-dur-fast) var(--jv-ease-out);
 	}
 	.head:hover,
 	.head:focus-visible {
-		color: var(--jv-accent);
+		color: var(--jv-text-bright);
+	}
+	.head[aria-expanded='true'] {
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.disclose {
+		font-family: var(--jv-font-chrome);
+		color: var(--jv-text-faint);
+	}
+	.count {
+		flex: 1;
+		min-width: 0;
+		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-body);
+		letter-spacing: var(--jv-track-tight);
+		text-transform: none;
+		color: var(--jv-text-faint);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.badge {
-		background: var(--jv-accent);
-		color: var(--jv-accent-ink);
-		border-radius: var(--jv-radius-pill);
+		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-body);
+		letter-spacing: var(--jv-track-tight);
+		text-transform: none;
+		color: var(--jv-accent);
+		border: 1px solid color-mix(in srgb, var(--jv-accent) 40%, transparent);
+		border-radius: var(--jv-radius-sm);
 		padding: 0 var(--jv-space-2);
-		font-size: var(--jv-fs-xs);
+		white-space: nowrap;
 	}
 	.list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--jv-space-2);
 	}
 	.empty,
 	.err {
-		color: var(--jv-text-faint);
-		font-size: var(--jv-fs-xs);
 		margin: 0;
+		padding: var(--jv-space-3) var(--jv-space-4);
+		color: var(--jv-text-faint);
+		font-size: var(--jv-fs-sm);
 	}
 	.err {
-		color: var(--jv-danger);
+		color: var(--jv-danger-text);
+	}
+	.inbox :global(.btn) {
+		margin: var(--jv-space-3) var(--jv-space-4);
+		align-self: flex-start;
+	}
+	@media (max-width: 640px) {
+		.count {
+			display: none;
+		}
 	}
 </style>

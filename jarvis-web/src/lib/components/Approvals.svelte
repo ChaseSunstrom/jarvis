@@ -170,8 +170,7 @@
 {#if pending.length}
 	<section class="approvals" data-testid="approvals" aria-live="assertive">
 		<div class="head">
-			<span class="mark" aria-hidden="true">[ ! ]</span>
-			<span>{pending.length} thing{pending.length === 1 ? '' : 's'} waiting on you</span>
+			<span>Held · {pending.length} thing{pending.length === 1 ? '' : 's'} waiting on you · asks before it runs</span>
 		</div>
 
 		{#if err}<p class="err" data-testid="approval-error" role="alert">{err}</p>{/if}
@@ -272,14 +271,14 @@
 						<span class="left" data-testid="approval-expiry-{req.tool}">{left}s</span>
 					{/if}
 					<Button
-						variant="approve"
+						variant="primary"
 						testid="approve-{req.tool}"
 						disabled={busy === id}
 						onclick={() => resolve(req, true)}
 					>
 						APPROVE
 					</Button>
-					<Button variant="danger" testid="deny-{req.tool}"
+					<Button testid="deny-{req.tool}"
 						disabled={busy === id}
 						onclick={() => resolve(req, false)}
 					>
@@ -292,47 +291,28 @@
 {/if}
 
 <style>
+	/*
+	 * Reactor II's held bar: a flat panel with the warn colour as an INSET rule
+	 * on its left — a box-shadow, not a border, so it never moves the layout —
+	 * the label in the warn colour, what is held in the bright text, its
+	 * arguments in mono, and APPROVE as the one filled control on the screen.
+	 */
 	.approvals {
 		position: sticky;
 		top: 0;
 		z-index: 40;
-		border: 1px solid var(--jv-warn);
-		border-left: 3px solid var(--jv-warn);
-		border-radius: var(--jv-radius-sm);
 		background: var(--jv-panel);
-		box-shadow: var(--jv-elev-panel);
-		padding: var(--jv-space-3);
-		margin-bottom: var(--jv-space-3);
-	}
-	/* A question is the assistant asking, not the assistant about to act, so
-	   it is marked with the accent rather than the warning colour. */
-	.req.question {
-		border-left: 2px solid var(--jv-accent);
-		padding-left: var(--jv-space-2);
-	}
-	.answer {
-		flex: 1 1 14rem;
-		min-width: 0;
-	}
-	/* Louder than the ordinary accent, quieter than a denial: this is a
-	   provenance note, not a failure. */
-	.req.tainted {
-		border-left-color: var(--jv-warn);
-	}
-	.desc.warn {
-		color: var(--jv-warn);
-	}
-	.choices {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--jv-space-2);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn), var(--jv-elev-panel);
+		padding: var(--jv-space-3) var(--jv-space-4) var(--jv-space-3) var(--jv-space-5);
+		margin-bottom: var(--jv-space-4);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
 	}
 	.head {
-		display: flex;
-		align-items: center;
-		gap: var(--jv-space-2);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-wide);
 		text-transform: uppercase;
 		color: var(--jv-warn);
@@ -343,28 +323,74 @@
 		align-items: center;
 		gap: var(--jv-space-3);
 		flex-wrap: wrap;
-		padding: var(--jv-space-2) 0;
-		border-top: 1px dashed var(--jv-line-hair);
+		padding: var(--jv-space-3) 0;
+		border-top: 1px solid var(--jv-line-hair);
+	}
+	/* A question is the assistant asking, not the assistant about to act. */
+	.req.question {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
+		padding-left: var(--jv-space-3);
+	}
+	/* Louder than the ordinary accent, quieter than a denial: provenance. */
+	.req.tainted {
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn);
+		padding-left: var(--jv-space-3);
 	}
 	.what {
 		flex: 1 1 14rem;
 		min-width: 0;
 	}
 	.what b {
+		display: block;
 		color: var(--jv-text-bright);
-		font-weight: 500;
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-sm);
 	}
-	.desc,
+	.desc {
+		display: block;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+		overflow-wrap: anywhere;
+	}
+	.desc.warn {
+		color: var(--jv-warn);
+	}
 	.args {
 		display: block;
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
-		color: var(--jv-text-dim);
+		color: var(--jv-text-faint);
 		overflow-wrap: anywhere;
 	}
 	.left {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
+		font-variant-numeric: tabular-nums;
 		color: var(--jv-warn);
+	}
+	.answer {
+		flex: 1 1 14rem;
+		min-width: 0;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+	}
+	.answer:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: var(--jv-focus-offset);
+	}
+	.choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--jv-space-2);
+	}
+	.err {
+		margin: 0 0 var(--jv-space-2);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-danger-text);
 	}
 </style>

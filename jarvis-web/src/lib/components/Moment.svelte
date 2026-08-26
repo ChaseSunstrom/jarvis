@@ -14,7 +14,7 @@
 	 * that produced it. Every one of those is a field on the record, not a
 	 * reconstruction.
 	 */
-	import { Button } from '$lib/ui';
+	import { Button, Pill } from '$lib/ui';
 	import type { Snippet } from 'svelte';
 
 	interface Props {
@@ -62,7 +62,7 @@
 
 <article class="moment" class:read data-kind={kind} data-testid={testid || undefined}>
 	<header>
-		<span class="kind">{kind}</span>
+		<Pill tone={read ? 'neutral' : 'live'}>{kind}</Pill>
 		<h3>{title}</h3>
 		{#if when}<time>{when}</time>{/if}
 	</header>
@@ -71,7 +71,7 @@
 
 	<footer>
 		{#if link}
-			<a class="btn ghost" href={link} data-testid={testid ? `${testid}-open` : undefined}>
+			<a class="open" href={link} data-testid={testid ? `${testid}-open` : undefined}>
 				OPEN
 			</a>
 		{/if}
@@ -107,39 +107,41 @@
 </article>
 
 <style>
+	/* One moment is one hairline row: the kind as a tag, the title, when, what
+	   it said, and quiet actions. Unread carries the inset accent rule. */
 	.moment {
-		border: 1px solid var(--jv-line);
-		border-left: 2px solid var(--jv-accent);
-		border-radius: var(--jv-radius-md);
-		background: var(--jv-surface-1);
-		padding: var(--jv-space-3);
 		display: flex;
 		flex-direction: column;
 		gap: var(--jv-space-2);
+		padding: var(--jv-space-3) var(--jv-space-4);
+		border-bottom: 1px solid var(--jv-line-hair);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	}
 	.moment.read {
-		border-left-color: var(--jv-line);
+		box-shadow: none;
+	}
+	.moment:last-child {
+		border-bottom: 0;
 	}
 	header {
 		display: flex;
 		align-items: baseline;
-		gap: var(--jv-space-2);
+		gap: var(--jv-space-3);
 		flex-wrap: wrap;
 	}
 	h3 {
 		margin: 0;
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-body);
 		font-size: var(--jv-fs-sm);
-		color: var(--jv-text);
+		color: var(--jv-text-bright);
 		flex: 1 1 auto;
 	}
-	.kind,
-	time,
-	.source {
+	time {
 		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+		font-size: var(--jv-fs-2xs);
 		color: var(--jv-text-faint);
-		text-transform: uppercase;
-		letter-spacing: var(--jv-track-chrome);
+		font-variant-numeric: tabular-nums;
 	}
 	.body {
 		margin: 0;
@@ -152,13 +154,30 @@
 		gap: var(--jv-space-2);
 		align-items: center;
 	}
+	.open {
+		font-family: var(--jv-font-body);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
+		text-decoration: none;
+		border: 1px solid var(--jv-line);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-4);
+		transition: color var(--jv-dur-fast) var(--jv-ease-out), border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.open:hover {
+		color: var(--jv-text-bright);
+		border-color: var(--jv-text-dim);
+	}
 	.why {
 		background: none;
 		border: none;
 		padding: 0;
 		color: var(--jv-text-faint);
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
 		text-transform: uppercase;
 		cursor: pointer;
@@ -166,14 +185,15 @@
 	}
 	.why:hover,
 	.why:focus-visible {
-		color: var(--jv-accent);
+		color: var(--jv-text);
 	}
 	.source {
 		margin: 0;
-		text-transform: none;
-		letter-spacing: normal;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
 	}
 	.source code {
-		color: var(--jv-accent);
+		font-family: var(--jv-font-chrome);
+		color: var(--jv-text);
 	}
 </style>

@@ -65,3 +65,6 @@ jarvis-core/models/
 # gets a component library"; that commit's history was rewritten before this
 # branch was ever pushed.
 jarvis-core/wyoming/
+
+# Subagent worktrees the harness creates beside the checkout; never part of it.
+.claude/worktrees/

@@ -1445,8 +1445,7 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.mic .arc,
-		.stages i {
+		.mic .arc {
 			transition: none;
 		}
 	}
