@@ -1,10 +1,11 @@
 # What still needs a phone
 
 Everything in `android-app/` that can be proved without hardware now is: the
-app builds (`./gradlew assembleDebug`), 185 JVM unit tests pass, lint is
-blocking and clean, ten screens are captured as Robolectric screenshots and
-compared against goldens, and thirty-odd Python mirrors read the Kotlin and
-assert the logic it is supposed to implement.
+app builds (`./gradlew assembleDebug`), the JVM unit tests pass, lint is
+blocking and clean, the screens are captured as Robolectric screenshots and
+compared against goldens, and 63 Python mirrors read the Kotlin and assert
+the logic it is supposed to implement — on a machine with the SDK; this host
+runs only the mirrors (BLOCKERS §3).
 
 This file is the rest — the checks that cannot be made on a build machine, each
 one written so somebody holding a phone can do it without reading the source
