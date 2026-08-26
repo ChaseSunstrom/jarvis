@@ -82,6 +82,9 @@ OUT_DIR = REPO_ROOT / ".verify" / "live"
 
 #: The ceiling a turn's transcript may not exceed unless it says otherwise.
 DEFAULT_WER = 0.25
+#: How long a `restart: true` turn waits for an earlier scenario's background
+#: task before pulling the core out from under it.
+RESTART_SETTLE_S = 180.0
 
 #: Full-mode thresholds, from the brief. `--implemented-only` does not apply
 #: them: a suite that is deliberately partial cannot have a meaningful rate.
@@ -386,6 +389,14 @@ class Runner:
                         else None
                     )
                 if turn.restart:
+                    # A background job an earlier scenario started must not be
+                    # the thing this restart interrupts: the sensor audit that
+                    # interactions-proactive-moment starts takes minutes, and
+                    # when the core went down under it the job ended
+                    # `jarvis_task_failed` ("interrupted when Jarvis
+                    # restarted") — that scenario's failure, caused here. Wait,
+                    # bounded, for running tasks to settle; then restart.
+                    await self._settle_tasks(observer, RESTART_SETTLE_S)
                     # The whole point of the turn: kill the process and see
                     # what survived. The socket does not, so the client and
                     # the observer are rebuilt around the new one — and the
@@ -694,6 +705,26 @@ class Runner:
             return dataclasses.replace(turn, say=self._expand_text(turn.say, ground))
         turn.say = self._expand_text(turn.say, ground)
         return turn
+
+    async def _settle_tasks(self, observer: Any, budget: float) -> None:
+        """Wait up to `budget` seconds for running tasks to finish; say if they did not."""
+        deadline = time.monotonic() + budget
+        while True:
+            running = [
+                t for t in await observer.tasks()
+                if str(t.get("status")) in ("running", "pending", "queued")
+            ]
+            if not running:
+                return
+            if time.monotonic() >= deadline:
+                names = ", ".join(str(t.get("title") or t.get("id"))[:40] for t in running[:3])
+                print(
+                    f"       · restarting under {len(running)} running task(s) after "
+                    f"{budget:.0f}s: {names}",
+                    flush=True,
+                )
+                return
+            await asyncio.sleep(2.0)
 
     async def _mqtt_publish(self, messages: Any) -> None:
         """Publish each `{topic, payload, retain?}` to the house's broker.

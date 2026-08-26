@@ -1419,6 +1419,31 @@ async def test_remember_refuses_a_turn_that_has_read_untrusted_content(tmp_path)
     assert (await call(jarvis, "memory", "list"))["count"] == 0
 
 
+async def test_forget_that_matched_nothing_says_so_to_the_model(tmp_path):
+    """A count of zero with a reason was read as success: on the live rig the
+    model answered "Forgotten, Sir" over `{"count": 0}` and the store still
+    held the fact. The result now says, in the reply's own words, that nothing
+    was forgotten — and for two matches, that it must ask which."""
+    jarvis = await setup_memory(tmp_path)
+    await call(jarvis, "memory", "add", text="the shed key is under the second flowerpot")
+
+    nothing = await tools(jarvis).call("forget", {"query": "the boiler's serial number"})
+    assert nothing["count"] == 0
+    assert nothing["message"].startswith("NOTHING was forgotten")
+    assert "do not say it is forgotten" in nothing["message"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+    await call(jarvis, "memory", "add", text="the spare key is on the hook by the door")
+    two = await tools(jarvis).call("forget", {"query": "key"})
+    assert two["count"] == 0 and len(two["candidates"]) == 2
+    assert two["message"].startswith("NOTHING was forgotten") and "Ask which" in two["message"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 2
+
+    one = await tools(jarvis).call("forget", {"query": "shed key"})
+    assert one["count"] == 1 and one["message"].startswith("Forgotten")
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+
 async def test_forget_refuses_a_turn_that_has_read_untrusted_content(tmp_path):
     """Deleting is a durable write too, and nothing puts a note back."""
     from jarvis.api.devices import mark_untrusted

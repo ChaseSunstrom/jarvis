@@ -558,3 +558,12 @@ is quiet. Done since:
   the broker and searxng up. Seven failures, recorded in docs/verification.md; two are
   defects to chase (memory-forget's store, a failed background sensor audit). The rebuild
   chain — today's rule and guard changes — is measuring now.
+- 18:40 — the report run's two defects, read: every failed background task in the store
+  says "interrupted when Jarvis restarted" — resilience-core-restart pulls the core out from
+  under the sensor audit an earlier scenario started, so the rig now waits (bounded) for
+  running tasks before a restart turn. And `forget`: a query like "shed key" was called
+  ambiguous because "key" alone cleared the floor for another note, the result came back
+  count 0 with candidates, and the model said "Forgotten" over it — forget now takes the one
+  entry that matched every word when no other did, and every empty outcome says NOTHING was
+  forgotten in the reply's own words. Smoke set green on the rebuilt stack; the eight are
+  running.

@@ -637,9 +637,21 @@ class MemoryStore:
                 "reason": "say which memory to forget (an id, or what it was about)",
             }
 
-        matches = [entry for score, entry in self._score(text, None) if score >= MATCH_FLOOR]
+        scored = [(score, entry) for score, entry in self._score(text, None) if score >= MATCH_FLOOR]
+        matches = [entry for _, entry in scored]
         if not matches:
             return {"forgotten": [], "count": 0, "reason": f"nothing remembered about {text!r}"}
+        # "shed key" against "the shed key is under…" and "the spare key is on
+        # the hook…": the second clears the floor on "key" alone, and asking
+        # which of the two was meant is not the careful answer, it is the
+        # wrong one — the model said "Forgotten" over the candidates and the
+        # fact stayed (memory-forget, 26 Aug). One entry that matched every
+        # word of the query, when no other did, is what was meant. A real tie
+        # — "key" against both — still asks.
+        if len(matches) > 1 and not forget_all:
+            best, runner_up = scored[0][0], scored[1][0]
+            if best >= 0.9 and runner_up < 0.9:
+                matches = [scored[0][1]]
         if len(matches) > 1 and not forget_all:
             return {
                 "forgotten": [],
@@ -1438,6 +1450,21 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
             out["message"] = (
                 "Forgotten. Do not repeat what it said, even from earlier in this "
                 "conversation: if asked, say you have nothing recorded about it."
+            )
+        elif out.get("candidates"):
+            out["message"] = (
+                "NOTHING was forgotten: more than one memory matches. Ask which "
+                "one is meant, naming them — do not say it is forgotten."
+            )
+        else:
+            # Count zero with a reason — and the model said "Forgotten, Sir"
+            # over it (memory-forget on the live rig, 26 Aug): the store still
+            # held the fact. A result has to say what did not happen, in the
+            # words the reply should use.
+            out["message"] = (
+                "NOTHING was forgotten: " + str(out.get("reason") or "no memory matched")
+                + ". Say so plainly — do not say it is forgotten — and, if it "
+                "helps, ask what it was about or call recall to find its id."
             )
         return out
 
