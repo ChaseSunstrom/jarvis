@@ -12,8 +12,13 @@
 	 * given the most room here: EXPORT and FORGET EVERYTHING. The model may
 	 * write a note and forget one; handing over the whole store or deleting all
 	 * of it is the user's, and it is theirs through this page.
+	 *
+	 * Every entry is a point on the destination's graph; `?entry=<id>` in the
+	 * URL — set by selecting that point — is the one this list scrolls to and
+	 * marks.
 	 */
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
+	import { page } from '$app/state';
 	import {
 		openConnection,
 		describeError,
@@ -21,8 +26,9 @@
 		type ConnectionStatus
 	} from '$lib/connection';
 	import { isUnsupported } from '$lib/jarvisClient';
+	import { touchKnowledge } from '$lib/knowledge/store.svelte';
 	import { toasts } from '$lib/toast';
-	import { Button, ScreenState, type Status } from '$lib/ui';
+	import { Button, Pill, ScreenState, type Status } from '$lib/ui';
 
 	interface Entry {
 		id: string;
@@ -47,6 +53,8 @@
 	let link = $state<ConnectionStatus>('connecting');
 
 	const extracted = $derived(entries.filter((e) => e.source === 'extracted').length);
+	/** The entry the URL points at — the node picked on the graph. */
+	const picked = $derived(page.url.pathname.endsWith('/memory') ? page.url.searchParams.get('entry') ?? '' : '');
 	/*
 	 * Offline is first, and it is a state this page did not have.
 	 *
@@ -117,6 +125,19 @@
 		return () => live?.close();
 	});
 
+	// The picked entry is brought into view once the list has it. Not on every
+	// render: scrolling the page under somebody who is reading is the thing to
+	// avoid, so this follows the URL and nothing else.
+	$effect(() => {
+		const id = picked;
+		if (!id || loading) return;
+		void tick().then(() => {
+			document
+				.querySelector(`[data-testid="memory-entry-${CSS.escape(id)}"]`)
+				?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		});
+	});
+
 	async function forget(entry: Entry): Promise<void> {
 		if (!conn || busy) return;
 		busy = entry.id;
@@ -125,6 +146,7 @@
 			entries = entries.filter((e) => e.id !== entry.id);
 			total = Math.max(0, total - 1);
 			toasts.success('Forgotten', entry.text.slice(0, 60));
+			touchKnowledge();
 		} catch (e) {
 			err = describeError(e);
 		} finally {
@@ -170,6 +192,7 @@
 			total = 0;
 			confirmingWipe = false;
 			toasts.success(`Forgot ${answer.wiped} note(s)`, 'including the semantic index');
+			touchKnowledge();
 		} catch (e) {
 			err = describeError(e);
 		} finally {
@@ -186,48 +209,54 @@
 	}
 </script>
 
-
 <p class="lede" data-testid="memory-lede">
 	What Jarvis remembers between conversations. {total} note{total === 1 ? '' : 's'}, {extracted} of
 	them worked out rather than told. It is all on this machine, in one file you can read.
 </p>
 
-<div class="toolbar">
-	<input
-		type="search"
-		placeholder="search  ( / )"
-		aria-label="Search what Jarvis remembers"
-		data-testid="memory-search"
-		bind:value={query}
-		onchange={load}
-	/>
-	<Button testid="memory-export-json" onclick={() => exportAll('json')}>
-		EXPORT JSON
-	</Button>
-	<Button testid="memory-export-md" onclick={() => exportAll('markdown')}>
-		EXPORT MARKDOWN
-	</Button>
-	{#if confirmingWipe}
-		<Button variant="danger" testid="memory-wipe-confirm"
-			disabled={busy === 'wipe'}
-			onclick={wipe}>
-			{busy === 'wipe' ? '…' : 'YES — FORGET EVERYTHING'}
-		</Button>
-		<Button testid="memory-wipe-cancel" onclick={() => (confirmingWipe = false)}>
-			CANCEL
-		</Button>
-	{:else}
-		<Button variant="danger" testid="memory-wipe" onclick={() => (confirmingWipe = true)}>
-			FORGET EVERYTHING
-		</Button>
-	{/if}
-</div>
-
 {#if !supported}
-	<p class="note" data-testid="memory-unsupported">
+	<p class="lede" data-testid="memory-unsupported">
 		This server has no memory integration configured.
 	</p>
 {:else}
+	<form
+		class="bar"
+		onsubmit={(e) => {
+			e.preventDefault();
+			void load();
+		}}
+	>
+		<label class="sr" for="memory-search">Search what Jarvis remembers</label>
+		<input
+			id="memory-search"
+			type="search"
+			class="search"
+			placeholder="Search  ( / )"
+			data-testid="memory-search"
+			data-jv-filter
+			bind:value={query}
+		/>
+		<span class="quiet">
+			<Button testid="memory-export-json" onclick={() => exportAll('json')}>Export JSON</Button>
+			<Button testid="memory-export-md" onclick={() => exportAll('markdown')}>Export markdown</Button>
+		</span>
+		<!--
+		  The one irreversible control in the console, and the user's alone —
+		  the model has no tool that can reach it. One click arms it; the red
+		  button is the second one.
+		-->
+		{#if confirmingWipe}
+			<Button variant="danger" testid="memory-wipe-confirm" disabled={busy === 'wipe'} onclick={wipe}>
+				{busy === 'wipe' ? '…' : 'Yes — forget everything'}
+			</Button>
+			<Button testid="memory-wipe-cancel" onclick={() => (confirmingWipe = false)}>Cancel</Button>
+		{:else}
+			<Button variant="danger" testid="memory-wipe" onclick={() => (confirmingWipe = true)}>
+				Forget everything
+			</Button>
+		{/if}
+	</form>
+
 	<ScreenState
 		{status}
 		emptyTitle="Nothing remembered yet"
@@ -241,100 +270,160 @@
 		errorTestid="memory-error"
 	>
 		{#snippet children()}
-		<ul class="notes" data-testid="memory-list">
-			{#each entries as entry (entry.id)}
-				<li data-testid="memory-entry-{entry.id}" class:pinned={entry.pinned}>
-					<p class="text">{entry.text}</p>
-					<p class="meta">
-						<span class="source" data-testid="memory-source-{entry.id}">{entry.source}</span>
-						<span>{when(entry.created)}</span>
-						{#each entry.tags as tag (tag)}<span class="tag">{tag}</span>{/each}
-						{#if entry.redacted?.length}
-							<span class="tag" title="Something was scrubbed before this was stored">
-								redacted: {entry.redacted.join(', ')}
-							</span>
-						{/if}
-					</p>
-					<span class="acts">
-						<Button testid="memory-pin-{entry.id}"
-							disabled={!!busy}
-							onclick={() => pin(entry)}
-						>
-							{entry.pinned ? 'UNPIN' : 'PIN'}
-						</Button>
-						<Button variant="danger" testid="memory-forget-{entry.id}"
-							disabled={!!busy}
-							onclick={() => forget(entry)}
-						>
-							FORGET
-						</Button>
-					</span>
-				</li>
-			{/each}
-		</ul>
+			<ul class="notes" data-testid="memory-list">
+				{#each entries as entry (entry.id)}
+					<li
+						data-testid="memory-entry-{entry.id}"
+						class:pinned={entry.pinned}
+						class:picked={picked === entry.id}
+					>
+						<p class="text">{entry.text}</p>
+						<div class="meta">
+							<span class="source" data-testid="memory-source-{entry.id}">{entry.source}</span>
+							<span class="dot" aria-hidden="true">·</span>
+							<span>{when(entry.created)}</span>
+							{#each entry.tags as tag (tag)}<Pill>{tag}</Pill>{/each}
+							{#if entry.pinned}<Pill tone="live">pinned</Pill>{/if}
+							{#if entry.redacted?.length}
+								<Pill tone="warn">redacted: {entry.redacted.join(', ')}</Pill>
+							{/if}
+						</div>
+						<span class="acts">
+							<Button testid="memory-pin-{entry.id}" disabled={!!busy} onclick={() => pin(entry)}>
+								{entry.pinned ? 'Unpin' : 'Pin'}
+							</Button>
+							<Button variant="danger" testid="memory-forget-{entry.id}" disabled={!!busy} onclick={() => forget(entry)}>
+								Forget
+							</Button>
+						</span>
+					</li>
+				{/each}
+			</ul>
 		{/snippet}
 	</ScreenState>
 {/if}
 
 <style>
-	.lede,
-	.note {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-xs);
+	.lede {
+		margin: 0 0 var(--jv-space-4);
+		font-size: var(--jv-fs-sm);
 		color: var(--jv-text-dim);
-		margin: 0 0 var(--jv-space-3);
+		max-width: 70ch;
 	}
-	.toolbar {
+	.sr {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
+	}
+	.bar {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--jv-space-2);
 		align-items: center;
-		margin: var(--jv-space-4) 0;
+		gap: var(--jv-space-2);
+		margin-bottom: var(--jv-space-4);
+	}
+	.search {
+		flex: 1 1 12rem;
+		min-width: 0;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.search::placeholder {
+		color: var(--jv-text-faint);
+	}
+	.search:hover {
+		border-color: var(--jv-line);
+	}
+	.quiet {
+		display: inline-flex;
+		gap: var(--jv-space-2);
 	}
 	.notes {
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-2);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		background: var(--jv-panel);
+		overflow: hidden;
 	}
 	.notes li {
 		display: grid;
-		grid-template-columns: 1fr max-content;
-		gap: var(--jv-space-2);
-		align-items: start;
-		padding: var(--jv-space-3);
-		border: 1px solid var(--jv-line);
-		border-radius: var(--jv-radius-md);
-		background: var(--jv-surface-1);
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas: 'text acts' 'meta acts';
+		gap: var(--jv-space-1) var(--jv-space-3);
+		align-items: center;
+		padding: var(--jv-space-3) var(--jv-space-4);
+		border-bottom: 1px solid var(--jv-line-hair);
+		transition: background var(--jv-dur-base) var(--jv-ease-out);
 	}
-	.notes li.pinned {
-		border-color: var(--jv-accent-deep);
+	.notes li:last-child {
+		border-bottom: 0;
+	}
+	.notes li:hover {
+		background: var(--jv-wash);
+	}
+	/* The picked entry is the one lit on the graph: the same wash and rule. */
+	.notes li.picked {
+		background: var(--jv-wash);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	}
 	.text {
+		grid-area: text;
 		margin: 0;
-		grid-column: 1;
+		font-size: var(--jv-fs-sm);
 		color: var(--jv-text);
+		overflow-wrap: anywhere;
+	}
+	li.picked .text {
+		color: var(--jv-text-bright);
 	}
 	.meta {
-		grid-column: 1;
-		margin: var(--jv-space-1) 0 0;
+		grid-area: meta;
 		display: flex;
 		flex-wrap: wrap;
+		align-items: center;
 		gap: var(--jv-space-2);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
 		color: var(--jv-text-faint);
-		font-size: var(--jv-fs-xs);
 	}
-	.source,
-	.tag {
+	.source {
 		text-transform: uppercase;
-		letter-spacing: var(--jv-track-chrome);
 	}
+	.dot {
+		opacity: 0.6;
+	}
+	/* Pin and forget are there for the keyboard and on hover; a row is a fact, not a control panel. */
 	.acts {
-		grid-column: 2;
-		grid-row: 1 / span 2;
+		grid-area: acts;
 		display: flex;
 		gap: var(--jv-space-1);
+		opacity: 0;
+		transition: opacity var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.notes li:hover .acts,
+	.notes li.picked .acts,
+	.acts:focus-within {
+		opacity: 1;
+	}
+	@media (max-width: 900px) {
+		.acts {
+			opacity: 1;
+		}
 	}
 </style>

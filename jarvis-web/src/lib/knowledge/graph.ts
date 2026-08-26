@@ -55,7 +55,9 @@ export function buildGraph(notes: NoteLike[], memory: MemoryLike[]): { nodes: Gr
 		...notes.map((n) => ({ id: `note:${n.id}`, label: n.title, kind: 'note' as const, tags: n.tags ?? [] })),
 		...memory.map((m) => ({
 			id: `memory:${m.id}`,
-			label: m.text.length > 42 ? `${m.text.slice(0, 41)}…` : m.text,
+			// A label is a name, not the fact: a sentence under a point in a
+			// 340px column runs into the next point's name.
+			label: m.text.length > 30 ? `${m.text.slice(0, 29)}…` : m.text,
 			kind: 'memory' as const,
 			tags: m.tags ?? []
 		}))
@@ -124,16 +126,28 @@ export function layout(nodes: GraphNode[], edges: GraphEdge[], options: LayoutOp
 	const n = nodes.length;
 	if (n === 0) return { nodes: [], edges: [], width, height };
 	const rand = seeded(nodes.map((node) => node.id).join('\n'));
-	const pad = Math.min(width, height) * 0.12;
+	// Room for a label under a point at the edge: never less than a line of text.
+	const pad = Math.max(30, Math.min(width, height) * 0.12);
 	const xs = nodes.map(() => pad + rand() * (width - 2 * pad));
 	const ys = nodes.map(() => pad + rand() * (height - 2 * pad));
 	const index = new Map(nodes.map((node, i) => [node.id, i]));
 	const links = edges
-		.map((edge) => [index.get(edge.from), index.get(edge.to), edge.kind === 'link' ? 1 : 0.45] as const)
+		// A link pulls; a shared tag pulls less — and neither so hard that two
+		// linked names land on top of each other.
+		.map((edge) => [index.get(edge.from), index.get(edge.to), edge.kind === 'link' ? 0.5 : 0.2] as const)
 		.filter(([a, b]) => a !== undefined && b !== undefined) as [number, number, number][];
 	const area = width * height;
-	const k = Math.sqrt(area / n) * 0.7;
-	let temperature = Math.min(width, height) / 8;
+	const k = Math.sqrt(area / n) * 0.5;
+	/*
+	 * Gravity, sized against the repulsion rather than typed: a node the box's
+	 * half-width from the middle feels about the pull that a neighbour one k
+	 * away pushes with. At a fixed 0.02 the repulsion won everywhere and a
+	 * five-node graph sat on the frame's edges in a line, with the middle
+	 * empty; at this it gathers into a cloud about k across and leaves the
+	 * margins the labels need.
+	 */
+	const gravity = (1.4 * k) / Math.max(width, height);
+	let temperature = Math.min(width, height) / 6;
 	const cool = temperature / iterations;
 	for (let step = 0; step < iterations; step++) {
 		const dx = new Array<number>(n).fill(0);
@@ -149,6 +163,11 @@ export function layout(nodes: GraphNode[], edges: GraphEdge[], options: LayoutOp
 					ddy = 0.01;
 					d = Math.hypot(ddx, ddy);
 				}
+				// Repulsion reaches three k and no further: an island a screen away
+				// from a cluster was still being pushed by every node in it, and
+				// the picture had two nodes in the far corners and a knot in the
+				// middle. Past the cutoff gravity alone places it.
+				if (d > 3 * k) continue;
 				const force = (k * k) / d;
 				dx[i] += (ddx / d) * force;
 				dy[i] += (ddy / d) * force;
@@ -168,14 +187,39 @@ export function layout(nodes: GraphNode[], edges: GraphEdge[], options: LayoutOp
 		}
 		for (let i = 0; i < n; i++) {
 			// The pull to the centre, so an island does not drift to a corner.
-			dx[i] += (width / 2 - xs[i]) * 0.02;
-			dy[i] += (height / 2 - ys[i]) * 0.02;
+			dx[i] += (width / 2 - xs[i]) * gravity;
+			dy[i] += (height / 2 - ys[i]) * gravity;
 			const d = Math.hypot(dx[i], dy[i]) || 0.01;
 			const capped = Math.min(d, temperature);
-			xs[i] = Math.min(width - pad, Math.max(pad, xs[i] + (dx[i] / d) * capped));
-			ys[i] = Math.min(height - pad, Math.max(pad, ys[i] + (dy[i] / d) * capped));
+			xs[i] += (dx[i] / d) * capped;
+			ys[i] += (dy[i] / d) * capped;
 		}
 		temperature = Math.max(0.5, temperature - cool);
+	}
+	/*
+	 * Fitted, not clamped. Clamping every step to the box made the box the
+	 * answer: repulsion pushed every node to the nearest edge and a five-node
+	 * graph was a line along the top with two corners filled. The simulation
+	 * runs free, and the picture it settles into is scaled — uniformly, so
+	 * shapes survive — to the box with room under the lowest node for its
+	 * label.
+	 */
+	const minX = Math.min(...xs);
+	const maxX = Math.max(...xs);
+	const minY = Math.min(...ys);
+	const maxY = Math.max(...ys);
+	const spanX = maxX - minX;
+	const spanY = maxY - minY;
+	const scale = Math.min(
+		spanX > 1 ? (width - 2 * pad) / spanX : Infinity,
+		spanY > 1 ? (height - 2 * pad) / spanY : Infinity
+	);
+	const fit = Number.isFinite(scale) ? Math.min(scale, 1.5) : 1;
+	const offX = width / 2 - ((minX + maxX) / 2) * fit;
+	const offY = height / 2 - ((minY + maxY) / 2) * fit;
+	for (let i = 0; i < n; i++) {
+		xs[i] = xs[i] * fit + offX;
+		ys[i] = ys[i] * fit + offY;
 	}
 	return {
 		nodes: nodes.map((node, i) => ({ ...node, x: Math.round(xs[i] * 10) / 10, y: Math.round(ys[i] * 10) / 10 })),

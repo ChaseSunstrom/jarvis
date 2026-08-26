@@ -1125,7 +1125,21 @@ index 1234567..89abcde 100644
 			created: new Date(Date.now() - 86_400_000).toISOString(),
 			updated: new Date(Date.now() - 86_400_000).toISOString(),
 			links: ["heating"],
-			backlinks: []
+			backlinks: ["heating"]
+		},
+		{
+			// The note the boiler note's [[heating]] resolves to, so the link is
+			// a real edge on the knowledge graph rather than a dangling name —
+			// and so "the link graph is shown both ways" has a both.
+			id: "heating",
+			slug: "heating",
+			title: "Heating",
+			body: "Flow temperature 45 °C on the radiators. The boiler was [[boiler-serviced]] last spring.",
+			tags: ["house"],
+			created: new Date(Date.now() - 172_800_000).toISOString(),
+			updated: new Date(Date.now() - 172_800_000).toISOString(),
+			links: ["boiler-serviced"],
+			backlinks: ["boiler-serviced"]
 		},
 		{
 			id: "research-heat-pumps",
@@ -1915,12 +1929,20 @@ index 1234567..89abcde 100644
 						? msg.tools
 						: ['get_state', 'turn_on'];
 					const failAt = Number.isInteger(msg.fail_at) ? msg.fail_at : -1;
+					// The arguments ride on BOTH events, as jarvis-core sends them:
+					// the knowledge graph reads a finished `note_search`'s query to
+					// light the notes it touched, and a mock that dropped them on
+					// the second event would let a graph that ignored them pass.
+					const args =
+						msg.arguments && typeof msg.arguments === 'object'
+							? msg.arguments
+							: { name: 'kitchen lamp' };
 					ok(msg.id, { started: names.length });
 					names.forEach((name, index) => {
 						setTimeout(() => {
 							broadcast('jarvis_tool_started', {
 								name,
-								arguments: { name: 'kitchen lamp' },
+								arguments: args,
 								round: 1,
 								index,
 								total: names.length
@@ -1929,6 +1951,7 @@ index 1234567..89abcde 100644
 								const failed = index === failAt;
 								broadcast('jarvis_tool_finished', {
 									name,
+									arguments: args,
 									round: 1,
 									index,
 									total: names.length,
@@ -1939,6 +1962,36 @@ index 1234567..89abcde 100644
 								});
 							}, 60);
 						}, index * 40);
+					});
+					break;
+				}
+
+				// A turn that read remembered facts, as the bus sees one: the
+				// `intent-end` the core mirrors onto `voice_pipeline_event`
+				// carries the entries the model was given. The knowledge graph
+				// lights them; this lets a test say which without a model.
+				case 'jarvis/test/memory_used': {
+					const ids = Array.isArray(msg.entries) && msg.entries.length ? msg.entries : ['mem1'];
+					const used = ids.map((id) => ({
+						id: String(id),
+						text: memoryEntries.find((e) => e.id === id)?.text ?? ''
+					}));
+					ok(msg.id, { used: used.length });
+					broadcast('voice_pipeline_event', {
+						run_id: 0,
+						type: 'intent-end',
+						data: {
+							intent_output: {
+								response: {
+									speech: { plain: { speech: '', extra_data: null } },
+									response_type: 'action_done',
+									data: { memory_used: used }
+								},
+								conversation_id: 'conv-mock-1'
+							}
+						},
+						pipeline: 'pipe-jarvis',
+						device_id: null
 					});
 					break;
 				}

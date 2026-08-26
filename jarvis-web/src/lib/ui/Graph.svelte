@@ -4,15 +4,18 @@ The knowledge graph: notes and memory entries as nodes, `[[links]]` and shared
 tags as edges, laid out by `$lib/knowledge/graph` and drawn in with the
 stagger. A node lights and its edges pulse when something touches it — a
 turn that read a memory entry, a tool that wrote a note — and settles again
-over `--jv-dur-blink`. Click or press a node to select it; the parent decides
-what selecting means (opening the note, scrolling to the entry).
+over `--jv-dur-blink`. Click or press a node (or its label) to select it; the
+parent decides what selecting means (opening the note, scrolling to the entry).
 
 ```svelte
 <Graph {nodes} {edges} selected={openId} pulses={recent} onselect={(id) => open(id)} />
 ```
 
-Under reduced motion nothing draws in and nothing pulses; the lit state is
-still shown, because it is information.
+The drawing is laid out at the width it is shown at — one unit is one pixel —
+so a label is the size the type scale says wherever the graph is put, rather
+than a 600-unit picture shrunk into a 340px column. Under reduced motion
+nothing draws in and nothing pulses; the lit state is still shown, because it
+is information.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -31,14 +34,16 @@ still shown, because it is information.
 		selected?: string;
 		/** Nodes touched recently; each lights for one blink. */
 		pulses?: Pulse[];
-		/** The drawing's height in its own units; the width is 600. */
+		/** The drawing's height in px; the width is the container's. */
 		height?: number;
 		onselect?: (id: string) => void;
 		testid?: string;
 	}
 	let { nodes, edges, selected = '', pulses = [], height = 380, onselect, testid = 'graph' }: Props = $props();
 
-	const WIDTH = 600;
+	/** The container's width, measured; 600 until the browser has said. */
+	let measured = $state(0);
+	const WIDTH = $derived(measured > 0 ? Math.round(measured) : 600);
 	const placed = $derived(layout(nodes, edges, { width: WIDTH, height }));
 	const at = $derived(new Map(placed.nodes.map((node) => [node.id, node])));
 
@@ -81,77 +86,88 @@ still shown, because it is information.
 			choose(id);
 		}
 	}
-	/** Where the label goes: to the right, unless the node is near the right edge. */
-	const labelSide = (x: number) => (x > WIDTH * 0.72 ? 'end' : 'start');
+	/**
+	 * Where the label goes: under the node, running towards the middle of the
+	 * drawing — so a node at the edge never has its name clipped by the box.
+	 */
+	const labelSide = (x: number) => (x > WIDTH / 2 ? 'end' : 'start');
 </script>
 
-{#if placed.nodes.length}
-	<svg
-		class="graph"
-		viewBox="0 0 {WIDTH} {height}"
-		role="group"
-		aria-label="Knowledge graph: {nodes.length} nodes, {edges.length} links"
-		data-testid={testid}
-		data-nodes={nodes.length}
-		data-lit={lit.size}
-	>
-		<g class="edges">
-			{#each placed.edges as edge, i (edge.from + edge.to)}
-				{@const a = at.get(edge.from)}
-				{@const b = at.get(edge.to)}
-				{#if a && b}
-					<line
-						class="edge {edge.kind}"
-						class:lit={lit.has(edge.from) || lit.has(edge.to)}
-						class:near={selected === edge.from || selected === edge.to}
-						x1={a.x}
-						y1={a.y}
-						x2={b.x}
-						y2={b.y}
-						style:animation-delay="{staggerDelay(i)}ms"
-					/>
-				{/if}
-			{/each}
-		</g>
-		<g class="nodes">
-			{#each placed.nodes as node, i (node.id)}
-				<g
-					class="node {node.kind}"
-					class:selected={selected === node.id}
-					class:lit={lit.has(node.id)}
-					role="button"
-					tabindex="0"
-					aria-label={node.label}
-					aria-pressed={selected === node.id}
-					data-testid="graph-node-{node.id}"
-					data-kind={node.kind}
-					transform="translate({node.x} {node.y})"
-					style:animation-delay="{staggerDelay(i)}ms"
-					onclick={() => choose(node.id)}
-					onkeydown={(event) => onKey(event, node.id)}
-				>
-					<circle class="halo" r="14" />
-					<circle class="hit" r="12" />
-					{#if node.kind === 'note'}
-						<circle class="body" r="6" />
-						<circle class="core" r="1.6" />
-					{:else}
-						<circle class="body" r="4" />
+<div class="frame" bind:clientWidth={measured}>
+	{#if placed.nodes.length}
+		<svg
+			class="graph"
+			viewBox="0 0 {WIDTH} {height}"
+			width={WIDTH}
+			{height}
+			role="group"
+			aria-label="Knowledge graph: {nodes.length} nodes, {edges.length} links"
+			data-testid={testid}
+			data-nodes={nodes.length}
+			data-lit={lit.size}
+		>
+			<g class="edges">
+				{#each placed.edges as edge, i (edge.from + edge.to)}
+					{@const a = at.get(edge.from)}
+					{@const b = at.get(edge.to)}
+					{#if a && b}
+						<line
+							class="edge {edge.kind}"
+							class:lit={lit.has(edge.from) || lit.has(edge.to)}
+							class:near={selected === edge.from || selected === edge.to}
+							x1={a.x}
+							y1={a.y}
+							x2={b.x}
+							y2={b.y}
+							style:animation-delay="{staggerDelay(i)}ms"
+						/>
 					{/if}
-					<text
-						x={labelSide(node.x) === 'start' ? 11 : -11}
-						y="4"
-						text-anchor={labelSide(node.x)}
-					>{node.label}</text>
-				</g>
-			{/each}
-		</g>
-	</svg>
-{:else}
-	<p class="none" data-testid="{testid}-empty">Nothing to draw yet: a note or a remembered fact becomes a point here.</p>
-{/if}
+				{/each}
+			</g>
+			<g class="nodes">
+				{#each placed.nodes as node, i (node.id)}
+					<g
+						class="node {node.kind}"
+						class:selected={selected === node.id}
+						class:lit={lit.has(node.id)}
+						role="button"
+						tabindex="0"
+						aria-label={node.label}
+						aria-pressed={selected === node.id}
+						data-testid="graph-node-{node.id}"
+						data-kind={node.kind}
+						transform="translate({node.x} {node.y})"
+						style:animation-delay="{staggerDelay(i)}ms"
+						onclick={() => choose(node.id)}
+						onkeydown={(event) => onKey(event, node.id)}
+					>
+						<circle class="halo" r="14" />
+						<circle class="hit" r="12" />
+						{#if node.kind === 'note'}
+							<circle class="body" r="6" />
+							<circle class="core" r="1.6" />
+						{:else}
+							<circle class="body" r="4" />
+						{/if}
+						<text
+							x={labelSide(node.x) === 'start' ? -6 : 6}
+							y="20"
+							text-anchor={labelSide(node.x)}
+						>{node.label}</text>
+					</g>
+				{/each}
+			</g>
+		</svg>
+	{:else}
+		<p class="none" data-testid="{testid}-empty">Nothing to draw yet: a note or a remembered fact becomes a point here.</p>
+	{/if}
+</div>
 
 <style>
+	.frame {
+		width: 100%;
+		min-width: 0;
+	}
 	.graph {
 		display: block;
 		width: 100%;
@@ -205,6 +221,7 @@ still shown, because it is information.
 		transform-origin: 0 0;
 		transition: opacity var(--jv-dur-slow) var(--jv-ease-out);
 	}
+	/* The label is part of the control: clicking a name picks the point. */
 	text {
 		font-family: var(--jv-font-body);
 		font-size: var(--jv-fs-xs);
@@ -213,7 +230,7 @@ still shown, because it is information.
 		stroke: var(--jv-bg);
 		stroke-width: 3;
 		transition: fill var(--jv-dur-fast) var(--jv-ease-out);
-		pointer-events: none;
+		cursor: pointer;
 	}
 	.node:hover .body,
 	.node:focus-visible .body {

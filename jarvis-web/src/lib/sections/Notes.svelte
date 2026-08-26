@@ -2,17 +2,22 @@
 	/**
 	 * Notes: documents Jarvis and you both write, in one folder of markdown.
 	 *
-	 * The editor is deliberately plain — a textarea and a preview — because the
-	 * notes are files: whatever you type here is what somebody opening
-	 * `config/notes/<slug>.md` in any editor will see, and a rich editor that
-	 * wrote its own markup would break that promise on the first bold word.
+	 * The editor is deliberately plain — a textarea, no preview widgets —
+	 * because the notes are files: whatever you type here is what somebody
+	 * opening `config/notes/<slug>.md` in any editor will see, and a rich editor
+	 * that wrote its own markup would break that promise on the first bold word.
 	 *
-	 * What this page adds over an editor is the two things a folder cannot do
-	 * on its own: full-text search across every note, and the link graph —
-	 * `[[wiki links]]` resolved, and the back-links that answer "what points at
-	 * this?".
+	 * What this page adds over a folder is the two things a folder cannot do:
+	 * full-text search across every note, and the link graph — `[[wiki links]]`
+	 * resolved, and the back-links that answer "what points at this?". The
+	 * graph itself is the destination's hero (see `routes/knowledge/+layout`);
+	 * the note that is open here is the node lit there, and it is the URL
+	 * (`?open=<id>`) that says which, so a link to a note is a link to its
+	 * point on the map.
 	 */
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import {
 		openConnection,
 		describeError,
@@ -20,8 +25,9 @@
 		type ConnectionStatus
 	} from '$lib/connection';
 	import { isUnsupported } from '$lib/jarvisClient';
+	import { touchKnowledge } from '$lib/knowledge/store.svelte';
 	import { toasts } from '$lib/toast';
-	import { Button, EmptyState, ScreenState, type Status } from '$lib/ui';
+	import { Button, EmptyState, Field, Input, Panel, Pill, ScreenState, type Status } from '$lib/ui';
 
 	interface NoteRow {
 		id: string;
@@ -65,6 +71,8 @@
 						: 'ready'
 	);
 	const dirty = $derived(Boolean(open) && draft !== (open?.body ?? ''));
+	/** The note the URL asks for, which the graph sets by selecting a node. */
+	const wanted = $derived(page.url.pathname.endsWith('/notes') ? page.url.searchParams.get('open') ?? '' : '');
 
 	async function load(): Promise<void> {
 		if (!conn) return;
@@ -114,14 +122,14 @@
 		return () => live?.close();
 	});
 
-	async function show(row: NoteRow): Promise<void> {
+	async function show(id: string): Promise<void> {
 		if (!conn) return;
 		try {
 			const answer = await conn.client.command<{ note: NoteRow }>({
 				type: 'jarvis/notes/get',
 				// `note_id`, not `id`: every frame already has an `id`, and it is
 				// the correlation number the server replies against.
-				note_id: row.id
+				note_id: id
 			});
 			open = answer.note;
 			draft = answer.note.body ?? '';
@@ -129,6 +137,20 @@
 			err = describeError(e);
 		}
 	}
+
+	/** Open a note: the URL first, so the graph lights the same node. */
+	function pick(id: string): void {
+		void goto(`/knowledge/notes?open=${encodeURIComponent(id)}`, { noScroll: true, keepFocus: true });
+		void show(id);
+	}
+
+	// The URL is the selection. A node clicked on the graph, a back button, a
+	// link from a note — all arrive here, and the editor follows.
+	$effect(() => {
+		const id = wanted;
+		if (!conn || !id || open?.id === id) return;
+		void show(id);
+	});
 
 	async function save(): Promise<void> {
 		if (!conn || !open || busy) return;
@@ -141,7 +163,8 @@
 			});
 			toasts.success('Saved', open.title);
 			await load();
-			await show(open);
+			await show(open.id);
+			touchKnowledge();
 		} catch (e) {
 			err = describeError(e);
 		} finally {
@@ -161,7 +184,8 @@
 			newTitle = '';
 			creating = false;
 			await load();
-			await show(answer.note);
+			pick(answer.note.id);
+			touchKnowledge();
 		} catch (e) {
 			err = describeError(e);
 		} finally {
@@ -174,239 +198,330 @@
 		busy = row.id;
 		try {
 			await conn.client.command({ type: 'jarvis/notes/delete', note_id: row.id });
-			if (open?.id === row.id) open = null;
+			if (open?.id === row.id) {
+				open = null;
+				void goto('/knowledge/notes', { noScroll: true, keepFocus: true });
+			}
 			await load();
 			toasts.success('Deleted', row.title);
+			touchKnowledge();
 		} catch (e) {
 			err = describeError(e);
 		} finally {
 			busy = '';
 		}
 	}
-</script>
 
+	function when(iso: string): string {
+		const d = new Date(iso);
+		return Number.isNaN(d.getTime())
+			? ''
+			: d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+	}
+</script>
 
 <p class="lede" data-testid="notes-lede">
 	Markdown files in <code>config/notes/</code>. Jarvis writes here — research reports, things you
 	asked it to note — and so can you, from any editor. <code>[[links]]</code> are resolved both ways.
 </p>
 
-<div class="toolbar">
-	<input
-		type="search"
-		placeholder="search every note  ( / )"
-		aria-label="Search notes"
-		data-testid="notes-search"
-		bind:value={query}
-		onchange={load}
-	/>
-	{#if creating}
-		<input
-			type="text"
-			placeholder="title"
-			aria-label="New note title"
-			data-testid="notes-new-title"
-			bind:value={newTitle}
-		/>
-		<Button variant="primary" testid="notes-create" disabled={!newTitle.trim()} onclick={create}>
-			CREATE
-		</Button>
-	{:else}
-		<Button testid="notes-new" onclick={() => (creating = true)}>
-			+ NEW NOTE
-		</Button>
-	{/if}
-</div>
-
 {#if !supported}
 	<p class="lede" data-testid="notes-unsupported">This server has no notes integration.</p>
 {:else}
 	<div class="split">
-		<ScreenState
-			{status}
-			emptyTitle="No notes yet"
-			emptyBody="Say “note that…” to Jarvis, or write one here. They are markdown files in your config directory."
-			errorTitle="Couldn't read the notes"
-			errorDetail={err}
-			onretry={load}
-			onreconnect={reconnect}
-			emptyTestid="notes-empty"
-			errorTestid="notes-error"
-		>
-			{#snippet children()}
-				<ul class="list" data-testid="notes-list">
-					{#each notes as note (note.id)}
-						<li data-testid="note-row-{note.id}" class:open={open?.id === note.id}>
-							<button class="row" onclick={() => show(note)}>
-								<span class="title">{note.title}</span>
-								{#if note.excerpt}<span class="excerpt">{note.excerpt}</span>{/if}
-								<span class="tags">
-									{#each note.tags as tag (tag)}<span class="tag">{tag}</span>{/each}
+		<div class="list-side">
+			<form
+				class="find"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void load();
+				}}
+			>
+				<label class="sr" for="notes-search">Search notes</label>
+				<input
+					id="notes-search"
+					type="search"
+					class="search"
+					placeholder="Search every note  ( / )"
+					data-testid="notes-search"
+					data-jv-filter
+					bind:value={query}
+				/>
+				{#if creating}
+					<Input bind:value={newTitle} placeholder="Title" testid="notes-new-title" />
+					<Button testid="notes-create" disabled={!newTitle.trim() || busy === 'create'} onclick={create}>
+						Create
+					</Button>
+				{:else}
+					<Button testid="notes-new" onclick={() => (creating = true)}>+ New note</Button>
+				{/if}
+			</form>
+
+			<ScreenState
+				{status}
+				emptyTitle="No notes yet"
+				emptyBody="Say “note that…” to Jarvis, or write one here. They are markdown files in your config directory."
+				errorTitle="Couldn't read the notes"
+				errorDetail={err}
+				onretry={load}
+				onreconnect={reconnect}
+				emptyTestid="notes-empty"
+				errorTestid="notes-error"
+			>
+				{#snippet children()}
+					<ul class="list" data-testid="notes-list">
+						{#each notes as note (note.id)}
+							<li data-testid="note-row-{note.id}" class:open={open?.id === note.id}>
+								<button class="row" type="button" onclick={() => pick(note.id)}>
+									<span class="title">{note.title}</span>
+									{#if note.excerpt}<span class="excerpt">{note.excerpt}</span>{/if}
+									<span class="meta">
+										{#if note.updated}<span class="when">{when(note.updated)}</span>{/if}
+										{#each note.tags as tag (tag)}<Pill>{tag}</Pill>{/each}
+									</span>
+								</button>
+								<span class="act">
+									<Button variant="danger" testid="note-delete-{note.id}" disabled={!!busy} onclick={() => remove(note)}>
+										Delete
+									</Button>
 								</span>
-							</button>
-							<Button variant="danger" testid="note-delete-{note.id}"
-								disabled={!!busy}
-								onclick={() => remove(note)}
-							>
-								DELETE
-							</Button>
-						</li>
-					{/each}
-				</ul>
-			{/snippet}
-		</ScreenState>
+							</li>
+						{/each}
+					</ul>
+				{/snippet}
+			</ScreenState>
+		</div>
 
 		{#if open}
-			<section class="editor" data-testid="note-editor">
-				<header>
-					<h2 data-testid="note-title">{open.title}</h2>
-					<Button variant="primary" testid="note-save"
-						disabled={!dirty || busy === 'save'}
-						onclick={save}>
-						{busy === 'save' ? 'SAVING…' : dirty ? 'SAVE' : 'SAVED'}
-					</Button>
-				</header>
-				<textarea
-					data-testid="note-body"
-					aria-label="The note, in markdown"
-					bind:value={draft}
-					spellcheck="true"
-				></textarea>
-				{#if open.links.length || open.backlinks.length}
-					<p class="links" data-testid="note-links">
-						{#if open.links.length}<span>points at: {open.links.join(', ')}</span>{/if}
-						{#if open.backlinks.length}<span>pointed at by: {open.backlinks.join(', ')}</span>{/if}
-					</p>
-				{/if}
-			</section>
+			<!-- Captured: a snippet is its own function, and TypeScript cannot carry
+			     the `{#if open}` narrowing into it. -->
+			{@const note = open}
+			<div class="editor-side">
+				<Panel title={note.title} meta={dirty ? 'edited' : busy === 'save' ? 'saving' : 'saved'} live={dirty} testid="note-editor">
+					{#snippet children()}
+						<h2 class="sr" data-testid="note-title">{note.title}</h2>
+						<Field label="The note, in markdown">
+							<Input bind:value={draft} rows={16} mono testid="note-body" />
+						</Field>
+						<div class="foot">
+							<div class="links" data-testid="note-links">
+								{#if note.links.length}
+									<span class="k">points at</span>
+									{#each note.links as target (target)}
+										<Button testid="note-link-{target}" onclick={() => pick(target)}>{target}</Button>
+									{/each}
+								{/if}
+								{#if note.backlinks.length}
+									<span class="k">pointed at by</span>
+									{#each note.backlinks as source (source)}
+										<Button testid="note-backlink-{source}" onclick={() => pick(source)}>{source}</Button>
+									{/each}
+								{/if}
+								{#if !note.links.length && !note.backlinks.length}
+									<span class="k">No links yet — write <code>[[a title]]</code> to make one.</span>
+								{/if}
+							</div>
+							<Button variant="primary" testid="note-save" disabled={!dirty || busy === 'save'} onclick={save}>
+								{busy === 'save' ? 'SAVING…' : dirty ? 'SAVE' : 'SAVED'}
+							</Button>
+						</div>
+					{/snippet}
+				</Panel>
+			</div>
 		{:else}
 			<!--
 			  An empty right-hand pane said nothing about itself: half the screen
 			  blank, on a page whose whole point is reading. It says what it is
 			  for now, which is the difference between "loading" and "pick one".
 			-->
-			<section class="editor placeholder" data-testid="note-none-open">
+			<div class="editor-side placeholder" data-testid="note-none-open">
 				<EmptyState
 					title="Nothing open"
-					body="Pick a note on the left to read or edit it. Jarvis writes here too — research reports land as notes."
+					body="Pick a note on the left, or a point on the graph, to read or edit it. Jarvis writes here too — research reports land as notes."
 				/>
-			</section>
+			</div>
 		{/if}
 	</div>
 {/if}
 
 <style>
 	.lede {
+		margin: 0 0 var(--jv-space-4);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+		max-width: 70ch;
+	}
+	.lede code {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-xs);
-		color: var(--jv-text-dim);
-		margin: 0 0 var(--jv-space-3);
+		color: var(--jv-text);
 	}
-	.toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--jv-space-2);
-		margin-bottom: var(--jv-space-3);
-	}
-	/* No min-height: EmptyState brings its own spacing, and a height typed here
-	   is exactly the hard-coded value token-lint exists to catch. */
-	.placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
+	.sr {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
 	}
 	.split {
 		display: grid;
-		grid-template-columns: minmax(16rem, 1fr) 2fr;
-		gap: var(--jv-space-4);
+		grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+		gap: var(--jv-space-5);
 		align-items: start;
 	}
-	@media (max-width: 60rem) {
-		.split {
-			grid-template-columns: 1fr;
-		}
+	.find {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--jv-space-2);
+		margin-bottom: var(--jv-space-3);
+	}
+	.search {
+		flex: 1 1 12rem;
+		min-width: 0;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.search::placeholder {
+		color: var(--jv-text-faint);
+	}
+	.search:hover {
+		border-color: var(--jv-line);
 	}
 	.list {
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-1);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		background: var(--jv-panel);
+		overflow: hidden;
 	}
 	.list li {
 		display: grid;
-		grid-template-columns: 1fr max-content;
-		gap: var(--jv-space-2);
+		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
+		gap: var(--jv-space-2);
+		border-bottom: 1px solid var(--jv-line-hair);
+		transition: background var(--jv-dur-fast) var(--jv-ease-out);
 	}
-	.list li.open .title {
-		color: var(--jv-accent);
+	.list li:last-child {
+		border-bottom: 0;
+	}
+	.list li:hover {
+		background: var(--jv-wash);
+	}
+	.list li.open {
+		background: var(--jv-wash);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	}
 	.row {
-		display: flex;
-		flex-direction: column;
+		display: grid;
 		gap: var(--jv-space-1);
 		text-align: left;
 		background: none;
-		border: 1px solid transparent;
-		border-radius: var(--jv-radius-sm);
-		padding: var(--jv-space-2);
+		border: 0;
+		padding: var(--jv-space-3) var(--jv-space-4);
 		color: inherit;
 		font: inherit;
 		cursor: pointer;
+		min-width: 0;
 	}
-	.row:hover,
 	.row:focus-visible {
-		border-color: var(--jv-line);
-		background: var(--jv-surface-2);
+		outline: var(--jv-focus-outline);
+		outline-offset: calc(-1 * var(--jv-focus-offset));
 	}
 	.title {
-		color: var(--jv-text);
-	}
-	.excerpt,
-	.tags,
-	.links {
-		color: var(--jv-text-faint);
-		font-size: var(--jv-fs-xs);
-	}
-	.tag {
-		margin-right: var(--jv-space-2);
-		text-transform: uppercase;
-		letter-spacing: var(--jv-track-chrome);
-	}
-	.editor {
-		border: 1px solid var(--jv-line);
-		border-radius: var(--jv-radius-md);
-		padding: var(--jv-space-3);
-		background: var(--jv-surface-1);
-	}
-	.editor header {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: var(--jv-space-3);
-	}
-	.editor h2 {
-		margin: 0;
-		font-size: var(--jv-fs-md);
-	}
-	textarea {
-		width: 100%;
-		min-height: var(--jv-measure-log);
-		margin-top: var(--jv-space-2);
-		background: var(--jv-surface-2);
-		border: 1px solid var(--jv-line);
-		border-radius: var(--jv-radius-sm);
-		color: var(--jv-text);
-		font-family: var(--jv-font-mono);
 		font-size: var(--jv-fs-sm);
-		padding: var(--jv-space-2);
-		resize: vertical;
+		color: var(--jv-text);
+	}
+	li.open .title {
+		color: var(--jv-text-bright);
+	}
+	.excerpt {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.meta {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--jv-space-2);
+	}
+	.when {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
+	}
+	/* The delete is there for the keyboard and on hover; not a red button beside every note. */
+	.act {
+		padding-right: var(--jv-space-3);
+		opacity: 0;
+		transition: opacity var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.list li:hover .act,
+	.act:focus-within {
+		opacity: 1;
+	}
+	.editor-side {
+		min-width: 0;
+	}
+	/* The markdown is data, set in mono on the sunken ground. */
+	.editor-side :global(textarea.in) {
+		background: var(--jv-surface-sunken);
+		font-size: var(--jv-fs-xs);
+		line-height: 1.7;
+		min-height: var(--jv-measure-log);
+	}
+	.foot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+		margin-top: var(--jv-space-3);
 	}
 	.links {
 		display: flex;
-		gap: var(--jv-space-3);
-		margin: var(--jv-space-2) 0 0;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--jv-space-2);
+		min-width: 0;
+	}
+	.links .k {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.links code {
+		font-family: var(--jv-font-chrome);
+	}
+	.placeholder {
+		display: flex;
+		align-items: stretch;
+	}
+	.placeholder :global(.empty) {
+		flex: 1;
+	}
+	@media (max-width: 900px) {
+		.split {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.act {
+			opacity: 1;
+		}
 	}
 </style>
