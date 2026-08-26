@@ -41,7 +41,14 @@ IGNORED = (
 
 
 def routes() -> list[dict[str, str]]:
-    """Every screen with a real path, and the element that proves it rendered."""
+    """Every screen with a real path, and the element that proves it rendered.
+
+    `LIVE_CONSOLE_ROUTES=/settings,/settings/assistant` narrows the walk to
+    the routes a milestone touched — a destination's path is included as its
+    own row, because it has to redirect to a section that renders. A name in
+    the variable that no screen declares is an error, not a silent no-op: a
+    typo there would otherwise make a verify script pass by walking nothing.
+    """
     src = SCREENS.read_text(encoding="utf-8")
     out = []
     for block in re.findall(r"\{\n\t\tpath: .*?\n\t\}", src, re.S):
@@ -51,11 +58,13 @@ def routes() -> list[dict[str, str]]:
         if not (path and name and probe) or "[" in path.group(1):
             continue
         out.append({"path": path.group(1), "name": name.group(1), "probe": probe.group(1)})
-    # `LIVE_CONSOLE_ROUTES=/,/house` narrows the pass to a milestone's own
-    # screens; M50's gate still walks the whole console.
-    only = [r.strip() for r in os.environ.get("LIVE_CONSOLE_ROUTES", "").split(",") if r.strip()]
-    if only:
-        return [r for r in out if r["path"] in only]
+    wanted = [p.strip() for p in os.environ.get("LIVE_CONSOLE_ROUTES", "").split(",") if p.strip()]
+    if wanted:
+        known = {route["path"] for route in out}
+        unknown = sorted(set(wanted) - known)
+        if unknown:
+            raise SystemExit(f"LIVE_CONSOLE_ROUTES names routes screens.ts does not declare: {unknown}")
+        out = [route for route in out if route["path"] in wanted]
     return out
 
 

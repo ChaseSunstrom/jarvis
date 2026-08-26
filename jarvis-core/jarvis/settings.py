@@ -106,6 +106,17 @@ def _text(minimum: int = 1, maximum: int = 200) -> Callable[[Any], str]:
     return check
 
 
+def _optional_text(maximum: int = 200) -> Callable[[Any], str]:
+    """`_text`, with empty allowed — for a setting whose empty means "the default"."""
+    check_filled = _text(1, maximum)
+
+    def check(value: Any) -> str:
+        text = str(value if value is not None else "").strip()
+        return check_filled(text) if text else ""
+
+    return check
+
+
 def _number(low: float, high: float, integer: bool = False) -> Callable[[Any], Any]:
     def check(value: Any) -> Any:
         try:
@@ -176,6 +187,30 @@ def _apply_agent_attr(name: str) -> Callable[["Jarvis", Any], bool]:
         return True
 
     return hook
+
+
+def _apply_vision_model(jarvis: "Jarvis", value: Any) -> bool:
+    """Point the running vision analyser at another model.
+
+    `VisionConfig` is frozen and the analyser holds it whole, so this replaces
+    the record rather than poking a field — and sets the client's default too,
+    for the same reason `_apply_model` does: the call names `cfg.model`, the
+    fallback names the client's, and one of them stale is a setting that
+    works on alternate frames.
+    """
+    import dataclasses
+
+    store = jarvis.data.get("vision")
+    manager = store.get("manager") if isinstance(store, dict) else None
+    analyser = getattr(manager, "model", None)
+    config = getattr(analyser, "config", None)
+    if analyser is None or config is None:
+        return False
+    analyser.config = dataclasses.replace(config, model=value)
+    client = getattr(analyser, "ollama", None)
+    if client is not None:
+        client.model = value
+    return True
 
 
 def _apply_agent_option(name: str) -> Callable[["Jarvis", Any], bool]:
@@ -287,10 +322,40 @@ SETTINGS: tuple[SettingSpec, ...] = (
         group="Assistant",
         type="choice",
         apply=APPLY_LIVE,
-        note="The Ollama model every conversation runs on.",
+        note="The model every conversation runs on, as the server at LLM_URL "
+        "names it. Behind the gateway that is an alias (`house`); the MODELS "
+        "panel says which served model it stands for.",
         validate=_text(1, 120),
         apply_hook=_apply_model,
         choices_hook=_model_choices,
+    ),
+    SettingSpec(
+        key="llm.fast_model",
+        path=("llm", "fast_model"),
+        label="Fast model",
+        group="Assistant",
+        type="choice",
+        apply=APPLY_LIVE,
+        note="A smaller model for the voice path, named as LLM_URL names it. "
+        "Recorded on the running agent, and read by nothing yet: the fast "
+        "path lands with M60, and this is where it will look. Empty means "
+        "the conversation model.",
+        validate=_optional_text(120),
+        apply_hook=_apply_agent_attr("fast_model"),
+        choices_hook=_model_choices,
+    ),
+    SettingSpec(
+        key="vision.model",
+        path=("vision", "model"),
+        label="Vision model",
+        group="Assistant",
+        type="string",
+        apply=APPLY_LIVE,
+        note="The model that looks at a camera frame, named as the vision "
+        "integration's own server names it. Only in effect when `vision:` is "
+        "configured.",
+        validate=_text(1, 120),
+        apply_hook=_apply_vision_model,
     ),
     SettingSpec(
         key="llm.options.temperature",

@@ -13,8 +13,16 @@
 export interface Screen {
 	/** The route. */
 	path: string;
-	/** What it is called in the nav and in a test's failure message. */
+	/** What it is called in the nav and in a test's failure message. Unique. */
 	name: string;
+	/**
+	 * The word on the section strip, when `name` is longer than it.
+	 *
+	 * `name` has to be unique — every per-screen spec titles its tests with
+	 * it, and Playwright refuses two tests of one title — so the settings
+	 * section about the house is named `House settings` and labelled HOUSE.
+	 */
+	label?: string;
 	/** One line: what somebody comes to this screen to do. */
 	purpose: string;
 	/** In the TOP-LEVEL tab strip? A section is not; its destination is. */
@@ -176,14 +184,44 @@ export const SCREENS: Screen[] = [
 		probe: 'memory-lede',
 		chord: 'g m'
 	},
+	// SETTINGS, cut to what a person changes (M54): five sections a person can
+	// name. The plan of which setting is featured where is `sections/settingsPlan.ts`.
 	{
 		path: '/settings/assistant',
 		name: 'Assistant',
-		purpose: 'The backend’s own settings, pairing, voice identity and this console.',
+		purpose: 'The models it runs on, and how it answers: temperature, its name, its language.',
 		nav: false,
 		within: '/settings',
 		probe: 'assistant-screen',
 		chord: 'g s'
+	},
+	{
+		path: '/settings/voice',
+		name: 'Voice settings',
+		label: 'Voice',
+		purpose: 'The wake word, the voice it speaks with, and whose voice it answers.',
+		nav: false,
+		within: '/settings',
+		probe: 'settings-voice-lede',
+		chord: 'g v'
+	},
+	{
+		path: '/settings/house',
+		name: 'House settings',
+		label: 'House',
+		purpose: 'Where the house is: the time zone, the units, and the rooms.',
+		nav: false,
+		within: '/settings',
+		probe: 'settings-house-lede'
+	},
+	{
+		path: '/settings/console',
+		name: 'Console',
+		purpose: 'This screen: text size, how it reaches Jarvis, pairing a phone, the desktop shell.',
+		nav: false,
+		within: '/settings',
+		probe: 'settings-console-lede',
+		chord: 'g e'
 	},
 	{
 		path: '/settings/tools',
@@ -193,15 +231,6 @@ export const SCREENS: Screen[] = [
 		within: '/settings',
 		probe: 'tools-screen',
 		chord: 'g t'
-	},
-	{
-		path: '/settings/desktop',
-		name: 'Desktop',
-		purpose: 'The machines running the desktop agent, and what they are doing.',
-		nav: false,
-		within: '/settings',
-		probe: 'desktop-lede',
-		chord: 'g e'
 	}
 ];
 
@@ -233,7 +262,9 @@ export const MOVED: Readonly<Record<string, string>> = {
 	'/notes': '/knowledge/notes',
 	'/memory': '/knowledge/memory',
 	'/tools': '/settings/tools',
-	'/desktop': '/settings/desktop'
+	// The desktop page became two panels on SETTINGS › Console (M54);
+	// `/settings/desktop` itself redirects there too.
+	'/desktop': '/settings/console'
 };
 
 /**

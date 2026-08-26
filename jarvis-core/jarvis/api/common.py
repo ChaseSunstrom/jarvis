@@ -1076,6 +1076,32 @@ def _dig_config(config: dict[str, Any], path: tuple[str, ...]) -> Any:
     return node
 
 
+# --- the models the servers actually serve ---------------------------------
+#: The last answer, for anything that wants it without another round of probes.
+DATA_MODEL_CATALOGUE = "llm_models"
+
+
+async def async_llm_models_payload(jarvis: "Jarvis") -> dict[str, Any]:
+    """`jarvis/llm/models` and `GET /api/llm/models`: what is served, resolved.
+
+    Reads through the shared model-server client when the llm integration
+    built one (`jarvis.data["llm_client"]`), which is also how tests hand in
+    a fake transport. Never raises — the page this feeds has to render on a
+    stack that is half up, which is when somebody opens it.
+    """
+    from ..llm.catalogue import async_describe
+
+    # Duck-typed rather than `isinstance(httpx.AsyncClient)`: this module
+    # deliberately has no httpx import, and a closed pool (mid-shutdown) is
+    # worth exactly as little as none.
+    client = jarvis.data.get("llm_client")
+    if client is None or getattr(client, "is_closed", True) or not callable(getattr(client, "get", None)):
+        client = None
+    payload = await async_describe(jarvis, client=client)
+    jarvis.data[DATA_MODEL_CATALOGUE] = payload
+    return payload
+
+
 # --- automations ------------------------------------------------------------
 def automation_list_payload(jarvis: "Jarvis") -> list[dict[str, Any]]:
     """Every automation the engine is running, editable or not.

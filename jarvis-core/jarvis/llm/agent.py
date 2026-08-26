@@ -505,6 +505,12 @@ class ConversationAgent:
         self.client = client
         self.tools = tools
         self.model = model or DEFAULT_MODEL
+        #: The fast slot: a smaller model for the voice path, named as the
+        #: server at LLM_URL names it (`llm.fast_model` in Settings). Held here
+        #: and read by nothing in this file yet — M60 routes the voice turn
+        #: through it; until then every turn runs on `model`, and the settings
+        #: note says exactly that rather than claiming an effect it has not got.
+        self.fast_model: str = ""
         self.max_tool_rounds = max(1, int(max_tool_rounds or DEFAULT_MAX_TOOL_ROUNDS))
         self.memory = memory or ConversationStore()
         #: The durable half of the memory. `self.memory` is what the model is

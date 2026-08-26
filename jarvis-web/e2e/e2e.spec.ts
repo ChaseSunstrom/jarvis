@@ -432,7 +432,11 @@ test("tools page creates, edits and deletes a tool, and protects the built-ins",
 test("settings page edits a setting, resets it, and is honest about restarts", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  // The raw rows — key, source, SAVE, RESET — live behind EVERYTHING now
+  // (M54); the plain rows above them are covered by settings.spec.ts.
+  await page.goto("/settings/assistant");
+  await expect(page.getByTestId("everything")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("everything-summary").click();
   const model = page.getByTestId("setting-llm.model");
   await expect(model).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("source-llm.model")).toHaveText("yaml");
@@ -441,7 +445,9 @@ test("settings page edits a setting, resets it, and is honest about restarts", a
   // looks clickable teaches people to click it and learn nothing.
   await expect(page.getByTestId("save-llm.model")).toBeDisabled();
 
-  await page.getByTestId("input-llm.model").selectOption("qwen3:14b");
+  // The choices are what LLM_URL names — the gateway's aliases — and the
+  // MODELS panel above says which served model each stands for.
+  await page.getByTestId("input-llm.model").selectOption("house-fast");
   await page.getByTestId("save-llm.model").click();
   await expect(page.getByTestId("source-llm.model")).toHaveText("overlay", {
     timeout: 10_000,
@@ -471,9 +477,13 @@ test("settings page edits a setting, resets it, and is honest about restarts", a
   await expect(page.getByTestId("source-llm.model")).toHaveText("yaml", {
     timeout: 10_000,
   });
-  await expect(page.getByTestId("input-llm.model")).toHaveValue("qwen3:8b");
+  await expect(page.getByTestId("input-llm.model")).toHaveValue("house");
 
   // A package owns this one: no way to edit it, and the file to edit is named.
+  // It is a House setting, so it is on the House section.
+  await page.goto("/settings/house");
+  await expect(page.getByTestId("everything")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("everything-summary").click();
   await expect(page.getByTestId("input-jarvis.time_zone")).toBeDisabled();
   await expect(page.getByTestId("package-jarvis.time_zone")).toContainText(
     "packages/house.yaml",
@@ -674,7 +684,9 @@ test("tools page degrades to the service catalogue on an older backend", async (
 test("settings page reports the selected backend and streams events", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  // This console's own environment and the event stream are SETTINGS ›
+  // Console (M54): neither is a house setting.
+  await page.goto("/settings/console");
 
   // serve-e2e.mjs points JARVIS_URL at the mock and HA_URL at a dead port, so
   // seeing the mock's url here proves JARVIS_* took precedence.
@@ -688,11 +700,11 @@ test("settings page reports the selected backend and streams events", async ({
   await expect(page.getByTestId("config-problem")).toHaveCount(0);
   // The pipeline is read-only and says so. It used to be a `<select>` whose
   // value could not be committed anywhere, next to a second, read-only copy
-  // of a TTS voice the editable Voice group above already owns.
+  // of a TTS voice the editable Voice section already owns.
   await expect(page.getByTestId("pipeline-name")).toContainText("Jarvis");
   await expect(page.getByTestId("tts-voice")).toHaveCount(0);
-  // ...and the voice is edited exactly once, in the group that can save it.
-  await expect(page.getByTestId("setting-voice.tts_voice")).toBeVisible();
+  // ...and the voice is edited exactly once, on the section that can save it
+  // (settings.spec.ts walks every setting to its section).
 
   // The event stream is a diagnostic now, folded away rather than sitting
   // open below the settings people came to change.
@@ -1048,13 +1060,18 @@ test("every management editor fits a phone, which is where the app shows them", 
   expect(url.x + url.width).toBeLessThanOrEqual(391);
 
   // Settings: a row per setting, each with a control and two buttons — the
-  // most likely thing to wrap badly.
-  await page.goto("/settings");
+  // most likely thing to wrap badly. The MODELS panel and the plain rows
+  // first, then the raw rows behind EVERYTHING.
+  await page.goto("/settings/assistant");
+  await expect(page.getByTestId("models-list")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("plain-llm.options.temperature")).toBeVisible();
+  await noOverflow("settings · plain");
+  await page.getByTestId("everything-summary").click();
   await expect(page.getByTestId("setting-llm.model")).toBeVisible({
     timeout: 15_000,
   });
   await noOverflow("settings");
-  for (const id of ["input-llm.model", "save-llm.model"]) {
+  for (const id of ["input-llm.model", "save-llm.model", "role-chat", "plain-save-llm.options.temperature"]) {
     const box = (await page.getByTestId(id).boundingBox())!;
     expect(box.x + box.width, `settings · ${id}`).toBeLessThanOrEqual(391);
   }
@@ -1492,7 +1509,7 @@ test("the console shows a pairing QR, and what it encodes is a code and not a to
   // worse than typing it: a QR on a screen can be photographed from across the
   // room and stays valid as long as the token does. So the QR carries a
   // short-lived, single-use code the app exchanges for a token.
-  await page.goto("/settings");
+  await page.goto("/settings/console");
   const panel = page.getByTestId("pairing");
   await expect(panel).toBeVisible({ timeout: 15_000 });
 
@@ -1572,7 +1589,7 @@ test("the pairing secret is shown only after the password, and only from the ser
   // must not be in the page before the button that asks for it: a control that
   // fetched it on load and hid it behind a `{#if}` has already handed it over
   // to anything that can read the DOM.
-  await page.goto("/settings");
+  await page.goto("/settings/console");
   await unlockConsole(page);
   if (await page.getByTestId("pair-secret-form").count()) {
     await page.getByTestId("pair-secret").fill(PAIRING_SECRET);
@@ -1608,7 +1625,7 @@ test("a paired device can be un-paired, and the panel says what is connected", a
   // Pairing without un-pairing is a one-way door. A phone that is lost, sold
   // or no longer trusted has to be removable, and until this existed the only
   // way was editing the token store by hand on the server.
-  await page.goto("/settings");
+  await page.goto("/settings/console");
   const panel = page.getByTestId("tokens");
   await expect(panel).toBeVisible({ timeout: 15_000 });
 
@@ -1765,7 +1782,7 @@ test("the console shows whose voice Jarvis answers, without the voiceprint reach
   const payload = page.waitForResponse(
     (r) => r.url().includes("/api/voice/speaker") && r.request().method() === "GET",
   );
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   const body = await (await payload).json();
   expect(body.enrolled).toBe(true);
   for (const key of ["vector", "vectors", "samples_data", "mean", "profile"]) {
@@ -1808,7 +1825,7 @@ test("the console shows whose voice Jarvis answers, without the voiceprint reach
 test("forgetting a voiceprint is refused without the console password", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   await page.getByTestId("speaker-forget").click();
   await expect(page.getByTestId("speaker-error")).toContainText(/unlock the console/i);
   // Still enrolled: the refusal was real rather than cosmetic.
@@ -1861,7 +1878,7 @@ test("the console drops its own nav when the Android app is framing it", async (
 test("the console offers enrolment, reading its phrases from the server", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   const panel = page.getByTestId("voice-identity");
   await expect(panel).toBeVisible();
 
@@ -1892,7 +1909,7 @@ test("enrolling from a locked console is refused, and says how to unlock it", as
   // records real audio and really posts it — the refusal comes from the
   // relay, not from there being nothing to send.
   await context.grantPermissions(["microphone"]);
-  await page.goto("/settings");
+  await page.goto("/settings/voice");
   await page.getByTestId("enrol-start").click();
   await page.getByTestId("enrol-record-0").click();
   await expect(page.getByTestId("enrol-stop-0")).toBeVisible();

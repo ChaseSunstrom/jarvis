@@ -31,7 +31,7 @@ they ARE different — one chooses a place, the other a view within it.
 			class:on={page.url.pathname === section.path}
 			aria-current={page.url.pathname === section.path ? 'page' : undefined}
 			data-testid="section-{section.name.toLowerCase().replace(/ /g, '-')}"
-			title={section.purpose}>{section.name}</a
+			title={section.purpose}>{section.label ?? section.name}</a
 		>
 	{/each}
 </nav>

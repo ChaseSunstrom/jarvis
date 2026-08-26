@@ -266,6 +266,11 @@ export function makeWorld() {
 
 	// One of each interesting shape: a live choice, a restart-only number, a
 	// plain string, and one a package owns so the locked path is exercised.
+	//
+	// `llm.model` is what LLM_URL names — behind the gateway that is an alias
+	// (`house`), the way the deployed stack has it — and NOT a served id. The
+	// MODELS panel (`jarvis/llm/models` below) is what maps one to the other,
+	// and this fixture is the difference the panel exists to show.
 	const settings = [
 		{
 			key: 'llm.model',
@@ -273,13 +278,40 @@ export function makeWorld() {
 			group: 'Assistant',
 			type: 'choice',
 			apply: 'live',
-			note: 'The Ollama model every conversation runs on.',
-			value: 'qwen3:8b',
-			yaml_value: 'qwen3:8b',
+			note: 'The model every conversation runs on, as the server at LLM_URL names it.',
+			value: 'house',
+			yaml_value: 'house',
 			source: 'yaml',
 			unapplied_reason: null,
 			package: null,
-			choices: ['qwen3:8b', 'qwen3:14b', 'llama3.2:3b']
+			choices: ['house', 'house-fast']
+		},
+		{
+			key: 'llm.fast_model',
+			label: 'Fast model',
+			group: 'Assistant',
+			type: 'choice',
+			apply: 'live',
+			note: 'A smaller model for the voice path. Empty means the conversation model.',
+			value: '',
+			yaml_value: null,
+			source: 'default',
+			unapplied_reason: null,
+			package: null,
+			choices: ['house', 'house-fast']
+		},
+		{
+			key: 'vision.model',
+			label: 'Vision model',
+			group: 'Assistant',
+			type: 'string',
+			apply: 'live',
+			note: 'The model that looks at a camera frame.',
+			value: 'qwen2.5vl:7b',
+			yaml_value: 'qwen2.5vl:7b',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null
 		},
 		{
 			key: 'llm.options.temperature',
@@ -350,8 +382,238 @@ export function makeWorld() {
 			unapplied_reason: null,
 			package: null,
 			choices: ['en_GB-alan-medium', 'en_US-amy-medium', 'en_GB-northern_english_male-medium']
+		},
+		// The rows the plain sections feature (M54): the wake word on Voice, the
+		// units and language on House — so the IA test can find each of them as
+		// a plain row AND as a raw row behind EVERYTHING.
+		{
+			key: 'voice.wake_word',
+			label: 'Wake word',
+			group: 'Voice',
+			type: 'choice',
+			apply: 'live',
+			note: 'The models openWakeWord is actually serving.',
+			value: 'hey_jarvis',
+			yaml_value: 'hey_jarvis',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null,
+			choices: ['hey_jarvis', 'ok_nabu', 'alexa']
+		},
+		{
+			key: 'voice.language',
+			label: 'Speech language',
+			group: 'Voice',
+			type: 'choice',
+			apply: 'live',
+			note: '',
+			value: 'en',
+			yaml_value: null,
+			source: 'default',
+			unapplied_reason: null,
+			package: null,
+			choices: ['en', 'de', 'fr']
+		},
+		{
+			key: 'jarvis.unit_system',
+			label: 'Units',
+			group: 'House',
+			type: 'choice',
+			apply: 'live',
+			note: '',
+			value: 'metric',
+			yaml_value: 'metric',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null,
+			choices: ['metric', 'imperial']
+		},
+		{
+			key: 'jarvis.language',
+			label: 'Language',
+			group: 'House',
+			type: 'choice',
+			apply: 'live',
+			note: '',
+			value: 'en',
+			yaml_value: 'en',
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null,
+			choices: ['en', 'de', 'fr']
+		},
+		{
+			key: 'jarvis.log_level',
+			label: 'Log level',
+			group: 'House',
+			type: 'choice',
+			apply: 'live',
+			note: '',
+			value: 'info',
+			yaml_value: null,
+			source: 'default',
+			unapplied_reason: null,
+			package: null,
+			choices: ['debug', 'info', 'warning', 'error']
 		}
 	];
+
+	/**
+	 * What the model servers actually serve (M54), in the shape
+	 * `jarvis/llm/models` answers with on the deployed stack: a gateway whose
+	 * aliases (`house`, `house-fast`) stand for served ids on llama-swap, the
+	 * embedder and the reranker in their own containers, and a vision model on
+	 * the vision integration's own server. Five roles, so the panel's tags,
+	 * dots and "used for" lines are all exercised by one fixture.
+	 *
+	 * `recomputeModels()` re-derives the roles and the "used for" lists from
+	 * the settings rows above, so choosing a model on the panel changes what
+	 * the next list says — the same contract the real backend keeps.
+	 */
+	const aliasToModel = { house: 'qwen3.8-27b', 'house-fast': 'qwen3-4b' };
+	const models = [
+		{
+			id: 'qwen3.8-27b',
+			name: 'Qwen 3.8 27B',
+			family: 'Qwen 3.8',
+			parameters: '27B',
+			quant: 'AWQ-INT4',
+			role: 'chat',
+			loaded: true,
+			aliases: ['house'],
+			in_use_for: ['conversation', 'research', 'coding'],
+			server: 'http://127.0.0.1:8081',
+			kind: 'llama-swap → vllm',
+			choice: 'house',
+			described_by: 'id',
+			context: 256000,
+			size_bytes: null,
+			description: 'cyankiwi/Qwen3.8-27B-AWQ-INT4',
+			missing: false,
+			note: 'as named by the server'
+		},
+		{
+			id: 'qwen3-4b',
+			name: 'Qwen 3 4B',
+			family: 'Qwen 3',
+			parameters: '4B',
+			quant: 'Q4_K_M',
+			role: 'fast',
+			loaded: false,
+			aliases: ['house-fast'],
+			in_use_for: [],
+			server: 'http://127.0.0.1:8081',
+			kind: 'llama-swap',
+			choice: 'house-fast',
+			described_by: 'id',
+			context: null,
+			size_bytes: null,
+			description: '',
+			missing: false,
+			note: 'configured as fast (house-fast); idle — nothing is routed to it yet'
+		},
+		{
+			id: 'qwen2.5vl:7b',
+			name: 'Qwen 2.5 VL 7B',
+			family: 'Qwen 2.5 VL',
+			parameters: '7.6B',
+			quant: 'Q4_K_M',
+			role: 'vision',
+			loaded: false,
+			aliases: [],
+			in_use_for: ['vision'],
+			server: 'http://127.0.0.1:11434',
+			kind: 'ollama',
+			choice: null,
+			described_by: 'server',
+			context: null,
+			size_bytes: 5969000000,
+			description: '',
+			missing: false,
+			note: ''
+		},
+		{
+			id: 'BAAI/bge-small-en-v1.5',
+			name: 'BGE',
+			family: 'BGE',
+			parameters: '',
+			quant: 'FLOAT32',
+			role: 'embeddings',
+			loaded: true,
+			aliases: [],
+			in_use_for: ['embeddings'],
+			server: 'http://127.0.0.1:7997',
+			kind: 'tei',
+			choice: null,
+			described_by: 'server',
+			context: 512,
+			size_bytes: null,
+			description: '',
+			missing: false,
+			note: ''
+		},
+		{
+			id: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+			name: 'MiniLM',
+			family: 'MiniLM',
+			parameters: '',
+			quant: 'FLOAT32',
+			role: 'rerank',
+			loaded: true,
+			aliases: [],
+			in_use_for: ['rerank'],
+			server: 'http://127.0.0.1:7998',
+			kind: 'tei',
+			choice: null,
+			described_by: 'server',
+			context: 512,
+			size_bytes: null,
+			description: '',
+			missing: false,
+			note: ''
+		}
+	];
+
+	/** The `roles` block and every row's `in_use_for`, from the settings rows. */
+	function modelsPayload() {
+		const value = (key) => String(world.settings.find((s) => s.key === key)?.value ?? '');
+		const chatValue = value('llm.model');
+		const fastValue = value('llm.fast_model');
+		const visionValue = value('vision.model');
+		const chatId = aliasToModel[chatValue] ?? chatValue;
+		const fastId = fastValue ? (aliasToModel[fastValue] ?? fastValue) : aliasToModel['house-fast'];
+		const rows = world.models.map((m) => ({ ...m, in_use_for: [...m.in_use_for] }));
+		for (const row of rows) {
+			row.in_use_for = row.in_use_for.filter((job) => !['conversation', 'research', 'coding', 'vision'].includes(job));
+			if (row.id === chatId) row.in_use_for.unshift('conversation', 'research', 'coding');
+			if (row.id === visionValue && row.role === 'vision') row.in_use_for.push('vision');
+			if (row.role === 'fast' || row.role === 'chat') row.role = row.id === chatId ? 'chat' : row.id === fastId ? 'fast' : 'chat';
+		}
+		if (!rows.some((r) => r.id === chatId)) {
+			rows.push({
+				id: chatId, name: chatId, family: '', parameters: '', quant: '', role: 'unknown', loaded: null,
+				aliases: [], in_use_for: ['conversation', 'research', 'coding'], server: '', kind: '', choice: null,
+				described_by: 'id', context: null, size_bytes: null, description: '', missing: true,
+				note: `\`llm.model\` names '${chatValue}', which no server lists`
+			});
+		}
+		return {
+			models: rows,
+			roles: {
+				chat: { setting: 'llm.model', value: chatValue, model: chatId },
+				fast: { setting: 'llm.fast_model', value: fastValue, model: fastId, source: fastValue ? 'setting' : 'gateway' },
+				vision: { setting: 'vision.model', value: visionValue, model: visionValue || null, configured: true }
+			},
+			servers: [
+				{ url: 'http://127.0.0.1:4000', kind: 'litellm', role: 'chat', ok: true, error: '', models: 2 },
+				{ url: 'http://127.0.0.1:8081', kind: 'llama-swap', role: 'chat', ok: true, error: '', models: 2 },
+				{ url: 'http://127.0.0.1:7997', kind: 'tei', role: 'embeddings', ok: true, error: '', models: 1 },
+				{ url: 'http://127.0.0.1:7998', kind: 'tei', role: 'rerank', ok: true, error: '', models: 1 }
+			],
+			gateway: { url: 'http://127.0.0.1:4000', aliases: { ...aliasToModel } },
+			fast_available: true
+		};
+	}
 
 	// Two built-ins, so a console tool has something it must refuse to shadow
 	// and something it must refuse to delete.
@@ -401,8 +663,11 @@ export function makeWorld() {
 		}
 	];
 
-	return {
-		areas, devices, entities, states, automations, settings, tools,
+	const world = {
+		areas, devices, entities, states, automations, settings, tools, models, modelsPayload,
+		// Test hook (`jarvis/test/models_mode`): what the model servers answer —
+		// 'ok', 'empty' (LLM_URL lists nothing) or 'error' (the command fails).
+		modelsMode: 'ok',
 		companions, approvals: [], calls: [],
 		// Exposed so `jarvis/test/registry_reset` can rebuild the registry and
 		// the states between tests; they are closures over the seed data, not
@@ -421,6 +686,7 @@ export function makeWorld() {
 			{ id: 'tok-oldphone', name: 'Old Pixel', connected: false, created_at: 1700000100 }
 		]
 	};
+	return world;
 }
 
 // The enrolment phrases jarvis-core serves, kept here so the console panel has
@@ -1438,6 +1704,18 @@ index 1234567..89abcde 100644
 		if (url.pathname === '/_test/calls') {
 			res.writeHead(200, { 'content-type': 'application/json' });
 			res.end(JSON.stringify(world.calls));
+			return;
+		}
+		// The REST twin of `jarvis/llm/models` (M54), token-protected as the
+		// real one is: what the model servers actually serve.
+		if (url.pathname === '/api/llm/models') {
+			if (req.headers.authorization !== `Bearer ${token}`) {
+				res.writeHead(401);
+				res.end('unauthorized');
+				return;
+			}
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify(world.modelsPayload()));
 			return;
 		}
 		// Stands in for the token-protected REST surface a real backend has
@@ -3444,6 +3722,35 @@ index 1234567..89abcde 100644
 				// effect, so the page never has to guess or re-fetch.
 				case 'config/settings/list':
 					ok(msg.id, { settings: world.settings, unapplied: [] });
+					break;
+
+				// The models the servers actually serve (M54). Derived from the
+				// settings rows each time, so a role chosen on the panel is what
+				// the next list says — the contract the real backend keeps.
+				case 'jarvis/llm/models': {
+					if (world.modelsMode === 'error') {
+						fail(msg.id, 'unknown_error', 'could not reach the model servers: the gateway answered 502');
+						break;
+					}
+					const payload = world.modelsPayload();
+					if (world.modelsMode === 'empty') {
+						ok(msg.id, {
+							...payload,
+							models: [],
+							gateway: null,
+							fast_available: false,
+							servers: [{ url: 'http://127.0.0.1:4000', kind: 'openai', role: 'chat', ok: true, error: '', models: 0 }]
+						});
+						break;
+					}
+					ok(msg.id, payload);
+					break;
+				}
+
+				// Test hook: what the model servers answer next time.
+				case 'jarvis/test/models_mode':
+					world.modelsMode = ['ok', 'empty', 'error'].includes(msg.mode) ? msg.mode : 'ok';
+					ok(msg.id, { mode: world.modelsMode });
 					break;
 
 				case 'config/settings/set': {

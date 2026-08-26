@@ -22,6 +22,7 @@ import { render } from 'svelte/server';
 import Approvals from './Approvals.svelte';
 import ChatMessage from './ChatMessage.svelte';
 import ChatPanel from './ChatPanel.svelte';
+import Models from './Models.svelte';
 import Pairing from './Pairing.svelte';
 import TaskCard from './TaskCard.svelte';
 import TaskDock from './TaskDock.svelte';
@@ -68,6 +69,16 @@ describe('server rendering', () => {
 	it('renders the pairing panel’s markup, which is the point of doing it at all', () => {
 		const { body } = render(Pairing);
 		expect(body).toContain('data-testid="pairing"');
+	});
+
+	it('arms no timers in the MODELS panel, and renders it loading with no connection', () => {
+		// The panel loads in an `$effect` once a connection arrives. On the
+		// server there is none, so the first paint is the skeleton — never a
+		// fetch, never a timer, never a `window`.
+		expect(timersArmedBy(Models, { conn: null, status: 'connecting' })).toBe(0);
+		const { body } = render(Models, { props: { conn: null, status: 'connecting' } });
+		expect(body).toContain('data-testid="models"');
+		expect(body).toContain('data-screen-state="loading"');
 	});
 
 	// --- chat mode ----------------------------------------------------------

@@ -1050,6 +1050,10 @@ class WebSocketHandler:
     async def _cmd_settings_reset(self, msg: dict[str, Any]) -> Any:
         return await common.async_reset_setting(self.jarvis, msg)
 
+    # the models the servers actually serve
+    async def _cmd_llm_models(self, msg: dict[str, Any]) -> Any:
+        return await common.async_llm_models_payload(self.jarvis)
+
     # automations
     async def _cmd_automation_list(self, msg: dict[str, Any]) -> Any:
         return common.automation_list_payload(self.jarvis)
@@ -1407,6 +1411,7 @@ WebSocketHandler._HANDLERS = {
     "config/settings/list": WebSocketHandler._cmd_settings_list,
     "config/settings/set": WebSocketHandler._cmd_settings_set,
     "config/settings/reset": WebSocketHandler._cmd_settings_reset,
+    "jarvis/llm/models": WebSocketHandler._cmd_llm_models,
     "config/automation/list": WebSocketHandler._cmd_automation_list,
     "config/automation/create": WebSocketHandler._cmd_automation_create,
     "config/automation/update": WebSocketHandler._cmd_automation_update,

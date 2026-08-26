@@ -8,6 +8,28 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M54 — settings that make sense, and the real models.** SETTINGS › Assistant opens on a
+  MODELS panel that lists what the model servers actually serve: `jarvis/llm/models` (and
+  `GET /api/llm/models`) resolves the gateway's aliases through LiteLLM's `/model/info` to the
+  ids llama-swap answers with, reads `/running` for what is loaded and the loaded backend's own
+  record (vLLM's context and weights, llama.cpp's parameter count) — never asking llama-swap about
+  a model that is not up, since that would load it — and adds the embedder and the reranker from
+  their TEI containers. Each row is the served id with its name, `family · size · quant` (marked
+  "as named by the server" when read off the id rather than reported), the role as a tag — chat ·
+  fast · vision · embeddings · rerank — a lit dot when loaded, and the Jarvis jobs it is used for
+  in plain words; a configured name no server lists is a row that says "not served"; a fast model
+  nothing routes to yet says so rather than claiming a fast path. Under the list, one choice per
+  role writes `llm.model`, the new `llm.fast_model` (empty = the chat model; recorded on the
+  agent, read by nothing until M60, and the note says exactly that) or the new `vision.model`
+  (live, onto the analyser). The settings information architecture is cut to what a person changes:
+  Assistant (models, temperature, name, language) · Voice (wake word, voice, speech language, whose
+  voice, enrolment) · House (time zone, units, a link to the rooms) · Console (text size, this
+  console, pairing, this window, paired computers, the event stream folded) · Tools — each opening
+  on plain rows with one line saying why, the rest of the server's rows behind an EVERYTHING fold
+  exactly as before, and nothing lost: `settings.spec.ts` walks every setting the server sends to
+  its section. The Desktop page is folded into Console and its old addresses redirect. The mock
+  serves the same shapes, `models.spec.ts` drives the panel through its four states and a role
+  choice onto the wire, and `docs/UI_MIGRATION.md` §3 lists what moved where.
 - **M53 — Motion when it does things.** One vocabulary (`docs/design/MOTION.md`) for what moves
   when Jarvis listens, thinks, calls a tool, steps a task, reads memory, reads a sensor, looks
   at a camera, waits on you, speaks, errs, or a moment lands — every duration and easing a

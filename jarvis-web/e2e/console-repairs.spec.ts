@@ -63,7 +63,9 @@ test('a dropped socket can be reconnected without reloading the tab', async ({ p
 	// Every management page keeps its own socket, so every one of them needed the
 	// same way back. Settings is the one somebody is most likely to be sitting on
 	// when a backend restarts underneath them.
-	await page.goto('/settings');
+	await page.goto('/settings/assistant');
+	await expect(page.getByTestId('everything')).toBeVisible({ timeout: 15_000 });
+	await page.getByTestId('everything-summary').click();
 	await expect(page.getByTestId('setting-llm.timeout')).toBeVisible({ timeout: 15_000 });
 	for (const socket of sockets.splice(0)) socket.close();
 	await expect(page.getByTestId('link-dropped')).toBeVisible({ timeout: 10_000 });
@@ -195,7 +197,8 @@ test('text is readable by default, and the reader can make it larger', async ({ 
 		locator.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
 	expect(await px(eid)).toBeGreaterThanOrEqual(11);
 
-	await page.goto('/settings');
+	// Text size is a property of this screen, so it is SETTINGS › Console (M54).
+	await page.goto('/settings/console');
 	const root = () =>
 		page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
 	const standard = await root();
@@ -213,7 +216,7 @@ test('text is readable by default, and the reader can make it larger', async ({ 
 	await expect.poll(root).toBe(large);
 
 	// Put it back, so the rest of the run sees the size it expects.
-	await page.goto('/settings');
+	await page.goto('/settings/console');
 	await page.getByTestId('text-size-standard').click();
 	await expect.poll(root).toBe(standard);
 });
@@ -230,7 +233,9 @@ test('a number setting is saved as a number', async ({ page }) => {
 		})
 	);
 
-	await page.goto('/settings');
+	await page.goto('/settings/assistant');
+	await expect(page.getByTestId('everything')).toBeVisible({ timeout: 15_000 });
+	await page.getByTestId('everything-summary').click();
 	const field = page.getByTestId('input-llm.timeout');
 	await expect(field).toBeVisible({ timeout: 15_000 });
 

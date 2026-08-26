@@ -902,7 +902,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     speaks, errs; every duration and easing a `motion.*` token; reduced motion honoured; the
     choreographies recorded in `docs/motion-review/` and measured by `motion.spec.ts`.
   - Verify: `bash scripts/verify/m53-motion-acts.sh`
-- [ ] **M54 — Settings that make sense, and the real models** · size L · deps M50 · parallel-ok M52, M53
+- [x] **M54 — Settings that make sense, and the real models** · size L · deps M50 · parallel-ok M52, M53
   - Scope: a MODELS panel listing what the model server actually serves (name, family and size,
     role — chat / fast / vision / embeddings / rerank — loaded now, used by Jarvis for which job)
     with a per-role choice, backed by `jarvis/llm/models` reading the gateway; the settings

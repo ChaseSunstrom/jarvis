@@ -8,7 +8,7 @@
 
 <svelte:head><title>Jarvis · Settings</title></svelte:head>
 
-<ScreenTitle title="Settings" lede="Configuration and capability: the assistant, what it can call, what is installed, and the machines it runs on." testid="settings-screen" />
+<ScreenTitle title="Settings" lede="What a person changes: the assistant and its models, its voice, the house, this console, and its tools." testid="settings-screen" />
 
 <SectionStrip sections={sectionsOf('/settings')} />
 

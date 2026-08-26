@@ -67,7 +67,7 @@ all of this by construction.
 | `/memory` | `/knowledge/memory` | A section, beside the graph. |
 | `/settings` | `/settings/assistant` | SETTINGS' default section. |
 | `/tools` | `/settings/tools` | A section: callables, exposure, extensions, catalog — behind expanders. |
-| `/desktop` | `/settings/desktop` | A section. |
+| `/desktop` | `/settings/console` | Two panels on the Console section (M54); `/settings/desktop` redirects there too. |
 | `/styleguide` | `/styleguide` | Not in the nav. The library, every state, every token. |
 
 Every row on the left is a 308 to the row on its right. Nothing 404s.
@@ -203,6 +203,35 @@ The library (`src/lib/ui`), re-skinned once so the pages inherit:
 - [x] Boot (`JarvisBootAnimation`, `BootTimeline`) · **partial** → the staged instrument. — **done (M51)**: the staged instrument, sans wordmark without blur.
 - [x] `JarvisUi.kt` `pill()` / `ghost()` / `CornerBrackets` · **old** → replaced; Roborazzi goldens re-rendered; `docs/ANDROID_DEVICE_TESTS.md` gains what only a device can confirm. — **done (M51)**: `button()`, `primary()`, `tab()`, hairline panels; ten Roborazzi goldens recorded and verified; ADT-031…035.
 - [x] Desktop app (`jarvis-desktop-app`) · loads the console build — nothing to restyle beyond the tray icon; verified by its existing Playwright `_electron` run. — **done (M51)**: nothing to restyle beyond what the console build carries; its Playwright run is unchanged.
+
+### M54 — settings that make sense, and the real models
+
+The operator's words: *"clean up the other menus to make them more simple,
+especially settings, and the models isn't the actual AI models, which makes
+it hard to understand."* SETTINGS was a generic rows renderer — every editable
+key in the server's groups, key and all, on one page with pairing, voice
+identity, the desktop and an event log under it — and "Model" was a dropdown
+of the gateway's aliases (`house`, `house-fast`), which are names Jarvis uses
+and not the models. This pass cuts SETTINGS to five sections a person can
+name, features the rows somebody comes for in plain words with one line saying
+why, keeps every other row behind an EVERYTHING fold exactly as the server
+describes it, and puts a MODELS panel at the top that lists what the model
+servers actually serve. What moved where, ticked as it was done
+(`bash scripts/verify/m54-settings-models.sh`; `e2e/settings.spec.ts` walks every setting the
+server sends to its section):
+
+- [x] SETTINGS shell · **five sections** — Assistant · Voice · House · Console · Tools — in `screens.ts`, in that order; `Screen.label` for the strip's word where the unique `name` is longer (`Voice settings` → VOICE, `House settings` → HOUSE — the HUD is `Voice` and the destination is `House`, and every per-screen spec titles its tests by name); `g v` reaches Voice, `g e` (was Desktop) lands on Console; `/settings/desktop` and `/desktop` both 308 to `/settings/console`; the palette indexes the three new sections.
+- [x] SETTINGS › Assistant · **MODELS panel** (`components/Models.svelte`, backed by `jarvis/llm/models`): one hairline row per served model — name, `family · size · quant` in mono, the role as a tag, a lit dot when loaded, "used for …" in words, "as named by the server" when the size was read off the id, "not served" when a configured name is listed by nobody — and a choice per role (chat · fast · vision) that writes `llm.model` / `llm.fast_model` / `vision.model` through the settings API. Loading, empty ("The model server lists nothing"), error (with the reason and a Retry) and offline (the last list, under the banner) are all real states.
+- [x] SETTINGS › Assistant · **plain rows**: Temperature, Name, Language — label, one-line why, control, SAVE lit only when dirty, RESET when overridden (`components/SettingPlain.svelte`, the plan in `sections/settingsPlan.ts`).
+- [x] SETTINGS › Assistant · **EVERYTHING** (`components/SettingsFold.svelte` + `SettingRaw.svelte`): the server's Assistant group as it was — key, source tag, note, SAVE, RESET — closed by default. A group the console has never heard of lands here too, so it is still reachable.
+- [x] SETTINGS › Voice · **new section** (`sections/SettingsVoice.svelte`): plain rows Wake word, Voice, Speech language; the **Whose voice** panel and browser enrolment (`EnrolVoice`) moved here from the foot of Assistant; EVERYTHING holds the Voice group.
+- [x] SETTINGS › House · **new section** (`sections/SettingsHouse.svelte`): plain rows Time zone, Units, and a **Rooms** row that links to HOUSE › Areas rather than growing a second editor; EVERYTHING holds the House group (name, language, currency, country, coordinates, elevation, log level).
+- [x] SETTINGS › Console · **new section** (`sections/SettingsConsole.svelte`): Text size, This console (the web server's own environment), Pair a phone + What can reach this house (`Pairing`), This window + Paired computers (from the Desktop page), and the **Event stream** as a closed fold — none of them house settings, all of them moved off Assistant.
+- [x] SETTINGS › Desktop · **deleted** (`sections/Desktop.svelte`, `routes/settings/desktop/+page.svelte`); its two panels are on Console; the route file is a redirect; `docs/ui-review/settings-desktop/` removed, `settings-voice/` `settings-house/` `settings-console/` added at three widths.
+- [x] SETTINGS › Tools · **unchanged** by this pass (M55 makes it one searchable list).
+- [x] The connection boilerplate every section re-typed → `sectionLink.svelte.ts` (dial generation, disposed flag, RECONNECT); the settings working copy → `settingsStore.svelte.ts` (drafts, save, reset, restart-needed), one per section, shared by its plain and raw rows through `SettingControl.svelte`.
+- [x] Core · `jarvis/llm/models` and `GET /api/llm/models` (`jarvis/llm/catalogue.py`): LiteLLM `/model/info` → llama-swap `/v1/models` + `/running` → the backend's own `/v1/models` for models that are UP only (never through `/upstream/<id>/…` for one that is not, which would load it); Ollama `/api/tags` + `/api/ps`; TEI `/info` for the embedder and the reranker. `llm.fast_model` (empty = the chat model; held on the agent, read by nothing until M60 and the note says so) and `vision.model` (live, onto the analyser) join the allowlist; `llm.model`'s note stops calling it "the Ollama model".
+- [x] Mock · `jarvis/llm/models` and `/api/llm/models` with a 27-B chat behind `house`, a 4-B fast behind `house-fast`, a vision model, the embedder, the reranker; `jarvis/test/models_mode` (ok · empty · error); the settings rows the new sections feature (`llm.fast_model`, `vision.model`, `voice.wake_word`, `voice.language`, `jarvis.unit_system`, `jarvis.language`, `jarvis.log_level`); `llm.model` is `house` with the aliases as choices, the way the deployed stack has it.
 
 ## 4. What "clean" means here
 

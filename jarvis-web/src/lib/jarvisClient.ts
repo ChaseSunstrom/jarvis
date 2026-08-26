@@ -201,6 +201,70 @@ export interface SettingResult {
 	settings: SettingRow[];
 }
 
+/** What a model is for, as `jarvis/llm/models` classifies it. */
+export type ModelRole = 'chat' | 'fast' | 'vision' | 'embeddings' | 'rerank' | 'unknown';
+
+/**
+ * One model as a server actually serves it (M54).
+ *
+ * `id` is the string a request names — `qwen3.8-27b`, never the gateway's
+ * `house`; the alias is in `aliases`. `loaded` is null when the server cannot
+ * say. `choice` is what `llm.model` takes to use it (the alias behind a
+ * gateway, the id otherwise), null when `LLM_URL` cannot reach it at all.
+ */
+export interface ModelRow {
+	id: string;
+	name: string;
+	family: string;
+	parameters: string;
+	quant: string;
+	role: ModelRole;
+	loaded: boolean | null;
+	aliases: string[];
+	in_use_for: string[];
+	server: string;
+	kind: string;
+	choice: string | null;
+	/** Whether family/size/quant came from the server or were read off the id. */
+	described_by: 'server' | 'id';
+	context: number | null;
+	size_bytes: number | null;
+	description: string;
+	/** Configured, and listed by no server. */
+	missing: boolean;
+	note: string;
+}
+
+export interface ModelRoleState {
+	/** The setting that chooses this role. */
+	setting: string;
+	/** The setting's current value, as LLM_URL names it. */
+	value: string;
+	/** The served id that value stands for, or null. */
+	model: string | null;
+	/** Fast only: 'setting' | 'gateway' | null. */
+	source?: string | null;
+	/** Vision only: whether `vision:` is configured at all. */
+	configured?: boolean;
+}
+
+export interface ModelServer {
+	url: string;
+	kind: string;
+	role: string;
+	ok: boolean;
+	error: string;
+	models: number;
+}
+
+export interface ModelsPayload {
+	models: ModelRow[];
+	roles: { chat: ModelRoleState; fast: ModelRoleState; vision: ModelRoleState };
+	servers: ModelServer[];
+	gateway: { url: string; aliases: Record<string, string> } | null;
+	fast_available: boolean;
+}
+
 /** One automation as jarvis-core reports it, YAML-authored or console-authored. */
 export interface AutomationRow {
 	id: string;
@@ -1081,6 +1145,11 @@ export class JarvisClient {
 	/** Drop an override so the value in configuration.yaml shows through again. */
 	resetSetting(key: string): Promise<SettingResult> {
 		return this.command({ type: 'config/settings/reset', key });
+	}
+
+	/** What the model servers actually serve, resolved through the gateway (M54). */
+	listModels(): Promise<ModelsPayload> {
+		return this.command<ModelsPayload>({ type: 'jarvis/llm/models' });
 	}
 
 	// --- automations -------------------------------------------------------

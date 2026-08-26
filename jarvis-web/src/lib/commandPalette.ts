@@ -66,7 +66,7 @@ const PAGE_KEYWORDS: Readonly<Record<string, string>> = {
 	'/house': 'home rooms devices entities lights',
 	'/work': 'jobs tasks progress research coding',
 	'/knowledge': 'notes memory remember wrote',
-	'/settings': 'backend events log tools installed skills plugins',
+	'/settings': 'models backend tools installed skills plugins voice house console',
 	'/house/devices': 'entities states lights switches',
 	'/house/areas': 'rooms zones',
 	'/house/dashboards': 'graphs charts history metrics',
@@ -75,9 +75,11 @@ const PAGE_KEYWORDS: Readonly<Record<string, string>> = {
 	'/work/code': 'repository repositories git branch diff agent coding job',
 	'/knowledge/notes': 'write wrote markdown report',
 	'/knowledge/memory': 'remember forget facts recall',
-	'/settings/assistant': 'backend model voice pairing password',
-	'/settings/tools': 'llm catalogue exposure mcp skills plugins extensions catalog install',
-	'/settings/desktop': 'machines agent computer'
+	'/settings/assistant': 'models model llm temperature name language chat fast vision',
+	'/settings/voice': 'wake word tts voice speaker enrol enrolment whose voice language',
+	'/settings/house': 'time zone timezone units metric imperial areas rooms location',
+	'/settings/console': 'text size backend pairing password pair phone desktop shell machines agent computer events log',
+	'/settings/tools': 'llm catalogue exposure mcp skills plugins extensions catalog install'
 };
 
 export const PAGE_ITEMS: readonly PaletteItem[] = SCREENS.filter(
@@ -85,7 +87,7 @@ export const PAGE_ITEMS: readonly PaletteItem[] = SCREENS.filter(
 ).map((screen) => ({
 	id: `page:${screen.path}`,
 	kind: 'page' as const,
-	label: screen.within ? `${screen.name} · in ${screen.within.slice(1)}` : screen.name,
+	label: screen.within ? `${screen.label ?? screen.name} · in ${screen.within.slice(1)}` : screen.name,
 	detail: screen.path,
 	href: screen.path,
 	keywords: PAGE_KEYWORDS[screen.path] ?? ''

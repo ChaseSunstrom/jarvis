@@ -1035,6 +1035,12 @@ async def settings_list(request: Request) -> dict[str, Any]:
     return common.settings_payload(jarvis)
 
 
+@api_router.get("/llm/models")
+async def llm_models(request: Request) -> dict[str, Any]:
+    """What the model servers actually serve, resolved through the gateway."""
+    return await common.async_llm_models_payload(get_jarvis(request))
+
+
 @api_router.post("/config/settings/set")
 async def settings_set(request: Request) -> dict[str, Any]:
     try:
