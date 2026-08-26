@@ -976,7 +976,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     structure rather than slash count; the bar holds at 768–1440 without overlapping itself
     (it did on a tablet at first — the M50 render showed VOICE over the brand) and fades its
     overflowing edge on a phone. The phone opens its console on DASHBOARDS.
-- [ ] **M63 — The dashboard shows the house** · size M · deps M56, M57, M58, M62 · parallel-ok M61
+- [x] **M63 — The dashboard shows the house** · size M · deps M56, M57, M58, M62 · parallel-ok M61
   - Scope: the operator's "full functionality" — a widget has a kind: a graph (M62's, and what
     an unkinded widget is, so every saved layout still loads), one entity's state with its
     switch (the Devices row's own `call_service`, live over `state_changed`), the newest
@@ -987,6 +987,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     served by the mock; a shipped, read-only House the console opens on, its empty pieces
     saying how each thing gets there. The inventory row allows the tile's one switch at rest.
   - Verify: `bash scripts/verify/m63-dashboard-widgets.sh`
+  - 26 Aug 16:35: built by an agent in a worktree, cherry-picked (b5a1dde) and verified on
+    the branch: gate 32/32, the eight touched core suites 513, vitest 757, M62 17/17 and
+    M55 21/21 again with the tile's one switch allowed at rest. A real camera's still and
+    the sky from real elements are Unproven here (no camera, fixture elements).
 - [ ] **M64 — The phone looks like the console** · size L · deps M51, M61 · parallel-ok M56, M63
   - Scope: an audit put the phone's native screens beside the console and found fourteen
     mismatches; each is closed by copying the console, not by inventing. The tab strip is
@@ -1008,7 +1012,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
 
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M63
+- [ ] **M23 — Final integration** · size M · deps M00–M64
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
     m30, m45, m58; m25/m26 re-measured after the next rebuild); the rest are M56 (no served

@@ -484,3 +484,15 @@ is quiet. Done since:
   its overflowing edge on a phone so a sixth tab is seen to be there. Two agents in
   worktrees meanwhile: the six Tasker gap rows (M61) and the dashboard's widget kinds
   (M63).
+- 16:05 — CI on 483d5e5: ten jobs green (the harness self-test, compose smoke, core on 3.12,
+  the desktop-agent e2e, lint, static, the browser/desktop/orchestrator suites, android
+  specs). Still red: the APK job's unit tests — Robolectric runs offline from ~/.cache and
+  the only step that filled it ran after the tests (d2fe77a); the web e2e, with no
+  annotation to name the test (4da6d39 adds the github and html reporters); the emulator
+  suite, with no screenshot at all (614957c annotates each failing test and the first
+  crash); the Electron build, which GitHub never gave a runner. The next push says.
+- 16:30 — M62 ticked and committed (610ec24): gate 17/17, M48 15/15 at the new cap, M55
+  21/21. The M50 render caught a tablet bar that overlapped itself with six tabs; fixed
+  and pinned by a bar-overlap test at five widths. M61's six gap rows, built by an agent
+  in a worktree, cherry-picked clean (95ab5df): 224 unit tests there; the live smoke
+  slice its gate needs runs from here after the stack is rebuilt.
