@@ -1090,6 +1090,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     set on the rebuilt stack is 7/7 with WER 0.0 over 4 spoken samples (median 2.40 s); gate 6/6.
     Not ticked: the Settings › Voice line that shows the pace waits for M67's change to the
     settings registry, so the two do not collide in `settings.py`.
+  - 26 Aug 21:32: the pace has a key the house reads — `voice: tts: length_scale: !env_var
+    PIPER_LENGTH_SCALE 0.9`, handed to the core by compose and kept as `voice_tts_length_scale`
+    (packaging refused both halves until the chain was whole: an env var nothing reads, then a
+    key nothing reads). Voice 80, packaging 100. Still open for the Settings › Voice line.
 - [ ] **M71 — Enrolment, complete** · size M · deps M35 · parallel-ok M66
   - Scope: "make sure enrolment is completely implemented and complete" — an audit of voice
     enrolment end to end (the console's EnrolVoice, the phone's flow, the server's speaker

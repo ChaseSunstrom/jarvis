@@ -151,10 +151,15 @@ voice:
     # serving and offers them as a dropdown, so this is one you can pick rather
     # than one you have to spell.
     voice: en_GB-alan-medium
-    # How fast it speaks is PIPER_LENGTH_SCALE in .env (a duration multiplier;
-    # 0.9 is a tenth quicker) — Piper takes it at start, so it is the
-    # container's, not a per-request knob. With `engine: openai` (Kokoro) it is
-    # `speed:` here instead, 1.0 being the voice's own pace.
+    # How fast it speaks. Piper's length scale is a duration multiplier (0.9
+    # is a tenth quicker) that Piper takes at START, so the value that counts
+    # is PIPER_LENGTH_SCALE in .env, which docker-compose.yml hands to the
+    # wyoming-piper container; this line reads the same variable so Settings ›
+    # Voice can say what the house speaks at and where the knob is. Editing
+    # the number here alone changes nothing — restart wyoming-piper with the
+    # variable set. With `engine: openai` (Kokoro) it is `speed:` here instead,
+    # per request, 1.0 being the voice's own pace.
+    length_scale: !env_var PIPER_LENGTH_SCALE 0.9
   wake:
     host: 127.0.0.1
     port: 10400

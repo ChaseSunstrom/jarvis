@@ -1646,6 +1646,15 @@ def test_compose_piper_length_scale_matches_the_example_env() -> None:
     assert example, ".env.example does not document PIPER_LENGTH_SCALE"
     assert loaded == example.group(1).strip()
     assert 0.5 <= float(loaded) <= 1.5, loaded
+    # Every place compose expands it says the same default: Piper's command and
+    # the core's environment (which only reports it, for Settings › Voice). Two
+    # defaults would let the screen name a pace the house does not speak at.
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    defaults = set(re.findall(r"\$\{PIPER_LENGTH_SCALE:-([^}]+)\}", compose))
+    assert defaults == {loaded}, defaults
+    assert re.search(r"^\s+- PIPER_LENGTH_SCALE=\$\{PIPER_LENGTH_SCALE:-", compose, re.M), (
+        "jarvis-core's environment does not carry PIPER_LENGTH_SCALE"
+    )
 
 
 def test_the_image_installs_git_for_coding_jobs():

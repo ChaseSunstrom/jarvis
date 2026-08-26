@@ -175,6 +175,11 @@ services:
       # up and healthy. tests/test_packaging.py fails the build if the two
       # files drift apart again.
       - SEARXNG_URL=${SEARXNG_URL:-http://127.0.0.1:8888}
+      # Piper's pace, the same default the wyoming-piper service gets below.
+      # Jarvis cannot change it (Piper takes it at start) — it reads it so
+      # Settings › Voice can say what the house speaks at and where the knob
+      # is, instead of a pace the screen cannot name.
+      - PIPER_LENGTH_SCALE=${PIPER_LENGTH_SCALE:-0.9}
       # The same pair jarvis-browser gets, and for the same reason: Jarvis is
       # the client. Keep them DIFFERENT values — holding the API token must
       # not be enough to approve a click on "Pay".

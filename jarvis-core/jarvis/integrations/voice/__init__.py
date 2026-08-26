@@ -70,6 +70,12 @@ DEPENDENCIES: list[str] = []
 DATA_VOICE = "voice"
 DATA_STT_CLIENT = "voice_stt_client"
 DATA_TTS_CLIENT = "voice_tts_client"
+#: Piper's length scale as configured (`voice: tts: length_scale:`, read from
+#: PIPER_LENGTH_SCALE). Jarvis cannot apply it — Piper takes it at start — so
+#: it is kept only to be shown: Settings › Voice says what the house speaks at
+#: and where the knob is. None with an OpenAI-compatible engine, whose pace is
+#: `speed:` per request.
+DATA_TTS_LENGTH_SCALE = "voice_tts_length_scale"
 DATA_WAKE_CLIENT = "voice_wake_client"
 DATA_CONVERSATION_AGENT = "conversation_agent"
 
@@ -402,6 +408,13 @@ def _build_clients(jarvis: "Jarvis", config: dict[str, Any]) -> tuple[Any, Any, 
     tts = jarvis.data.get(DATA_TTS_CLIENT)
     if tts is None:
         section = _section(config, "tts")
+        try:
+            scale = float((section or {}).get("length_scale") or 0) or None
+        except (TypeError, ValueError):
+            scale = None
+        jarvis.data[DATA_TTS_LENGTH_SCALE] = (
+            None if section is not None and str(section.get("engine") or "").lower() == "openai" else scale
+        )
         if section is not None and str(section.get("engine") or "").lower() == "openai":
             # An OpenAI-compatible speech service (Kokoro-FastAPI and friends).
             # Opt-in, because Piper is 33 MB and already here; see
