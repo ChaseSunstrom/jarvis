@@ -801,6 +801,52 @@ jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test
 | The core image has git — the step after the workspace, without which `create_repository` answers "git is not installed" | Automated / Containerised | the packaging test reads the Dockerfile's apt line; the gate runs `git --version` in the running core (2.47.3) |
 | A coding job's `create_repository` lands in `/workspace/<name>` with a `.git` visible on the host side of the crossover | Containerised | the gate replays the operator's request through `POST /api/services/code/create_repository` and checks `jarvis-workspace/m72-probe/.git`; the probe repository stays, since nothing removes one. The live rig has no repository-creating scenario yet |
 
+### Ask and answer (M66, built; the live rig has not heard it)
+
+`bash scripts/verify/m66-ask-and-answer.sh` (26 Aug 22:10: 28/28 in a worktree). Server:
+`jarvis-core/tests/test_spoken_answers.py` (44 — the contract's cases), `test_ask_and_answer.py`
+(21), `test_ask_user.py` (17); harness: `testing/e2e/test_ask_and_answer.py` (a question answered
+by the next turn, an expired one told so — its own harness with a six-second question clock);
+console: `e2e/e2e.spec.ts` "a question that runs out of time says it lapsed"; phone:
+`presence_signals_test.py` (69), `prompt_reaches_the_user_test.py` (19).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A question is spoken ONCE: the reply carries it and is read aloud by the surface the user spoke to; the phone gets the card marked `spoken` and stays silent. A typed turn's question is still spoken by the phone | Automated (the chain) / **Unproven** (a real spoken turn on a real phone) | `test_the_pipeline_tells_the_agent_whether_the_reply_is_spoken`, `test_a_spoken_turn_stamps_its_question_as_spoken`, `test_the_phone_is_told_a_spoken_question_is_already_spoken`, `test_the_companion_puts_spoken_on_the_wire`; the mirrors' four `spoken` checks; the gate reads the pipeline, the registry, the bridge, the wire and the three Kotlin files. The Kotlin does not build here |
+| A question waits `question_ttl` (1800 s), its own knob, never derived from `approval_ttl` (300 s); the request carries `ttl` and the model is told how long | Automated | `test_a_question_waits_thirty_minutes_and_an_action_five`, `test_the_question_clock_is_its_own_and_not_derived`; the gate reads both defaults, the shipped config and the example house |
+| A late answer is told "That question expired after N minutes; ask again and I'll wait" (`expired: true`, `waited_seconds`), an action likewise naming the tool, and nothing lapsed ever runs; an id the server never held still gets "unknown, expired or already-used" | Automated | `test_a_lapsed_question_is_answered_in_words`, `test_a_lapsed_action_names_the_tool_and_its_clock`, `test_a_lapsed_request_never_runs`, `test_an_id_the_registry_never_held_still_gets_the_honest_guess`, `test_the_lapsed_memory_is_bounded`; end to end `test_an_expired_question_says_so_in_words` |
+| `jarvis_approval_expired` fires when the registry notices a lapse, carrying the request and `expired: true` | Automated | `test_a_lapsed_question_is_answered_in_words` |
+| The next thing said in the conversation resolves what waits on it, by the contract's rules: a bare yes/no for an action, words picking out one choice for a question (the choice's own text), the words verbatim for free text; "yes and also…" is not a yes; two waiting and a yes is "say which"; a yes in another conversation approves nothing | Automated | `tests/contracts/spoken_answers.json` run by `test_spoken_answers.py` (39 cases + the list equality); `test_a_question_is_answered_by_the_next_turn`, `test_a_held_action_is_confirmed_by_a_yes`, `test_a_no_declines_and_nothing_runs`, `test_an_unrelated_turn_leaves_it_waiting_and_says_so`, `test_a_yes_in_another_conversation_approves_nothing`, `test_two_things_waiting_and_a_yes_resolves_neither`; end to end `test_a_question_is_answered_by_the_next_turn` |
+| A request raised after untrusted content is never resolved by voice; the turn says it waits on the console | Automated | `test_a_tainted_request_is_never_resolved_by_voice`; the contract's three tainted cases |
+| The resolution is `approve_request`, unchanged — single use, the answer reaching only the named argument — and the turn carries it as a tool row and continues with the result | Automated | `test_the_turn_events_draw_the_resolution_as_a_tool_row`; the e2e's `tool_calls` assertions |
+| The held bar keeps a lapsed card ("This question lapsed after N minutes — ask again and Jarvis will wait", CLEAR), shows the server's clock as m:ss, and counts waiting and lapsed separately | Automated | `e2e/e2e.spec.ts` "a question that runs out of time says it lapsed, and does not vanish"; the mock's `expiredSentence` is the server's, word for word |
+| The operator hears the question once, and can answer it by saying so, on the deployed house | **Unproven** | waits for the live rig (`scripts/verify/live_interaction.sh` has no ask-and-answer scenario yet); the worktree cannot run the rig |
+| Settings › Assistant shows `question_ttl` | Unproven | not added: M67 is in the settings registry at the same time (the M70 precedent); `configuration.md` documents the key |
+
+### The house is editable by voice (M69, built; the live rig has not heard it)
+
+`bash scripts/verify/m69-editable-house.sh` (26 Aug 22:10: 19/19 in a worktree). Server:
+`jarvis-core/tests/test_entity_remove.py` (29), `test_api.py` (`test_ws_entity_and_device_removal`),
+`test_gated_services.py` (the tier table), `test_packaging.py` (the documented commands); harness:
+`testing/e2e/test_ask_and_answer.py` (a removal confirmed by the next turn, "all of the elements"
+refused); console: `e2e/editable-house.spec.ts` (3), `dashboards/tiles.test.ts` (the removed tile).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `remove_entities` / `remove_device` are Tier 3 with the targets pinned when raised — concrete, normalised ids; a device with its name and every entity on it — and what runs after the yes is what was shown | Automated | `test_remove_entities_is_tier_three_with_the_ids_pinned`, `test_the_confirmed_removal_removes_exactly_what_was_shown`, `test_a_name_is_resolved_and_pinned_like_a_locks`, `test_remove_device_pins_the_device_and_everything_on_it` |
+| "All of the elements" — `*`, `all`, `everything`, `the house`, nothing named, or an unknown id — is refused with a sentence naming `list_entities` BEFORE anything is held; more than 20 at once likewise; `remove_device` refuses the vague, the unknown and two matches | Automated | `test_all_of_the_elements_is_refused_with_a_sentence` (8 spellings), `test_an_unknown_id_is_refused_rather_than_held`, `test_too_many_at_once_is_refused`, `test_remove_device_refuses_the_vague_and_the_unknown`, `test_two_devices_with_the_same_word_are_not_guessed_between`; end to end `test_all_of_the_elements_is_refused_before_anything_is_held` |
+| The refusal check is part of the tool: a re-registration without one is a weakening and refused | Automated | `test_the_refusal_is_the_registrys_and_a_rereg_cannot_drop_it` |
+| One delete path: the tools, `config/entity_registry/remove`, `config/device_registry/remove` and the REST twins all run `Jarvis.async_remove_entity` / `async_remove_device` | Automated | the gate reads the four call sites; `test_the_api_removes_and_answers_with_what_it_removed`, `test_ws_entity_and_device_removal` |
+| A removed entity leaves the state machine (`state_changed` with no `new_state`), the registry (saved gone), the exposure list and the house summary, and its live object — the platform's poll loop cannot write it back | Automated | `test_removing_an_entity_takes_its_state_and_its_entry`, `test_removal_is_saved_so_a_restart_does_not_bring_it_back`, `test_a_removed_entity_leaves_the_exposure_list_and_the_house_summary`, `test_a_platforms_poll_loop_cannot_write_the_state_back` |
+| A device removal takes its entities first, then the record, and fires `device_registry_updated: remove` | Automated | `test_removing_a_device_takes_its_entities_first`, `test_the_api_removes_a_device` |
+| The confirmation is sayable: "remove the decorative lights" → held → "yes, go ahead" → gone from the states and the registry, through the real server | Automated | `test_a_confirmed_removal_takes_the_entity_out_of_the_house` |
+| The Devices screen offers REMOVE (two presses), the row leaves on the `state_changed`, a removal made elsewhere drops the row live, and the registries are re-read on their events | Automated | `e2e/editable-house.spec.ts` "REMOVE takes an entity out of the house…", "a removal made elsewhere…" |
+| A dashboard tile whose entity was removed says so ("was removed from this Jarvis") rather than drawing stale state or "add the device" | Automated | `tiles.test.ts` "says the entity was removed…", `e2e/editable-house.spec.ts` "a dashboard tile whose entity was removed says so…" |
+| The knowledge graph: the console's graph holds notes and memory only, so a removed entity has nothing there to leave | Automated (by inspection) | the gate reads `NodeKind` in `graph.ts` |
+| An entity a platform keeps publishing comes back under a fresh entry; automations naming a removed id are not edited | Documented, not fixed | `Jarvis.async_remove_entity`'s docstring; the automation check reports the stale id |
+| "Remove the X" spoken to the deployed house, confirmed out loud, and gone from the Devices screen | **Unproven** | waits for the live rig |
+
+### A faster voice (M70, in progress)
 ### A faster voice (M70)
 
 `bash scripts/verify/m70-voice-speed.sh` (26 Aug 22:04: 14/14 on the running house). Server: `test_packaging.py`

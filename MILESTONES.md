@@ -1046,6 +1046,13 @@ web and of Tasker. Local only. Each row here is planned in that document.
     thirty minutes; an expired one says so and how to ask again; the banner's clock and the
     voice agree.
   - Verify: `bash scripts/verify/m66-ask-and-answer.sh`
+  - 26 Aug 22:10, built in a worktree, not ticked: the gate is 28/28 there; core
+    `test_spoken_answers` 44, `test_ask_and_answer` 21, `test_ask_user` 17; the harness self-test's
+    question answered by the next turn and expired one told so; the banner's lapse in a browser;
+    the phone's mirrors 69 and 19. The single voice is the reply's (the surface you spoke to);
+    the phone shows a `spoken` question and stays silent. Not ticked because the live rig has
+    not heard it and the Kotlin does not build here; no Settings row for `question_ttl` (M67 is
+    in the settings registry at the same time).
 - [x] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66
   - Scope: "how can I ask it to be able to edit settings with permission" — a `list_settings`
     tool (Tier 1, read-only) over the console's settings registry, compact for the whole list and
@@ -1088,6 +1095,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the confirmation sayable (M66); a removed thing leaves the graph, the dashboard and the
     exposure list.
   - Verify: `bash scripts/verify/m69-editable-house.sh`
+  - 26 Aug 22:10, built in a worktree, not ticked: the gate is 19/19 there; core
+    `test_entity_remove` 29 with the API, tier-table and packaging suites; the harness self-test's
+    removal confirmed by "yes, go ahead" and "all of the elements" refused; the Devices screen's
+    REMOVE and the removed tile in a browser (3). Waits for the live rig.
 - [x] **M70 — A faster voice** · size S · deps M35 · parallel-ok M66
   - Scope: "can you have jarvis speak slightly faster" — Piper's length scale (`PIPER_LENGTH_SCALE`
     in compose, pinned to `.env.example` and `configuration.yaml` as the other voice knobs are)

@@ -8,6 +8,30 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M69 (built, awaiting the live rig) — the house is editable by voice.** "Can you remove all of
+  the elements of the house?" no longer gets "I have no tool for deleting entities":
+  `remove_entities` and `remove_device` exist, Tier 3 with the entity ids (or the device and every
+  entity on it) pinned into the approval the way a lock's doors are, and the confirmation can be
+  said — "yes, go ahead" in the next turn runs exactly what the card showed. "All of the elements"
+  is refused with a sentence before anything is held, because an approval that read "remove: all"
+  would show nothing of what it removes; `list_devices` says what there is. One delete path:
+  the Devices screen's new REMOVE (two presses) and `config/entity_registry/remove` /
+  `config/device_registry/remove` run the same `Jarvis.async_remove_entity`, which takes the
+  live object (so a poll cannot write the state back), the state (every surface drops the row
+  live) and the registry entry (so the exposure list and the house summary). A dashboard tile
+  whose entity went says "was removed from this Jarvis" rather than drawing stale state.
+- **M66 (built, awaiting the live rig) — ask and answer.** One voice: a question raised by a
+  spoken turn is said once, by the reply that carries it, on the surface you spoke to; the phone
+  gets the card marked `spoken` and does not read it out again. A question waits on its own
+  clock, `llm.question_ttl` (30 minutes), not the five-minute action clock, and an answer that
+  comes after it is told "That question expired after 30 minutes; ask again and I'll wait" —
+  the banner keeps the lapsed card with the same sentence and a CLEAR instead of vanishing at
+  0 s, and counts minutes as m:ss. And an answer or a confirmation can be said: the next thing
+  said in the conversation resolves the question or the held action by the rules in
+  `tests/contracts/spoken_answers.json` — a bare yes or no for an action, words that pick out
+  one choice for a question, the words themselves for a free-text one, nothing when two things
+  wait ("say which") and never for a request raised after untrusted content, which waits on
+  the console where its provenance is on screen.
 - **M71 — enrolment, complete.** Jarvis knows **who** is speaking. More than one person can
   be enrolled, each under a name — "who is this?" on the phone and the console; empty is
   `owner`, as before — and a turn is compared with everyone: the verdict names the person
