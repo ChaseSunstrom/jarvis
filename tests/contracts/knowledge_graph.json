@@ -1,0 +1,102 @@
+{
+  "$comment": "The knowledge graph's nodes and edges for one small house (M61). Read by jarvis-web/src/lib/knowledge/graph.test.ts (buildGraph) and by android-app/tools/knowledge_graph_mirror_test.py against the Kotlin port's own test; both must produce exactly these. Positions are not pinned — the layout is seeded and identical by construction, and a float is not a claim a test should carry.",
+  "notes": [
+    {
+      "id": "n1",
+      "title": "Boiler service",
+      "tags": [
+        "house"
+      ],
+      "links": [
+        "Meter readings"
+      ]
+    },
+    {
+      "id": "n2",
+      "title": "Meter readings",
+      "tags": [
+        "house",
+        "energy"
+      ]
+    },
+    {
+      "id": "n3",
+      "title": "Garden plan",
+      "tags": [
+        "garden"
+      ]
+    }
+  ],
+  "memory": [
+    {
+      "id": "m1",
+      "text": "The spare key is under the blue pot",
+      "tags": [
+        "house"
+      ]
+    },
+    {
+      "id": "m2",
+      "text": "Boiler serviced 2026-08-26",
+      "tags": [
+        "energy"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "note:n1",
+      "label": "Boiler service",
+      "kind": "note"
+    },
+    {
+      "id": "note:n2",
+      "label": "Meter readings",
+      "kind": "note"
+    },
+    {
+      "id": "note:n3",
+      "label": "Garden plan",
+      "kind": "note"
+    },
+    {
+      "id": "memory:m1",
+      "label": "The spare key is under the bl…",
+      "kind": "memory"
+    },
+    {
+      "id": "memory:m2",
+      "label": "Boiler serviced 2026-08-26",
+      "kind": "memory"
+    }
+  ],
+  "edges": [
+    {
+      "from": "note:n1",
+      "to": "note:n2",
+      "kind": "link"
+    },
+    {
+      "from": "note:n1",
+      "to": "memory:m1",
+      "kind": "tag"
+    },
+    {
+      "from": "note:n2",
+      "to": "memory:m1",
+      "kind": "tag"
+    },
+    {
+      "from": "note:n2",
+      "to": "memory:m2",
+      "kind": "tag"
+    }
+  ],
+  "constants": {
+    "tag_fanout": 8,
+    "label_chars": 30,
+    "iterations": 220,
+    "link_weight": 0.5,
+    "tag_weight": 0.2
+  }
+}

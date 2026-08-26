@@ -3,12 +3,16 @@ package ai.jarvis.app
 import ai.jarvis.app.assist.JarvisConversation
 import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.companion.ConversationAskHost
+import ai.jarvis.app.assist.ActivityRows
+import ai.jarvis.app.assist.KnowledgeGraph
 import ai.jarvis.app.assist.ToolActivityView
 import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeWordService
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.ApprovalBridge
 import ai.jarvis.app.ui.JarvisOrbView
+import ai.jarvis.app.ui.ActivityStrip
+import ai.jarvis.app.ui.KnowledgeGraphView
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.PermissionBridge
 import ai.jarvis.app.ui.ReadabilityScrim
@@ -51,6 +55,8 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
     private lateinit var toolActivityView: ToolActivityView
+    private lateinit var activityStrip: ActivityStrip
+    private lateinit var knowledgeGraphView: KnowledgeGraphView
     private lateinit var config: JarvisConfig
     private var convo: JarvisConversation? = null
 
@@ -219,6 +225,17 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 10), 0, 0)
         }
         root.addView(toolActivityView, fullWidth())
+        // And what the HOUSE did around the turn (M61): the same rows the console draws.
+        activityStrip = ActivityStrip(this)
+        root.addView(activityStrip, fullWidth())
+        knowledgeGraphView = KnowledgeGraphView(this)
+        root.addView(
+            knowledgeGraphView,
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                JarvisUi.dp(this@JarvisAssistActivity, 160)
+            )
+        )
 
         transcriptView = JarvisUi.transcriptView(this).apply {
             // Brighter than the shared transcript colour, for the same reason
@@ -315,6 +332,9 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     }
 
     override fun onTools(run: ToolRun) = toolActivityView.render(run)
+    override fun onActivity(rows: ActivityRows) = activityStrip.render(rows)
+    override fun onKnowledge(nodes: List<KnowledgeGraph.Node>, edges: List<KnowledgeGraph.Edge>) = knowledgeGraphView.render(nodes, edges)
+    override fun onKnowledgePulse(ids: List<String>) = knowledgeGraphView.pulse(ids)
 
     override fun onIdle() { if (!isFinishing) finish() }
 

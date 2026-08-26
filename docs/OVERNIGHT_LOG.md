@@ -381,3 +381,6 @@ is quiet. Done since:
   fixture page the rig rewrote landed as a moment inside 90 s, and "what is
   being watched" answered with the change. Committed next; M60's gate is
   running its full core suite (2,756 tests — slow, not stuck).
+- 10:15 — M61, first stage: ActivityRows/ActivityStrip, KnowledgeGraph(View), chunked
+  speech on the phone, eight Tasker rows closed, JVM tests and Python mirrors; the
+  gate's gradle steps cannot run here (no SDK). M60's gate is still in the core suite.

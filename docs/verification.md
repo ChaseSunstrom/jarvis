@@ -689,6 +689,19 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### The phone, the equal of the web (M61, first stage)
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The phone's activity strip speaks the console's vocabulary: the same events, kinds, cap, sensor domains and states | Automated | `android-app/tools/activity_mirror_test.py` reads `ActivityRows.kt` against `tests/contracts/activity_rows.json` |
+| The device subscribes to every event in that vocabulary and feeds the strip | Automated | the mirror (`ActivityRows.EVENTS.keys`, `onBusEvent`) |
+| The strip's arithmetic: a tool call is one row start to finish, a button pressed twice is two rows, a light is not a reading, a look names its camera, a dozen newest first | Automated (JVM, not run here) | `app/src/test/…/assist/ActivityRowsTest.kt` |
+| The phone builds the same knowledge graph as the console for the same house | Automated | `jarvis-web/src/lib/knowledge/graph.test.ts` (run) and `KnowledgeGraphTest.kt` (JVM, not run here) against `tests/contracts/knowledge_graph.json`; `knowledge_graph_mirror_test.py` pins the constants and the PRNG |
+| A reply plays as sentences then the remainder, never twice; an off-origin chunk is refused | Automated | `android-app/tools/tts_chunk_test.py` reads the client and the conversation |
+| Eight Tasker rows closed, each registered once at its stated tier, each with a unit test of its arithmetic | Automated (JVM, not run here) | `ParityActionsTest.kt`; `action_table_test.py` (run) pins registration, tiers and docs |
+| The Kotlin compiles, lints and its goldens hold | **Unproven** | no Android SDK on this host (CLAUDE.md); ADT-039 |
+| Early speech is heard, the strip and graph are legible over the launcher, two presses look like two | **Unproven** | ADT-036, ADT-037, ADT-038 |
+
 ### Anything online, locally (M59)
 
 | Claim | Status | Evidence |

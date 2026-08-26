@@ -53,6 +53,17 @@ object Builtins {
         // Media
         addAll(MediaActions.all)
 
+        // The Tasker rows closed by M61 (ParityActions.kt), one add each so the
+        // table mirror can see every registration.
+        add(ShowToast)
+        add(SetAutoBrightness)
+        add(SetRotationLock)
+        add(SetScreenTimeout)
+        add(GetNetworkInfo)
+        add(SendIntent)
+        add(LaunchShortcut)
+        add(MediaControl)
+
         // Comms
         add(SendSms)
         add(PlaceCall)

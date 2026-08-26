@@ -130,6 +130,25 @@ class AssistPipelineClient(
         fun onError(message: String)
 
         /**
+         * A sentence of the reply, synthesised while the model writes the next
+         * (M60's `tts-chunk`): play it now, in order. Defaulted — a caller that
+         * does not chunk still gets the whole reply on [onTtsEnd].
+         */
+        fun onTtsChunk(absoluteUrl: String, index: Int) {}
+
+        /**
+         * `tts-end`, with what M60 added: the whole reply as before, plus the
+         * part the chunks did not cover and how many chunks there were. The
+         * default keeps the old contract — the whole reply, once.
+         */
+        fun onTtsEnd(absoluteUrl: String, remainderUrl: String?, chunks: Int) {
+            onTtsUrl(absoluteUrl)
+        }
+
+        /** Any bus event this device subscribed to, as it arrived. Feeds [ActivityRows]. */
+        fun onBusEvent(type: String, data: JSONObject) {}
+
+        /**
          * The wake word was heard, and the run has moved on to speech.
          *
          * Only ever fired for a [StartStage.WAKE_WORD] run. Default so the two
@@ -174,6 +193,9 @@ class AssistPipelineClient(
 
     private var ws: WebSocket? = null
     private val nextId = AtomicInteger(1)
+
+    /** Results awaited by id for [request]; a socket that closes forgets them. */
+    private val pending = HashMap<Int, (JSONObject?) -> Unit>()
 
     private var pipelineName = "Jarvis"
     private var pipelineId: String? = null
@@ -316,7 +338,9 @@ class AssistPipelineClient(
     private fun subscribeToToolCalls() {
         if (subscribed) return
         subscribed = true
-        for (event in listOf(ToolRun.EVENT_STARTED, ToolRun.EVENT_FINISHED)) {
+        // The strip's whole vocabulary (M61), not only the two tool events:
+        // `ActivityRows.EVENTS` is the contract the console reads too.
+        for (event in ActivityRows.EVENTS.keys) {
             ws?.send(
                 JSONObject()
                     .put("id", nextId.getAndIncrement())
@@ -497,7 +521,18 @@ class AssistPipelineClient(
                 }
             }
             "auth_invalid" -> post { callbacks.onError("auth failed: check the token") }
-            "result" -> if (msg.optInt("id") == listRequestId) handlePipelineList(msg)
+            "result" -> {
+                val id = msg.optInt("id")
+                if (id == listRequestId) {
+                    handlePipelineList(msg)
+                } else {
+                    val waiting = synchronized(pending) { pending.remove(id) }
+                    if (waiting != null) {
+                        val result = msg.optJSONObject("result")
+                        post { waiting(result) }
+                    }
+                }
+            }
             "event" -> handleEvent(msg.optJSONObject("event") ?: return)
         }
     }
@@ -514,6 +549,20 @@ class AssistPipelineClient(
     }
 
     // --- protocol ----------------------------------------------------------
+
+    /**
+     * One command to jarvis-core, its result handed back on the main thread
+     * (M61): what the knowledge graph reads its notes and memory with. False,
+     * and nothing sent, before the socket has authenticated — the caller asks
+     * again at the next turn, which is when it wants the answer anyway.
+     */
+    fun request(type: String, onResult: (JSONObject?) -> Unit): Boolean {
+        if (!authed) return false
+        val id = nextId.getAndIncrement()
+        synchronized(pending) { pending[id] = onResult }
+        ws?.send(JSONObject().put("id", id).put("type", type).toString())
+        return true
+    }
 
     private fun listPipelines() {
         listRequestId = nextId.getAndIncrement()
@@ -652,15 +701,35 @@ class AssistPipelineClient(
                 if (speech.isNotEmpty()) post { callbacks.onResponseFinal(speech) }
             }
             "tts-start" -> post { callbacks.onState(State.SPEAKING) }
-            "tts-end" -> {
+            "tts-chunk" -> {
                 val url = data?.optJSONObject("tts_output")?.optString("url").orEmpty()
+                if (url.isNotEmpty()) {
+                    val resolved = absolute(url)
+                    if (resolved == null) {
+                        Log.w(TAG, "refusing an off-origin tts chunk url")
+                    } else {
+                        val index = data?.optInt("index", 0) ?: 0
+                        post {
+                            callbacks.onState(State.SPEAKING)
+                            callbacks.onTtsChunk(resolved, index)
+                        }
+                    }
+                }
+            }
+            "tts-end" -> {
+                val output = data?.optJSONObject("tts_output")
+                val url = output?.optString("url").orEmpty()
                 if (url.isNotEmpty()) {
                     val resolved = absolute(url)
                     if (resolved == null) {
                         Log.w(TAG, "refusing an off-origin tts url")
                         post { callbacks.onError("refused a TTS URL that is not on your server") }
                     } else {
-                        post { callbacks.onTtsUrl(resolved) }
+                        // The remainder is on the same origin or it is not played.
+                        val remainder = output?.optString("remainder_url").orEmpty()
+                            .takeIf { it.isNotEmpty() && it != "null" }?.let { absolute(it) }
+                        val chunks = output?.optInt("chunks", 0) ?: 0
+                        post { callbacks.onTtsEnd(resolved, remainder, chunks) }
                     }
                 }
             }
@@ -676,6 +745,8 @@ class AssistPipelineClient(
     /** What the agent loop is doing, as it does it. See [ToolRun]. */
     private fun handleBusEvent(type: String, data: JSONObject?) {
         if (data == null) return
+        // Every subscribed event, as it came: the activity strip's feed (M61).
+        post { callbacks.onBusEvent(type, data) }
         when (type) {
             ToolRun.EVENT_STARTED -> {
                 val name = data.optString("name").ifEmpty { "tool" }

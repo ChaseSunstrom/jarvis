@@ -494,3 +494,18 @@ report it rather than pretending to have opened something.
 The Kotlin tests need JUnit 4 on the unit-test classpath
 (`testImplementation("junit:junit:4.13.2")`) and nothing else — every class they
 touch is free of Android imports.
+
+### Closed with M61 (Tasker parity)
+
+| id | tier | params | permission | notes |
+|---|---|---|---|---|
+| `show_toast` | 1 | `text` (≤ 200 chars), `long` | — | a line on the screen for a moment; nothing changes |
+| `set_auto_brightness` | 1 | `on` | WRITE_SETTINGS (Modify system settings) | a clear error names the grant when it is missing |
+| `set_rotation_lock` | 1 | `locked` | WRITE_SETTINGS | as above |
+| `set_screen_timeout` | 1 | `seconds` 15–1800 | WRITE_SETTINGS | as above; outside the range is refused before the grant is checked |
+| `get_network_info` | 1 | — | ACCESS_FINE_LOCATION for the SSID | transport, whether it reaches the internet, SSID and RSSI when known; an SSID Android hides is `null` with a note, never guessed |
+| `send_intent` | 3 | `action` (fully qualified), `data`, `package`, `extras` | — | starts an activity; the user sees the action, data and package |
+| `launch_shortcut` | 1 | `package`, `shortcut_id` | default launcher | only the default launcher may start another app's shortcuts; says so |
+| `media_control` | 1 | `command` play/pause/toggle/stop/next/previous | — | the media keys, dispatched like a headset button, to whatever is playing |
+| `lock_screen` | 2 | via `ui_global_action` `{action: lock_screen}` | accessibility | the accessibility agent's global action |
+| `screenshot` | 2 | as `take_screenshot` | accessibility | the accessibility agent's global action |

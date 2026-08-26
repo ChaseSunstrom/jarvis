@@ -8,6 +8,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M61 (first stage) — the phone, the equal of the web.** The voice screens draw the living
+  activity around the reactor from the same vocabulary as the console (`ActivityRows.kt` mirrors
+  `tests/contracts/activity_rows.json`; the device subscribes to every event in it) and the
+  knowledge graph as the console draws it (`KnowledgeGraph.kt` is a port of the console's
+  builder and seeded layout; `tests/contracts/knowledge_graph.json` pins the nodes and edges both
+  produce). A reply is played as the console plays it: sentences as they come (`tts-chunk`), then
+  the remainder, never the whole twice. Eight Tasker rows closed with actions the JVM can prove —
+  `show_toast`, `set_auto_brightness`, `set_rotation_lock`, `set_screen_timeout`,
+  `get_network_info`, `send_intent`, `launch_shortcut`, `media_control` — and two named under the
+  accessibility agent's existing ids (`lock_screen`, `screenshot`). Not ticked: this host has no
+  Android SDK, so the Kotlin is mirrored in Python and JVM tests are written but the build, lint
+  and golden screenshots wait for a machine that has one (ADT-036…039); thirteen rows stay gap
+  for permissions the app does not yet request.
 - **M59 — anything online, locally.** A `watch` integration gives the web time: `watch_page` keeps
   a snapshot and says when a page changes, with what changed; `watch_feed` follows an RSS 2.0 or
   Atom feed (parsed with the standard library) and says what is new; `watch_for` ("tell me when

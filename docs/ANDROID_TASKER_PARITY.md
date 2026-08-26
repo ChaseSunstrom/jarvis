@@ -19,7 +19,7 @@ possible for a third-party app on modern Android (with the reason).
 |---|---|---|---|---|---|
 | Notify | `send_notification` | direct | POST_NOTIFICATIONS | unit | done |
 | Vibrate | `vibrate` | direct | — | unit | done |
-| Flash (on-screen text) | `show_toast` | direct | — | unit | gap |
+| Flash (on-screen text) | `show_toast` | direct | — | unit (`ParityActionsTest`, M61) | done |
 | Say (TTS) | companion speaker (`say`) | direct | — | unit | done |
 | Torch | `toggle_torch` | direct | CAMERA (flash) | unit | done |
 
@@ -31,8 +31,8 @@ possible for a third-party app on modern Android (with the reason).
 | Kill app | `kill_app` | confirm | — | unit | done |
 | List apps | `list_installed_apps` | direct | QUERY_ALL_PACKAGES / manifest queries | unit | done |
 | Open URL | `open_url` | direct | — | unit | done |
-| Send intent | `send_intent` | confirm | — | unit | gap |
-| App shortcut | `launch_shortcut` | direct | — | unit | gap |
+| Send intent | `send_intent` | confirm | — | unit (`ParityActionsTest`, M61) | done |
+| App shortcut | `launch_shortcut` | direct | — | unit (`ParityActionsTest`, M61) | done |
 
 ## Audio
 
@@ -42,7 +42,7 @@ possible for a third-party app on modern Android (with the reason).
 | Media volume | `set_media_volume` | direct | — | unit | done |
 | Ringer mode | `set_ringer_mode` | direct | — | unit | done |
 | Do not disturb | `toggle_dnd` | confirm | ACCESS_NOTIFICATION_POLICY | unit | done |
-| Media control (play/pause/next/previous) | `media_control` | direct | notification listener | unit | gap |
+| Media control (play/pause/next/previous) | `media_control` | direct | notification listener | unit (`ParityActionsTest`, M61) | done |
 | Now playing | `media_now_playing` | direct | notification listener | unit | gap |
 | Record audio | `record_audio` | approve | RECORD_AUDIO | unit | gap |
 
@@ -52,11 +52,11 @@ possible for a third-party app on modern Android (with the reason).
 |---|---|---|---|---|---|
 | Brightness | `set_brightness` | direct | WRITE_SETTINGS | unit | done |
 | Screen on / off | `screen_on` / `screen_off` (accessibility) | direct | accessibility | unit | done |
-| Auto-brightness | `set_auto_brightness` | direct | WRITE_SETTINGS | unit | gap |
-| Rotation lock | `set_rotation_lock` | direct | WRITE_SETTINGS | unit | gap |
-| Screen timeout | `set_screen_timeout` | direct | WRITE_SETTINGS | unit | gap |
-| Lock screen | `lock_screen` (accessibility global action) | confirm | accessibility | unit | gap |
-| Screenshot | `screenshot` (accessibility, API 30+) | confirm | accessibility | unit | gap |
+| Auto-brightness | `set_auto_brightness` | direct | WRITE_SETTINGS | unit (`ParityActionsTest`, M61) | done |
+| Rotation lock | `set_rotation_lock` | direct | WRITE_SETTINGS | unit (`ParityActionsTest`, M61) | done |
+| Screen timeout | `set_screen_timeout` | direct | WRITE_SETTINGS | unit (`ParityActionsTest`, M61) | done |
+| Lock screen | `ui_global_action` with action: lock_screen (the accessibility agent's global action) | confirm | accessibility | unit (`ParityActionsTest`, M61) | done |
+| Screenshot | `take_screenshot` (accessibility, API 30+) | confirm | accessibility | unit (`ParityActionsTest`, M61) | done |
 | Wallpaper | `set_wallpaper` | confirm | SET_WALLPAPER | unit | gap |
 
 ## Input and screen
@@ -98,7 +98,7 @@ possible for a third-party app on modern Android (with the reason).
 | Bluetooth on/off | `set_bluetooth` (API ≤32 direct; 33+ via panel) | confirm | BLUETOOTH_CONNECT | unit | gap |
 | Hotspot | `open_settings_panel` (hotspot) — not settable by third-party apps | direct | — | unit | no |
 | Airplane mode | `open_settings_panel` (airplane) — not settable | direct | — | unit | no |
-| Network info (SSID, IP, signal) | `get_network_info` | direct | ACCESS_FINE_LOCATION (SSID) | unit | gap |
+| Network info (SSID, IP, signal) | `get_network_info` | direct | ACCESS_FINE_LOCATION (SSID) | unit (`ParityActionsTest`, M61) | done |
 
 ## Phone
 
@@ -159,3 +159,14 @@ network info, Bluetooth, read_sms and call log, NFC, the display settings,
 show_toast, ui_key, loops. Each lands with its tier in the local table, its
 permission asked through the PermissionGateway, a unit test, and a row here
 flipped to **done**.
+
+## What is still a gap, and why
+
+The rows above still marked **gap** need a permission this app does not yet
+request (camera, SMS, call log, NFC, `ANSWER_PHONE_CALLS`, `SET_WALLPAPER`),
+a listener it does not run (now-playing needs the notification listener), or
+a real handset to prove (`play_media`, `set_bluetooth` on API 33+, `ui_key`,
+loops in the task engine). Each is one action in `ParityActions.kt` and one
+row here; none should be written on a host that cannot compile it (this one —
+CLAUDE.md — has no Android SDK), and M61 stays open until they are and
+`docs/ANDROID_DEVICE_TESTS.md` ADT-039 has run.

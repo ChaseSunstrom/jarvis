@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildGraph, layout, touchedBy } from './graph';
 
@@ -80,5 +81,14 @@ describe('the knowledge graph', () => {
 
 	it('handles nothing', () => {
 		expect(layout([], [], {}).nodes).toEqual([]);
+	});
+});
+
+describe('the contract the phone mirrors', () => {
+	const contract = JSON.parse(readFileSync(new URL('../../../../tests/contracts/knowledge_graph.json', import.meta.url), 'utf8'));
+	it('builds exactly the nodes and edges the contract pins', () => {
+		const { nodes, edges } = buildGraph(contract.notes, contract.memory);
+		expect(nodes.map((n) => ({ id: n.id, label: n.label, kind: n.kind }))).toEqual(contract.nodes);
+		expect(edges).toEqual(contract.edges);
 	});
 });

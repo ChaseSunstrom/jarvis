@@ -22,7 +22,10 @@ from pathlib import Path
 doc = Path("docs/ANDROID_TASKER_PARITY.md").read_text()
 kt = Path("android-app/app/src/main/kotlin/ai/jarvis/app/automation")
 ids = set(re.findall(r"override val id\s*=\s*\"([a-z][a-z0-9_.]+)\"", "".join(p.read_text() for p in kt.rglob("*.kt"))))
-ids |= set(re.findall(r"\"(ui_[a-z_]+|app_foreground|screen_on|screen_off)\"", "".join(p.read_text() for p in (kt / "accessibility").rglob("*.kt"))))
+app = Path("android-app/app/src/main/kotlin")
+# Conditions (app_foreground, screen_on/off), the companion say mode and the ui_* ids the accessibility agent
+# registers are string ids anywhere in the app, not override val ids.
+ids |= set(re.findall(r"\"(ui_[a-z_]+|take_screenshot|app_foreground|screen_on|screen_off|say)\"", "".join(p.read_text() for p in app.rglob("*.kt"))))
 done = gap = 0; missing = []
 for line in doc.splitlines():
     if not line.startswith("|") or "| done |" not in line and "| gap |" not in line: continue
@@ -40,11 +43,19 @@ assert gap == 0, f"{gap} row(s) still marked gap in docs/ANDROID_TASKER_PARITY.m
 print(f"{done} Tasker rows done, none open")
 '
 check "every gap that became an action has a unit test" python3 -c '
+import re
 from pathlib import Path
 tests = "".join(p.read_text() for p in Path("android-app/app/src/test").rglob("*.kt"))
-for name in ("media_control", "screenshot", "lock_screen", "send_intent", "take_photo", "get_network_info", "read_sms", "nfc_read", "show_toast"):
+doc = Path("docs/ANDROID_TASKER_PARITY.md").read_text()
+closed = []
+for line in doc.splitlines():
+    if not line.startswith("|") or "| done |" not in line or "M61" not in line: continue
+    cells = [c.strip() for c in line.strip("|").split("|")]
+    closed += re.findall(r"`([a-z][a-z0-9_]+)`", cells[1])[:1]
+assert closed, "no row says M61 closed it"
+for name in closed:
     assert name in tests, f"no unit test mentions {name}"
-print("the new actions are tested")
+print(f"{len(closed)} rows closed by M61, each with a unit test")
 '
 
 # --- the phone looks like the web ---------------------------------------------

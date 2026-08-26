@@ -3,6 +3,8 @@ package ai.jarvis.app
 import ai.jarvis.app.assist.JarvisConversation
 import ai.jarvis.app.companion.CompanionMessageHandler
 import ai.jarvis.app.companion.ConversationAskHost
+import ai.jarvis.app.assist.ActivityRows
+import ai.jarvis.app.assist.KnowledgeGraph
 import ai.jarvis.app.assist.ToolActivityView
 import ai.jarvis.app.assist.ToolRun
 import ai.jarvis.app.assist.WakeStartPolicy
@@ -13,6 +15,8 @@ import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisBootAnimation
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisOrbView
+import ai.jarvis.app.ui.ActivityStrip
+import ai.jarvis.app.ui.KnowledgeGraphView
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.SystemCheckActivity
 import android.Manifest
@@ -65,6 +69,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     private lateinit var transcriptView: TextView
     private lateinit var responseView: TextView
     private lateinit var toolActivityView: ToolActivityView
+    /** The living activity around the reactor (M61): what the house did, as it did it. */
+    private lateinit var activityStrip: ActivityStrip
+    private lateinit var knowledgeGraphView: KnowledgeGraphView
     private lateinit var muteButton: Button
     private lateinit var listenButton: Button
     private lateinit var listenReason: TextView
@@ -435,6 +442,8 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         transcriptView = JarvisUi.transcriptView(this)
         responseView = JarvisUi.responseView(this)
         toolActivityView = ToolActivityView(this)
+        activityStrip = ActivityStrip(this)
+        knowledgeGraphView = KnowledgeGraphView(this)
         muteButton = JarvisUi.button(this, "LISTENING — TAP TO MUTE") { toggleMute() }
 
         // The always-on listener's actual state, on the screen the user opens.
@@ -507,6 +516,22 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
+        )
+        col.addView(
+            activityStrip,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
+        )
+        // What Jarvis knows, drawn as the console draws it (M61): hidden until
+        // there is a note or a memory to draw.
+        col.addView(
+            knowledgeGraphView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                JarvisUi.dp(this@MainActivity, 200)
             ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
         )
         col.addView(transcriptView)
@@ -800,6 +825,9 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     }
 
     override fun onTools(run: ToolRun) = toolActivityView.render(run)
+    override fun onActivity(rows: ActivityRows) = activityStrip.render(rows)
+    override fun onKnowledge(nodes: List<KnowledgeGraph.Node>, edges: List<KnowledgeGraph.Edge>) = knowledgeGraphView.render(nodes, edges)
+    override fun onKnowledgePulse(ids: List<String>) = knowledgeGraphView.pulse(ids)
 
     /**
      * A conversation ended. On a screen with no talk button, that is not a
