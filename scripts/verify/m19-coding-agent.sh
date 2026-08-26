@@ -5,6 +5,15 @@
 # end to end. A sandbox escape is a test failure, not a warning.
 source "$(dirname "$0")/lib.sh"
 verify_begin "M19" "coding agent: end-to-end in the sandbox"
+# The coding job's model calls go to the gateway with the key in .env, which
+# is gitignored and not in every caller's environment — read it here, the way
+# the live rig does, or the job ends in a 401 that has nothing to do with M19.
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+if [ -f "$ROOT/.env" ]; then
+    set -a
+    . "$ROOT/.env"
+    set +a
+fi
 use_venv
 C=jarvis-core/jarvis/integrations/code
 

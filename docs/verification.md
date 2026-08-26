@@ -702,7 +702,7 @@ person-shaped probe asks; what the suite found, written up.
 | The phone's reactor sweeps once per tool call, beats while speaking and gathers its iris while looking — the M53 vocabulary, timed by the same tokens | Automated | `android-app/tools/reactor_motion_test.py` reads `ReactorOrb.kt`, `JarvisOrbView.kt`, the conversation and `Reactor.svelte` |
 | Loops in the task engine: `repeat` by count or while a condition holds, bounded by `TaskLimits` | Automated | `android-app/tools/task_repeat_test.py` |
 | The Kotlin compiles and lints | Automated | `./gradlew assembleDebug`, `lintDebug` — green in the m08 gate with M61's Kotlin, 26 Aug 12:05 |
-| The goldens hold with the strip and the graph on the voice screen | see M61's gate | `./gradlew verifyRoborazziDebug`; a changed screen is re-recorded (ADT-039) |
+| The goldens hold with the strip and the graph on the voice screen — twelve, `voice-activity` and `voice-graph` recorded on 26 Aug and looked at | Automated | `./gradlew verifyRoborazziDebug`, green here with M08's toolchain |
 | Early speech is heard, the strip and graph are legible over the launcher, two presses look like two | **Unproven** | ADT-036, ADT-037, ADT-038 |
 
 ### Anything online, locally (M59)

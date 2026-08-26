@@ -339,4 +339,37 @@ class ScreenshotTest {
         }
         compose.onRoot().captureRoboImage(golden("theme-panel"))
     }
+
+    // --- the voice screen's company (M61): the strip and the graph ---------
+
+    @Test
+    fun `the activity strip with a turn's rows`() {
+        val rows = ai.jarvis.app.assist.ActivityRows()
+        rows.apply("jarvis_tool_started", org.json.JSONObject("""{"name":"get_state","arguments":{"entity_id":"light.hall"},"round":1,"index":0}"""), 1L)
+        rows.apply("jarvis_tool_finished", org.json.JSONObject("""{"name":"get_state","round":1,"index":0,"ok":true,"duration_ms":84}"""), 2L)
+        rows.apply("state_changed", org.json.JSONObject("""{"entity_id":"sensor.garage_temperature","new_state":{"state":"12.5","attributes":{"friendly_name":"Garage temperature","unit_of_measurement":"°C"}}}"""), 3L)
+        rows.apply("vision_look_started", org.json.JSONObject("""{"id":"l1","camera":"Kitchen","question":"anyone there?"}"""), 4L)
+        rows.apply("jarvis_notification", org.json.JSONObject("""{"notification":{"id":"n1","title":"Check the oven","kind":"reminder"}}"""), 5L)
+        val strip = ai.jarvis.app.ui.ActivityStrip(context)
+        strip.render(rows)
+        bitmapOf(strip).captureRoboImage(golden("voice-activity"))
+    }
+
+    @Test
+    fun `the knowledge graph for a small house`() {
+        val notes = listOf(
+            ai.jarvis.app.assist.KnowledgeGraph.NoteLike("n1", "Boiler service", tags = listOf("house"), links = listOf("Meter readings")),
+            ai.jarvis.app.assist.KnowledgeGraph.NoteLike("n2", "Meter readings", tags = listOf("house", "energy")),
+            ai.jarvis.app.assist.KnowledgeGraph.NoteLike("n3", "Garden plan", tags = listOf("garden")),
+        )
+        val memory = listOf(
+            ai.jarvis.app.assist.KnowledgeGraph.MemoryLike("m1", "The spare key is under the blue pot", tags = listOf("house")),
+            ai.jarvis.app.assist.KnowledgeGraph.MemoryLike("m2", "Boiler serviced 2026-08-26", tags = listOf("energy")),
+        )
+        val (nodes, edges) = ai.jarvis.app.assist.KnowledgeGraph.build(notes, memory)
+        val graph = ai.jarvis.app.ui.KnowledgeGraphView(context)
+        graph.render(nodes, edges)
+        graph.pulse(listOf("note:n1"))
+        bitmapOf(graph, height = 420).captureRoboImage(golden("voice-graph"))
+    }
 }

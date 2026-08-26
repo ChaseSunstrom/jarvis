@@ -430,3 +430,10 @@ is quiet. Done since:
   median round trip 2.87 s (6.67 s at 06:54), p95 20.3 s. Intent and the 2 s
   median still missed, recorded. docs/LIVE_TEST_REPORT.md is this run.
   `make verify-all` starts as M23's whole-state record.
+- 12:40 — verify-all's first half read: four of its reds were the repository's and
+  are fixed (`d62d774`: a doc block, two stale gate paths, a JVM test's false
+  claim); m19's 401 was the launcher's environment (the gate reads .env now);
+  m03's graph count is a cross-spec leak (a knowledge reset in the mock). And
+  the m08 gate proved this host has M08's toolchain: M61's Kotlin compiles,
+  lints and passes its JVM tests here — its gate is 17/19, the goldens for the
+  strip and the graph being recorded, the six gap rows staying gap.

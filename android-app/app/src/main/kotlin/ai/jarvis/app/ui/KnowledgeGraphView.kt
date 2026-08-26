@@ -71,7 +71,27 @@ class KnowledgeGraphView(context: Context) : View(context) {
                 else -> JarvisUi.GOLD
             }
             canvas.drawCircle(p.x, p.y, r, nodePaint)
-            canvas.drawText(p.node.label, p.x - labelPaint.measureText(p.node.label) / 2, p.y + r + labelPaint.textSize, labelPaint)
+        }
+        // Labels after every point, kept inside the box and off each other: the
+        // console dodges a label that would land on another (M52); here one
+        // that would is drawn above its point instead, and one that would
+        // leave the box is slid back in. Ten names in a phone's width collide
+        // otherwise, and a name half off the edge is not a name.
+        val placed = ArrayList<android.graphics.RectF>()
+        val gap = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat()
+        val ascent = -labelPaint.ascent()
+        for (p in current.nodes) {
+            val label = p.node.label
+            val w = labelPaint.measureText(label)
+            val x = (p.x - w / 2).coerceIn(gap, (width - w - gap).coerceAtLeast(gap))
+            var baseline = p.y + r + gap + ascent
+            var rect = android.graphics.RectF(x, baseline - ascent, x + w, baseline + labelPaint.descent())
+            if (placed.any { android.graphics.RectF.intersects(it, rect) }) {
+                baseline = p.y - r - gap - labelPaint.descent()
+                rect = android.graphics.RectF(x, baseline - ascent, x + w, baseline + labelPaint.descent())
+            }
+            placed.add(rect)
+            canvas.drawText(label, x, baseline, labelPaint)
         }
     }
 
