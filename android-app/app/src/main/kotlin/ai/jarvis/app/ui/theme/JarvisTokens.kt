@@ -163,6 +163,7 @@ object JarvisTokens {
             const val GLINT = 14000
             const val LEVEL = 3400
             const val THINK = 9000
+            const val SPEAK = 600
         }
 
         /** Ambient drift: rotations slow enough to read as alive rather than as motion. */

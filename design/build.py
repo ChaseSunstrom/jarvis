@@ -169,7 +169,9 @@ def css_name(path: tuple[str, ...]) -> str | None:
         kind = rest[0]
         if kind == "drift":
             return "--jv-drift"
-        prefix = {"dur": "dur", "ease": "ease", "stagger": "stagger", "reactor": "rx", "ambient": "amb"}[kind]
+        # `budget` (what a choreography may cost) is measured by tests, not read
+        # by CSS, but it is a motion token like the rest and gets a name.
+        prefix = {"dur": "dur", "ease": "ease", "stagger": "stagger", "reactor": "rx", "ambient": "amb", "budget": "budget"}[kind]
         return f"--jv-{prefix}-" + "-".join(rest[1:])
     if group == "chrome":
         return "--jv-" + "-".join(rest)

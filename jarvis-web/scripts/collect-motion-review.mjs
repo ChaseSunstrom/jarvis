@@ -16,7 +16,8 @@ const NAMES = [
 	['motion-review-boot', '1-boot.webm'],
 	['motion-review-idle-to-listening', '2-orb-states.webm'],
 	['motion-review-a-task-running', '3-task-running.webm'],
-	['motion-review-moving-between-pages', '4-navigation.webm']
+	['motion-review-moving-between-pages', '4-navigation.webm'],
+	['motion-review-jarvis-at-work', '5-at-work.webm']
 ];
 
 if (!existsSync(RESULTS)) {

@@ -307,7 +307,23 @@
 		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn), var(--jv-elev-panel);
 		padding: var(--jv-space-3) var(--jv-space-4) var(--jv-space-3) var(--jv-space-5);
 		margin-bottom: var(--jv-space-4);
-		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+		/* Waiting on you: the warn rule pulses slowly until answered (M53). */
+		animation:
+			jv-rise var(--jv-dur-base) var(--jv-ease-out) both,
+			held-pulse var(--jv-dur-blink) var(--jv-ease-in-out) infinite alternate;
+	}
+	@keyframes held-pulse {
+		from {
+			box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-warn), var(--jv-elev-panel);
+		}
+		to {
+			box-shadow: inset var(--jv-rule-live) 0 0 transparent, var(--jv-elev-panel);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.approvals {
+			animation: none;
+		}
 	}
 	.head {
 		font-family: var(--jv-font-body);

@@ -27,6 +27,7 @@ decoration.
 -->
 <script lang="ts">
 	import { prefersReducedMotion } from '$lib/motion';
+	import { tokenMs } from '$lib/tokens';
 
 	interface Segments {
 		/** Steps finished. */
@@ -51,6 +52,10 @@ decoration.
 		level?: number;
 		/** Which pipeline state the instrument wears. */
 		state?: 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
+		/** Counts the tool calls; each change sweeps the blades once (M53). */
+		work?: number;
+		/** A camera is being looked at: the lens irises while it lasts (M53). */
+		looking?: boolean;
 		/** Group the blades into plan steps. */
 		segments?: Segments | null;
 		/** The core breathes and the rings turn. Off for a static figure. */
@@ -69,8 +74,30 @@ decoration.
 		breathing = true,
 		reveal = null,
 		label = 'Jarvis',
-		testid = 'reactor'
+		testid = 'reactor',
+		work = 0,
+		looking = false
 	}: Props = $props();
+
+	// One sweep per tool call: `work` changing lights the blades for one
+	// enter-duration, then they settle. Under reduced motion nothing sweeps.
+	// Toggled on the node rather than through a `$state`: this component's
+	// public prop is called `state`, and in this file `$state(…)` compiles as
+	// a subscription to it (the SSR build threw "store.subscribe is not a
+	// function"), so the one piece of local state here is a class on a node.
+	let bladesEl: SVGGElement | undefined;
+	let sweepTimer: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		void work;
+		const el = bladesEl;
+		if (!work || !el || prefersReducedMotion()) return;
+		el.classList.add('sweep');
+		if (sweepTimer) clearTimeout(sweepTimer);
+		sweepTimer = setTimeout(() => el.classList.remove('sweep'), tokenMs('--jv-dur-enter'));
+		return () => {
+			if (sweepTimer) clearTimeout(sweepTimer);
+		};
+	});
 
 	// --- the geometry, as tests/contracts/reactor_geometry.json has it -------
 	// Typed here rather than imported so the component ships no JSON; the
@@ -170,6 +197,7 @@ decoration.
 	class:still
 	class:fluid
 	data-state={state}
+	data-looking={looking || undefined}
 	data-level={clampedLevel.toFixed(2)}
 	data-segments={segments ? `${segments.done}/${segments.total}` : undefined}
 	viewBox="0 0 {size} {size}"
@@ -201,7 +229,7 @@ decoration.
 	</g>
 
 	<g class="spin layer" style:opacity={shown.blades} style:transform="scale({0.9 + shown.blades * 0.1})">
-		<g class="blades">
+		<g class="blades" bind:this={bladesEl}>
 			{#each bladePaths as blade, i (i)}
 				<path d={blade.d} class="blade {blade.tone}" style:animation-delay={blade.delay} />
 			{/each}
@@ -458,5 +486,55 @@ decoration.
 		:global(.reactor *) {
 			animation: none !important;
 		}
+	}
+
+	/* --- motion when it does things (M53) ------------------------------- */
+	/* A tool call: the blades light and sweep once, then settle. */
+	.blades.sweep {
+		animation:
+			spin var(--jv-rx-blades) linear infinite,
+			sweep var(--jv-dur-enter) var(--jv-ease-out) 1;
+	}
+	@keyframes sweep {
+		0% {
+			filter: brightness(1);
+		}
+		35% {
+			filter: brightness(1.8);
+		}
+		100% {
+			filter: brightness(1);
+		}
+	}
+	/* Speaking: the blades in cadence, one beat per --jv-rx-speak. */
+	.reactor[data-state='speaking'] .blades {
+		animation:
+			spin var(--jv-rx-blades) linear infinite,
+			cadence var(--jv-rx-speak) var(--jv-ease-in-out) infinite alternate;
+	}
+	@keyframes cadence {
+		from {
+			opacity: 0.72;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	/* Looking at a camera: the lens irises while it lasts. */
+	.reactor[data-looking] .core {
+		animation: iris var(--jv-rx-iris-a) var(--jv-ease-in-out) infinite alternate;
+	}
+	@keyframes iris {
+		from {
+			transform: scale(var(--core-scale, 1));
+		}
+		to {
+			transform: scale(calc(var(--core-scale, 1) * 0.8));
+		}
+	}
+	.reactor.still .blades.sweep,
+	.reactor.still[data-state='speaking'] .blades,
+	.reactor.still[data-looking] .core {
+		animation: none;
 	}
 </style>

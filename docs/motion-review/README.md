@@ -10,6 +10,7 @@ accessible; it cannot prove any of it feels good, and no test will.
 | [2-orb-states.webm](2-orb-states.webm) | idle → listening → thinking → speaking on the instrument: the level arc carries a synthetic amplitude here and real audio in the running app — the microphone's while listening, the player's while speaking |
 | [3-task-running.webm](3-task-running.webm) | A task arriving and working: the bar, the steps opening, tool calls appearing while it runs |
 | [4-navigation.webm](4-navigation.webm) | Moving between pages — entrances, staggered lists, and what a route change looks like |
+| [5-at-work.webm](5-at-work.webm) | Jarvis at work on the voice tab: a tool call sweeps the blades and draws its call line, a sensor reading counts in, a camera look irises the lens under *looking · Kitchen*, a remembered fact blinks on the graph, a moment lands, a task steps. |
 
 ## Re-record them
 

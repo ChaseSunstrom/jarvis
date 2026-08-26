@@ -20,7 +20,9 @@ function keep(patch: Record<string, unknown>): void {
 		/* first write */
 	}
 	mkdirSync('../.verify', { recursive: true });
-	writeFileSync(MOTION_JSON, JSON.stringify({ ...current, ...patch, at: new Date().toISOString() }, null, 2));
+	// `acts` merges one level down: eight tests each keep their own act.
+	const acts = { ...((current.acts as Record<string, unknown>) ?? {}), ...((patch.acts as Record<string, unknown>) ?? {}) };
+	writeFileSync(MOTION_JSON, JSON.stringify({ ...current, ...patch, acts, at: new Date().toISOString() }, null, 2));
 }
 
 /**
@@ -179,5 +181,72 @@ test.describe('with reduced motion', () => {
 		);
 		keep({ reduced_running: running });
 		expect(running, `${running} animations still running under reduced motion`).toBe(0);
+	});
+});
+
+/**
+ * Motion when it does things (M53): each choreography in docs/design/MOTION.md
+ * is driven through the mock's hooks — the core's own bus events — and
+ * measured the way the boot is: frame gaps while it plays, against the
+ * `--jv-budget-frame` token, and zero running animations under reduced
+ * motion. The numbers land in .verify/motion.json for the report.
+ */
+const hook = (page: import('@playwright/test').Page, payload: Record<string, unknown>) =>
+	page.evaluate(
+		(msg) =>
+			new Promise((resolve) => {
+				const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+				ws.onopen = () => ws.send(JSON.stringify({ id: 97, ...msg }));
+				ws.onmessage = () => {
+					ws.close();
+					resolve(null);
+				};
+			}),
+		payload
+	);
+
+const ACTS: Record<string, Record<string, unknown>> = {
+	'tool call': { type: 'jarvis/test/tool_run', tools: ['get_state', 'light.turn_on'], arguments: { entity_id: 'light.hall_lamp' } },
+	'task step': { type: 'jarvis/test/task_run', title: 'Read twelve pages', steps: ['search', 'read', 'write up'] },
+	'memory read': { type: 'jarvis/test/memory_used', entries: ['mem1'] },
+	'sensor change': { type: 'jarvis/test/sensor_change', entity_id: 'sensor.lab_temperature', value: '23.1' },
+	'camera look': { type: 'jarvis/test/camera_look', camera: 'Kitchen', after_ms: 1500 },
+	'held bar': { type: 'jarvis/test/ask_user', question: 'Front door or garage door?' },
+	error: { type: 'jarvis/test/tool_run', tools: ['light.turn_on'], fail_at: 0 },
+	moment: { type: 'jarvis/test/moment', kind: 'reminder', title: 'Check the oven' }
+};
+
+test.describe('when it does things', () => {
+	for (const [name, payload] of Object.entries(ACTS)) {
+		test(`${name}: within the frame budget while it moves`, async ({ page }) => {
+			await freshBoot(page);
+			await page.goto('/');
+			await page.waitForLoadState('networkidle');
+			await expect(page.getByTestId('activity')).toBeVisible();
+			const budget = await page.evaluate(() =>
+				parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--jv-budget-frame'))
+			);
+			expect(budget, 'the frame budget is a token').toBeGreaterThan(0);
+			// Fire, then sample while the choreography is playing — the first
+			// frames after the event are the ones that carry it.
+			await hook(page, payload);
+			const { long, worst } = await frameGaps(page, 90);
+			keep({ acts: { [name]: { worst: Number(worst.toFixed(1)), long: long.length } } });
+			expect(worst, `${name}: a frame took ${worst.toFixed(1)}ms against a budget of ${budget}ms`).toBeLessThan(budget);
+		});
+	}
+
+	test('all of them under reduced motion: nothing runs in the reactor or the strip', async ({ page }) => {
+		await freshBoot(page);
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await page.goto('/');
+		await page.waitForLoadState('networkidle');
+		for (const payload of Object.values(ACTS)) await hook(page, payload);
+		await page.waitForTimeout(600);
+		const running = await page.evaluate(() => {
+			const roots = ['reactor', 'activity', 'caption'].map((id) => document.querySelector(`[data-testid="${id}"]`)).filter(Boolean) as Element[];
+			return roots.reduce((n, el) => n + el.getAnimations({ subtree: true }).filter((a) => a.playState === 'running').length, 0);
+		});
+		expect(running, `${running} animations running under reduced motion`).toBe(0);
 	});
 });

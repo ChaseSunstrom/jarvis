@@ -896,7 +896,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     moments landing — and the reactor's state reflecting real work; the C2 layout kept, every
     value a token. The mock backend emits the same events, so the console is tested against it.
   - Verify: `bash scripts/verify/m52-voice-live.sh`
-- [ ] **M53 — Motion when it does things** · size M · deps M52 · parallel-ok M54
+- [x] **M53 — Motion when it does things** · size M · deps M52 · parallel-ok M54
   - Scope: `docs/design/MOTION.md` — one vocabulary for what moves when Jarvis listens, thinks,
     calls a tool, steps a task, reads memory, reads a sensor, looks at a camera, waits on you,
     speaks, errs; every duration and easing a `motion.*` token; reduced motion honoured; the

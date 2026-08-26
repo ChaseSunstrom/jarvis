@@ -76,3 +76,39 @@ test('moving between pages', async ({ page }) => {
 		await page.waitForTimeout(1400);
 	}
 });
+
+test('jarvis at work', async ({ page }) => {
+	// What the voice tab does while Jarvis works (M52/M53): a tool call sweeps
+	// the blades and draws a call line; a sensor reading counts in; a camera
+	// look irises the lens with "looking · Kitchen" under it; a fact is
+	// remembered and the graph blinks; a moment lands; a task steps. Driven
+	// through the mock's hooks, which fire the core's own bus events.
+	await fresh(page);
+	await page.goto('/');
+	await page.waitForTimeout(1500);
+	const hook = (payload: Record<string, unknown>) =>
+		page.evaluate(
+			(msg) =>
+				new Promise((resolve) => {
+					const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+					ws.onopen = () => ws.send(JSON.stringify({ id: 97, ...msg }));
+					ws.onmessage = () => {
+						ws.close();
+						resolve(null);
+					};
+				}),
+			payload
+		);
+	await hook({ type: 'jarvis/test/tool_run', tools: ['get_state', 'light.turn_on'], arguments: { entity_id: 'light.hall_lamp' } });
+	await page.waitForTimeout(1400);
+	await hook({ type: 'jarvis/test/sensor_change', entity_id: 'sensor.lab_temperature', value: '23.1' });
+	await page.waitForTimeout(1200);
+	await hook({ type: 'jarvis/test/camera_look', camera: 'Kitchen', after_ms: 2200 });
+	await page.waitForTimeout(2600);
+	await hook({ type: 'jarvis/test/memory_used', entries: ['mem1'] });
+	await page.waitForTimeout(1600);
+	await hook({ type: 'jarvis/test/moment', kind: 'reminder', title: 'Check the oven' });
+	await page.waitForTimeout(1200);
+	await hook({ type: 'jarvis/test/task_run', title: 'Read twelve pages', steps: ['search', 'read', 'write up'] });
+	await page.waitForTimeout(2400);
+});
