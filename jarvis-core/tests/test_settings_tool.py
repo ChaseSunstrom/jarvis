@@ -162,13 +162,13 @@ async def test_the_list_is_the_console_registry_not_a_second_one(jarvis, registr
 
 async def test_asked_for_a_setting_that_does_not_exist_the_list_names_the_nearest(registry):
     """"Demo mode" is answered with what the settings are called, not a guess."""
-    listed = await registry.call("list_settings", {"query": "demo mode"}, None)
+    listed = await registry.call("list_settings", {"query": "party mode"}, None)
 
     assert listed["status"] == "ok"
     assert listed["count"] == 0 and listed["settings"] == []
     assert listed["nearest"], "no nearest names to offer"
     assert all(key in SETTINGS_BY_KEY for key in listed["nearest"])
-    assert "No setting matches 'demo mode'" in listed["note"]
+    assert "No setting matches 'party mode'" in listed["note"]
     assert listed["nearest"][0] in listed["note"]
 
 
@@ -288,13 +288,16 @@ async def test_denying_runs_nothing(jarvis, registry):
 async def test_an_unknown_key_is_refused_with_the_nearest_before_anything_is_held(
     jarvis, registry
 ):
-    """"No setting called demo mode; the nearest are …" — and no card."""
+    """"No setting called party mode; the nearest are …" — and no card.
+
+    (It was "demo mode" until M80 made demo mode a real setting; the case is
+    the same — a name that is nobody's — with a name that stays nobody's.)"""
     seen = _raised(jarvis)
 
-    refused = await registry.call("change_setting", {"key": "demo mode", "value": True}, None)
+    refused = await registry.call("change_setting", {"key": "party mode", "value": True}, None)
 
     assert refused["status"] == "error"
-    assert "no setting called 'demo mode'" in refused["error"]
+    assert "no setting called 'party mode'" in refused["error"]
     assert "the nearest are" in refused["error"]
     # Up to the sentence that follows, not the first full stop: keys have dots.
     named = refused["error"].split("the nearest are ")[1].split(". Call")[0].split(", ")

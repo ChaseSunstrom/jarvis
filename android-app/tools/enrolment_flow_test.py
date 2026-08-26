@@ -40,7 +40,8 @@ enrolment had got to with nothing on screen showing it.
 ## No redo
 
 Only FORGET MY VOICE and start over. There is an honest limit here and this file
-pins it too: the API has four endpoints — status, enrol, verify, forget — and no
+pins it too: the API has four doors — status, enrol, verify, forget — plus the
+`enrolling` heartbeat (M79, which stores nothing but a timestamp), and no
 per-sample delete, so "say that one again" can re-offer the phrase and cannot
 remove the sample already stored. The screen has to SAY that rather than imply a
 clean second attempt.
@@ -389,3 +390,21 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_the_phone_says_recording_now_before_it_opens_the_microphone() -> None:
+    """M79. "during enrolment jarvis is listening and tries to respond": the
+    phrase about to be read is not a command. The activity posts the
+    heartbeat before the recorder opens, off the main thread, and does not
+    wait for it — a slow server must not delay the recording, and a failed
+    heartbeat is not worth a dialog."""
+    activity = _read(ACTIVITY)
+    client = _read(CLIENT)
+    assert 'fun enrolling(): Result<JSONObject> = post("/api/voice/speaker/enrolling"' in client
+    start = re.search(r"private fun startCapture\(which: Mode\) \{.*?capture = ByteArrayOutputStream\(\)", activity, re.S)
+    assert start, "startCapture is gone"
+    body = start.group(0)
+    assert "Thread { client.enrolling() }.start()" in body, "the phone records without saying so"
+    assert body.index("requestPermissions") < body.index("client.enrolling()"), (
+        "the heartbeat must come after the permission check — a refused microphone records nothing"
+    )

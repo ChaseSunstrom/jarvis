@@ -31,6 +31,8 @@ construction is the specific lie this table exists to avoid.
 
 from __future__ import annotations
 
+import asyncio
+
 import copy
 import logging
 from collections.abc import Callable, Iterable
@@ -128,6 +130,20 @@ def _number(low: float, high: float, integer: bool = False) -> Callable[[Any], A
         return number
 
     return check
+
+
+def _bool(value: Any) -> bool:
+    """A switch. Accepts what a form, a yaml file or a model sends for one —
+    true/false, yes/no, on/off, 1/0 — and refuses the rest, so "maybe" cannot
+    land in a config file as a truthy string."""
+    if isinstance(value, bool):
+        return value
+    text = str(value if value is not None else "").strip().lower()
+    if text in ("true", "yes", "on", "1", "enabled"):
+        return True
+    if text in ("false", "no", "off", "0", "disabled"):
+        return False
+    raise SettingsError("Expected on or off.")
 
 
 def _one_of(*allowed: str) -> Callable[[Any], str]:
@@ -245,6 +261,23 @@ def _apply_approval_ttl(jarvis: "Jarvis", value: Any) -> bool:
     if registry is None:
         return False
     registry.approval_ttl = value
+    return True
+
+
+def _apply_demo_enabled(jarvis: "Jarvis", value: Any) -> bool:
+    """Demo mode, live (M80): off removes every demo entity through the one
+    delete path; on builds the fixture house again. No restart — the operator
+    asked why the fake lamps were still there, and "after a restart" is not
+    an answer to that."""
+    from .integrations import demo as demo_integration
+
+    async def apply() -> None:
+        if value:
+            await demo_integration.async_setup(jarvis, {"enabled": True})
+        else:
+            await demo_integration.async_remove_all(jarvis)
+
+    jarvis.async_create_task(apply()) if hasattr(jarvis, "async_create_task") else asyncio.ensure_future(apply())
     return True
 
 
@@ -404,6 +437,28 @@ SETTINGS: tuple[SettingSpec, ...] = (
         note="Seconds a Tier-3 request waits for a human before it lapses.",
         validate=_number(30, 3600),
         apply_hook=_apply_approval_ttl,
+    ),
+    SettingSpec(
+        key="demo.enabled",
+        path=("demo", "enabled"),
+        label="Demo mode",
+        group="House",
+        type="boolean",
+        note="The fixture house — fake lights, a lock, a garage door, sensors, a vacuum — for "
+        "trying Jarvis with no hardware. Off removes them at once; a real house wants it off.",
+        validate=_bool,
+        apply_hook=_apply_demo_enabled,
+    ),
+    SettingSpec(
+        key="llm.address",
+        path=("llm", "address"),
+        label="Form of address",
+        group="Assistant",
+        type="string",
+        note="What Jarvis calls you — Sir, Ma'am, a name — whoever is speaking. "
+        "\"none\" for no title at all.",
+        validate=_text(1, 40),
+        apply_hook=_apply_agent_attr("address"),
     ),
     SettingSpec(
         key="llm.question_ttl",

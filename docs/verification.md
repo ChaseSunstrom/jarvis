@@ -787,6 +787,53 @@ jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test
 | Against the house's real instances the client reports the tailnet SearXNG answering nothing and the stack's own answering | Scripted | the gate's last check runs the branch's client from the host with `jarvis-core/.env`'s `SEARXNG_URL` — 26 Aug: five engines timed out there, 5 results from `127.0.0.1:8888` in 4.5 s |
 | A research run on the deployed house reaches a report instead of "nothing was found" | Manual | the live rig's `research-*` scenarios after the next rebuild; recorded in `docs/OVERNIGHT_LOG.md` when run |
 
+### Not listening while you enrol (M79)
+
+`bash scripts/verify/m79-enrolling-not-listening.sh` (26 Aug 23:25: 10/10). Server: `test_voice.py`
+(`test_a_turn_that_starts_during_an_enrolment_yields`), `test_speaker_gate.py` (the heartbeat marks; the
+route set); console: `src/lib/server` vitest (the relay); phone: `android-app/tools/enrolment_flow_test.py`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A sample, a test, or the `POST /api/voice/speaker/enrolling` heartbeat marks an enrolment in progress for twenty seconds | Automated | `test_a_sample_a_test_and_the_heartbeat_all_mark_an_enrolment_in_progress` |
+| A pipeline turn that starts inside the window yields — no model, nothing spoken, `intent-end` says `enrolling` | Automated | `test_a_turn_that_starts_during_an_enrolment_yields` |
+| The console and the phone say "recording now" before their microphone opens; the phone off the main thread and without waiting | Automated | the EnrolVoice grep in the gate; `test_the_phone_says_recording_now_before_it_opens_the_microphone` |
+| Enrolling in the room with the console listening: Jarvis stays quiet | Manual | the operator, after the rebuild |
+
+### Demo mode is a setting (M80)
+
+`bash scripts/verify/m80-demo-mode.sh`. Server: `tests/test_demo_mode.py` (3), the settings suites (52), `test_settings_tool.py`.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `demo.enabled` is a boolean on Settings › House, applied live; "demo mode" resolves to it for the model | Automated | the gate's registry checks; `resolve_setting("demo mode")` |
+| Off removes every demo entity through the one delete path (registry, state, live object) and on brings them back; off at boot clears what an earlier boot registered | Automated | `test_off_removes_the_fixture_house_and_on_brings_it_back`, `test_off_at_boot_clears_what_an_earlier_boot_registered`, `test_the_setting_applies_live_through_the_hook` |
+| The console plan and the mock carry the row (the first boolean row) | Automated | the gate greps both |
+| "Turn off demo mode" on the house, held, approved, and the Devices screen empty of fixtures | Manual | the operator, after the rebuild |
+
+### It knows what it can do (M81)
+
+`bash scripts/verify/m81-knows-what-it-can-do.sh` (26 Aug 23:25: 8/8). Server: `test_llm.py`
+(`test_a_denied_capability_a_tool_provides_is_caught`, `test_the_form_of_address_is_one_line_the_persona_cannot_override`).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| A reply that denies a capability a registered tool provides is caught and sent back for the call; a house without the tool may say so; a question or a held action is not a denial | Automated | the guard test |
+| The rules say software is a coding job and forbid "only a butler" | Automated | the gate greps TOOL_RULES |
+| The form of address is one line the persona cannot override; `llm: address:` and Settings › Assistant set it; "none" for no title; the persona no longer says "Sir or ma'am" | Automated | the address test; the packaging pins for the new key |
+| "You make me a react app" on the house starts a coding job or asks where, never "not a developer" | Manual | the operator, after the rebuild |
+
+### A coding job says when nobody can run it (M82)
+
+`bash scripts/verify/m82-coding-worker.sh`. Server: `test_orchestrator.py`
+(`test_a_remote_job_the_orchestrator_has_failed_fails_the_card_within_a_poll`).
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The watcher reads the remote job's own state; a job the orchestrator failed fails the card within one poll with the orchestrator's words | Automated | the orchestrator test (50) |
+| The orchestrator image can unpack OpenCode (unzip) and proves the binary at build time | Automated / Containerised | the Dockerfile greps; the gate's `opencode --version` in the running container |
+| A coding job on the house runs instead of sitting at "queued" | Scripted | the gate's `POST /code_task` probe, after the rebuild |
+
 ### Said, not shown (M73)
 
 `bash scripts/verify/m73-spoken-form.sh`. Server: `jarvis-core/tests/test_speech_text.py` (the operator's own

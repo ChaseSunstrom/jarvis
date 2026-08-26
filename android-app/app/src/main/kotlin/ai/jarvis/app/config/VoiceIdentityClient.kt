@@ -302,6 +302,15 @@ class VoiceIdentityClient(
      */
     fun verify(pcm: ByteArray): Result<JSONObject> = post("/api/voice/speaker/verify", pcm)
 
+    /**
+     * "Recording now" (M79). Told before the microphone opens for a phrase, so
+     * the house's listeners — this phone's wake word, the console's microphone —
+     * do not take the phrase as a command for the next twenty seconds; the
+     * sample refreshes the mark. A failure here is not one worth showing: the
+     * enrolment goes on, and a turn that slips through is what it was before.
+     */
+    fun enrolling(): Result<JSONObject> = post("/api/voice/speaker/enrolling", ByteArray(0))
+
     /** Forget one person by name (M71), or everyone when [label] is null. */
     fun forget(label: String? = null): Result<Status> =
         delete("/api/voice/speaker" + query(label)).map(Status::from)

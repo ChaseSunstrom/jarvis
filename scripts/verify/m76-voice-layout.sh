@@ -8,7 +8,7 @@ P=jarvis-web/src/routes/+page.svelte
 check "the voice page renders the task dock itself, under the instrument" grep -q 'data-testid="voice-tasks"' "$P"
 check "the layout's floating alerts no longer carry the dock on the voice page" bash -c "awk '/data-testid=\"hud-alerts\"/{f=1} f&&/<\\/div>/{exit} f' jarvis-web/src/routes/+layout.svelte | grep -vq TaskDock"
 check "the stage centres the instrument and takes what the exchange does not" bash -c "grep -q 'justify-content: center' $P && grep -q 'grid-template-rows: minmax(0, 1fr) auto auto auto;' $P"
-check "every breakpoint has the tasks row" bash -c "[ \$(grep -c \"'tasks\" $P) -ge 3 ]"
+check "every breakpoint has the tasks row" bash -c "[ \$(grep -cE \"'tasks|tasks turn'\" $P) -ge 3 ]"
 ensure_web_deps
 ensure_web_build
 run_playwright "the instrument's centre is in the middle band and a task draws below it, at 1440 and 390" 'e2e/voice-layout.spec.ts'

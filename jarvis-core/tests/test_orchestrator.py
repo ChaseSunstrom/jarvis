@@ -928,3 +928,43 @@ async def test_a_fan_out_within_the_cap_claims_nothing_was_dropped(
     result = await call_service(jarvis, "delegate", {"tasks": ["a", "b"]})
     assert "tasks_dropped" not in result and "incomplete" not in result
     await shutdown(jarvis)
+
+
+# --- M82: a coding job says when nobody can run it ------------------------------------
+async def test_a_remote_job_the_orchestrator_has_failed_fails_the_card_within_a_poll(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The operator's React app sat at "running · queued" for an hour while the
+    orchestrator had answered `status: error — opencode binary not installed`
+    from the first poll: the watcher read the wrapper's "ok", not the job's
+    state (26 Aug 2026)."""
+    import asyncio
+
+    from jarvis.integrations import orchestrator as module
+
+    monkeypatch.setattr(module, "POLL_SECONDS", 0.01)
+    fake = FakeOrchestrator(
+        {
+            "POST /code_task": {"job_id": "job-9", "status": "running"},
+            "GET /code_task/job-9": {
+                "job_id": "job-9",
+                "status": "error",
+                "error": "opencode binary not installed in orchestrator image",
+            },
+        }
+    )
+    jarvis, registry = await build(tmp_path, fake)
+    assert registry is not None
+    result = await registry.call("code_task", {"repo": "jarvis", "instruction": "make a react app"})
+    assert result["status"] == "started", result
+
+    task = None
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        tasks = [t for t in jarvis.tasks.tasks if t.kind == "code_task"]
+        if tasks and tasks[-1].status == "error":
+            task = tasks[-1]
+            break
+    assert task is not None, "the card never learned the job had failed"
+    assert "opencode binary not installed" in (task.error or "")
+    await shutdown(jarvis)

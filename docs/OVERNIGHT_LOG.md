@@ -746,3 +746,12 @@ is quiet. Done since:
   same hour: n8n (M77), demo mode as a setting (M80), a capability denied though a tool has it
   and "ma'am" (M81), a coding job stuck in "queued" because the agents profile was not running
   (M82), and "pull things up" — panels around the instrument, movable (M83).
+- 23:37 — M76, M79, M80, M81 ticked (gates 9/9, 10/10, 6/6, 8/8). M76's earlier "20 %" was the
+  spec's own socket path hanging, not the layout; on a phone the page is taller than the screen
+  and the instrument leads it, which the spec now says. M82 built: the stuck React app was a job
+  the orchestrator had already failed — "opencode binary not installed", because the image's
+  three-minute apt budget killed the package list on this network, the WARN swallowed it and the
+  image had no curl — and a watcher reading its wrapper's "ok"; the watcher reads the job's own
+  state now, and the image gets unzip and a proper budget. The M83 surface is under way. CI on
+  0a4756b: the enrol spec had not been told about M79's heartbeat, and the voice-layout spec
+  carried the wrong socket path; both fixed here.

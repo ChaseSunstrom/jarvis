@@ -101,6 +101,11 @@ export const FEATURED: Readonly<Record<SettingsSectionId, readonly FeaturedSetti
 	],
 	house: [
 		{
+			key: 'demo.enabled',
+			label: 'Demo mode',
+			why: 'The fixture house — fake lights, a lock, a garage door, sensors — for trying Jarvis with no hardware. Off removes them at once; a real house wants it off.'
+		},
+		{
 			key: 'jarvis.time_zone',
 			label: 'Time zone',
 			why: 'When “at seven” is. Every timed automation and every clock reads this.'

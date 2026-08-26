@@ -109,6 +109,9 @@ Operating rules (these override style, always):
 5. Keep spoken replies to one or two sentences unless asked for detail.
 """
 
+#: The form of address a house speaks with unless `llm: address:` says otherwise.
+DEFAULT_ADDRESS = "Sir"
+
 TOOL_RULES = """\
 Tool use:
 - Control and read the house through the tools; never claim a state you
@@ -127,6 +130,12 @@ Tool use:
 - "Note that ...", "make a note", and anything longer than a sentence are
   note_create. One-line facts about the user are remember, which is repeated
   to you on every future turn.
+- Building, writing or changing software — an app, a script, a site, a
+  program, a repository — is a coding job: start_coding_job (and
+  list_code_repositories / create_repository for where it goes). You are not
+  "only a butler": never say you cannot build software, and never deny a
+  thing one of your tools does. If something is genuinely outside the tools,
+  say which tool is missing, not that you are the wrong kind of assistant.
 - When you have acted, say what you did — the device and the state, "the
   bed light is on" — not only "done": the confirmation is how the user knows
   which thing changed.
@@ -530,6 +539,7 @@ class ConversationAgent:
         persona: str | None = None,
         persona_file: str | Path | None = None,
         max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        address: str = DEFAULT_ADDRESS,
         constrained_retry: bool = True,
         memory: ConversationStore | None = None,
         options: dict[str, Any] | None = None,
@@ -550,6 +560,11 @@ class ConversationAgent:
         #: note says exactly that rather than claiming an effect it has not got.
         self.fast_model: str = ""
         self.max_tool_rounds = max(1, int(max_tool_rounds or DEFAULT_MAX_TOOL_ROUNDS))
+        #: How the user is addressed — "Sir" by default — pinned here and put
+        #: in the prompt, because the persona's "Sir or ma'am" let the model
+        #: pick one per turn (26 Aug 2026: "ma'am" in one breath, "Sir" in
+        #: the next) and a speaker's name is not a licence to guess (M81).
+        self.address = str(address or DEFAULT_ADDRESS).strip() or DEFAULT_ADDRESS
         #: Whether the retry after a narrated-not-made call is grammar
         #: constrained (M60). On by default: it costs nothing on a model that
         #: calls tools properly, because that model never reaches the retry.
@@ -738,6 +753,15 @@ class ConversationAgent:
             _LOGGER.info("Forgot a fact from %d transcript turn(s)", blanked)
         return blanked
 
+    def address_rule(self) -> str:
+        """One line the persona cannot override: who the user is called."""
+        if not self.address or self.address.lower() in ("none", "off", "nobody"):
+            return "Do not use a title or a form of address for the user."
+        return (
+            f"Address the user as {self.address}, whoever is speaking and whatever their "
+            "name — never infer a different form of address from a name or a voice."
+        )
+
     def system_prompt(
         self, query: str = "", semantic: dict[str, float] | None = None
     ) -> str:
@@ -765,7 +789,7 @@ class ConversationAgent:
         the cache bought nothing.
         """
         areas = ", ".join(a.name for a in self.jarvis.areas.areas.values())
-        parts = [self.persona().strip(), TOOL_RULES.strip()]
+        parts = [self.persona().strip(), self.address_rule(), TOOL_RULES.strip()]
         toolbox = self.toolbox_rule()
         if toolbox:
             parts.append(toolbox)
@@ -1648,6 +1672,35 @@ class ConversationAgent:
                         )
                         constrain_next = self.constrained_retry
                         continue
+                    # A capability denied though a tool provides it (M81):
+                    # "I'm a butler, not a developer" with start_coding_job in
+                    # the registry. Same shape as the claimed action above:
+                    # told once, asked to call, the note never shown.
+                    denied = None if narrated else denied_capability(
+                        request_text, "".join(said), self.tools.names()
+                    )
+                    if denied:
+                        nudged = True
+                        _LOGGER.warning(
+                            "The model denied a capability it has (%s) for %r; asking it to call",
+                            denied, request_text[:80],
+                        )
+                        result.preamble += "".join(said)
+                        messages.append(self._assistant_message_text("".join(said)))
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"You said you cannot do that, but your tool {denied} does "
+                                    "exactly that. Call it now with what the request asked for. "
+                                    "Then answer the request itself in one sentence — no "
+                                    "apology, and no mention of this note, which the user never "
+                                    "sees. If the tool refuses, say what it said."
+                                ),
+                            }
+                        )
+                        constrain_next = self.constrained_retry
+                        continue
                     if narrated:
                         nudged = True
                         _LOGGER.warning(
@@ -2110,6 +2163,49 @@ _ACTION_CLAIMED = re.compile(
     r"muted|armed|disarmed|enabled|disabled|cancelled|canceled) (?:it|them|the|that|off|on))\b",
     re.IGNORECASE,
 )
+#: A capability the model has, denied. "you make me a react app" →
+#: "I'm a butler, not a developer" (26 Aug 2026) while start_coding_job sat
+#: in the registry and another turn was asking which repository to use.
+#: Caught like a claimed action: the reply is sent back for the call.
+_CAPABILITY_REQUEST = {
+    "start_coding_job": re.compile(
+        r"\b(?:make|build|create|write|code|develop|scaffold|set up|generate)\b.{0,60}\b"
+        r"(?:app|application|website|web ?site|site|script|program|repo(?:sitory)?|"
+        r"react|python|typescript|javascript|component|api|service|tool)\b",
+        re.IGNORECASE | re.S,
+    ),
+    "deep_research": re.compile(
+        r"\b(?:research|look up|find out|investigate|dig into)\b", re.IGNORECASE
+    ),
+    "remove_entities": re.compile(r"\b(?:remove|delete|forget)\b.{0,40}\b(?:entit|device|element|thing)", re.IGNORECASE),
+}
+_CAPABILITY_DENIED = re.compile(
+    r"\b(?:beyond my (?:remit|abilities|capabilit)|not a developer|not a programmer|"
+    r"(?:i(?:'m| am) (?:only |just )?a butler)|i (?:can(?:'|no)t|cannot|am unable to|"
+    r"am not able to|have no (?:way|tool|means)) (?:to )?(?:build|write|create|make|code|develop|"
+    r"research|look (?:that|it|this) up|remove|delete)|"
+    r"no tool for (?:that|this|building|deleting|removing|research))\b",
+    re.IGNORECASE,
+)
+
+
+def denied_capability(request: str, reply: str, tools: Iterable[str]) -> str | None:
+    """The tool the reply denies having, or None.
+
+    The request asked for something a registered tool does; the reply says it
+    cannot. Only a registered tool counts — a house without the code
+    integration is allowed to say it cannot build an app — and only a denial,
+    not a question or a held action.
+    """
+    if not request or not reply or not _CAPABILITY_DENIED.search(reply):
+        return None
+    names = set(tools)
+    for tool, pattern in _CAPABILITY_REQUEST.items():
+        if tool in names and pattern.search(request):
+            return tool
+    return None
+
+
 _ACTION_DECLINED = re.compile(
     r"\b(can(?:'|no)t|cannot|unable|not able|won't|will not|did not|didn't|haven't|"
     r"have not|no such|isn't|is not|already|waiting on|needs your|approval)\b",

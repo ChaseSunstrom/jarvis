@@ -413,6 +413,22 @@ export function makeWorld() {
 			choices: ['en_GB-alan-medium', 'en_US-amy-medium', 'en_GB-northern_english_male-medium']
 		},
 		{
+			// Demo mode (M80): the fixture house as a switch. A boolean row —
+			// the first the registry has — so the plain section's toggle is
+			// exercised by something real.
+			key: 'demo.enabled',
+			label: 'Demo mode',
+			group: 'House',
+			type: 'boolean',
+			apply: 'live',
+			note: 'The fixture house of fake devices. Off removes them at once.',
+			value: true,
+			yaml_value: true,
+			source: 'yaml',
+			unapplied_reason: null,
+			package: 'demo-house'
+		},
+		{
 			// The voice's pace (M70): a number Piper takes at START, so the
 			// registry marks it `restart` and the row must say where the real
 			// knob is rather than promise a live change.

@@ -419,6 +419,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # for ever, which is what it did.
     call_timeout = float(options.get("call_timeout") or 0.0)
     max_tool_rounds = int(options.get("max_tool_rounds") or DEFAULT_MAX_TOOL_ROUNDS)
+    address = str(options.get("address") or "Sir").strip() or "Sir"
     # Kept on the instance rather than read where it is used: the pool is built
     # lazily by whoever fans out first, and by then the config is gone.
     jarvis.data[DATA_MAX_CONCURRENT] = _bounded_concurrency(options.get("max_concurrent"))
@@ -500,6 +501,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         persona=options.get("persona"),
         persona_file=options.get("persona_file"),
         max_tool_rounds=max_tool_rounds,
+        address=address,
         constrained_retry=bool(options.get("constrained_tool_calls", True)),
         memory=memory,
         options=_as_dict(options.get("options")),

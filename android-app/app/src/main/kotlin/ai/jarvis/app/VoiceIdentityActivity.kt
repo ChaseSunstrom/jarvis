@@ -429,6 +429,10 @@ class VoiceIdentityActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
             return
         }
+        // Not listening while you enrol (M79): the phrase about to be read is
+        // not a command. Sent before the recorder opens, off the main thread,
+        // and never waited for.
+        Thread { client.enrolling() }.start()
         capture = ByteArrayOutputStream()
         val streamer = MicStreamer(
             onPcm = { buffer, length ->

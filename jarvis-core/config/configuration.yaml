@@ -296,6 +296,9 @@ llm:
 
   # Seconds a Tier-3 approval request stays valid before it expires unused.
   approval_ttl: 300
+  # What Jarvis calls you, whoever is speaking: the persona's "Sir or ma'am"
+  # let the model pick one per turn (M81). "none" for no title.
+  address: Sir
   # Seconds a QUESTION (ask_user) waits for its answer — its own clock, longer,
   # because the person it waits on has walked off (M66).
   question_ttl: 1800

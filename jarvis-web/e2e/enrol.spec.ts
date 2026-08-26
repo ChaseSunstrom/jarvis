@@ -119,8 +119,11 @@ test('enrolling under a name sends the name with every sample, and a new name is
 	await page.waitForTimeout(1200);
 	await page.getByTestId('enrol-stop-0').click();
 	await expect(page.getByTestId('enrol-record-0')).toHaveText('AGAIN');
-	expect(sent).toHaveLength(1);
-	const query = new URL(sent[0]).searchParams;
+	// Two writes per phrase since M79: "recording now" before the microphone
+	// opens, then the sample — the heartbeat carries no name, the sample does.
+	expect(sent).toHaveLength(2);
+	expect(sent[0]).toContain('/api/voice/speaker/enrolling');
+	const query = new URL(sent[1]).searchParams;
 	expect(query.get('label')).toBe('Ted');
 	expect(query.get('rate')).toBe('16000');
 	expect(query.get('width')).toBe('2');

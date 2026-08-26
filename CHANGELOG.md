@@ -8,6 +8,21 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M79 — not listening while you enrol.** The phrases read aloud for a voiceprint no longer
+  reach the house as commands: a sample, a test, or the console's and the phone's "recording
+  now" heartbeat marks an enrolment in progress for twenty seconds, and any turn that starts
+  inside it yields.
+- **M80 — demo mode is a setting.** Settings › House has a Demo mode switch (`demo.enabled`);
+  off removes every fixture entity at once through the one delete path, on brings the demo
+  house back; "turn off demo mode" by voice is a held setting change.
+- **M81 — it knows what it can do.** Building software is a coding job by rule; a reply that
+  denies a capability a tool provides ("I'm a butler, not a developer") is caught and sent back
+  for the call; the form of address (`llm: address: Sir`, Settings › Assistant) is one line the
+  persona cannot override — no more "ma'am" in one breath and "Sir" in the next.
+- **M82 — a coding job says when nobody can run it.** A remote coding job the orchestrator has
+  already failed fails the card within one poll (the watcher read the wrapper's "ok" and left
+  "running · queued" for an hour); the orchestrator image installs unzip so OpenCode's installer
+  can unpack, and proves the binary at build time.
 - **M73 — said, not shown.** The reply the synthesiser gets is words: `**Price:** ~$78,721, up
   0.15% over 24 hours` is spoken as "Price: about 78,721 dollars, up 0.15 percent over 24 hours";
   bullets, headings, links, code, currency, percent, units (GB, kW, °C…), ratios and arrows are

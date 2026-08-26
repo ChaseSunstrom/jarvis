@@ -1189,7 +1189,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 23:14, built, not ticked: web suite 121 (fallback first after a failure), browser suite
     349 (text first, JavaScript pages fall back, a LAN redirect refused on the shortcut), research
     suite 32; the gate's last check reads a real news page through the rebuilt jarvis-browser.
-- [ ] **M76 — Jarvis in the middle, the tasks below** · size S · deps M49 · parallel-ok M73
+- [x] **M76 — Jarvis in the middle, the tasks below** · size S · deps M49 · parallel-ok M73
   - Scope: "can we have the tasks popups show below jarvis on the voice page? … move jarvis to be
     in the middle of the page instead of kind of near the top" — the reactor centred in the
     stage; the task dock rendered by the voice page under the instrument rather than over it
@@ -1198,6 +1198,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 23:14, built, not ticked: look/HUD/tasks/states 63/63 with the new grid; a browser
     measurement of the instrument's centre reads 38 % in one run and 20 % in the spec's — being
     pinned down before the tick.
+  - 26 Aug 23:32: gate 9/9 — the instrument's centre measured at 38 % of a 1440×900 viewport (the
+    earlier 20 % was the spec's own socket path hanging, and on a phone the page is taller than
+    the screen, where the instrument leads rather than floats); a running task's dock draws under
+    it as the page's own; look/HUD/tasks/states 63/63; token lint clean.
 - [ ] **M77 — n8n: the house's workflows** · size M · deps M47 · parallel-ok M75
   - Scope: "allow jarvis to create/manage my n8n stuff … talk to the AI assistant on n8n to
     create/manage/run workflows" (https://n8n.tail05d9af.ts.net/assistant). An `n8n` integration
@@ -1224,7 +1228,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 23:14: gate 7/7 — the second listener yields (voice suite), the duplicate alarm is refused
     and named (schedule suite 34). The room test — a phone and a console — is the operator's, after
     the rebuild.
-- [ ] **M79 — Not listening while you enrol** · size S · deps M71, M78 · parallel-ok M73
+- [x] **M79 — Not listening while you enrol** · size S · deps M71, M78 · parallel-ok M73
   - Scope: "during enrolment jarvis is listening and tries to respond" — the phrases read aloud
     for a voiceprint reach a listener as commands. An enrolment in progress is a state of the
     house: fetching the phrases or uploading a sample marks it for a short window, and any
@@ -1235,7 +1239,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 26 Aug 23:14, built, not ticked: the server marks an enrolment on a sample, a test or the
     console's heartbeat before it records; a pipeline turn inside the window yields (voice 85,
     speaker gate 64, console server tests 74). The phone's heartbeat and the gate are next.
-- [ ] **M80 — Demo mode is a setting** · size S · deps M67, M69 · parallel-ok M81
+  - 26 Aug 23:32: gate 10/10 — the server marks an enrolment on a sample, a test or the heartbeat;
+    a turn inside the window yields; the console and the phone say "recording now" before their
+    microphone opens (voice 85, speaker gate 64, the phone's mirror 18/18, the relay tests 74).
+- [x] **M80 — Demo mode is a setting** · size S · deps M67, M69 · parallel-ok M81
   - Scope: "I can't unset the demo mode still, so it still has a bunch of default stuff that
     doesn't exist" — the fixture house (`packages/demo-house.yaml`, the `demo` integration) has
     no switch. `demo.enabled` in the settings registry (Settings › House, "Demo mode"), applied
@@ -1243,19 +1250,34 @@ web and of Tasker. Local only. Each row here is planned in that document.
     creating them; on brings them back. So "turn off demo mode" by voice is a held setting
     change (M67) and the operator's first question of the evening has an answer.
   - Verify: `bash scripts/verify/m80-demo-mode.sh`
-- [ ] **M81 — It knows what it can do** · size S · deps M19, M43 · parallel-ok M80
+  - 26 Aug 23:37: gate 6/6 — `demo.enabled` on Settings › House, live: off removes the fixture house
+    through the one delete path, on brings it back, off at boot clears stale entries; "demo mode"
+    resolves to it for the model (demo-mode suite 3, settings suites 52; M67's tests now use
+    "party mode" for the name that is nobody's). The Devices screen without fixtures is the
+    operator's to see after the rebuild.
+- [x] **M81 — It knows what it can do** · size S · deps M19, M43 · parallel-ok M80
   - Scope: "you make me a react app" → "I'm a butler, not a developer" while another turn was
     already asking which repository to put it in; and "ma'am" for a house that says "Sir". The
     rules tell the model that building software is a coding job; a reply that denies a
     capability a tool provides is caught and sent back for the call, like a claimed action; the
     form of address is pinned in the persona and never inferred from who is speaking.
   - Verify: `bash scripts/verify/m81-knows-what-it-can-do.sh`
+  - 26 Aug 23:32: gate 8/8 — the rules name the coding job, the denial guard catches "not a
+    developer" for a registered tool and sends the reply back for the call, the address is one
+    line (`llm: address: Sir`, Settings › Assistant) the persona no longer contradicts (test_llm 81).
 - [ ] **M82 — A coding job says when nobody can run it** · size S · deps M19 · parallel-ok M80
-  - Scope: "this just gets stuck in queued" — the orchestrator and the sandbox are behind
-    `--profile agents` on purpose and were not running; the job queued for ever, silently. A
-    queued job with no worker says so on the card within seconds and names the command; the
-    Code screen shows the worker's state; this house runs the profile.
+  - Scope: "this just gets stuck in queued" — the orchestrator had failed the job from its
+    first poll ("opencode binary not installed": the image lacked unzip and the installer's
+    failure was swallowed), and the core's watcher read its wrapper's "ok" instead of the job's
+    state, so the card sat at running · queued for the whole poll budget. The watcher reads the
+    job's own state and a failed job fails the card within one poll; the image unpacks OpenCode
+    and proves the binary at build time; this house runs the `agents` profile.
   - Verify: `bash scripts/verify/m82-coding-worker.sh`
+  - 26 Aug 23:37, built, not ticked: the watcher reads the job's own state and a failed job fails
+    the card within one poll (orchestrator suite 50); the image gets unzip and a fifteen-minute
+    apt budget (three minutes killed the package list on this network, the WARN hid it, and the
+    image shipped without curl — so OpenCode never installed). The third rebuild is running; the
+    gate's last two checks want the binary in the container.
 - [ ] **M83 — Pull things up** · size L · deps M63, M76 · parallel-ok M77
   - Scope: "have jarvis able to pull things up and display them on the voice screen, kind of
     like iron man, and able to move things around" — a `show` tool (Tier 1) puts a thing on the

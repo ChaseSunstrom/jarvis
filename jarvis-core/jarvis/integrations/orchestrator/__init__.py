@@ -855,7 +855,16 @@ def _register_tools(jarvis: "Jarvis", client: OrchestratorClient) -> None:
             status = await async_code_status(client, job_id)
             if not isinstance(status, dict):
                 continue
-            state = str(status.get("status") or "")
+            # The REMOTE job's state, not the wrapper's. `async_code_status`
+            # answers `{"status": "ok", "job_status": …}` for the model's
+            # sake; reading its "ok" here kept a job the orchestrator had
+            # already failed ("opencode binary not installed") at "running ·
+            # queued" for the whole poll budget — the operator's stuck React
+            # app on 26 Aug 2026 (M82). A wrapper error is an error too.
+            if status.get("status") == "error" and not status.get("job_status"):
+                state = "error"
+            else:
+                state = str(status.get("job_status") or "")
             if state and state != seen:
                 seen = state
                 registry.output(task_id, f"job {job_id}: {state}", stream="note")

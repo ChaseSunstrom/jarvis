@@ -503,8 +503,43 @@ def build_entities(prefix: str = "") -> dict[str, list[DemoEntity]]:
     }
 
 
+async def async_remove_all(jarvis: "Jarvis") -> int:
+    """Take the demo house down (M80): every demo entity through the one
+    delete path, so the registries, the state and the live objects agree,
+    and the dashboards, the exposure list and the model's house all lose
+    them at once. Returns how many went."""
+    store = jarvis.data.setdefault(DOMAIN, {})
+    created: dict[str, DemoEntity] = store.get("entities") or {}
+    # Registry entries from an earlier boot too — the platform is "demo".
+    ids = set(created)
+    for entry in list(jarvis.entities.entities.values()):
+        if getattr(entry, "platform", "") == DOMAIN:
+            ids.add(entry.entity_id)
+    removed = 0
+    for entity_id in sorted(ids):
+        try:
+            result = await jarvis.async_remove_entity(entity_id)
+        except Exception:  # noqa: BLE001 - one stubborn entity must not keep the rest
+            _LOGGER.exception("Demo: could not remove %s", entity_id)
+            continue
+        if isinstance(result, dict) and result.get("removed"):
+            removed += 1
+    created.clear()
+    store["platforms"] = {}
+    _LOGGER.info("Demo: removed %d entities", removed)
+    return removed
+
+
 async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     options = config if isinstance(config, dict) else {}
+    # Demo mode is a setting (M80): `demo: enabled: false` — set from Settings
+    # › House or by "turn off demo mode" under approval — leaves a real house
+    # with no fixture in it. Off at boot also clears what an earlier boot
+    # registered, so the Devices screen does not keep a lamp that never was.
+    if not bool(options.get("enabled", True)):
+        removed = await async_remove_all(jarvis)
+        _LOGGER.info("Demo: off (%d stale entities cleared)", removed)
+        return True
     create_areas = bool(options.get("create_areas", True))
     prefix = str(options.get("prefix", "") or "")
 
