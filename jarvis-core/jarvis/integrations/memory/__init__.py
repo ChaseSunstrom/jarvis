@@ -1492,8 +1492,9 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
             # fourth rebuilt stack). NOW: confirm it is forgotten. LATER: no
             # repeating, no hinting.
             out["message"] = (
-                "Forgotten — tell the user so now, in one sentence. From the next "
-                "turn on, do not repeat what it said, even from earlier in this "
+                "Forgotten. Tell the user so now, in one sentence that uses the "
+                "word — \"Forgotten, Sir.\" — not \"done\". From the next turn on, "
+                "do not repeat what it said, even from earlier in this "
                 "conversation, and do not hint that anything was forgotten: if "
                 "asked, answer only that you have nothing recorded about it."
             )
