@@ -665,6 +665,35 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### Motion when it does things (M53)
+
+`bash scripts/verify/m53-motion-acts.sh`. Each choreography measured; nothing moves under reduced motion.
+
+| Claim | Level | Proof |
+|---|---|---|
+| The vocabulary names every act — listening, thinking, a tool call, a task step, a memory read, a sensor change, a camera look, waiting on you, speaking, an error, a moment — with what moves and its tokens | Automated | the gate reads `docs/design/MOTION.md` for each act; every token it names is in `design/tokens.json` and the generated files are current |
+| Eight choreographies stay inside the frame budget while they play | Automated | `motion.spec.ts` "when it does things": each act fired through a mock hook, ninety frames sampled, the worst under `--jv-budget-frame`; the numbers in `.verify/motion.json` |
+| All of them at once leave nothing running under reduced motion in the reactor, the strip or the caption | Automated | `motion.spec.ts`: `getAnimations({subtree})` across the three roots after every act, zero running |
+| The reactor sweeps on a tool call, beats while speaking, irises while looking; the held bar pulses; only the strip's newest row moves | Automated *for the plumbing* | `Reactor.svelte` (`work`, `looking`, `[data-state='speaking']`), `Approvals.svelte`, `Activity.svelte`; whether it *reads* as work is the recording |
+| No value typed by hand | Automated | the token lint, clean |
+| The signature recording of Jarvis at work is current | Automated *by construction* | the gate regenerates `docs/motion-review/5-at-work.webm` |
+| Whether it is *good* | **Needs eyes** | `docs/motion-review/` |
+
+### VOICE, alive (M52)
+
+`bash scripts/verify/m52-voice-live.sh`. The graph and the activity strip, driven by events.
+
+| Claim | Level | Proof |
+|---|---|---|
+| The knowledge graph is on the voice tab with every note and remembered fact, and lights when a turn reads a fact or a note tool touches a note | Automated | `e2e/voice-live.spec.ts`: five nodes from the mock; `jarvis/test/memory_used` lights a node and it settles within one blink |
+| Every kind of work is a row as it happens — tool (start → result, failure named), task (steps and status), sensor (reading and unit), camera (live while it lasts), memory, moment, approval | Automated | `voice-live.spec.ts` drives each through a mock hook that fires the core's own bus event; `src/lib/activity.test.ts` pins the mapping |
+| A camera being looked at is said under the reactor while it lasts | Automated | `voice-live.spec.ts`: the caption reads *looking · Kitchen*, then does not |
+| The strip is a glance, not a log: twelve rows, newest first | Automated | `voice-live.spec.ts` and `activity.test.ts` (fifteen tools → twelve rows, `tool_14` first) |
+| Nothing in the strip animates under reduced motion | Automated | `voice-live.spec.ts` counts running animations in the strip: zero |
+| The voice tab still holds at five widths and in its four states; the look is unchanged; no value typed by hand | Automated | `home.spec.ts`, `hud.spec.ts`, `responsive.spec.ts`, `states.spec.ts`, `look.spec.ts -g Voice`, the token lint |
+| The voice tab opens in the real console against the stack with no console error | Live | `LIVE_CONSOLE_ROUTES=/ python3 testing/live/console_pass.py` |
+| Whether it looks *alive* | **Needs eyes** | `docs/ui-review/hud/` |
+
 ### The phone, on the same look (M51)
 
 `bash scripts/verify/m51-android-c2.sh`. Build, unit, lint and goldens — no device.

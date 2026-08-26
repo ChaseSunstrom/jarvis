@@ -198,3 +198,13 @@ The knowledge graph: notes and memory entries as nodes, `[[links]]` and shared
 tags as edges, laid out by `$lib/knowledge/graph` (seeded, so reproducible)
 and drawn in with the stagger. `pulses` lights the nodes something touched for
 one `--jv-dur-blink`; `onselect` says what selecting means.
+
+## Activity
+
+The voice tab's activity strip: what Jarvis is doing, as hairline rows, newest
+first — a tool call as it starts and finishes, a task stepping, a sensor
+changing, a camera being looked at, a fact remembered, a moment landing, an
+approval waiting. The rows come from `$lib/activity` (`activityFrom` maps a
+bus event to a row; `applyActivity` keeps them in order and capped). Only the
+newest row enters with motion; a live row's dot pulses; nothing moves under
+reduced motion. Props: `rows`, `empty`, `testid`.

@@ -37,6 +37,11 @@ const props: Record<string, Record<string, unknown>> = {
 	ScreenTitle: { title: 'House', lede: 'What is on.' },
 	StagesBar: { stages: [{ key: 'stt', label: 'transcribe', ms: 412 }] },
 	CallLine: { name: 'light.turn_on', args: 'kitchen_lamp', state: 'ok', ms: 84 },
+	Activity: {
+		rows: [
+			{ id: 'tool:1', kind: 'tool', title: 'get_state', detail: 'entity_id: light.hall', state: 'live', at: 1 }
+		]
+	},
 	DayStrip: { nodes: [{ at: '07:00', label: 'briefing', state: 'done' }] },
 	ProgressRing: { size: 200, done: 1, running: 1, total: 3, percent: 40, title: 'A task' },
 	Figure: { value: 31.4, unit: 'tok/s', decimals: 1 },

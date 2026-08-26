@@ -890,7 +890,7 @@ of anything online, cameras, sensors, the sky; the voice tab alive; simpler
 menus and the real models; motion when it acts; the phone the equal of the
 web and of Tasker. Local only. Each row here is planned in that document.
 
-- [ ] **M52 — VOICE: the graph and the living activity around the reactor** · size L · deps M49, M50 · parallel-ok M54, M56, M57, M58
+- [x] **M52 — VOICE: the graph and the living activity around the reactor** · size L · deps M49, M50 · parallel-ok M54, M56, M57, M58
   - Scope: the knowledge graph on the voice tab, lighting as Jarvis uses it; a live activity
     strip fed by the bus — tool calls as they happen, task steps, sensor changes, camera looks,
     moments landing — and the reactor's state reflecting real work; the C2 layout kept, every

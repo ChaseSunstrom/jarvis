@@ -37,5 +37,6 @@ export { default as DayStrip } from './DayStrip.svelte';
 export { default as ProgressRing } from './ProgressRing.svelte';
 export { default as Figure } from './Figure.svelte';
 export { default as Graph } from './Graph.svelte';
+export { default as Activity } from './Activity.svelte';
 
 export type { Status } from './ScreenState.svelte';

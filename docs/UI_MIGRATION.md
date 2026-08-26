@@ -188,6 +188,11 @@ The library (`src/lib/ui`), re-skinned once so the pages inherit:
 - [x] New: `TopBar`, `SectionStrip`, `ScreenTitle`, `StatusReadout`, `StagesBar`, `CallLine`, `DayStrip`, `ProgressRing` (a `Reactor` preset), `Graph` (knowledge, with `$lib/knowledge/graph`'s seeded layout), `Figure` (count-up) — each with a `@component` block, a README section, SSR/unit tests, and a style-guide entry.
 - [x] `chrome.css` · **migrated** · the grid, the brackets, the skeleton classes and every `.console .thing` deleted; what remains is the frame, the motion primitives, the toasts and the palette.
 
+### M52 / M53 — the voice tab, alive, and moving for what it does
+
+- [x] `/` VOICE · **extended** · the knowledge graph (`Graph`, 300px) under the transcript, lighting when a turn reads a fact or a note tool touches a note; the activity strip (`Activity`, `$lib/activity`) under the turn — tool calls, task steps, sensor readings, camera looks, memory, moments, approvals, newest first, twelve rows; the caption says *looking · Kitchen* while a camera is looked at.
+- [x] `Reactor` · **extended** · `work` sweeps the blades once per tool call; speaking runs them in cadence on `--jv-rx-speak`; `looking` irises the lens; a failed call flashes the rim to the error palette for one blink. `Approvals` pulses its warn rule while held. All still under reduced motion; each choreography measured (`motion.spec.ts`), recorded (`docs/motion-review/5-at-work.webm`).
+
 ### M51 — the phone, on the same look
 
 - [x] HUD (`MainActivity`, `JarvisOrbView` / `ReactorOrb.kt` / `SiriOrbView`) · **old** · GLSL sphere, pill PAIR / SETTINGS → the instrument drawn on Canvas from the same geometry table, the same four states from `color.orb.*`, the same dock. — **done (M51)**: `ReactorOrb.kt` draws bezel, blades, coil, level, lens and dot from the same geometry contract as the web; both orb views use it; the sphere shader, its specular and the brackets are gone; three hairline field circles behind.

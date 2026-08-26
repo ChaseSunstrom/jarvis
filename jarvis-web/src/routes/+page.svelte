@@ -5,7 +5,12 @@
 	import { Player } from '$lib/audio/playback';
 	import { EnergyVAD } from '$lib/wake';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
-	import { CallLine, Panel, Reactor, ScreenState, StagesBar } from '$lib/ui';
+	import { Activity, CallLine, Graph, Panel, Reactor, ScreenState, StagesBar } from '$lib/ui';
+	import { getContext } from 'svelte';
+	import { buildGraph, touchedBy, type MemoryLike, type NoteLike } from '$lib/knowledge/graph';
+	import { applyActivity, lookingCaption, type ActivityRow } from '$lib/activity.svelte';
+	import { tokenMs } from '$lib/tokens';
+	import type { Connection } from '$lib/connection';
 	import { setHudStatus } from '$lib/hudStatus.svelte';
 	import { prefersReducedMotion, watchReducedMotion } from '$lib/motion';
 	import {
@@ -27,7 +32,7 @@
 		getConversation,
 		listConversations
 	} from '$lib/conversations';
-	import type { ConversationSummary } from '$lib/jarvisClient';
+	import type { BusEvent, ConversationSummary } from '$lib/jarvisClient';
 
 	// `turnState` rather than `state`: a variable called `state` in a component
 	// makes `$state` ambiguous to the tooling — svelte-check reads it as the
@@ -87,6 +92,95 @@
 
 	let ws: WebSocket | null = null;
 	let client: PipelineClient | null = null;
+
+	// --- what Jarvis is doing, and what it knows (M52) ----------------------
+	// The voice screen has no link of its own — its socket is the pipeline's —
+	// so the graph and the activity strip read the console's link, handed
+	// down by the layout as a getter (it comes and goes with the connection).
+	const getConn = getContext<(() => Connection | null) | undefined>('console-connection');
+	let conn = $derived(getConn?.() ?? null);
+	let notes = $state<NoteLike[]>([]);
+	let memory = $state<MemoryLike[]>([]);
+	let pulses = $state<{ id: string; at: number }[]>([]);
+	let activity = $state<ActivityRow[]>([]);
+	// Motion when it does things (M53): a tool call sweeps the blades once
+	// (`work` counts calls; the reactor sweeps on each change), a failed one
+	// flashes the rim to the error palette for one blink, a camera look irises
+	// the lens while it lasts.
+	let work = $state(0);
+	let flash = $state<'error' | ''>('');
+	let flashTimer: ReturnType<typeof setTimeout> | null = null;
+	function flashError(): void {
+		flash = 'error';
+		if (flashTimer) clearTimeout(flashTimer);
+		flashTimer = setTimeout(() => (flash = ''), tokenMs('--jv-dur-blink'));
+	}
+	const looking = $derived(lookingCaption(activity) !== '');
+	const graph = $derived(buildGraph(notes, memory));
+
+	async function loadKnowledge(live: Connection): Promise<void> {
+		try {
+			const [n, m] = await Promise.all([
+				live.client.command<{ notes: NoteLike[] }>({ type: 'jarvis/notes/list' }),
+				live.client.command<{ entries: MemoryLike[] }>({ type: 'jarvis/memory/list' })
+			]);
+			notes = n?.notes ?? [];
+			memory = m?.entries ?? [];
+		} catch {
+			// A build without notes or memory draws an empty graph, not an error:
+			// the screen's error state is the turn's, not the sidebar's.
+		}
+	}
+	function pulse(ids: string[]): void {
+		if (!ids.length) return;
+		// The graph's clock is `performance.now()`; a wall-clock stamp reads as
+		// forever in the future and the node never settles.
+		const at = performance.now();
+		pulses = [...pulses.filter((p) => at - p.at < 10_000), ...ids.map((id) => ({ id, at }))];
+	}
+	/** A turn's `memory_used`, off the pipeline event the core mirrors onto the bus. */
+	function usedIds(data: any): string[] {
+		const used = data?.data?.intent_output?.response?.data?.memory_used;
+		return Array.isArray(used) ? used.map((u: any) => `memory:${u?.id ?? u}`) : [];
+	}
+	$effect(() => {
+		const live = conn;
+		if (!live) return;
+		let disposed = false;
+		let unsub: (() => void) | null = null;
+		void loadKnowledge(live);
+		void live.client
+			.subscribeEvents((event: BusEvent) => {
+				if (disposed) return;
+				activity = applyActivity(activity, event);
+				if (event.event_type === 'jarvis_tool_started') work += 1;
+				if (
+					event.event_type === 'jarvis_tool_finished' &&
+					(event.data?.ok === false || event.data?.status === 'error')
+				) {
+					flashError();
+				}
+				if (event.event_type === 'voice_pipeline_event' && event.data?.type === 'intent-end') {
+					pulse(usedIds(event.data));
+				} else if (event.event_type === 'jarvis_tool_finished') {
+					const name = String(event.data?.name ?? '');
+					if (name.startsWith('note_')) {
+						void loadKnowledge(live).then(() => pulse(touchedBy(name, event.data?.arguments, graph.nodes)));
+					}
+				} else if (event.event_type === 'memory_changed') {
+					void loadKnowledge(live);
+				}
+			})
+			.then((sub) => {
+				if (disposed) void sub.unsubscribe();
+				else unsub = () => void sub.unsubscribe();
+			})
+			.catch(() => {});
+		return () => {
+			disposed = true;
+			unsub?.();
+		};
+	});
 	let mic: MicCapture | null = null;
 	// Reactive, and reported in the DOM, because "the button says LISTENING" and
 	// "the microphone is open" are different claims and only the second one
@@ -673,9 +767,11 @@
 	});
 
 	/** The caption under the instrument: state · how it is listening. */
+	// What Jarvis is doing with a camera goes ahead of the mic's state: it is
+	// the one thing a person wants to know is happening (M52).
 	const caption = $derived(
 		[
-			stateLabel.toLowerCase(),
+			lookingCaption(activity) || stateLabel.toLowerCase(),
 			muted ? 'muted' : micReady ? 'hands-free' : micError ? 'mic closed' : 'mic opening'
 		].join(' · ')
 	);
@@ -826,7 +922,7 @@
 				<circle cx="700" cy="700" r="660" />
 			</svg>
 			<div class="instrument">
-				<Reactor size={360} fluid level={orbLevel} state={reactorState} testid="reactor" label="Jarvis" />
+				<Reactor size={360} fluid level={orbLevel} state={flash || reactorState} {work} {looking} testid="reactor" label="Jarvis" />
 			</div>
 			<p class="cap" data-testid="caption">{caption}</p>
 		</section>
@@ -895,6 +991,11 @@
 					{/if}
 				{/snippet}
 			</Panel>
+			<Panel title="Graph" meta={`${notes.length} notes · ${memory.length} remembered`} live={pulses.length > 0} testid="voice-graph-panel">
+				{#snippet children()}
+					<Graph nodes={graph.nodes} edges={graph.edges} {pulses} height={300} testid="voice-graph" />
+				{/snippet}
+			</Panel>
 		</aside>
 
 		<aside class="side turn-panel">
@@ -913,6 +1014,11 @@
 							{/each}
 						</ul>
 					{/if}
+				{/snippet}
+			</Panel>
+			<Panel title="Activity" meta={activity.length ? `${activity.length}` : '—'} live={activity.some((r) => r.state === 'live')} testid="activity-panel">
+				{#snippet children()}
+					<Activity rows={activity} />
 				{/snippet}
 			</Panel>
 		</aside>
@@ -1143,6 +1249,9 @@
 	.side {
 		z-index: 1;
 		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--jv-space-3);
 		animation: jv-rise var(--jv-dur-enter) var(--jv-ease-out) both;
 	}
 	.transcript-panel {

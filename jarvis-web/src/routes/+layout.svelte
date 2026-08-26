@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { setContext } from 'svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -71,6 +72,10 @@
 	// Derived from the snapshot rather than read once: `link` reconnects on its
 	// own, and a surface holding the old Connection would go quietly deaf.
 	let approvalConn = $derived(snapshot.status === 'connected' ? link.connection : null);
+	// The voice screen draws the graph and the activity strip off the same
+	// link (it has no link of its own — its socket is the pipeline's). A getter,
+	// not the value: context is set once, the connection comes and goes.
+	setContext('console-connection', () => approvalConn);
 
 	/*
 	 * The link runs on EVERY route, the voice screen included.

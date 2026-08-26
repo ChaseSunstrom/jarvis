@@ -16,6 +16,7 @@
 <script lang="ts">
 	import { TOKENS, tokenMs, type TokenName } from '$lib/tokens';
 	import {
+		Activity,
 		Button,
 		IconButton,
 		Input,
@@ -302,6 +303,21 @@
 				{#if demoGraph}
 					<Graph nodes={demoGraph.nodes} edges={demoGraph.edges} selected="note:heating" pulses={demoPulses} onselect={(id) => (demoPulses = [{ id, at: performance.now() }])} height={220} testid="sg-graph" />
 				{/if}
+			</article>
+
+			<article class="demo wide">
+				<h3>Activity</h3>
+				<p class="sw-value">What Jarvis is doing, newest first; a live row's dot pulses, a failed one is red.</p>
+				<Activity
+					rows={[
+						{ id: 'cam', kind: 'camera', title: 'Kitchen', detail: 'is anyone there?', state: 'live', at: 3 },
+						{ id: 'tool', kind: 'tool', title: 'get_state', detail: '84 ms', state: 'done', at: 2 },
+						{ id: 'sensor', kind: 'sensor', title: 'Lab Temperature', detail: '23.1 °C', state: 'done', at: 1 },
+						{ id: 'moment', kind: 'moment', title: 'Check the oven', detail: 'reminder', state: 'done', at: 0 },
+						{ id: 'fail', kind: 'tool', title: 'turn_on', detail: 'no such entity', state: 'failed', at: 0 }
+					]}
+					testid="sg-activity"
+				/>
 			</article>
 
 			<article class="demo">

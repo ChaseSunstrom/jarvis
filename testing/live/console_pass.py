@@ -51,6 +51,11 @@ def routes() -> list[dict[str, str]]:
         if not (path and name and probe) or "[" in path.group(1):
             continue
         out.append({"path": path.group(1), "name": name.group(1), "probe": probe.group(1)})
+    # `LIVE_CONSOLE_ROUTES=/,/house` narrows the pass to a milestone's own
+    # screens; M50's gate still walks the whole console.
+    only = [r.strip() for r in os.environ.get("LIVE_CONSOLE_ROUTES", "").split(",") if r.strip()]
+    if only:
+        return [r for r in out if r["path"] in only]
     return out
 
 

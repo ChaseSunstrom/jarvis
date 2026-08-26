@@ -1970,6 +1970,60 @@ index 1234567..89abcde 100644
 				// `intent-end` the core mirrors onto `voice_pipeline_event`
 				// carries the entries the model was given. The knowledge graph
 				// lights them; this lets a test say which without a model.
+				case 'jarvis/test/sensor_change': {
+					// A reading changing, as the recorder would see it: the voice tab's
+					// activity strip draws sensor rows from `state_changed` alone.
+					const entityId = String(msg.entity_id || 'sensor.lab_temperature');
+					const value = msg.value !== undefined ? String(msg.value) : '22.8';
+					const prior = world.states.get(entityId) || {
+						entity_id: entityId,
+						state: '21.4',
+						attributes: { friendly_name: 'Lab Temperature', unit_of_measurement: '°C' }
+					};
+					const updated = { ...prior, state: value, last_changed: new Date().toISOString() };
+					world.states.set(entityId, updated);
+					ok(msg.id, { entity_id: entityId, state: value });
+					broadcast('state_changed', { entity_id: entityId, old_state: prior, new_state: updated });
+					break;
+				}
+				case 'jarvis/test/camera_look': {
+					// A look at a camera, as the vision integration fires it: started,
+					// then finished (or denied) — the record's fields, no frame.
+					const camera = String(msg.camera || 'Kitchen');
+					const id = `look-${Date.now()}`;
+					const record = { id, camera, question: String(msg.question || 'is anyone there?'), allowed: !msg.deny };
+					ok(msg.id, { id });
+					if (msg.deny) {
+						broadcast('vision_look_denied', { ...record, reason: 'consent: never' });
+						break;
+					}
+					broadcast('vision_look_started', record);
+					setTimeout(() => broadcast('vision_look_finished', { ...record, duration_ms: 620 }), Number(msg.after_ms) || 900);
+					break;
+				}
+				case 'jarvis/test/moment': {
+					// A notification landing, as the notifications store fires it.
+					const notification = {
+						id: `n-${Date.now()}`,
+						kind: String(msg.kind || 'reminder'),
+						title: String(msg.title || 'Check the oven'),
+						body: String(msg.body || msg.title || 'Check the oven'),
+						source: 'schedule',
+						created: Date.now() / 1000,
+						read: false
+					};
+					ok(msg.id, { id: notification.id });
+					broadcast('jarvis_notification', { notification });
+					break;
+				}
+				case 'jarvis/test/memory_change': {
+					// The memory store announcing a write or a forget.
+					const action = String(msg.action || 'remembered');
+					const entry = { id: String(msg.entry_id || 'mem1'), text: String(msg.text || 'The spare key is in the blue tin on the shelf.'), created: Date.now() / 1000 };
+					ok(msg.id, { action });
+					broadcast('memory_changed', { action, entry, count: memoryEntries.length });
+					break;
+				}
 				case 'jarvis/test/memory_used': {
 					const ids = Array.isArray(msg.entries) && msg.entries.length ? msg.entries : ['mem1'];
 					const used = ids.map((id) => ({
