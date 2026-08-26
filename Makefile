@@ -5,6 +5,12 @@
 
 SHELL := /bin/bash
 COMPOSE := docker compose
+# The profiles the deployed configuration.yaml needs: `mqtt:` and `sensors:`
+# are switched on (M57) and `web:` searches through SearXNG, and neither
+# mosquitto nor searxng starts without its profile — the core then logs a
+# broker it cannot reach at every boot and the live rig's sensor scenario is
+# refused before it starts (26 Aug). `?=` so an operator's .env or shell wins.
+export COMPOSE_PROFILES ?= mqtt,search
 
 .DEFAULT_GOAL := help
 

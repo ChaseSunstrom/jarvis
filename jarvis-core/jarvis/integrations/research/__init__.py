@@ -320,7 +320,9 @@ def _register_tools(jarvis: "Jarvis") -> None:
             "the background and returns a task id, NOT an answer. Use it "
             "whenever the user says research, or the answer needs more than "
             "one page — do NOT do that by hand with web_search and web_fetch. "
-            "web_search alone is for a single look-up."
+            "web_search alone is for a single look-up. Not for the house's own "
+            "state (its lights, sensors, notes): the house's tools answer that "
+            "now, and run_background_task defers it."
         ),
         parameters=schema_object(
             {

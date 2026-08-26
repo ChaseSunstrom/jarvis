@@ -496,3 +496,24 @@ is quiet. Done since:
   and pinned by a bar-overlap test at five widths. M61's six gap rows, built by an agent
   in a worktree, cherry-picked clean (95ab5df): 224 unit tests there; the live smoke
   slice its gate needs runs from here after the stack is rebuilt.
+- 17:05 — the stack rebuilt with every fix (`make up`), then the smoke set: 7/7 scenarios,
+  8/8 turns, WER 0.0, intent 100 %, routing 100 %, median round trip 2.515 s, and the
+  rig's stack-logs-clean check green — the MQTT startup ERROR (483d5e5) and the claimed
+  action on chat-context-retention (M60's guard) are both gone. `make test` on the merged
+  tree: core 3234, every suite and both evals green. M50 re-rendered every screen under
+  the six-tab bar, 29/29. CI on 4c9fda3: APK green at last (Robolectric's jars fetched
+  first), compose smoke, desktop wheel/install and the rest green; two reds left with
+  names now — Tools' link-drop test (a race with the client's reconnect, made
+  deterministic in 69da624) and `python · jarvis-core` on 3.12 (reproducing here). The
+  once-red gates and the full live run are in progress.
+- 17:25 — CI on 69da624: the web e2e green with the deterministic link drop; the Electron
+  shell green once launched without its sandbox (GitHub's 24.04 runners restrict user
+  namespaces); the emulator suite finally named its five failures, and an agent found the
+  one cause — M22's automation master switch, OFF by default and cleared by the test
+  rule, so every known action was denied by the standing ban before its tier was read
+  (228eb01: a hook that does the user's one tap, a test pinning the OFF case, and the
+  contract narrowed to "the switch may be turned on, never off"). Two reds of my own
+  making: M63's three websocket commands had no rows in docs/clients.md (the 3.12
+  reproduction found it: 3260 passed, 1 failed), and the new annotation step took three
+  green suites down because GitHub's run shell is `bash -e` and a grep with nothing to
+  find returns 1. Both fixed in df0fab8 and pushed.

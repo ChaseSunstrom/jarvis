@@ -6,6 +6,12 @@ intent: >
   phone, the thread has to be the same thread — "it" in the second turn still
   means what it meant in the first, on a different client.
 variants: [text]
+# The light starts off, or a scenario that ran before this one leaves it on and
+# the first turn is answered — truthfully — with "it is already on" and no
+# service call, which is a fine answer and not the one this thread is about.
+setup:
+  states:
+    light.bed_light: "off"
 turns:
   - say: "Turn on the bed light."
     expect:
