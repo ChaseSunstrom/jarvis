@@ -114,9 +114,21 @@ DEFAULT_SEARCH_LIMIT = 5
 #: the same distinction for note-vs-memory routing.
 MEMORY_REQUESTS = (
     "remember", "don't forget", "do not forget", "keep in mind", "bear in mind",
-    "note that", "make a note", "write that down", "write this down",
-    "jot that down", "commit that to memory", "memorise", "memorize",
+    "commit that to memory", "memorise", "memorize",
     "for future reference", "from now on", "always ", "never forget",
+)
+
+#: Phrases that ask for a NOTE — a document to find again — and not a memory.
+#: They used to sit in `MEMORY_REQUESTS`, which made "note that the boiler was
+#: serviced" an invitation to `remember`: the model, told by the note-taking
+#: skill that one sentence is a memory, called `remember`, the store accepted
+#: it because the user had said "note that", and no note was ever written.
+#: The live suite's `notes-write-and-find` caught it the first time it ran.
+#: `remember` refuses these and names the right tool; `evals/routing.py`
+#: holds the same phrases as the definition the router is checked against.
+NOTE_REQUESTS = (
+    "note that", "make a note", "take a note", "write that down", "write this down",
+    "jot that down", "add a note",
 )
 
 #: How many candidates the cross-encoder is shown. It reads the query with each
@@ -1324,7 +1336,23 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
         # probe found: a remark said in passing became a permanent fact that
         # every later conversation could read.
         said = utterance_of(jarvis, context)
-        if said and not any(phrase in said.lower() for phrase in MEMORY_REQUESTS):
+        lowered = (said or "").lower()
+        if said and any(phrase in lowered for phrase in NOTE_REQUESTS) and not any(
+            phrase in lowered for phrase in MEMORY_REQUESTS
+        ):
+            # "Note that …" is a note. Refusing here is what puts the model on
+            # the right tool: a `remember` that quietly succeeded left the user
+            # with a memory entry they never asked for and no note to find.
+            return {
+                "stored": False,
+                "reason": "not stored: the user asked for a note, not a memory",
+                "message": (
+                    "That is a note, not a memory: write it with note_create so it "
+                    "can be found again."
+                ),
+                "use_instead": "note_create",
+            }
+        if said and not any(phrase in lowered for phrase in MEMORY_REQUESTS):
             return {
                 "stored": False,
                 "reason": "not stored: the user did not ask for this to be remembered",

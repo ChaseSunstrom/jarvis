@@ -17,14 +17,19 @@ house assistant becomes annoying:
 
 * **The conversation.** Anything that stops mattering when the conversation
   ends. Most things.
-* **Memory** (`remember`). One durable fact about the household — "the boiler
-  service is due in March", "Sam is allergic to shellfish". A sentence, kept
-  forever, read back in every conversation. Only when the user has asked for
-  it in their own words.
-* **A note.** Anything longer than a sentence, anything with structure, and
-  anything they will want to open and read: a shopping list, a research
-  report, the model numbers off the back of the boiler.
+* **A note** (`note_create`). Whatever the user asked to be *noted*: "note
+  that…", "make a note…", "take a note…", "write that down" — however short.
+  Also anything longer than a sentence, anything with structure, and anything
+  they will want to open and read later: what happened today, a shopping
+  list, a research report, the model numbers off the back of the boiler.
+* **Memory** (`remember`). Only when the user says *remember*: "remember that
+  I take my coffee black", "don't forget Sam is allergic to shellfish". One
+  standing fact about them, kept forever, read back in every conversation.
+  The store refuses a "note that…" sentence and tells you to use
+  `note_create` — that is the routing rule, not a hint.
 
+The words decide, not the length. "Note that the boiler was serviced today"
+is one sentence and it is a note: a thing that happened, to be found again.
 A note is not a slower memory. Notes are read when somebody asks for them;
 memory is read every time.
 

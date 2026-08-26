@@ -275,6 +275,53 @@ async def test_memory_refuses_a_write_the_user_never_asked_for(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_memory_refuses_a_note_and_names_the_right_tool(tmp_path):
+    """The regression `notes-write-and-find` caught the first time it ran.
+
+    "Note that the boiler was serviced today" went to `remember`: the
+    note-taking skill said one sentence is a memory, the model believed it,
+    and the store accepted the write because "note that" was on its list of
+    memory requests. The user got a memory entry they never asked for and no
+    note to find. A note phrase is refused here with the tool that should
+    have been called, which is what puts the model back on `note_create`.
+    """
+    from jarvis.api.devices import remember_utterance
+    from jarvis.integrations.memory import MEMORY_REQUESTS, NOTE_REQUESTS
+
+    from test_features import setup_memory
+
+    assert not set(NOTE_REQUESTS) & set(MEMORY_REQUESTS)
+    jarvis = await setup_memory(tmp_path)
+    context = Context(origin="llm")
+    remember_utterance(
+        jarvis, context, "Note that the boiler was serviced today and the pressure was 1.2 bar."
+    )
+
+    refused = await tools_of(jarvis).call(
+        "remember", {"text": "the boiler was serviced today, pressure 1.2 bar"}, context=context
+    )
+    assert refused["stored"] is False
+    assert refused["use_instead"] == "note_create"
+    assert "note_create" in refused["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_remember_inside_a_note_phrase_still_remembers(tmp_path):
+    """'Note that… and remember it' is two requests; the explicit one wins."""
+    from jarvis.api.devices import remember_utterance
+
+    from test_features import setup_memory
+
+    jarvis = await setup_memory(tmp_path)
+    context = Context(origin="llm")
+    remember_utterance(jarvis, context, "make a note and remember that I take my coffee black")
+    stored = await tools_of(jarvis).call(
+        "remember", {"text": "I take my coffee black"}, context=context
+    )
+    assert stored.get("stored") is True
+
+
+@pytest.mark.asyncio
 async def test_memory_still_writes_when_the_user_does_ask(tmp_path):
     """The feature this must not break: "remember X" has to keep working."""
     from jarvis.api.devices import remember_utterance

@@ -2644,7 +2644,9 @@ def register_builtin_tools(
             "anything only they know — the address of a service on their "
             "network, which of several things they meant, a preference — "
             "instead of guessing. Offer `choices` when there is a knowable set "
-            "of answers. The question appears on their console and their phone."
+            "of answers. The question is put to them where they are — the "
+            "console's held bar, and a paired phone if one is connected — so "
+            "say it is waiting for them, not where."
         ),
         parameters=schema_object(
             {

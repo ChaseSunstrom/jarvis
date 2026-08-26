@@ -104,6 +104,11 @@ class FakeWyomingServer:
         self.info = info or {"asr": [{"name": "whisper", "installed": True}]}
         self.events = []
         self.audio_payloads = []
+        #: How each client connection ended: "eof" for a polite hang-up, the
+        #: exception's name for a slammed door. The real containers log the
+        #: latter at ERROR, which is what `test_wyoming_info_hangs_up_politely`
+        #: pins.
+        self.hangups = []
         self._server = None
         self._transcribing = False
         self._detecting = False
@@ -131,8 +136,13 @@ class FakeWyomingServer:
         chunks_seen = 0
         try:
             while True:
-                event = await read_frame(reader)
+                try:
+                    event = await read_frame(reader)
+                except (ConnectionError, OSError) as err:
+                    self.hangups.append(type(err).__name__)
+                    return
                 if event is None:
+                    self.hangups.append("eof")
                     break
                 self.events.append(event)
                 kind = event["type"]
@@ -388,6 +398,20 @@ async def test_wyoming_info(server):
     info = await wyoming_info("127.0.0.1", server.port)
     assert info == {"asr": [{"name": "whisper", "installed": True}]}
     assert server.types == ["describe"]
+
+
+async def test_wyoming_info_hangs_up_politely(server):
+    """The client sends EOF and waits, rather than closing on a server mid-drain.
+
+    Both Wyoming containers logged `ConnectionResetError('Connection lost')`
+    at ERROR on every `describe` — the client had read the info and closed
+    while the server's own drain was still in flight — and the live suite's
+    stack-logs-clean check went red for a conversation that had gone
+    perfectly. The server must see a clean end of stream, never a reset.
+    """
+    await wyoming_info("127.0.0.1", server.port)
+    await asyncio.sleep(0.05)
+    assert server.hangups == ["eof"]
 
 
 async def test_transcribe_streams_audio_and_returns_transcript(server):

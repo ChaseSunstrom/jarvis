@@ -13,6 +13,67 @@ and is not misled).
 
 ---
 
+## "Note that…" was remembered, not noted
+
+severity: major
+status: **fixed** (M27 — `MEMORY_REQUESTS` no longer counts a note phrase; the
+note-taking skill's rule is the words, not the length)
+Regression: `notes-write-and-find`
+Found by: the exploratory pass (`notes-then-recall`) and, the first time it
+was ever selected, the scenario above — it had been `gated-on: M16` and
+`--implemented-only` skipped every gated scenario forever
+
+"Make a note that the boiler pressure was 1.2 bar today" produced a memory
+entry and no note. Three things lined up: the bundled note-taking skill told
+the model that one sentence is a memory ("the boiler service is due in
+March"), the model read it (55 seconds, one `use_skill` round trip) and called
+`remember`; the memory store accepted the write because "note that" and "make
+a note" were on its list of phrases that mean *the user asked for this to be
+remembered*; and the reply said "Noted, Sir". The user got a standing fact in
+every future prompt they never asked for, and `note_search` had nothing to
+find.
+
+The store now refuses a note phrase — `{"stored": false, "use_instead":
+"note_create"}` with a message naming the tool — unless the sentence also
+says *remember*, and the skill says the words decide: "note that…" is a note
+however short. `evals/test_routing.py` pins the store's two lists to the
+router's definition so they cannot drift apart again.
+
+## The Wyoming containers logged a reset on every `describe`
+
+severity: minor
+status: **fixed** (M27 — `wyoming_info` sends EOF and waits for the peer
+before closing)
+Regression: `stack-logs-clean`, which fails the run on any ERROR-level record
+in a container's log
+Found by: `stack-logs-clean`, red on a conversation that had gone perfectly
+
+`whisper` and `piper` both logged `ERROR:asyncio:Task exception was never
+retrieved … ConnectionResetError('Connection lost')` each time something asked
+them to describe themselves: the client read the `info` event and closed the
+socket while the server's own `drain()` was still in flight. Nothing was
+wrong with the conversation; the check that reads the logs is right to
+refuse it, because a log full of resets is a log nobody reads. The client now
+hangs up politely (FIN, then read until the server closes, bounded at a
+second), and `FakeWyomingServer` records how each connection ended so
+`test_wyoming_info_hangs_up_politely` pins "eof" rather than a reset.
+
+## `ask_user` said the question was on a phone that was not there
+
+severity: minor
+status: **fixed** (M27 — the tool's description no longer promises a phone)
+Regression: none — the wording is the model's paraphrase of a tool
+description, and no deterministic check can pin a paraphrase; the
+exploratory probe `ambiguous-room` is where it was seen and where it will be
+seen again
+Found by: the exploratory pass (`ambiguous-room`)
+
+"The question is on your phone, Sir" — with no phone connected, in a text
+conversation, one turn before `tool-that-is-off` correctly said "no device of
+yours is connected right now". The description said the question "appears on
+their console and their phone"; it says now that it is put to them where they
+are, and to say it is waiting rather than where.
+
 ## Semantic recall was configured, degraded silently, and had never run
 
 severity: major

@@ -9,6 +9,7 @@ a prompt loses a rule — so they are asserted here against the same table.
 from pathlib import Path
 
 import pytest
+import sys
 
 from routing import CHANNELS, Ctx, decide
 
@@ -108,3 +109,22 @@ def test_a_note_and_a_fact_about_the_user_are_not_the_same_thing():
     assert note_intent("note that the boiler was serviced today") == "note"
     assert note_intent("remember that I take my coffee black") == "memory"
     assert note_intent("remember to put the bins out") == "task"
+
+
+def test_the_store_refuses_what_the_router_calls_a_note():
+    """`MEMORY_REQUESTS` and `NOTE_REQUESTS` are the router's split, in the store.
+
+    Every phrasing this table calls a note is a phrase `remember` refuses, and
+    none of them is a memory request — otherwise "note that…" is an invitation
+    to remember, which is the regression `notes-write-and-find` caught.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "jarvis-core"))
+    from jarvis.integrations.memory import MEMORY_REQUESTS, NOTE_REQUESTS  # noqa: E402
+
+    for said, expected, _why in NOTE_INTENTS:
+        text = said.lower()
+        if expected == "note":
+            assert any(phrase in text for phrase in NOTE_REQUESTS), said
+            assert not any(phrase in text for phrase in MEMORY_REQUESTS), said
+        if expected == "memory":
+            assert any(phrase in text for phrase in MEMORY_REQUESTS), said
