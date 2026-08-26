@@ -1441,6 +1441,9 @@ index 1234567..89abcde 100644
 			conversation_id: "conv-7"
 		}
 	];
+	// The knowledge as seeded, so a spec can put it back after another spec
+	// forgot a fact or deleted a note: the voice tab's graph counts them.
+	const knowledgeSeed = { notes: JSON.parse(JSON.stringify(notes)), memory: JSON.parse(JSON.stringify(memoryEntries)) };
 
 	// Skills: folders of instructions the operator wrote. The console lists
 	// them beside the tools, because "a thing the assistant knows how to do" is
@@ -3344,6 +3347,12 @@ index 1234567..89abcde 100644
 				// "there is nothing running" is only a testable claim if a test
 				// can get back to that state without depending on how long the
 				// previous test's job happened to take.
+				case 'jarvis/test/knowledge_reset': {
+					notes = JSON.parse(JSON.stringify(knowledgeSeed.notes));
+					memoryEntries = JSON.parse(JSON.stringify(knowledgeSeed.memory));
+					ok(msg.id, { notes: notes.length, memory: memoryEntries.length });
+					break;
+				}
 				case 'jarvis/test/task_reset': {
 					const ids = [...taskStore.keys()];
 					for (const id of ids) removeTask(id);

@@ -51,6 +51,11 @@ async function untilRow(page: Page, kind: string, hookPayload: Record<string, un
 
 test('the graph is on the voice tab, with every note and remembered fact', async ({ page }) => {
 	await gotoVoice(page);
+	// Every note and fact as SEEDED: a spec earlier in the same run may have
+	// forgotten one, and the mock is one process for the whole suite.
+	await hook(page, { type: 'jarvis/test/knowledge_reset' });
+	await page.reload();
+	await expect(page.getByTestId('voice-screen')).toBeVisible();
 	const graph = page.getByTestId('voice-graph');
 	await expect(graph).toHaveAttribute('data-nodes', '5');
 });
