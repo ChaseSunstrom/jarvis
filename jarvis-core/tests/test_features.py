@@ -1419,6 +1419,41 @@ async def test_remember_refuses_a_turn_that_has_read_untrusted_content(tmp_path)
     assert (await call(jarvis, "memory", "list"))["count"] == 0
 
 
+async def test_a_paraphrase_of_a_note_is_the_same_note(tmp_path):
+    """Turn one of memory-forget left two notes — the user's "the shed key is
+    under the second flowerpot" and the extractor's "the speaker keeps the shed
+    key under the second flowerpot" — so "forget the shed key" was a tie. A
+    paraphrase whose words contain the other's is the same fact; from the
+    extractor it is not kept, from the user it replaces the old wording."""
+    from jarvis.integrations.memory import get_memory
+
+    jarvis = await setup_memory(tmp_path)
+    first = await call(jarvis, "memory", "add", text="the shed key is under the second flowerpot")
+    assert first["stored"] is True
+
+    memory = get_memory(jarvis)
+    extracted = await memory.async_add(
+        text="The speaker keeps the shed key under the second flowerpot.", source="extracted"
+    )
+    assert extracted["stored"] is False and "already remembered" in extracted["reason"]
+    assert (await call(jarvis, "memory", "list"))["count"] == 1
+
+    # The user's own restatement wins over the old wording, once.
+    again = await call(jarvis, "memory", "add", text="the shed key lives under the second flowerpot by the door")
+    assert again["stored"] is True and again.get("replaced")
+    listing = await call(jarvis, "memory", "list")
+    assert listing["count"] == 1 and "by the door" in listing["entries"][0]["text"]
+
+    # A different fact that happens to share two words is not a duplicate.
+    other = await call(jarvis, "memory", "add", text="the spare key is on the hook by the door")
+    assert other["stored"] is True and not other.get("replaced")
+    assert (await call(jarvis, "memory", "list"))["count"] == 2
+
+    # And forgetting the shed key is no longer a tie.
+    gone = await tools(jarvis).call("forget", {"query": "shed key"})
+    assert gone["count"] == 1
+
+
 async def test_forget_that_matched_nothing_says_so_to_the_model(tmp_path):
     """A count of zero with a reason was read as success: on the live rig the
     model answered "Forgotten, Sir" over `{"count": 0}` and the store still

@@ -273,6 +273,17 @@ _STOP_WORDS = frozenset(
 )
 
 
+def _words(text: Any) -> set[str]:
+    """The words of a note for the duplicate check — digits kept.
+
+    `tokens` is for relevance and drops numbers; for "is this the same note"
+    a number is the whole difference between "note 3 about bicycles" and
+    "note 4 about bicycles", and between the boiler serviced in March and in
+    May.
+    """
+    return {w for w in re.findall(r"[a-z0-9]+", str(text or "").lower()) if w not in _STOP_WORDS}
+
+
 def tokens(text: Any) -> set[str]:
     words = _WORD_RE.findall(str(text or "").lower())
     kept = {w for w in words if w not in _STOP_WORDS and len(w) > 1}
@@ -569,8 +580,18 @@ class MemoryStore:
             conversation_id=str(conversation_id or "")[:64],
         )
 
-        # A near-identical note replaces the old one rather than piling up.
+        # A near-identical note replaces the old one rather than piling up —
+        # unless the new one is the extractor's paraphrase of a note the user
+        # wrote themselves, in which case their wording stays and the
+        # paraphrase is not kept: "the speaker keeps the shed key under the
+        # second flowerpot" is not how anybody wants to be quoted back.
         duplicate = self._duplicate_of(entry)
+        if duplicate is not None and origin == "extracted" and duplicate.source != "extracted":
+            return {
+                "stored": False,
+                "reason": f"already remembered as {duplicate.text!r}",
+                "duplicate_of": duplicate.id,
+            }
         if duplicate is not None:
             self.entries.remove(duplicate)
 
@@ -589,9 +610,24 @@ class MemoryStore:
         return result
 
     def _duplicate_of(self, entry: MemoryEntry) -> MemoryEntry | None:
+        """The note this one says again, if any.
+
+        Exact after whitespace, and ALSO a paraphrase whose words contain the
+        other's: "the shed key is under the second flowerpot" and the
+        extractor's "the speaker keeps the shed key under the second
+        flowerpot" are one fact, and stored as two they made "forget the shed
+        key" a tie the model had to ask about (memory-forget, 26 Aug). Three
+        shared words at least, so "the key" does not swallow every note that
+        mentions one.
+        """
         normalized = " ".join(entry.text.lower().split())
+        mine = _words(entry.text)
         for existing in self.entries:
             if " ".join(existing.text.lower().split()) == normalized:
+                return existing
+            theirs = _words(existing.text)
+            smaller, larger = (mine, theirs) if len(mine) <= len(theirs) else (theirs, mine)
+            if len(smaller) >= 3 and smaller <= larger:
                 return existing
         return None
 
