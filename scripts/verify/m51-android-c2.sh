@@ -4,7 +4,7 @@
 # The instrument on Canvas from the same geometry contract the web reads, the
 # four states from the same palette, C2's buttons, panels and type on every
 # native screen, and the goldens re-recorded so the JVM screenshot tests
-# describe the new look rather than the old one. No device, no emulator.
+# describe the new look rather than the old one. Nothing here touches a handset.
 source "$(dirname "$0")/lib.sh"
 verify_begin "M51" "the phone, on the same look"
 use_venv
