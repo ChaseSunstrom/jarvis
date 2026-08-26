@@ -2348,7 +2348,16 @@ index 1234567..89abcde 100644
 						created: Date.now() / 1000,
 						expires_at: Date.now() / 1000 + 300
 					};
-					world.approvals.push(req);
+					// The same request id is the same request, as on the real
+					// server (a tool held once has one id). The HUD test re-raises
+					// `req-hud-1` until the banner shows; when the mock appended a
+					// new entry per raise, approving one left the rest pending in
+					// this shared world for the run, and on CI (ed1892d) fourteen
+					// "at rest" checks in look.spec and menus.spec found an
+					// APPROVE button on screens no test had touched.
+					const dup = world.approvals.findIndex((a) => a.request_id === req.request_id);
+					if (dup >= 0) world.approvals.splice(dup, 1, req);
+					else world.approvals.push(req);
 					broadcast('jarvis_approval_required', req);
 					ok(msg.id, { raised: req.request_id });
 					break;
@@ -2381,7 +2390,9 @@ index 1234567..89abcde 100644
 						created: Date.now() / 1000,
 						expires_at: Date.now() / 1000 + 300
 					};
-					world.approvals.push(req);
+					const dupAsk = world.approvals.findIndex((a) => a.request_id === req.request_id);
+					if (dupAsk >= 0) world.approvals.splice(dupAsk, 1, req);
+					else world.approvals.push(req);
 					broadcast('jarvis_approval_required', req);
 					ok(msg.id, { raised: req.request_id });
 					break;

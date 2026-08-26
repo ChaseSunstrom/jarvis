@@ -713,3 +713,11 @@ is quiet. Done since:
   number applied on restart, the note naming PIPER_LENGTH_SCALE and wyoming-piper — the key had
   to be `voice.tts.length_scale` (the registry pins key == path). Gate 14/14 on the running
   house, voice smoke 5/5 with WER 0.0 over 3 spoken samples; M70 ticked. CI on 68f1691 fully green.
+- 22:07 — CI on ed1892d: the `CI` workflow red with fourteen Playwright "at rest" failures in
+  look.spec and menus.spec, each finding an APPROVE for `lock_control` on a screen no test had
+  touched — with no web file changed since the green 68f1691. The mechanism, in the mock backend:
+  `test/raise_approval` appended a new entry per call, and the HUD test re-raises `req-hud-1`
+  until the banner shows, so on a slow runner it raised twice, approved one, and left the other
+  pending in the shared world for the rest of the run. The mock now treats a re-raised id as the
+  same request (as the server does). HUD + look + menus together: 42/42. M67 ticked (gate 25/25
+  on the branch); M70 ticked (gate 14/14, the Settings › Voice pace row).
