@@ -717,6 +717,12 @@ READ_ONLY_TOOLS = frozenset({
     # files and the web, which read and never write
     "list_files", "read_file", "search_files",
     "web_search", "web_fetch", "web_browse", "web_crawl",
+    # the overhaul's readers (M57–M59): readings, the sky, a page, a feed,
+    # what is watched. Setting a watch is a write and is not here — a hostile
+    # page must not be able to make the house watch something.
+    "sensor_readings", "sensor_compare", "sensor_history", "sensor_summary",
+    "next_pass", "overhead_now", "moon_phase", "planets_tonight",
+    "read_page", "feed_latest", "list_watches",
 })
 
 

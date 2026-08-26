@@ -42,10 +42,13 @@ Corrected on 26 August with the operator's numbers: the chat model is
 `qwen3.8-27b` at ≈75 tok/s with a 256k context, which is fast enough — the
 model's generation is not the wait. What is: recognising the audio on four
 shared vCPUs (~11 s), prefilling a large system prompt into a 256k window on
-every turn, and starting synthesis. M60 (`docs/OVERHAUL_PLAN.md`) takes the
-parts of that this repository can change: a cached prompt prefix, a leaner
-prompt, sentence-streamed speech, whisper sized to the CPU. What remains after
-that is hardware, and still needs one of:
+every turn, and starting synthesis. M60 took the parts of that this
+repository can change — the prompt prefix kept on the server and ordered
+stable-first, the first sentence spoken before the reply is finished, whisper
+int8, and `llm.fast_model` on the voice path when the operator sets one — and
+the full-mode median moved from 6.67 s to 5.90 s (10:27; the rig measures to
+`run-end`, so early speech is not in that number). What remains is hardware,
+and still needs one of:
 
 * a small model (3–8 B class) served at the same endpoint for the voice path,
   with the large one kept for research and coding; or

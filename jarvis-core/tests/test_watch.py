@@ -243,7 +243,17 @@ async def test_read_page_reads_here_when_no_browser_is_configured(tmp_path):
     jarvis, manager, registry = await make_house(tmp_path, web)
     page = await run(registry, "read_page", url="http://127.0.0.1:1/pool.html")
     assert page["title"] == "Opening hours" and "Closed Mondays." in page["text"] and page["untrusted"] is True
-    assert "error" in await run(registry, "read_page", url="ftp://x")
+    # Fenced, whichever path fetched it, and the result says what happened —
+    # a model handed a bare page once told the user it was "waiting on your
+    # confirmation".
+    from jarvis.integrations.web.fence import is_fenced
+    assert is_fenced(page["text"]), page["text"][:80]
+    assert "was read" in page["message"] and "nothing else is pending" in page["message"]
+    refused = await run(registry, "read_page", url="ftp://x")
+    assert "error" in refused and "Nothing is waiting on approval" in refused["message"]
+    del web.pages["http://127.0.0.1:1/pool.html"]
+    failed = await run(registry, "read_page", url="http://127.0.0.1:1/pool.html")
+    assert "error" in failed and "could not be read" in failed["message"]
     await jarvis.async_stop()
 
 
@@ -262,7 +272,7 @@ async def test_read_page_goes_through_the_browser_when_it_is_there(tmp_path):
     jarvis.services.register("web", "fetch", fetch, supports_response=True)
     page = await run(registry, "read_page", url="http://127.0.0.1:1/app.html")
     assert seen == [{"url": "http://127.0.0.1:1/app.html", "render": True}]
-    assert page["text"].startswith("Rendered:") and "Loading" not in page["text"]
+    assert "Rendered:" in page["text"] and "Loading" not in page["text"]
     assert web.hits == [], "the browser read it; this process did not fetch it as well"
     await jarvis.async_stop()
 
@@ -283,3 +293,21 @@ async def test_watches_survive_a_restart(tmp_path):
     assert list(manager2.watches) == [added["watch"]["id"]]
     assert manager2.watches[added["watch"]["id"]].digest == manager.watches[added["watch"]["id"]].digest
     await again.async_stop()
+
+
+async def test_reading_is_read_only_and_setting_a_watch_is_not(tmp_path):
+    """The taint rule (tests/contracts/tool_tiers.json `untrusted_raises`).
+
+    After a web search the turn is tainted; a tool that only reads may still
+    run, a tool that changes something asks a human. `read_page` after a
+    search was escalated to an approval on the live rig, and the model told
+    the user — truthfully — that the page was waiting on their confirmation.
+    Reading is read-only; making the house watch a page is not.
+    """
+    web = FakeWeb()
+    jarvis, manager, registry = await make_house(tmp_path, web)
+    for name in ("read_page", "feed_latest", "list_watches"):
+        assert registry.is_read_only(registry.get(name)) is True, f"{name} escalates on a tainted turn"
+    for name in ("watch_page", "watch_feed", "watch_for", "cancel_watch"):
+        assert registry.is_read_only(registry.get(name)) is False, f"{name} would run on a hostile page's say-so"
+    await jarvis.async_stop()

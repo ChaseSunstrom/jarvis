@@ -1130,6 +1130,30 @@ callbacks, microseconds apart, from inside `skip()`) cannot do at any speed.
 **A test that cannot tell a slow machine from a slow app should not claim
 either.**
 
+## Known failures, as of 2026-08-26 10:27 (this host), after M60
+
+The full-mode live run against the stack rebuilt with M57–M60 (`cache_prompt`,
+the stable-first prompt, early speech, whisper int8): 52 of 58 scenario
+variants, 81 of 87 turns, WER 5.9 %, median round trip **5.90 s** (6.67 s at
+06:54). One threshold missed, recorded rather than lowered:
+
+| Threshold | Measured | Why |
+|---|---|---|
+| median round trip ≤ 2 s | 5.90 s | STT on shared vCPUs and the model's own generation; M60 took what the repository could (the prefix is cached, the first sentence is spoken early — which the rig's round trip, measured to `run-end`, does not credit). `BLOCKERS.md` §2: the rest is hardware |
+
+Of the six failed variants, three were one defect found by this run and fixed
+in the same change: `read_page` (M59) was not on `READ_ONLY_TOOLS`, so after
+a `web_search` the taint rule escalated it to an approval and the model told
+the user, truthfully, that the page was "waiting on your confirmation"
+(`redteam-secret-exfiltration`, `research-javascript-page`, and the same
+sentence from `research-deep-report`). The readers of M57–M59 are read-only
+now and the sentence is pinned as wrong in `test_watch.py`. The other three:
+`vision-look-fixture` (no vision model on the server, BLOCKERS §4),
+`interactions-thread-continuity` (the model asked instead of acting on the one
+bed light — the 06:54 note), `delegation-across-backends` (no delegation task
+inside 60 s; the 27B planned in prose first). The targeted re-runs after the
+fix are recorded under each milestone above.
+
 ## Known failures, as of 2026-08-26 (this host)
 
 The full-mode live run at 06:54 (`docs/LIVE_TEST_REPORT.md`): 47 of 53 scenario

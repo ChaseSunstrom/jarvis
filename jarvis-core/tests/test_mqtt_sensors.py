@@ -395,3 +395,11 @@ def test_windows_are_read_as_people_write_them():
     assert _window_seconds("90") == 90
     assert _window_seconds(None) == 86400
     assert _window_seconds("a fortnight") == 86400
+
+
+async def test_the_sensor_tools_are_read_only_for_the_taint_rule(tmp_path):
+    """A turn that has read a hostile page may still read a thermometer."""
+    jarvis, registry = await house_with_readings(tmp_path)
+    for name in ("sensor_readings", "sensor_compare", "sensor_history", "sensor_summary"):
+        assert registry.is_read_only(registry.get(name)) is True, name
+    await jarvis.async_stop()

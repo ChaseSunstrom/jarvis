@@ -401,3 +401,9 @@ is quiet. Done since:
   runs (M60's core suite, the full live re-measure) still in flight.
 - 10:21 — M60's gate 13/13, the full core suite green (2,756 tests). Ticked and
   committed; the live re-measure is still running and lands as its own record.
+- 10:40 — The full live re-measure after M60: 52/58, 81/87, WER 5.9 %, median 5.90 s
+  (from 6.67). Three of the six failures were one defect it found: `read_page`
+  (M59) was not on READ_ONLY_TOOLS, so after a search the taint rule escalated it
+  and the model said, truthfully, that the page was waiting on approval. Fixed —
+  the readers of M57–M59 are read-only, read_page fences its text on every path
+  and says what happened — and the two scenarios are re-running on the harness.
