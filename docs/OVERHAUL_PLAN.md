@@ -38,8 +38,11 @@ This document is the spine. Each numbered item is a milestone in
   engine with tiers and an audit — reached from the hub as `control_device`;
   as of M61's first stage its voice screens draw the activity strip and the
   knowledge graph from the console's contracts and play a reply as the
-  console does. Eight Tasker rows were closed; thirteen stay gap for
-  permissions the app does not request or a handset to prove.
+  console does. Fourteen Tasker rows were closed (loops were already there);
+  six stay gap — SMS, the call log, ending a call, NFC, and a camera
+  pipeline for photos and barcodes, which is a dependency decision
+  (`docs/TOOLING_DECISIONS.md`) — and `ui_key` is a no: an accessibility
+  service cannot inject keys.
 - The console: five tabs, Reactor II throughout; the voice tab shows the
   graph and the activity strip (M52), the instrument moves for what Jarvis
   does (M53), SETTINGS is five sections with the real models (M54), and

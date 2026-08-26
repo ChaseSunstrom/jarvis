@@ -22,8 +22,10 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   the rim beats while speaking (`motion.reactor.speak`), the iris gathers while a camera is
   looked at (`reactor_motion_test.py`). Not ticked: this host has no
   Android SDK, so the Kotlin is mirrored in Python and JVM tests are written but the build, lint
-  and golden screenshots wait for a machine that has one (ADT-036…039); thirteen rows stay gap
-  for permissions the app does not yet request.
+  and golden screenshots wait for a machine that has one (ADT-036…039). Five more rows followed
+  (now-playing, play media, wallpaper, record audio, Bluetooth) and the loops row was already
+  true; six rows stay gap for permissions the app does not request or a camera pipeline, and
+  `ui_key` is a no.
 - **M59 — anything online, locally.** A `watch` integration gives the web time: `watch_page` keeps
   a snapshot and says when a page changes, with what changed; `watch_feed` follows an RSS 2.0 or
   Atom feed (parsed with the standard library) and says what is new; `watch_for` ("tell me when

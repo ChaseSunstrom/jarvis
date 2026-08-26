@@ -393,6 +393,27 @@ The prompt side is M60's: the prefix is kept on the server between turns
 `PROMPT_TOKEN_BUDGET`; and the first sentence is synthesised while the model
 writes the rest. Re-measured by the live rig, never by editing a threshold.
 
+## A camera pipeline on the phone: CameraX and a barcode decoder (M61, open)
+
+**Not adopted, and the reason is written down.** Two Tasker rows are left
+open on the phone that need more than an action object: `take_photo` and
+`scan_code`. The permission is already requested (`CAMERA`), but a photo
+that Jarvis can hand to the vision integration needs a capture pipeline —
+CameraX (Apache-2.0, ~1 MB, a lifecycle-bound preview or a headless
+`ImageCapture` bound to a `ProcessLifecycleOwner`) — and a barcode needs a
+decoder: ML Kit's barcode scanning is Google-bundled (not on GrapheneOS
+without Play services), ZXing (Apache-2.0, pure Java, ~500 kB) is the local
+answer. The system camera app via `ACTION_IMAGE_CAPTURE` is the zero-
+dependency route for a photo but returns through an Activity result, which
+an action dispatched from the hub does not have.
+
+The decision waits for two things this host cannot supply: a build (the
+dependency changes the APK, and nothing here compiles it — BLOCKERS §3) and
+a handset to point at a barcode. Recommendation when both exist: CameraX
+`ImageCapture` headless for `take_photo` (Tier 3, asks every time, the frame
+goes to `look_at_camera`'s consent and fence), ZXing for `scan_code` (Tier 1,
+the decoded text is untrusted content). No Google dependency.
+
 ## How a decision here gets overturned
 
     python3 scripts/verify/toolbelt_baseline.py --out .verify/toolbelt/before.json
