@@ -307,7 +307,8 @@ def _register_tools(jarvis: "Jarvis") -> None:
                 "Research has started and is running now. Tell the user it is "
                 "under way and will take a minute or two, and that its progress "
                 "is on the Tasks page. Do not invent findings — you have none "
-                "yet."
+                "yet. Answer the user now, in this turn: do not call task_status "
+                "or wait for the result, which arrives later as a moment."
             ),
         }
 

@@ -1154,6 +1154,14 @@ bed light — the 06:54 note), `delegation-across-backends` (no delegation task
 inside 60 s; the 27B planned in prose first). The targeted re-runs after the
 fix are recorded under each milestone above.
 
+One environment fault, not the repository's: at 10:45 the SearXNG this house
+searches with (`searxng.tail05d9af.ts.net`) answered 200 with zero results
+because every upstream engine timed out (Brave, DuckDuckGo, Google CSE — the
+search box's own egress), so `deep_research` on the stack ended "nothing was
+found for 3 searches". The research scenarios run on the fixture ground with
+the fixture search and are unaffected; a stack-ground scenario that needs the
+open web fails until the search box can reach it.
+
 ## Known failures, as of 2026-08-26 (this host)
 
 The full-mode live run at 06:54 (`docs/LIVE_TEST_REPORT.md`): 47 of 53 scenario

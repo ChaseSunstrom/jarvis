@@ -2163,3 +2163,32 @@ async def test_a_turn_can_name_its_model_and_the_voice_path_names_the_fast_one(t
     assert fake.requests[2]["model"] == "tiny-fast"
     agent.fast_model = ""
     await shutdown(jarvis)
+
+
+async def test_a_turn_that_repeats_the_same_call_is_ended_and_answered(tmp_path):
+    """Three identical rounds end the turn; the final round is told to answer (M60).
+
+    On the live rig the model started a research task and then polled
+    task_status four times in the same turn, ran out of rounds, and — handed
+    no tools and no instruction — reasoned for a page and answered nothing.
+    """
+    from jarvis.llm.agent import REPEATED_ROUND_LIMIT
+
+    jarvis, house = await build_house(tmp_path)
+    entity_id = next(iter(house))
+    same = call_tool("get_state", {"entity_id": entity_id})
+    # Three identical rounds, then the final round answers: four requests.
+    fake = FakeOllama(same, same, same, say("It is on, Sir."))
+    agent = make_agent(jarvis, fake)
+    deltas = await collect(agent, f"is {entity_id} on?")
+    assert "It is on, Sir." in "".join(deltas)
+    # Three identical rounds, then the final round — not the full budget.
+    assert len(fake.requests) == REPEATED_ROUND_LIMIT + 1, [r.get("tools") is not None for r in fake.requests]
+    final = fake.requests[-1]
+    assert not final.get("tools"), "the final round still offered tools"
+    assert "No more tools this turn" in final["messages"][-1]["content"]
+    # The nudge is not part of what the conversation remembers.
+    history = await collect(agent, "and again?")
+    assert history is not None
+    assert all("No more tools this turn" not in str(m.get("content")) for m in fake.requests[-1]["messages"][:-1])
+    await shutdown(jarvis)

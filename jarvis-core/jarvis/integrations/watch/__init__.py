@@ -385,8 +385,14 @@ class WatchManager:
                 )
                 if isinstance(result, dict) and (result.get("text") or result.get("content")):
                     return str(result.get("title") or ""), normalise(str(result.get("text") or result.get("content") or ""))
+                # The browser answered without a page (an error result, a
+                # refused host): said at INFO, because the plain fetch below
+                # does not run the page's JavaScript and a reader that quietly
+                # fell back is how "Loading…" reaches the model as the page.
+                _LOGGER.info("watch: jarvis-browser gave no text for %s (%s); reading it here without JavaScript",
+                             url, (result or {}).get("error") if isinstance(result, dict) else result)
             except Exception as err:  # noqa: BLE001 - fall through to the plain fetch
-                _LOGGER.debug("watch: jarvis-browser could not read %s (%s); reading it here", url, err)
+                _LOGGER.info("watch: jarvis-browser could not read %s (%s); reading it here without JavaScript", url, err)
         async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=True, transport=self.transport) as client:
             response = await client.get(url, headers={"User-Agent": "Jarvis watch"})
             response.raise_for_status()

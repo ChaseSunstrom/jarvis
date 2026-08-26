@@ -902,7 +902,12 @@ class Runner:
                 since=getattr(self, "_scenario_started_at", started_at),
             )
             if task is None:
-                seen = [(t.get("kind"), t.get("status")) for t in await observer.tasks()]
+                # With the error, when there is one: a task that ended in error is
+                # the whole finding, and "(research, error)" says nothing.
+                seen = [
+                    (t.get("kind"), t.get("status"), str(t.get("error") or "")[:120] or None)
+                    for t in await observer.tasks()
+                ]
                 fail(f"no task matching {want_task} appeared; tasks were {seen}")
             elif want_task.get("steps_at_least") and len(task.get("steps") or []) < int(
                 want_task["steps_at_least"]

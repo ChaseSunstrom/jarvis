@@ -407,3 +407,9 @@ is quiet. Done since:
   and the model said, truthfully, that the page was waiting on approval. Fixed —
   the readers of M57–M59 are read-only, read_page fences its text on every path
   and says what happened — and the two scenarios are re-running on the harness.
+- 10:47 — Chasing the research failures on the harness: `deep_research` after a
+  `web_search` is escalated by the taint rule (correctly), so the model's new
+  search-first habit made research wait for approval; a tool rule now says to
+  delegate first. research-cancel passes alone (its error was run order). The
+  stack's SearXNG returns nothing — its upstream engines time out — recorded as
+  the environment's. Two scenarios re-running; then the final full run.
