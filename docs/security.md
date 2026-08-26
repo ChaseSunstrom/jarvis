@@ -211,6 +211,43 @@ nothing is held; and a key that *is* there arrives on the card marked
 `tainted` for the human to weigh. Refusing would also break the legitimate
 case — a turn that read a page and was then asked, by the user, to change the
 temperature.
+## An answer can be said, and the taint boundary decides when it may not be
+
+"I should be able to verbally confirm it." While a question or a held action
+waits on a conversation, the next turn in that conversation can be its answer
+— *"the corner one"*, *"yes, go ahead"*, *"cancel"* — and the agent decides
+that **in code, before the model sees the turn**, by the rules pinned in
+`tests/contracts/spoken_answers.json` (`jarvis/llm/spoken_answers.py`). The
+resolution itself is `approve_request`, unchanged: single use, the answer
+reaching only the argument the tool named in `Tool.answerable`, an approval
+carrying no words at all. What runs after a spoken yes is what the card showed.
+
+A wrong match approves an action the person did not confirm, so the rules
+prefer asking again over guessing:
+
+| waiting | resolved by | never by |
+| --- | --- | --- |
+| one **action** | the whole utterance being one of the affirmations (*yes*, *go ahead*, *okay*…) or denials (*no*, *cancel*, *never mind*…) | *"yes and also turn on the lamp"*, a choice word, anything else — the request keeps waiting and the model is told so |
+| one **question with choices** | words that pick out exactly one choice (the choice's own text is the answer); a denial dismisses | words that fit two choices or none |
+| one **free-text question** | the words, verbatim; a denial dismisses | — |
+| **two or more** | nothing — a *yes* is answered with what is waiting and *"say which"* | any guess |
+| anything **tainted** | nothing — the turn says it waits on the console | any words |
+
+The request carries which conversation raised it (`conversation_id`, stamped
+from what the agent recorded for the turn), so a *"yes"* in one conversation
+never approves what another asked; a request raised outside any conversation
+(the console's `jarvis/tools/call`) is nobody's to answer by voice.
+
+**The taint boundary.** A request raised by a turn that had already read
+untrusted content carries `tainted` (above), and such a request is never
+resolved by words, in either direction. The reason is the one the previous
+section gives: the words of a tainted question may be the page's, not
+Jarvis's, and the console's banner is the surface that says so. A spoken
+*"the corner one"* to a question an injected page composed would answer the
+page. So the turn replies that the request is waiting on the console, where
+the provenance is on screen, and leaves it exactly as it was. The rule is a
+single check in `spoken_answers.decide`, and the contract's cases pin it for
+an action, a question with choices and a free-text question alike.
 
 ## Everything that comes back is untrusted too
 

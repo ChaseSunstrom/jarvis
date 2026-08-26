@@ -266,6 +266,7 @@ def build_config(
     rerank_url: str = "",
     rerank_model: str = "",
     code: dict[str, Any] | None = None,
+    question_ttl: float = 1800.0,
     vision_model: str = "",
     vision_camera_url: str = "",
 ) -> str:
@@ -500,6 +501,9 @@ llm:
   # the failure should be Jarvis saying so, not the test giving up first.
   call_timeout: 200
   approval_ttl: 60
+  # A question's own clock (M66). The shipped default; a test that wants to
+  # watch one lapse boots its own harness with a short one.
+  question_ttl: {question_ttl}
   options:
     temperature: 0
   expose:
@@ -647,8 +651,10 @@ class Harness:
         rerank_url: str | None = None,
         rerank_model: str | None = None,
         code: dict[str, Any] | None = None,
+        question_ttl: float = 1800.0,
     ) -> None:
         self.host = host
+        self.question_ttl = question_ttl
         # The fakes never leave this box: jarvis-core reaches them over
         # loopback and nothing else ever does (an emulator talks to the server,
         # not to them). Binding them on 0.0.0.0 would put the fake Ollama's
@@ -966,6 +972,7 @@ class Harness:
                 rerank_url=self.rerank_url,
                 rerank_model=self.rerank_model,
                 code=self.code_config,
+                question_ttl=self.question_ttl,
             ),
             encoding="utf-8",
         )

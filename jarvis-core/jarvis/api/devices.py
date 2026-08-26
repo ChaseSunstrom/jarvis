@@ -767,6 +767,82 @@ def utterance_of(jarvis: "Jarvis", context: Any) -> str:
     return get_turn_utterances(jarvis).get(context)
 
 
+#: ``jarvis.data`` key for which conversation a turn belongs to, and whether
+#: its reply is spoken.
+DATA_TURN_FACTS = "turn_facts"
+
+
+class TurnFacts:
+    """Which conversation a turn is, and whether its reply will be spoken.
+
+    Two facts the tool registry needs at the moment it holds a request, and
+    cannot get from the ``Context`` (a fresh one per turn, carrying no
+    conversation) or from the tool's arguments (the model's, not the
+    surface's):
+
+    * the **conversation id**, so a request can be matched against the next
+      thing said in the same conversation (`ConversationAgent._answer_pending`)
+      and never against a turn in some other thread — a "yes" in the kitchen
+      must not approve a door the study asked about;
+    * **spoken**, so a question raised by a turn whose reply is read aloud is
+      not read aloud a second time by the phone (`companion.ask` carries it as
+      ``spoken``): the reply is the model's own sentence and already contains
+      the question, which is how the operator came to hear every question
+      twice.
+
+    Same shape and TTL as `UntrustedTurns`: keyed on the context id the agent
+    builds once per turn. A turn nobody recorded has no conversation and is
+    not spoken, which is the conservative reading of both.
+    """
+
+    def __init__(self, ttl: float = UNTRUSTED_TTL) -> None:
+        self.ttl = ttl
+        self._turns: dict[str, tuple[float, str | None, bool]] = {}
+
+    def remember(self, context: Any, conversation_id: str | None, spoken: bool) -> None:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return
+        now = time.time()
+        self._turns = {k: v for k, v in self._turns.items() if v[0] > now}
+        self._turns[key] = (
+            now + self.ttl,
+            str(conversation_id) if conversation_id else None,
+            bool(spoken),
+        )
+
+    def get(self, context: Any) -> tuple[str | None, bool]:
+        key = UntrustedTurns.key(context)
+        if key is None:
+            return None, False
+        entry = self._turns.get(key)
+        if entry is None or entry[0] <= time.time():
+            self._turns.pop(key, None)
+            return None, False
+        return entry[1], entry[2]
+
+
+def get_turn_facts(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> TurnFacts:
+    store = jarvis.data.get(DATA_TURN_FACTS)
+    if not isinstance(store, TurnFacts):
+        store = jarvis.data.setdefault(DATA_TURN_FACTS, TurnFacts(ttl))
+    return store
+
+
+def remember_turn(
+    jarvis: "Jarvis", context: Any, conversation_id: str | None, spoken: bool = False
+) -> None:
+    """Record the turn's conversation and whether its reply is spoken. Called
+    once, by the agent, next to `remember_utterance`."""
+    get_turn_facts(jarvis).remember(context, conversation_id, spoken)
+
+
+def turn_facts_of(jarvis: "Jarvis", context: Any) -> tuple[str | None, bool]:
+    """``(conversation_id, spoken)`` for this turn; ``(None, False)`` if nobody
+    recorded it."""
+    return get_turn_facts(jarvis).get(context)
+
+
 def get_untrusted_turns(jarvis: "Jarvis", ttl: float = UNTRUSTED_TTL) -> UntrustedTurns:
     """The shared taint set, created on first use."""
     store = jarvis.data.get(DATA_UNTRUSTED)

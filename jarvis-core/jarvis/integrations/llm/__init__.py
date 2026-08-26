@@ -9,7 +9,8 @@ Configuration::
       max_tool_rounds: 5
       max_concurrent: 2        # model calls in flight at once (subagents)
       call_timeout: 300        # seconds for one whole model call, stall or not
-      approval_ttl: 300
+      approval_ttl: 300        # seconds a held ACTION waits for a yes
+      question_ttl: 1800       # seconds a QUESTION (ask_user) waits for its answer
       options: {temperature: 0.6}
       expose:
         domains: [light, switch, cover, climate, media_player]
@@ -78,6 +79,7 @@ from ...llm.openai_compat import OpenAICompatClient
 from ...llm.authored_tools import get_authored_tools
 from ...llm.tools import (
     DEFAULT_APPROVAL_TTL,
+    DEFAULT_QUESTION_TTL,
     EVENT_APPROVAL_REQUIRED,
     Exposure,
     ToolRegistry,
@@ -421,6 +423,11 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     # lazily by whoever fans out first, and by then the config is gone.
     jarvis.data[DATA_MAX_CONCURRENT] = _bounded_concurrency(options.get("max_concurrent"))
     approval_ttl = float(options.get("approval_ttl") or DEFAULT_APPROVAL_TTL)
+    # Its own clock, never derived from `approval_ttl`: the two are different
+    # waits for different reasons (see `DEFAULT_QUESTION_TTL`), and an
+    # operator shortening approvals to a minute should not have every
+    # question lapse in a minute too.
+    question_ttl = float(options.get("question_ttl") or DEFAULT_QUESTION_TTL)
 
     client = create_http_client(jarvis, timeout)
     ollama = _build_model_client(options, url, model, timeout, client)
@@ -430,7 +437,9 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         ollama.call_timeout = max(call_timeout, timeout)
 
     exposure = Exposure.from_config(options.get("expose"))
-    registry = ToolRegistry(jarvis, exposure=exposure, approval_ttl=approval_ttl)
+    registry = ToolRegistry(
+        jarvis, exposure=exposure, approval_ttl=approval_ttl, question_ttl=question_ttl
+    )
     register_builtin_tools(registry, _as_dict(options.get("user_context")))
 
     specs: list[Any] = []
@@ -641,6 +650,13 @@ async def _ask_on_a_device(
                 # than the request lives would put a live-looking prompt in
                 # somebody's hand for an answer nothing can still accept.
                 "timeout": max(5.0, float(data.get("expires_at", 0)) - time.time()),
+                # The single voice (M66): a question raised by a spoken turn is
+                # said once, by the reply, on the surface the user spoke to.
+                # The phone gets it as a card to tap and does not read it out
+                # again — it used to, and the operator heard the question
+                # twice. A typed turn's question is still spoken by the phone,
+                # because nothing else will say it.
+                "spoken": bool(data.get("spoken")),
             },
             blocking=True,
             return_response=True,

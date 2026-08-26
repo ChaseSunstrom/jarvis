@@ -391,6 +391,14 @@ async def entity_registry_update(request: Request) -> dict[str, Any]:
         raise _api_error(err) from err
 
 
+@api_router.post("/config/entity_registry/remove")
+async def entity_registry_remove(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_remove_entity(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
 @api_router.get("/config/device_registry/list")
 async def device_registry_list(request: Request) -> list[dict[str, Any]]:
     return common.device_registry_payload(get_jarvis(request))
@@ -400,6 +408,14 @@ async def device_registry_list(request: Request) -> list[dict[str, Any]]:
 async def device_registry_update(request: Request) -> dict[str, Any]:
     try:
         return await common.async_update_device(get_jarvis(request), await json_body(request))
+    except ApiError as err:
+        raise _api_error(err) from err
+
+
+@api_router.post("/config/device_registry/remove")
+async def device_registry_remove(request: Request) -> dict[str, Any]:
+    try:
+        return await common.async_remove_device(get_jarvis(request), await json_body(request))
     except ApiError as err:
         raise _api_error(err) from err
 

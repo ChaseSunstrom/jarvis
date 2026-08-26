@@ -164,8 +164,10 @@ What happens:
    `{"request_id": ..., "approved": true}`, or the `jarvis/approve` websocket
    command, or `llm.approve`.
 4. The request is popped from the pending map *before* it executes, so it
-   cannot be replayed. It expires after `approval_ttl` (default 300 s)
-   whether or not anyone looked at it.
+   cannot be replayed. It expires after `approval_ttl` (default 300 s) —
+   a question (`ask_user`) after `question_ttl` (default 1800 s), its own
+   clock — whether or not anyone looked at it, and an answer that arrives
+   after that is told so in words (M66).
 
 The model never sees the approval path. It cannot call the approve endpoint —
 that is not one of its tools — and for the tools that resolve targets it cannot

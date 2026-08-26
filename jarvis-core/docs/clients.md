@@ -143,9 +143,9 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/mcp/add` | `name` plus either `url` (+ optional `token`) or, when the operator has allowed it, `command`/`args`. Adds the server, connects, and registers its tools as `mcp_<server>_<tool>` |
 | `jarvis/mcp/remove` | `name`; forgets a console-added server and unregisters its tools. A server defined in `configuration.yaml` is refused — edit the file |
 | `jarvis/mcp/reconnect` | `name`, or omit for all; reconnects and re-reads the tool list, which is how a server that gained a tool becomes visible |
-| `jarvis/approve` | resolve a Tier-3 approval the safety gate is holding. A held request — on `jarvis_approval_required` and from `llm.pending_requests` — carries `summary` (M67): one sentence composed server-side from the **pinned** arguments for a tool that has one (`Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu`), empty for every tool that has none. Draw it in place of the tool's name and the raw arguments, and fall back to name-and-arguments when it is empty; never compose one on the client. The field's name is `tests/contracts/tool_tiers.json` `rules.held_summary` |
-| `config/entity_registry/list` · `/update` | rename (label or `entity_id`), re-area, hide, or set `exposed` |
-| `config/device_registry/list` · `/update` | device names and area assignment |
+| `jarvis/approve` | `request_id`, `approved`, and `answer` for a request that is a question. Resolves a Tier-3 request the safety gate is holding. The result is `{status: executed \| denied \| error, …}`; an `error` for a request that lapsed carries `expired: true`, `waited_seconds` and a sentence to show or say (*"That question expired after 30 minutes; ask again and I'll wait."*); an id the server never held gets `unknown, expired or already-used approval request`. A held request — on `jarvis_approval_required` and from `llm.pending_requests` — carries `summary` (M67): one sentence composed server-side from the **pinned** arguments for a tool that has one (`Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu`), empty for every tool that has none. Draw it in place of the tool's name and the raw arguments, and fall back to name-and-arguments when it is empty; never compose one on the client. The field's name is `tests/contracts/tool_tiers.json` `rules.held_summary` |
+| `config/entity_registry/list` · `/update` · `/remove` | rename (label or `entity_id`), re-area, hide, or set `exposed`; `remove` takes the entity out of the house for good (M69) — its registry entry, its state (a `state_changed` with no `new_state`) and its live object, one path shared with the assistant's `remove_entities` |
+| `config/device_registry/list` · `/update` · `/remove` | device names and area assignment; `remove` forgets the device and removes every entity on it first, answering `{device_id, name, removed, entities}` |
 | `config/area_registry/list` · `/create` · `/update` · `/delete` | areas |
 | `config/companion/list` | the phones, desktops and satellites *running Jarvis*, each with what it will let Jarvis do to it and whether it is connected. Not the house's entities — those are the registries above. `include_actions: false` returns counts instead of manifests |
 | `config/token/list` | every long-lived token, with `connected` for whether a live socket is holding it. Built from the auth manager, so a token with no pairing record still appears |
@@ -157,6 +157,19 @@ jarvis-web keeps working against Home Assistant, which knows `get_states` and
 | `jarvis/device/register` | says who this socket is, so it can be sent commands and counted as present. It is the door to the whole device channel — `device_command` / `device_result` / `device_event` are *frames*, not commands, and are specified in `docs/cross-device.md` and `android-app/docs/device-channel.md` |
 | `assist_pipeline/pipeline/list` | available voice pipelines + the preferred one |
 | `assist_pipeline/run` | a voice run (below) |
+
+**Held requests, on the bus.** `jarvis_approval_required` carries the request:
+`request_id`, `tool`, `arguments` (pinned to concrete ids when raised), `tier`,
+`created`, `expires_at`, `ttl` (the clock it is on: `llm.question_ttl` for a
+question, `llm.approval_ttl` for an action — count *this* down, so the banner
+and the voice agree), `answerable` (the one argument an answer may write; set
+means it is a QUESTION), `choices`, `tainted` (raised by a turn that had read
+untrusted content), `conversation_id` (which conversation raised it — the next
+thing said there can answer it, see `docs/security.md`) and `spoken` (its reply
+is read aloud, so a phone does not read the question out again).
+`jarvis_approval_resolved` repeats it with `approved`; `jarvis_approval_expired`
+repeats it with `expired: true` when the server notices it lapsed — the server
+purges lazily, so keep your own countdown and treat this as confirmation.
 
 Every command above is in `_HANDLERS` in `jarvis/api/websocket.py`, and
 `test_packaging.py::test_every_websocket_command_is_documented` asserts the two

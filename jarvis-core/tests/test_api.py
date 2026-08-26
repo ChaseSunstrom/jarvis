@@ -795,6 +795,66 @@ def test_ws_entity_registry_update(client, jarvis, token):
     assert jarvis.entities.get("light.kitchen_light").area_id == "kitchen"
 
 
+def test_ws_entity_and_device_removal(client, jarvis, token):
+    """`config/entity_registry/remove` and `config/device_registry/remove` (M69):
+    the console's door to the one delete path, over the socket, with the
+    state_changed a subscriber sees on the way."""
+
+    async def seed():
+        device = await jarvis.devices.async_get_or_create(["hue:1"], "Hue Bridge", "hue")
+        for object_id in ("hall", "porch"):
+            entry = await jarvis.entities.async_get_or_create(
+                "light", "demo", f"uid-{object_id}", object_id, device_id=device.id
+            )
+            jarvis.states.set(entry.entity_id, "on")
+        loose = await jarvis.entities.async_get_or_create("light", "demo", "uid-study", "study")
+        jarvis.states.set(loose.entity_id, "off")
+        return device.id
+
+    device_id = asyncio.run(seed())
+
+    with client.websocket_connect("/api/websocket") as ws:
+        handshake(ws, token)
+        ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
+        assert ws.receive_json()["success"] is True
+
+        ws.send_json({"id": 2, "type": "config/entity_registry/remove", "entity_id": "light.study"})
+        frames = [ws.receive_json(), ws.receive_json()]
+        result = next(f for f in frames if f.get("id") == 2)["result"]
+        event = next(f for f in frames if f.get("type") == "event")["event"]
+        assert result == {
+            "entity_id": "light.study",
+            "removed": True,
+            "had_state": True,
+            "had_registry_entry": True,
+        }
+        assert event["data"]["entity_id"] == "light.study"
+        assert event["data"]["new_state"] is None
+
+        ws.send_json({"id": 3, "type": "config/entity_registry/remove", "entity_id": "light.study"})
+        assert ws.receive_json()["error"]["code"] == "not_found"
+
+        ws.send_json({"id": 4, "type": "config/entity_registry/remove"})
+        assert ws.receive_json()["error"]["code"] == "invalid_format"
+
+        ws.send_json({"id": 5, "type": "config/device_registry/remove", "device_id": device_id})
+        got = [ws.receive_json() for _ in range(3)]
+        outcome = next(f for f in got if f.get("id") == 5)["result"]
+        assert outcome["removed"] is True
+        assert outcome["entities"] == ["light.hall", "light.porch"]
+        assert {f["event"]["data"]["entity_id"] for f in got if f.get("type") == "event"} == {
+            "light.hall",
+            "light.porch",
+        }
+
+        ws.send_json({"id": 6, "type": "config/device_registry/remove", "device_id": device_id})
+        assert ws.receive_json()["error"]["code"] == "not_found"
+
+    assert jarvis.entities.get("light.study") is None
+    assert jarvis.states.get("light.hall") is None
+    assert jarvis.devices.devices.get(device_id) is None
+
+
 def test_ws_conversation_process(client, jarvis, token):
     async def process(call):
         return {

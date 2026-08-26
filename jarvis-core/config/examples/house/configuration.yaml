@@ -162,6 +162,7 @@ llm:
   max_tool_rounds: 5
   # Seconds a Tier-3 approval request stays valid before it expires unused.
   approval_ttl: 300
+  question_ttl: 1800
   options:
     temperature: 0.6
     num_ctx: 8192

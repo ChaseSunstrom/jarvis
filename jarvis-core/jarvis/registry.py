@@ -187,6 +187,18 @@ class DeviceRegistry:
         await self.save()
         return device
 
+    async def remove(self, device_id: str) -> bool:
+        """Forget a device. The entities that hang off it are the caller's to
+        remove first (`Jarvis.async_remove_device` does); this only drops the
+        record, or an entity would keep naming a device that is not there."""
+        if self.devices.pop(device_id, None) is None:
+            return False
+        self._bus.fire(
+            EVENT_DEVICE_REGISTRY_UPDATED, {"action": "remove", "device_id": device_id}
+        )
+        await self.save()
+        return True
+
 
 class EntityRegistry:
     def __init__(self, bus: EventBus, store: Store) -> None:

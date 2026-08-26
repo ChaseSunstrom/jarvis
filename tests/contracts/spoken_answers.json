@@ -1,0 +1,99 @@
+{
+  "$comment": [
+    "When the next thing said in a conversation resolves the request that is",
+    "waiting on it — and when it must not (M66).",
+    "",
+    "A wrong match here approves an action the person did not confirm, so the",
+    "rules prefer asking again over guessing: an ACTION is only ever approved",
+    "by a whole utterance that is one of `affirmations`, and only ever denied by",
+    "one of `denials`; a QUESTION with choices is answered by a choice the words",
+    "pick out uniquely; a free-text question takes the words as they are. A",
+    "request raised by a turn that had read untrusted content is never resolved",
+    "by voice (`tainted`) — the banner is the one surface that shows where the",
+    "question's words came from, so that is where it is answered.",
+    "",
+    "Read by jarvis-core/tests/test_spoken_answers.py, which holds the lists in",
+    "jarvis/llm/spoken_answers.py equal to these and runs every case. The phone",
+    "does not share this logic: an answer said to the phone is sent to the",
+    "server as a turn and decided here."
+  ],
+  "version": 1,
+  "normalisation": {
+    "lowercase": true,
+    "letters_digits_only": "every other character becomes a space; apostrophes are dropped, so don't and dont are the same word",
+    "edge_fillers": ["jarvis", "please", "thanks", "thank you", "hey"],
+    "edge_fillers_note": "removed from either end, repeatedly, before the lists are consulted; never from the middle, so 'yes please turn it on' is not 'yes'"
+  },
+  "affirmations": [
+    "yes", "yes please", "yep", "yeah", "yup", "ok", "okay", "sure", "sure thing",
+    "go ahead", "go for it", "do it", "please do", "confirm", "confirmed", "approve",
+    "approved", "proceed", "affirmative", "yes go ahead", "yes do it", "ok go ahead",
+    "okay go ahead", "ok do it", "okay do it", "yes confirm", "that's fine", "fine",
+    "carry on", "yes carry on"
+  ],
+  "denials": [
+    "no", "nope", "nah", "cancel", "cancel that", "cancel it", "don't", "do not",
+    "don't do it", "do not do it", "no don't", "no cancel", "stop", "no thanks",
+    "no thank you", "never mind", "nevermind", "forget it", "deny", "denied", "abort",
+    "leave it", "not now", "no leave it"
+  ],
+  "stopwords": [
+    "the", "a", "an", "one", "ones", "that", "this", "it", "i", "i'd", "id", "want",
+    "would", "like", "with", "option", "choose", "pick", "select", "let's", "lets",
+    "go", "for", "of", "them", "those", "these", "my", "me", "to", "yes", "no"
+  ],
+  "stopwords_note": "dropped from an utterance before its words are matched against a question's choices; what is left must all sit inside exactly one choice",
+  "rules": {
+    "no_pending": "Nothing waits on this conversation: the turn is an ordinary turn (`none`).",
+    "tainted": "Any pending request raised after untrusted content was read is never resolved by words. If the utterance would have resolved it, the decision is `tainted` and the turn says the request waits on the banner; the request is left exactly as it was.",
+    "several_pending": "More than one request waiting: an affirmation or a denial cannot be attributed, so the decision is `ambiguous` (the turn says what is waiting and asks which); anything else is `none`. Nothing is guessed.",
+    "action": "One action waiting (no `answerable`): the whole normalised utterance is one of `affirmations` → `approve`; one of `denials` → `deny`; anything else → `none`, and the request keeps waiting. 'yes and also turn on the lamp' is not a yes.",
+    "question_with_choices": "One question waiting with choices: a denial → `deny` (dismissed). The utterance equal to a choice, or containing a choice as a whole phrase, or whose non-stopword words all appear in exactly one choice → `answer` with THAT choice's exact text (never the utterance). An affirmation answers a choice that is itself an affirmation, likewise a denial. Words that fit two choices, or none → `none`.",
+    "question_free_text": "One question waiting with no choices: a denial → `deny`; anything else → `answer` with the utterance verbatim (trimmed, not normalised — a URL is an answer).",
+    "answer_writes_one_argument": "An answer only ever reaches the one argument the tool named in `Tool.answerable`; an approval carries no words at all. That is `approve_request`'s rule, unchanged."
+  },
+  "cases": [
+    {"name": "nothing waiting", "pending": [], "utterance": "yes", "expect": {"kind": "none"}},
+
+    {"name": "a bare yes approves the one held action", "pending": [{"tool": "lock_control"}], "utterance": "yes", "expect": {"kind": "approve", "index": 0}},
+    {"name": "yes, go ahead", "pending": [{"tool": "lock_control"}], "utterance": "Yes, go ahead.", "expect": {"kind": "approve", "index": 0}},
+    {"name": "fillers at the edges are not words", "pending": [{"tool": "lock_control"}], "utterance": "Jarvis, go ahead please", "expect": {"kind": "approve", "index": 0}},
+    {"name": "okay", "pending": [{"tool": "remove_entities"}], "utterance": "okay", "expect": {"kind": "approve", "index": 0}},
+    {"name": "no denies", "pending": [{"tool": "lock_control"}], "utterance": "No.", "expect": {"kind": "deny", "index": 0}},
+    {"name": "cancel that denies", "pending": [{"tool": "remove_entities"}], "utterance": "cancel that", "expect": {"kind": "deny", "index": 0}},
+    {"name": "never mind denies", "pending": [{"tool": "lock_control"}], "utterance": "never mind", "expect": {"kind": "deny", "index": 0}},
+    {"name": "a new request is not a confirmation", "pending": [{"tool": "lock_control"}], "utterance": "turn on the kitchen light", "expect": {"kind": "none"}},
+    {"name": "a yes with more attached is not a yes", "pending": [{"tool": "lock_control"}], "utterance": "yes and also turn on the lamp", "expect": {"kind": "none"}},
+    {"name": "yes in the middle is not a yes", "pending": [{"tool": "lock_control"}], "utterance": "I said yes to the other one", "expect": {"kind": "none"}},
+    {"name": "a choice word is not an approval of an action", "pending": [{"tool": "lock_control"}], "utterance": "corner", "expect": {"kind": "none"}},
+    {"name": "a tainted action is never approved by voice", "pending": [{"tool": "lock_control", "tainted": true}], "utterance": "yes", "expect": {"kind": "tainted", "index": 0}},
+    {"name": "a tainted action is never denied by voice either", "pending": [{"tool": "lock_control", "tainted": true}], "utterance": "no", "expect": {"kind": "tainted", "index": 0}},
+    {"name": "a tainted request and an unrelated turn", "pending": [{"tool": "lock_control", "tainted": true}], "utterance": "what time is it", "expect": {"kind": "none"}},
+    {"name": "two actions and a yes is ambiguous", "pending": [{"tool": "lock_control"}, {"tool": "remove_entities"}], "utterance": "yes", "expect": {"kind": "ambiguous"}},
+    {"name": "two actions and a no is ambiguous too", "pending": [{"tool": "lock_control"}, {"tool": "remove_entities"}], "utterance": "no", "expect": {"kind": "ambiguous"}},
+    {"name": "two waiting and an unrelated turn", "pending": [{"tool": "lock_control"}, {"tool": "remove_entities"}], "utterance": "what's the time", "expect": {"kind": "none"}},
+    {"name": "an action and a question, and a yes", "pending": [{"tool": "lock_control"}, {"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "yes", "expect": {"kind": "ambiguous"}},
+    {"name": "an action and a question, and a choice", "pending": [{"tool": "lock_control"}, {"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "the corner one", "expect": {"kind": "none"}},
+
+    {"name": "a choice named exactly", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "Corner lamp", "expect": {"kind": "answer", "index": 0, "answer": "Corner lamp"}},
+    {"name": "a choice named in a sentence", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "I meant the corner lamp, please", "expect": {"kind": "answer", "index": 0, "answer": "Corner lamp"}},
+    {"name": "a word that picks one choice out", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "the corner one", "expect": {"kind": "answer", "index": 0, "answer": "Corner lamp"}},
+    {"name": "a word both choices share picks nothing", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "the lamp", "expect": {"kind": "none"}},
+    {"name": "the operator's case", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["turn everything off", "just the lights"]}], "utterance": "turn everything off", "expect": {"kind": "answer", "index": 0, "answer": "turn everything off"}},
+    {"name": "the operator's case, in other words", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["turn everything off", "just the lights"]}], "utterance": "everything off, please", "expect": {"kind": "answer", "index": 0, "answer": "turn everything off"}},
+    {"name": "the other choice", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["turn everything off", "just the lights"]}], "utterance": "just the lights", "expect": {"kind": "answer", "index": 0, "answer": "just the lights"}},
+    {"name": "words that straddle two choices pick nothing", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["turn everything off", "just the lights"]}], "utterance": "turn the lights off", "expect": {"kind": "none"}},
+    {"name": "a yes answers a yes choice", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["yes", "no"]}], "utterance": "yeah", "expect": {"kind": "answer", "index": 0, "answer": "yes"}},
+    {"name": "a no answers a no choice", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["yes", "no"]}], "utterance": "nope", "expect": {"kind": "answer", "index": 0, "answer": "no"}},
+    {"name": "a yes does not answer a question with no yes among its choices", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "yes", "expect": {"kind": "none"}},
+    {"name": "a denial dismisses a question with choices", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"]}], "utterance": "never mind", "expect": {"kind": "deny", "index": 0}},
+    {"name": "a tainted question is never answered by voice", "pending": [{"tool": "ask_user", "answerable": "answer", "choices": ["Desk lamp", "Corner lamp"], "tainted": true}], "utterance": "the corner one", "expect": {"kind": "tainted", "index": 0}},
+
+    {"name": "free text is the answer, verbatim", "pending": [{"tool": "ask_user", "answerable": "answer"}], "utterance": "  http://printer.lan  ", "expect": {"kind": "answer", "index": 0, "answer": "http://printer.lan"}},
+    {"name": "free text keeps its capitals and punctuation", "pending": [{"tool": "ask_user", "answerable": "answer"}], "utterance": "Mira's room, second floor.", "expect": {"kind": "answer", "index": 0, "answer": "Mira's room, second floor."}},
+    {"name": "a yes is a fine free-text answer", "pending": [{"tool": "ask_user", "answerable": "answer"}], "utterance": "yes", "expect": {"kind": "answer", "index": 0, "answer": "yes"}},
+    {"name": "cancel dismisses a free-text question", "pending": [{"tool": "ask_user", "answerable": "answer"}], "utterance": "cancel", "expect": {"kind": "deny", "index": 0}},
+    {"name": "a tainted free-text question waits on the banner", "pending": [{"tool": "ask_user", "answerable": "answer", "tainted": true}], "utterance": "http://printer.lan", "expect": {"kind": "tainted", "index": 0}},
+    {"name": "an empty utterance answers nothing", "pending": [{"tool": "ask_user", "answerable": "answer"}], "utterance": "   ", "expect": {"kind": "none"}}
+  ]
+}

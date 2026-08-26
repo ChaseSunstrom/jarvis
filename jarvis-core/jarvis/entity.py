@@ -35,6 +35,13 @@ class Entity:
     jarvis: "Jarvis" = None  # type: ignore[assignment]
     entity_id: str = ""
     platform_name: str = ""
+    #: The `EntityPlatform` that added this entity, set by `async_add_entities`.
+    #:
+    #: What `Jarvis.async_remove_entity` reaches for: a removal that only
+    #: dropped the registry entry and the state would leave the object in the
+    #: platform's poll loop, which writes the state straight back on the next
+    #: tick — an entity the house said was gone, back a minute later.
+    platform: Any = None
 
     _attr_name: str | None = None
     _attr_unique_id: str | None = None
@@ -262,6 +269,7 @@ class EntityPlatform:
                 device_id=device_id,
             )
             entity.entity_id = entry.entity_id
+            entity.platform = self
             self.entities[entry.entity_id] = entity
             self.jarvis.data.setdefault("entity_objects", {})[entry.entity_id] = entity
 

@@ -156,6 +156,12 @@ TIER_THREE_TOOLS_AND_THEIR_SERVICE_TWINS: dict[str, str | None] = {
     # automation cannot call these at all.
     "create_tool": None,
     "ask_user": None,
+    # Taking things out of the house (M69). The delete path they run is the
+    # core's `async_remove_entity` / `async_remove_device`, which the console
+    # reaches as a websocket command, not a service — an automation has no
+    # verb for it.
+    "remove_entities": None,
+    "remove_device": None,
     # `lock_control` is Tier 3 *and* `domain="lock"`, so the service form
     # (`lock.lock` / `lock.unlock`) is already covered by GATED_DOMAINS.
     "lock_control": None,

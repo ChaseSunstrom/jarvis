@@ -535,6 +535,24 @@ async def async_update_entity(jarvis: "Jarvis", payload: dict[str, Any]) -> dict
     return {"entity_entry": entry.as_dict(), **result}
 
 
+async def async_remove_entity(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    """`config/entity_registry/remove`. One path — `Jarvis.async_remove_entity`
+    — shared with the assistant's `remove_entities`, so the console and the
+    voice cannot disagree about what removing means."""
+    entity_id = str(payload.get("entity_id") or "").strip().lower()
+    if not entity_id:
+        raise ApiError("invalid_format", "entity_id is required", 400)
+    outcome = await jarvis.async_remove_entity(entity_id, api_context())
+    if not outcome["removed"]:
+        raise ApiError("not_found", f"unknown entity {entity_id}", 404)
+    return {
+        "entity_id": entity_id,
+        "removed": True,
+        "had_state": bool(outcome["state"]),
+        "had_registry_entry": bool(outcome["registry"]),
+    }
+
+
 async def async_update_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
     device_id = str(payload.get("device_id") or "")
     if not device_id:
@@ -543,6 +561,17 @@ async def async_update_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict
     if entry is None:
         raise ApiError("not_found", f"unknown device {device_id}", 404)
     return entry.as_dict()
+
+
+async def async_remove_device(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+    """`config/device_registry/remove`: the device and every entity on it."""
+    device_id = str(payload.get("device_id") or "").strip()
+    if not device_id:
+        raise ApiError("invalid_format", "device_id is required", 400)
+    outcome = await jarvis.async_remove_device(device_id, api_context())
+    if not outcome["removed"]:
+        raise ApiError("not_found", f"unknown device {device_id}", 404)
+    return outcome
 
 
 async def async_create_area(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:

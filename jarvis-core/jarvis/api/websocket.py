@@ -1014,11 +1014,17 @@ class WebSocketHandler:
     async def _cmd_entity_update(self, msg: dict[str, Any]) -> Any:
         return await common.async_update_entity(self.jarvis, msg)
 
+    async def _cmd_entity_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_entity(self.jarvis, msg)
+
     async def _cmd_device_list(self, msg: dict[str, Any]) -> Any:
         return common.device_registry_payload(self.jarvis)
 
     async def _cmd_device_update(self, msg: dict[str, Any]) -> Any:
         return await common.async_update_device(self.jarvis, msg)
+
+    async def _cmd_device_remove(self, msg: dict[str, Any]) -> Any:
+        return await common.async_remove_device(self.jarvis, msg)
 
     async def _cmd_area_list(self, msg: dict[str, Any]) -> Any:
         return common.area_registry_payload(self.jarvis)
@@ -1422,8 +1428,12 @@ WebSocketHandler._HANDLERS = {
     "jarvis/approve": WebSocketHandler._cmd_approve,
     "config/entity_registry/list": WebSocketHandler._cmd_entity_list,
     "config/entity_registry/update": WebSocketHandler._cmd_entity_update,
+    # Removal (M69). The same `Jarvis.async_remove_entity` the assistant's
+    # `remove_entities` runs after its approval, so there is one delete path.
+    "config/entity_registry/remove": WebSocketHandler._cmd_entity_remove,
     "config/device_registry/list": WebSocketHandler._cmd_device_list,
     "config/device_registry/update": WebSocketHandler._cmd_device_update,
+    "config/device_registry/remove": WebSocketHandler._cmd_device_remove,
     "config/area_registry/list": WebSocketHandler._cmd_area_list,
     "config/area_registry/create": WebSocketHandler._cmd_area_create,
     "config/area_registry/update": WebSocketHandler._cmd_area_update,

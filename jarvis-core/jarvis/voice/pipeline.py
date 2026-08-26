@@ -1171,6 +1171,14 @@ class PipelineRun:
         speaker = self.speaker_label()
         if speaker is not None and ("speaker" in params or takes_var_kw):
             extra["speaker"] = speaker
+        # `spoken` likewise (M66): whether this run will read the reply aloud,
+        # so a question the turn raises is not read aloud twice — once by the
+        # reply and once by the phone. Only the real agent takes it; the voice
+        # integration's wrapper forwards keywords, so it reaches the agent
+        # through that too.
+        wants_spoken = "spoken" in params or takes_var_kw
+        if wants_spoken:
+            extra["spoken"] = self.runs_stage("tts")
         positional = [
             p
             for p in params.values()

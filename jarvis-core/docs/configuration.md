@@ -250,6 +250,7 @@ llm:
   persona_file: prompts/jarvis.txt
   max_tool_rounds: 5
   approval_ttl: 300
+  question_ttl: 1800
   timeout: 120
   keep_alive: 30m
   options: {temperature: 0.6, num_ctx: 8192}
@@ -267,6 +268,7 @@ llm:
 | `allow_think_escalation` | With `think: false`, lets the model raise reasoning for a single turn it judges needs working out, once per turn, via a `think_it_through` tool the agent serves itself. Default true; only meaningful when `think` is false. |
 | `max_tool_rounds` | Tool-call rounds per turn. Higher chains more steps and multiplies worst-case latency by the same factor. |
 | `approval_ttl` | Seconds a Tier-3 approval request stays valid. Requests are single-use, so a model cannot replay one. |
+| `question_ttl` | Seconds a **question** (`ask_user`) waits for its answer — default 1800, its own clock and never derived from `approval_ttl`. An action held for approval is about to happen and five minutes is long enough to say yes to it; a question is Jarvis waiting on a fact from somebody who has walked off, and it lives as long as the phone's conversation thread does. A late answer is told "that question expired after N minutes; ask again and I'll wait" (M66). |
 | `options` | Passed to Ollama verbatim. On the `openai` backend the keys with an equivalent are translated and the rest go through as `extra_body`; `num_ctx` is dropped, because on that wire the context length is a property of how the server was started. |
 | `conversation: {ttl, max_turns}` | How long the MODEL's context survives and how much of it is kept. |
 | `conversation: {history, history_limit}` | The durable half: every finished turn in `.storage/conversations.json`, which is what the console's chat mode lists and reopens. `history: false` turns it off. A tool's *result* is never written there — only whether it worked. |

@@ -41,6 +41,7 @@ from . import plan as plan_module
 from .history import ConversationArchive
 from .memory import ConversationStore
 from .ollama import DEFAULT_MODEL, ChatResult, OllamaClient, OllamaError
+from .spoken_answers import KIND_AMBIGUOUS, KIND_ANSWER, KIND_DENY, KIND_TAINTED, decide
 from .toolcalls import toolcall_schema
 from .tools import (
     EVENT_TOOL_FINISHED,
@@ -114,7 +115,9 @@ Tool use:
   haven't read, and never claim an action you haven't successfully called.
 - If a tool returns status "error", say plainly what failed. If it returns
   "approval_required", the action has NOT happened: tell the user it is
-  waiting on their confirmation and do not call it again.
+  waiting on their confirmation — a plain "yes" or "no" in their next turn
+  resolves it — and do not call it again. When ask_user is waiting, your
+  reply IS the question: say it once, and nothing about having asked.
 - Only the entities listed below exist. If a name doesn't resolve, call
   list_entities rather than guessing an entity_id.
 - CALL a tool by making a tool call. Never write one out as text, in your
@@ -1090,8 +1093,15 @@ class ConversationAgent:
         model: str | None = None,
         think: bool | None = None,
         speaker: str | None = None,
+        spoken: bool = False,
     ) -> AsyncIterator[str]:
         """Run one turn, yielding text deltas as the model produces them.
+
+        ``spoken`` says the reply will be read aloud by the surface the user
+        spoke to (the pipeline passes ``runs_stage("tts")``). It is stamped on
+        any request this turn holds, so a question the phone is also handed is
+        shown there and not read out a second time — the reply, which is the
+        model's own sentence, already carries it (M66).
 
         ``model`` names the model for THIS turn — the voice path passes
         ``fast_model`` when one is set (M60); None is the chat model. ``think``
@@ -1158,16 +1168,37 @@ class ConversationAgent:
         context = Context(origin="llm")
         # What the user actually said, for the one policy that cannot be
         # decided from the model's arguments: whether a memory write was ASKED
-        # for. See `integrations/memory`'s `remember` handler.
+        # for. See `integrations/memory`'s `remember` handler. And which
+        # conversation this is, for the registry to stamp on anything it holds
+        # (`remember_turn`), so the next turn here can answer it.
         try:
-            from ..api.devices import remember_utterance
+            from ..api.devices import remember_turn, remember_utterance
 
             remember_utterance(self.jarvis, context, message)
+            remember_turn(self.jarvis, context, conversation.id, spoken)
         except Exception:  # pragma: no cover - a policy aid, never a blocker
             _LOGGER.debug("Could not record the turn's utterance", exc_info=True)
         pieces: list[str] = []
 
         emit = self._turn_emitter(on_event)
+
+        # M66: is this turn the answer to something waiting on this
+        # conversation? Decided before the model sees it — in code, by the
+        # contract's rules — and either the request is resolved and the model
+        # is told the result, or the model is told what still waits, or the
+        # turn is a fixed sentence (two things waiting, or a tainted request)
+        # and the model is not consulted at all.
+        note, settled = await self._answer_pending(conversation.id, message, context, result, emit)
+        if settled is not None:
+            pieces.append(settled)
+            yield settled
+            result.text = settled
+            self._finish(conversation.id, result, user_text=message)
+            return
+        if note:
+            # After the history and before the user's words, so the last
+            # message the model reads is still what the user said.
+            messages.insert(len(messages) - 1, {"role": "system", "content": note})
 
         def _on_thinking(delta: str) -> None:
             # Capped as it accumulates rather than at the end: an unbounded
@@ -1256,6 +1287,121 @@ class ConversationAgent:
             said = "".join(pieces)
             result.text = _without_preamble(said, result.preamble) or said.strip()
             self._finish(conversation.id, result, user_text=message)
+
+    async def _answer_pending(
+        self,
+        conversation_id: str,
+        message: str,
+        context: Context,
+        result: ConversationResult,
+        emit: Callable[[str, dict[str, Any]], None],
+    ) -> tuple[str | None, str | None]:
+        """Resolve what waits on this conversation, if the message is its answer.
+
+        Returns ``(note, settled)``: a note for the model about what happened
+        or what still waits (or None when nothing waits), and a sentence that
+        IS the whole reply when the turn must not reach the model — two things
+        waiting and a "yes" that cannot be attributed, or a request raised
+        after untrusted content that only the banner may resolve.
+
+        The rules are `spoken_answers.decide`'s, pinned in
+        ``tests/contracts/spoken_answers.json``. The resolution itself is
+        `approve_request`, unchanged: single use, the answer reaching only the
+        argument the tool named. A registry that cannot list by conversation
+        (a stand-in in a test) means nothing waits.
+        """
+        listing = getattr(self.tools, "pending_for_conversation", None)
+        if not callable(listing):
+            return None, None
+        try:
+            pending = list(listing(conversation_id))
+        except Exception:  # pragma: no cover - never a reason to lose the turn
+            _LOGGER.debug("Could not list what waits on %s", conversation_id, exc_info=True)
+            return None, None
+        if not pending:
+            return None, None
+
+        verdict = decide(pending, message)
+        if verdict.kind == KIND_TAINTED:
+            request = pending[verdict.index or 0]
+            what = "question" if request.get("answerable") else "request"
+            return None, (
+                f"That {what} was raised after I had read something from outside the "
+                "house, so I won't take the answer by voice — it is waiting on the "
+                "console, where you can see where its words came from."
+            )
+        if verdict.kind == KIND_AMBIGUOUS:
+            names = ", ".join(_describe_pending(r) for r in pending)
+            return None, (
+                f"{len(pending)} things are waiting on you — {names}. "
+                "Say which one you mean, or answer on the console."
+            )
+        if not verdict.resolves:
+            return _waiting_note(pending), None
+
+        request = pending[verdict.index or 0]
+        tool_name = str(request.get("tool") or "")
+        approved = verdict.kind != KIND_DENY
+        answer = verdict.answer if verdict.kind == KIND_ANSWER else None
+        arguments = dict(request.get("arguments") or {})
+        if answer is not None and request.get("answerable"):
+            arguments[str(request["answerable"])] = answer
+
+        # Drawn as a tool row on every surface, because to the user it is
+        # one: they said yes, and the thing ran.
+        started = time.monotonic()
+        starting = _bounded(
+            {"name": tool_name, "arguments": arguments, "round": 0, "index": 0, "total": 1}
+        )
+        self.tools.announce(EVENT_TOOL_STARTED, starting, context)
+        emit(TURN_EVENT_TOOL_START, starting)
+        outcome = await self.tools.approve_request(str(request.get("request_id")), approved, answer)
+        status = outcome.get("status") if isinstance(outcome, dict) else None
+        tool_result = outcome.get("result") if status == "executed" else outcome
+        inner = tool_result.get("status") if isinstance(tool_result, dict) else None
+        ok = status in ("executed", "denied") and inner not in ("error", "denied")
+        finishing = _bounded(
+            {
+                "name": tool_name,
+                "round": 0,
+                "index": 0,
+                "total": 1,
+                "ok": ok,
+                "status": status if status != "executed" else (inner or "ok"),
+                "error": (tool_result or {}).get("error") if isinstance(tool_result, dict) else None,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+            }
+        )
+        self.tools.announce(EVENT_TOOL_FINISHED, finishing, context)
+        emit(TURN_EVENT_TOOL_END, finishing)
+        result.tool_calls.append({"name": tool_name, "arguments": arguments, "result": tool_result})
+
+        rendered = truncate(_dumps(tool_result))
+        if status == "denied":
+            what = "question" if request.get("answerable") else "action"
+            return (
+                f"The user's next message declines the held {what} `{tool_name}`; it did "
+                "not run and is no longer waiting. Acknowledge that in one sentence and "
+                "do not retry it."
+            ), None
+        if status != "executed":
+            return (
+                f"The user's next message was an answer to the held `{tool_name}`, but it "
+                f"could not be resolved: {outcome.get('error') if isinstance(outcome, dict) else outcome}. "
+                "Say so plainly."
+            ), None
+        if request.get("answerable"):
+            question = str(arguments.get("question") or "").strip()
+            return (
+                f"The user's next message answers the question you asked earlier"
+                f"{' — «' + question + '»' if question else ''}. `{tool_name}` has returned: "
+                f"{rendered}. Use the answer and carry on with what you were doing; do not "
+                "ask it again."
+            ), None
+        return (
+            f"The user's next message confirms the held action `{tool_name}`; it has now "
+            f"run and returned: {rendered}. Tell them what happened, in one sentence."
+        ), None
 
     @staticmethod
     def _turn_emitter(
@@ -1969,6 +2115,45 @@ _ACTION_DECLINED = re.compile(
     r"have not|no such|isn't|is not|already|waiting on|needs your|approval)\b",
     re.IGNORECASE,
 )
+
+
+def _describe_pending(request: dict[str, Any]) -> str:
+    """One held request, as a person would name it: the question's words, or
+    the tool and what it was pinned to."""
+    arguments = request.get("arguments") or {}
+    if request.get("answerable"):
+        question = str(arguments.get("question") or "").strip()
+        return f"the question «{question}»" if question else "a question"
+    targets = arguments.get("entity_id") or arguments.get("entity_ids") or arguments.get("device_id")
+    if isinstance(targets, list):
+        targets = ", ".join(str(t) for t in targets[:5])
+    tool = str(request.get("tool") or "an action")
+    return f"`{tool}`" + (f" on {targets}" if targets else "")
+
+
+def _waiting_note(pending: list[dict[str, Any]]) -> str:
+    """What the model is told when something waits and the message was not
+    its answer: enough to remind the user, and the rule for what would be."""
+    lines = []
+    for request in pending:
+        arguments = request.get("arguments") or {}
+        if request.get("answerable"):
+            choices = request.get("choices") or []
+            offered = f" (choices: {', '.join(str(c) for c in choices)})" if choices else ""
+            lines.append(
+                f"Still waiting on the user: your question «{arguments.get('question', '')}»"
+                f"{offered}. Their message did not answer it; if it was meant to, ask them "
+                "to say which. Otherwise carry on with what they said and remind them, "
+                "briefly, that it waits."
+            )
+        else:
+            lines.append(
+                f"Still waiting on the user's confirmation: {_describe_pending(request)}. "
+                "Their message did not confirm or decline it — only a plain yes or no "
+                "does. Carry on with what they said and remind them, briefly, that it "
+                "waits. Do not call it again."
+            )
+    return "\n".join(lines)
 
 
 def claimed_action(request: str, reply: str) -> bool:

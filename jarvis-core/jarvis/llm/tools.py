@@ -85,6 +85,11 @@ EVENT_TOOL_FINISHED = "jarvis_tool_finished"
 
 EVENT_APPROVAL_REQUIRED = "jarvis_approval_required"
 EVENT_APPROVAL_RESOLVED = "jarvis_approval_resolved"
+#: A held request that lapsed on its clock, unanswered. Fired when the
+#: registry notices (it purges lazily, on the next call or listing), so a
+#: surface must keep its own countdown too — this is the confirmation, not the
+#: alarm. Carries the request plus `expired: true`.
+EVENT_APPROVAL_EXPIRED = "jarvis_approval_expired"
 EVENT_BACKGROUND_TASK = "jarvis_background_task"
 EVENT_TOOL_CALLED = "jarvis_tool_called"
 
@@ -94,6 +99,23 @@ TIER_BACKGROUND = 2  # long-running, acknowledge then report
 TIER_APPROVAL = 3  # never runs without a human saying yes
 
 DEFAULT_APPROVAL_TTL = 300.0
+#: How long a QUESTION waits, as distinct from an action.
+#:
+#: An action held for approval is a thing about to happen, and five minutes is
+#: the longest anybody should be able to say yes to "unlock the front door"
+#: after they stopped thinking about it. A question is the assistant waiting
+#: on a fact — which lamp, what URL — and the person it is waiting on has
+#: walked off, is driving, is in the shower. The operator answered one after
+#: five minutes and got "unknown, expired or already-used approval request".
+#: Thirty minutes is the phone's own conversation-thread expiry
+#: (`ConversationRegistry`, docs/cross-device.md), so a question lives as long
+#: as the thread it belongs to.
+DEFAULT_QUESTION_TTL = 1800.0
+#: How many lapsed requests are remembered, so an answer that arrives late can
+#: be told "that expired after N minutes" rather than the three-way guess.
+#: Bounded because a request id is a dozen bytes and a busy year is a lot of
+#: them; beyond the bound the old sentence is still the truth.
+MAX_LAPSED = 200
 MAX_TOOL_RESULT_CHARS = 4000
 
 #: How many entities `list_entities` answers with, and the most it will.
@@ -104,6 +126,21 @@ MAX_TOOL_RESULT_CHARS = 4000
 #: truncated list rather than a short house.
 LIST_ENTITIES_DEFAULT = 100
 LIST_ENTITIES_MAX = 300
+
+#: The most entities `remove_entities` takes in one approval.
+#:
+#: An approval is read by a person in a few seconds; a card naming forty ids
+#: is one nobody reads before pressing yes, which makes it a card that
+#: approves whatever is on it. Removing more is more than one approval.
+MAX_REMOVE_AT_ONCE = 20
+
+#: Words that mean "everything" and are refused as a removal target. "Can you
+#: remove all of the elements of the house?" is the operator's sentence; an
+#: approval that read "remove: all" would show nothing of what it removes.
+REMOVE_WILDCARDS = frozenset(
+    {"*", "all", "everything", "every", "all of them", "the house", "house", "all entities",
+     "all the entities", "all devices", "all the devices", "everything in the house"}
+)
 
 #: Bounds on a question the model asks a human.
 #:
@@ -707,7 +744,7 @@ ToolHandler = Callable[[dict[str, Any], Any], Awaitable[Any] | Any]
 #: turn may proceed without a human once something hostile has been read.
 READ_ONLY_TOOLS = frozenset({
     # the house, observed
-    "get_state", "list_entities", "get_user_context", "recent_events",
+    "get_state", "list_entities", "list_devices", "get_user_context", "recent_events",
     "list_my_devices", "list_cameras", "look_at_camera", "describe_camera_change",
     "get_automation_trace", "get_briefing", "list_scheduled", "metrics_query",
     # what it knows
@@ -798,6 +835,16 @@ class Tool:
     #: made from what will run rather than from what the model said; and
     #: never by the model, whose words a hostile page can choose.
     summarise: Callable[[dict[str, Any]], str] | None = None
+    #: A sentence refusing the call before anything is held, or None.
+    #:
+    #: The one check that runs BEFORE a Tier-3 request goes to a human. The
+    #: schema check catches a missing key; this catches a call that is well
+    #: formed and must still not be put in front of somebody — "remove all of
+    #: the elements of the house" with no ids named, which as an approval
+    #: would read "remove: everything" and show nothing of what it removes.
+    #: Returning a sentence is the refusal, in the model's tool result, so the
+    #: next round can ask for what was missing instead of retrying.
+    refuse: Callable[[dict[str, Any]], str | None] | None = None
 
     def schema(self) -> dict[str, Any]:
         """Ollama / OpenAI function-calling schema for this tool."""
@@ -852,6 +899,24 @@ class PendingRequest:
     #: none, and the surface then falls back to the name and the arguments —
     #: which is what every request looked like before M67.
     summary: str = ""
+    #: The conversation whose turn raised this, when the agent said which.
+    #:
+    #: What lets the NEXT thing said in that conversation answer it — see
+    #: `ConversationAgent._answer_pending` — and nothing said anywhere else.
+    #: None for a request raised outside a conversation (the console's
+    #: `jarvis/tools/call`), which then can only be resolved on a surface.
+    conversation_id: str | None = None
+
+    #: True when the turn that raised this is spoken — its reply, which is the
+    #: model's own sentence and carries the question, will be read aloud by
+    #: the surface the user spoke to. A phone that gets the question as well
+    #: (`companion.ask`) shows it and does not read it out again.
+    spoken: bool = False
+
+    #: The clock this was put on, in seconds — `question_ttl` for a question,
+    #: `approval_ttl` for an action — so a late answer can be told how long it
+    #: had, in the same number the banner counted down.
+    ttl: float = DEFAULT_APPROVAL_TTL
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -865,6 +930,9 @@ class PendingRequest:
             "choices": list(self.choices),
             "tainted": self.tainted,
             "summary": self.summary,
+            "conversation_id": self.conversation_id,
+            "spoken": self.spoken,
+            "ttl": self.ttl,
         }
 
 
@@ -919,6 +987,27 @@ def _summary_of(tool: Tool, pinned: dict[str, Any]) -> str:
         _LOGGER.exception("Could not summarise %s for approval", tool.name)
         return ""
     return " ".join(text.split())[:MAX_SUMMARY_CHARS]
+def _minutes(seconds: float) -> str:
+    """A clock in words — "5 minutes", "30 minutes", "90 seconds" — for the
+    sentences a person hears. The banner shows the same number as digits."""
+    seconds = float(seconds)
+    if seconds < 120:
+        return f"{int(round(seconds))} seconds"
+    minutes = int(round(seconds / 60))
+    return f"{minutes} minute{'' if minutes == 1 else 's'}"
+
+
+def expired_sentence(tool: str, ttl: float, question: bool) -> str:
+    """What a late answer is told. Spoken by the voice and shown on the banner,
+    so it is one sentence in one place."""
+    if question:
+        return (
+            f"That question expired after {_minutes(ttl)}; ask again and I'll wait."
+        )
+    return (
+        f"That request to {tool} expired after {_minutes(ttl)}; "
+        "ask again and I'll hold it for you."
+    )
 
 
 def _choice_list(arguments: dict[str, Any]) -> tuple[str, ...]:
@@ -981,6 +1070,8 @@ def _weaker_than(new: Tool, old: Tool) -> str:
         return f"domain {old.domain!r} -> {new.domain!r}"
     if new.escalates_itself and not old.escalates_itself:
         return "claims to escalate itself, so the registry would stop holding it after untrusted content"
+    if old.refuse is not None and new.refuse is None:
+        return "loses its refusal check, so a call it used to refuse would be held for a human"
     return ""
 
 
@@ -992,12 +1083,18 @@ class ToolRegistry:
         jarvis: "Jarvis",
         exposure: Exposure | None = None,
         approval_ttl: float = DEFAULT_APPROVAL_TTL,
+        question_ttl: float = DEFAULT_QUESTION_TTL,
     ) -> None:
         self.jarvis = jarvis
         self.exposure = exposure or Exposure()
         self.approval_ttl = approval_ttl
+        self.question_ttl = question_ttl
         self._tools: dict[str, Tool] = {}
         self._pending: dict[str, PendingRequest] = {}
+        #: Requests that lapsed, newest last, so `approve_request` can say so
+        #: in words. Popped from `_pending` and never executed; this is memory
+        #: of the fact, not a second queue.
+        self._lapsed: dict[str, PendingRequest] = {}
 
     # --- registration -----------------------------------------------------
     def register(
@@ -1016,6 +1113,7 @@ class ToolRegistry:
         read_only: bool = False,
         escalates_itself: bool = False,
         summarise: Callable[[dict[str, Any]], str] | None = None,
+        refuse: Callable[[dict[str, Any]], str | None] | None = None,
         replaces: str | None = None,
     ) -> Tool:
         """Add a tool. A re-registration may not quietly WEAKEN the one there.
@@ -1071,6 +1169,7 @@ class ToolRegistry:
                 read_only=read_only,
                 escalates_itself=escalates_itself,
                 summarise=summarise,
+                refuse=refuse,
             )
         existing = self._tools.get(tool.name)
         if existing is not None and replaces != tool.name:
@@ -1132,6 +1231,18 @@ class ToolRegistry:
                 # again without a round trip through `list_entities`.
                 "expected": tool.parameters.get("properties", {}),
             }
+
+        # Before the gate, on purpose: a refused call is one that must not be
+        # held either. An approval that cannot show what it does is not an
+        # approval, and the model is better told why than made to wait.
+        if tool.refuse is not None:
+            try:
+                sentence = tool.refuse(arguments)
+            except Exception:  # a broken check refuses, which is the safe way round
+                _LOGGER.exception("Refusal check for %s blew up; refusing", tool.name)
+                sentence = f"{tool.name} could not check its arguments; it was not run."
+            if sentence:
+                return {"status": "error", "error": str(sentence)}
 
         if self.requires_approval(tool, arguments, context):
             try:
@@ -1265,13 +1376,17 @@ class ToolRegistry:
     def _request_approval(self, tool: Tool, args: dict[str, Any], context: Any) -> dict[str, Any]:
         now = time.time()
         pinned = self._pinned_arguments(tool, args)
+        # A question waits on a fact; an action waits on consent. Different
+        # clocks — see `DEFAULT_QUESTION_TTL` for why the first is longer.
+        ttl = float(self.question_ttl if tool.answerable else self.approval_ttl)
+        conversation_id, spoken = self._turn_facts(context)
         request = PendingRequest(
             id=uuid.uuid4().hex[:12],
             tool=tool.name,
             arguments=pinned,
             tier=tool.tier,
             created=now,
-            expires_at=now + self.approval_ttl,
+            expires_at=now + ttl,
             context=context,
             answerable=tool.answerable,
             # Only ever read off the model's own arguments for a tool that
@@ -1285,12 +1400,33 @@ class ToolRegistry:
             # surface on the name-and-arguments rendering, never an unheld
             # action.
             summary=_summary_of(tool, pinned),
+            conversation_id=conversation_id,
+            spoken=spoken,
+            ttl=ttl,
         )
         self._pending[request.id] = request
         payload = request.as_dict()
         payload["description"] = tool.description
         self._fire(EVENT_APPROVAL_REQUIRED, payload, context)
         _LOGGER.info("Approval required for %s (%s)", tool.name, request.id)
+        waits = _minutes(ttl)
+        if tool.answerable:
+            # The reply IS the question. Said here rather than left to the
+            # persona, because a reply that announces the question and then
+            # repeats it is the reply the operator heard twice.
+            message = (
+                f"The question has been put to the user and waits {waits} for their "
+                "answer — they can answer by saying it, or on the console or their "
+                "phone. Your reply now must BE the question, once, in one sentence; "
+                "do not also say that you are asking. Do not call ask_user again."
+            )
+        else:
+            message = (
+                "This action needs the user's explicit approval and has NOT run. "
+                f"It waits {waits}; they can confirm by saying yes, or on the console "
+                "or their phone. Tell them it is waiting on their confirmation, in "
+                "one sentence. Do not retry it."
+            )
         return {
             "status": "approval_required",
             "request_id": request.id,
@@ -1301,11 +1437,26 @@ class ToolRegistry:
             # from the console sees what the banner will.
             "summary": request.summary,
             "expires_at": request.expires_at,
-            "message": (
-                "This action needs the user's explicit approval and has NOT run. "
-                "Tell them it is waiting on their confirmation. Do not retry it."
-            ),
+            "waits_seconds": ttl,
+            "message": message,
         }
+
+    def _turn_facts(self, context: Any) -> tuple[str | None, bool]:
+        """Which conversation this turn is, and whether its reply is spoken.
+
+        Recorded by the agent at the top of the turn (`remember_turn`); a
+        registry driven by something else — a test, the console's
+        `jarvis/tools/call` — has neither, and the request then belongs to no
+        conversation and is not spoken, which is the reading that resolves
+        nothing by accident.
+        """
+        try:
+            from ..api.devices import turn_facts_of
+
+            return turn_facts_of(self.jarvis, context)
+        except Exception:  # pragma: no cover - absent integration, never a crash
+            _LOGGER.debug("Could not read the turn's facts", exc_info=True)
+            return None, False
 
     async def approve_request(
         self, request_id: str, approved: bool = True, answer: Any = None
@@ -1321,6 +1472,20 @@ class ToolRegistry:
         self.purge_expired()
         request = self._pending.pop(request_id, None)  # popped first: no replay
         if request is None:
+            lapsed = self._lapsed.get(request_id)
+            if lapsed is not None:
+                # Known to have lapsed, so say so — with the clock it was on,
+                # which is the number the banner counted down — and what to
+                # do about it. The three-way guess below is for an id this
+                # registry has never held or has already spent.
+                return {
+                    "status": "error",
+                    "request_id": request_id,
+                    "tool": lapsed.tool,
+                    "expired": True,
+                    "waited_seconds": lapsed.ttl,
+                    "error": expired_sentence(lapsed.tool, lapsed.ttl, bool(lapsed.answerable)),
+                }
             return {
                 "status": "error",
                 "request_id": request_id,
@@ -1385,11 +1550,44 @@ class ToolRegistry:
         self.purge_expired()
         return [r.as_dict() for r in self._pending.values()]
 
+    def pending_for_conversation(self, conversation_id: str | None) -> list[dict[str, Any]]:
+        """What is waiting on THIS conversation, oldest first.
+
+        Only requests that were stamped with the conversation when raised —
+        one raised with no conversation is nobody's to answer by voice.
+        """
+        if not conversation_id:
+            return []
+        self.purge_expired()
+        return [
+            r.as_dict()
+            for r in self._pending.values()
+            if r.conversation_id == str(conversation_id)
+        ]
+
     def purge_expired(self, now: float | None = None) -> int:
         moment = time.time() if now is None else now
         stale = [rid for rid, r in self._pending.items() if r.expires_at <= moment]
+        # `getattr`: `test_expiry_and_purge_accept_an_explicit_zero` builds a
+        # registry around `__init__`, and a purge must still purge.
+        lapsed: dict[str, PendingRequest] = getattr(self, "_lapsed", None) or {}
+        self._lapsed = lapsed
         for rid in stale:
-            del self._pending[rid]
+            request = self._pending.pop(rid)
+            lapsed[rid] = request
+            self._fire(
+                EVENT_APPROVAL_EXPIRED,
+                {**request.as_dict(), "expired": True},
+                request.context,
+            )
+            _LOGGER.info(
+                "%s %s lapsed unanswered after %s",
+                "Question" if request.answerable else "Approval",
+                rid,
+                _minutes(request.ttl),
+            )
+        while len(lapsed) > MAX_LAPSED:
+            del lapsed[next(iter(lapsed))]
         return len(stale)
 
     # --- plumbing ---------------------------------------------------------
@@ -2761,6 +2959,250 @@ def register_builtin_tools(
         # The one writable key. Everything else about the request is frozen
         # when it is raised, exactly as it is for an action.
         answerable="answer",
+    )
+
+    # --- the house's devices, listed -------------------------------------------
+    #
+    # `list_my_devices` is the phones and desktops running Jarvis; this is the
+    # house's device registry — the bridge, the thermostat, the things the
+    # Devices screen groups entities under. It exists so `remove_device` has
+    # something to be told an id by: a refusal that says "call list_devices"
+    # must name a tool the model has (`TOOLBOX_RULE`).
+    async def _list_devices(args: dict[str, Any], context: Any) -> Any:
+        wanted = str(args.get("area") or "").strip().lower()
+        out: list[dict[str, Any]] = []
+        for device in jarvis.devices.devices.values():
+            area_name = _area_name(jarvis, device.area_id)
+            if wanted and wanted not in {(area_name or "").lower(), (device.area_id or "").lower()}:
+                continue
+            entity_ids = sorted(
+                entry.entity_id
+                for entry in jarvis.entities.entities.values()
+                if entry.device_id == device.id
+            )
+            row: dict[str, Any] = {
+                "device_id": device.id,
+                "name": device.name,
+                "entities": entity_ids,
+            }
+            if device.manufacturer:
+                row["manufacturer"] = device.manufacturer
+            if device.model:
+                row["model"] = device.model
+            if area_name:
+                row["area"] = area_name
+            if device.disabled:
+                row["disabled"] = True
+            out.append(row)
+        return {"status": "ok", "count": len(out), "devices": out}
+
+    registry.register(
+        name="list_devices",
+        description=(
+            "List the house's devices — the bridges, hubs and appliances that entities "
+            "belong to — with their ids and the entities on each. Use it before "
+            "remove_device, or when the user names a device rather than a thing."
+        ),
+        parameters=schema_object(
+            {"area": {"type": "string", "description": "Restrict to one room/area."}},
+        ),
+        handler=_list_devices,
+        read_only=True,
+    )
+
+    # --- taking things out of the house (M69) --------------------------------
+    #
+    # "Can you remove all of the elements of the house?" — "I have no tool for
+    # deleting entities." Now there is, and it is Tier 3 with the targets
+    # pinned, exactly as `lock_control` pins its doors: the approval names the
+    # entity ids it will remove, resolved when it is raised, and what runs
+    # after the yes is what was shown. Both tools run the console's own delete
+    # path (`Jarvis.async_remove_entity` / `async_remove_device`) — never a
+    # second one — so "removed" means the same thing from the Devices screen
+    # and from the voice.
+    #
+    # "All of the elements" is refused with a sentence before anything is
+    # held. An approval must show what it removes; a card that said "all"
+    # would be consent to whatever the house happened to hold. The refusal
+    # names what to do instead, so the next round can list and choose.
+
+    def _wants_everything(value: Any) -> bool:
+        text = str(value or "").strip().lower()
+        return text in REMOVE_WILDCARDS or text.endswith(" everything")
+
+    def _named_entity_ids(args: dict[str, Any]) -> list[str]:
+        raw = args.get("entity_ids")
+        if raw is None:
+            raw = args.get("entity_id")
+        out: list[str] = []
+        for item in _as_list(raw):
+            text = str(item or "").strip().lower()
+            if text and text not in out:
+                out.append(text)
+        return out
+
+    def _entity_exists(entity_id: str) -> bool:
+        return jarvis.entities.get(entity_id) is not None or jarvis.states.get(entity_id) is not None
+
+    def _resolve_removal(args: dict[str, Any]) -> tuple[list[str], str | None]:
+        """The concrete ids a removal names, or the sentence refusing it."""
+        ids = _named_entity_ids(args)
+        name = str(args.get("name") or "").strip()
+        if not ids and not name:
+            return [], (
+                "Name the entities to remove, by entity id — an approval must show "
+                "exactly what it removes. Call list_entities for their ids, then "
+                "remove_entities with the ones you mean."
+            )
+        if _wants_everything(name) or any(_wants_everything(i) for i in ids):
+            return [], (
+                "I won't remove everything at once: name each entity by its id so the "
+                "approval shows exactly what goes. Call list_entities for the ids, then "
+                f"remove_entities with up to {MAX_REMOVE_AT_ONCE} of them at a time."
+            )
+        if name and not ids:
+            resolution = _resolve({"name": name})
+            if not resolution.ok:
+                return [], resolution.error or f"nothing here is called {name!r}"
+            ids = list(resolution.entity_ids)
+        unknown = [i for i in ids if not _entity_exists(i)]
+        if unknown:
+            return [], (
+                f"No entity called {', '.join(unknown)} on this Jarvis. Call list_entities "
+                "and use the ids it gives."
+            )
+        if len(ids) > MAX_REMOVE_AT_ONCE:
+            return [], (
+                f"That is {len(ids)} entities; remove at most {MAX_REMOVE_AT_ONCE} in one "
+                "approval so the person can read what they are agreeing to."
+            )
+        return ids, None
+
+    def _refuse_remove_entities(args: dict[str, Any]) -> str | None:
+        return _resolve_removal(args)[1]
+
+    def _pin_remove_entities(args: dict[str, Any]) -> dict[str, Any]:
+        ids, _ = _resolve_removal(args)
+        # The ids, and nothing fuzzy: the executor removes exactly these.
+        return {"entity_ids": ids, "entity_id": None, "name": None}
+
+    async def _remove_entities(args: dict[str, Any], context: Any) -> Any:
+        ids = _named_entity_ids(args)
+        if not ids:
+            return {"status": "error", "error": "no entity ids were pinned to this removal"}
+        removed: list[str] = []
+        missing: list[str] = []
+        ctx = context if isinstance(context, Context) else Context(origin="llm")
+        for entity_id in ids:
+            outcome = await jarvis.async_remove_entity(entity_id, ctx)
+            (removed if outcome.get("removed") else missing).append(entity_id)
+        status = "ok" if removed and not missing else ("partial" if removed else "error")
+        payload: dict[str, Any] = {"status": status, "removed": removed}
+        if missing:
+            payload["missing"] = missing
+            payload["error"] = f"{', '.join(missing)} was not on this Jarvis"
+        return payload
+
+    registry.register(
+        name="remove_entities",
+        description=(
+            "Remove entities from the house for good — their state, their registry "
+            "entry, their place on dashboards. Name them by entity id (at most "
+            f"{MAX_REMOVE_AT_ONCE} at a time); never 'all' or 'everything'. This ALWAYS "
+            "requires the user's explicit approval, which shows exactly the ids that go."
+        ),
+        parameters=schema_object(
+            {
+                "entity_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The entity ids to remove, e.g. ['light.old_lamp'].",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Or what the user called one thing, e.g. 'the old lamp'.",
+                },
+            },
+        ),
+        handler=_remove_entities,
+        tier=TIER_APPROVAL,
+        refuse=_refuse_remove_entities,
+        pin=_pin_remove_entities,
+    )
+
+    def _find_device(args: dict[str, Any]) -> tuple[Any, str | None]:
+        device_id = str(args.get("device_id") or "").strip()
+        name = str(args.get("name") or "").strip()
+        if _wants_everything(device_id) or _wants_everything(name):
+            return None, (
+                "I won't remove every device at once: name the device, and the approval "
+                "will show it and every entity that goes with it. Call list_devices for "
+                "their names and ids."
+            )
+        if not device_id and not name:
+            return None, (
+                "Name the device to remove, by id or by name — an approval must show "
+                "exactly what it removes. Call list_devices for them."
+            )
+        if device_id:
+            device = jarvis.devices.devices.get(device_id)
+            if device is None:
+                return None, f"No device with id {device_id!r} on this Jarvis; call list_devices."
+            return device, None
+        wanted = name.lower()
+        matches = [d for d in jarvis.devices.devices.values() if d.name.lower() == wanted]
+        if not matches:
+            matches = [d for d in jarvis.devices.devices.values() if wanted in d.name.lower()]
+        if len(matches) == 1:
+            return matches[0], None
+        if not matches:
+            return None, f"No device called {name!r} on this Jarvis; call list_devices."
+        names = ", ".join(f"{d.name} ({d.id})" for d in matches[:6])
+        return None, f"{len(matches)} devices match {name!r}: {names}. Say which, by id."
+
+    def _refuse_remove_device(args: dict[str, Any]) -> str | None:
+        return _find_device(args)[1]
+
+    def _pin_remove_device(args: dict[str, Any]) -> dict[str, Any]:
+        device, _ = _find_device(args)
+        if device is None:
+            return {}
+        entity_ids = sorted(
+            entry.entity_id
+            for entry in jarvis.entities.entities.values()
+            if entry.device_id == device.id
+        )
+        # The id, the name the person knows it by, and every entity that goes
+        # with it: the approval is the whole of what will happen.
+        return {"device_id": device.id, "name": device.name, "entity_ids": entity_ids}
+
+    async def _remove_device(args: dict[str, Any], context: Any) -> Any:
+        device_id = str(args.get("device_id") or "").strip()
+        if not device_id:
+            return {"status": "error", "error": "no device id was pinned to this removal"}
+        ctx = context if isinstance(context, Context) else Context(origin="llm")
+        outcome = await jarvis.async_remove_device(device_id, ctx)
+        if not outcome.get("removed"):
+            return {"status": "error", "error": f"no device with id {device_id!r} any more"}
+        return {"status": "ok", **outcome}
+
+    registry.register(
+        name="remove_device",
+        description=(
+            "Remove a device from the house for good, with every entity that belongs to "
+            "it. Name it by id or by name; never 'all'. This ALWAYS requires the user's "
+            "explicit approval, which shows the device and the entities that go with it."
+        ),
+        parameters=schema_object(
+            {
+                "device_id": {"type": "string", "description": "The device's id, if known."},
+                "name": {"type": "string", "description": "Or its name, e.g. 'Hue bridge'."},
+            },
+        ),
+        handler=_remove_device,
+        tier=TIER_APPROVAL,
+        refuse=_refuse_remove_device,
+        pin=_pin_remove_device,
     )
 
     # --- building the house -------------------------------------------------

@@ -296,6 +296,9 @@ llm:
 
   # Seconds a Tier-3 approval request stays valid before it expires unused.
   approval_ttl: 300
+  # Seconds a QUESTION (ask_user) waits for its answer — its own clock, longer,
+  # because the person it waits on has walked off (M66).
+  question_ttl: 1800
   options:
     temperature: 0.6
     # The context window asked of the model server.
