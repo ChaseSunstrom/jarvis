@@ -838,7 +838,7 @@ screens become one animated graph, because the brief asked for one by name.
     `house-light-on` + `chat-context-retention` live scenarios through the real browser.
   - Verify: `bash scripts/verify/m49-home-reactor.sh`
 
-- [ ] **M50 — Every page looks like C2, not only lints like it** · size XL · deps M49
+- [x] **M50 — Every page looks like C2, not only lints like it** · size XL · deps M49
   - Scope: `docs/UI_MIGRATION.md` §3's M50 rows, every one ticked. The library is
     re-skinned once so the pages inherit — `Button` to C2's `.btn` (uppercase Barlow, hairline,
     one filled primary), `Pill` to a hairline tag, `Tabs` to the bar's underline, the section
@@ -883,9 +883,77 @@ screens become one animated graph, because the brief asked for one by name.
     an AMOLED, the overlay over a third-party app). Never a device, never an emulator.
   - Verify: `bash scripts/verify/m51-android-c2.sh`
 
+## The overhaul (added 26 August)
+
+The operator's brief of 26 August (`docs/OVERHAUL_PLAN.md`): genuinely capable
+of anything online, cameras, sensors, the sky; the voice tab alive; simpler
+menus and the real models; motion when it acts; the phone the equal of the
+web and of Tasker. Local only. Each row here is planned in that document.
+
+- [ ] **M52 — VOICE: the graph and the living activity around the reactor** · size L · deps M49, M50 · parallel-ok M54, M56, M57, M58
+  - Scope: the knowledge graph on the voice tab, lighting as Jarvis uses it; a live activity
+    strip fed by the bus — tool calls as they happen, task steps, sensor changes, camera looks,
+    moments landing — and the reactor's state reflecting real work; the C2 layout kept, every
+    value a token. The mock backend emits the same events, so the console is tested against it.
+  - Verify: `bash scripts/verify/m52-voice-live.sh`
+- [ ] **M53 — Motion when it does things** · size M · deps M52 · parallel-ok M54
+  - Scope: `docs/design/MOTION.md` — one vocabulary for what moves when Jarvis listens, thinks,
+    calls a tool, steps a task, reads memory, reads a sensor, looks at a camera, waits on you,
+    speaks, errs; every duration and easing a `motion.*` token; reduced motion honoured; the
+    choreographies recorded in `docs/motion-review/` and measured by `motion.spec.ts`.
+  - Verify: `bash scripts/verify/m53-motion-acts.sh`
+- [ ] **M54 — Settings that make sense, and the real models** · size L · deps M50 · parallel-ok M52, M53
+  - Scope: a MODELS panel listing what the model server actually serves (name, family and size,
+    role — chat / fast / vision / embeddings / rerank — loaded now, used by Jarvis for which job)
+    with a per-role choice, backed by `jarvis/llm/models` reading the gateway; the settings
+    information architecture cut to Assistant · Voice · House · Console · Tools with plain
+    labels and the rest behind "everything".
+  - Verify: `bash scripts/verify/m54-settings-models.sh`
+- [ ] **M55 — Simpler menus everywhere** · size M · deps M50, M54 · parallel-ok M56, M57, M58
+  - Scope: HOUSE, WORK, KNOWLEDGE trimmed to their jobs; one control per row where one will do;
+    the tools page one searchable list; no two ways to the same thing; a menu inventory pinned
+    in `docs/UI_MIGRATION.md` §4 and read by a test.
+  - Verify: `bash scripts/verify/m55-menus.sh`
+- [ ] **M56 — Cameras and local vision** · size L · deps M52 · parallel-ok M57, M58
+  - Scope: the vision integration speaks OpenAI-style image messages to a GGUF VLM on the model
+    server; go2rtc restreams RTSP / USB / ONVIF cameras behind compose profile `cameras`;
+    optional Frigate events become moments; snapshot and "looking" on the voice tab; consent,
+    fencing and audit unchanged. Research: `docs/research/vision-and-cameras.md`.
+  - Verify: `bash scripts/verify/m56-vision.sh`
+- [ ] **M57 — Any sensor** · size L · deps M52 · parallel-ok M56, M58
+  - Scope: Home Assistant MQTT discovery ingested — Zigbee2MQTT, ESPHome, rtl_433, Tasmota
+    payloads as fixtures — into entities with history; tools to read, aggregate and compare
+    ("power draw now", "coldest room"); changes on the voice tab. Research:
+    `docs/research/sky-satellites-and-radio.md`, `docs/research/devices-and-protocols.md`.
+  - Verify: `bash scripts/verify/m57-sensors.sh`
+- [ ] **M58 — The sky** · size M · deps M52 · parallel-ok M56, M57
+  - Scope: skyfield with cached TLEs — the next ISS pass for the house, what is overhead now,
+    the moon's phase, the planets tonight — offline after the first download; optional ADS-B
+    through readsb behind profile `radio`. Research: `docs/research/sky-satellites-and-radio.md`.
+  - Verify: `bash scripts/verify/m58-sky.sh`
+- [ ] **M59 — Anything online, locally** · size L · deps M18, M31 · parallel-ok M60
+  - Scope: watch a page for a change, feeds, a reader that survives JavaScript, "tell me
+    when…" as scheduled research that lands as a moment — self-hosted throughout. Research:
+    `docs/research/local-intelligence.md`.
+  - Verify: `bash scripts/verify/m59-online.sh`
+- [ ] **M60 — Intelligence** · size L · deps M26, M33 · parallel-ok M59
+  - Scope: a fast local model on the voice path through llama-swap and the large one for
+    research; grammar-constrained tool calls for small models; the task planner batching
+    read-only steps; the evals re-measured and never lowered. Research:
+    `docs/research/local-intelligence.md`.
+  - Verify: `bash scripts/verify/m60-intelligence.sh`
+- [ ] **M61 — Android: the equal of the web, and of Tasker** · size XL · deps M51, M52, M53 · parallel-ok M56, M57, M58, M59, M60
+  - Scope: the phone's screens the console's — voice with the graph and activity, motion on
+    Canvas, one state machine; the action registry audited against Tasker's categories and
+    completed (comms, connectivity, device settings, media, apps, screen, clipboard, NFC,
+    intents, HTTP, variables, flows) with a parity table in `docs/ANDROID_TASKER_PARITY.md`;
+    triggers as profiles; "on my phone, do X" end to end from the hub. Build, unit, lint and
+    goldens only — never a device.
+  - Verify: `bash scripts/verify/m61-android-tasker.sh`
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M51
+- [ ] **M23 — Final integration** · size M · deps M00–M61
   - Scope: `make verify-all` green; **the stack comes up healthy and the whole suite runs
     against it** (M28/M29); **`bash scripts/verify/live_interaction.sh` in full mode exits 0** — every scenario, including the ones that were gated, inside the thresholds
     (intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median round trip ≤ 2 s, zero critical issues) —

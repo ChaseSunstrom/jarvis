@@ -24,7 +24,9 @@ same line everywhere, so a tool call looks like a tool call.
 	let { name, args = '', state = 'ok', error = '', ms = null, compact = false, testid = '' }: Props = $props();
 </script>
 
-<span class="call {state}" class:compact data-testid={testid || undefined} data-state={state}>
+<!-- data-mono: a tool call is data, and the route pass (testing/live/browser_routes.cjs)
+     reads mono outside a data container as prose in the wrong face. -->
+<span class="call {state}" class:compact data-mono data-testid={testid || undefined} data-state={state}>
 	<i aria-hidden="true"></i>
 	<b>{name}</b>
 	{#if args}<span class="args">{args}</span>{/if}

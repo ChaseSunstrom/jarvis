@@ -116,7 +116,7 @@ check "one folder per screen, three pictures each" python3 -c '
 import re
 from pathlib import Path
 src = Path("jarvis-web/src/lib/screens.ts").read_text()
-paths = [p for p in re.findall(r"path: .([^\x27]+).", src) if "[" not in p]
+paths = [p for p in re.findall(r"path: \x27([^\x27]+)\x27", src) if "[" not in p]
 missing = []
 for path in paths:
     slug = "hud" if path == "/" else path.strip("/").replace("/", "-")

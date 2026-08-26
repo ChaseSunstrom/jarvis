@@ -214,7 +214,14 @@ export function layout(nodes: GraphNode[], edges: GraphEdge[], options: LayoutOp
 		spanX > 1 ? (width - 2 * pad) / spanX : Infinity,
 		spanY > 1 ? (height - 2 * pad) / spanY : Infinity
 	);
-	const fit = Number.isFinite(scale) ? Math.min(scale, 1.5) : 1;
+	// Two nodes scaled to the box sit on opposite walls and read as a rule,
+	// not a picture, so a pair is enlarged only a little. From three up the
+	// settled picture is small next to its box (gravity wins over a short
+	// repulsion reach), and left at 1.5x it huddled in a corner with labels
+	// on top of each other — so it is scaled to fill, up to a limit that
+	// stops a knot becoming a wall of type.
+	const cap = n <= 2 ? 1.5 : 3;
+	const fit = Number.isFinite(scale) ? Math.min(scale, cap) : 1;
 	const offX = width / 2 - ((minX + maxX) / 2) * fit;
 	const offY = height / 2 - ((minY + maxY) / 2) * fit;
 	for (let i = 0; i < n; i++) {

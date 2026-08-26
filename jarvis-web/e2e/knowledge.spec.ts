@@ -146,3 +146,27 @@ test('the graph holds at a phone width, above the section', async ({ page }) => 
 	expect(graph!.x + graph!.width).toBeLessThanOrEqual(390);
 	expect(strip!.y).toBeGreaterThan(graph!.y + graph!.height);
 });
+
+test('no two labels print over each other', async ({ page }) => {
+	// The mock's five entries include two that settle at one height a label's
+	// width apart; before the labels dodged, "Boiler serviced" printed across
+	// the end of "The spare key…". Every pair of label boxes must be disjoint.
+	await gotoKnowledge(page);
+	const labels = page.locator('[data-testid^="graph-node-"] text');
+	await expect(labels).toHaveCount(5);
+	const boxes = (await labels.evaluateAll((els) =>
+		els.map((el) => {
+			const r = el.getBoundingClientRect();
+			return { x1: r.left, x2: r.right, y1: r.top, y2: r.bottom, text: el.textContent };
+		})
+	)).filter((b) => b.x2 > b.x1);
+	expect(boxes.length).toBe(5);
+	for (let i = 0; i < boxes.length; i++) {
+		for (let j = i + 1; j < boxes.length; j++) {
+			const a = boxes[i];
+			const b = boxes[j];
+			const overlap = a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+			expect(overlap, `"${a.text}" overlaps "${b.text}"`).toBe(false);
+		}
+	}
+});

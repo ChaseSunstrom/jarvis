@@ -91,6 +91,42 @@ is information.
 	 * drawing — so a node at the edge never has its name clipped by the box.
 	 */
 	const labelSide = (x: number) => (x > WIDTH / 2 ? 'end' : 'start');
+
+	/**
+	 * A label runs under its node. Two nodes at one height a label's width
+	 * apart printed their names over each other — the rule above sends both
+	 * names the same way — so each label is placed in x order and one that
+	 * would land on an earlier label goes above its node instead. The text is
+	 * not measured: its width is estimated from the character count, on the
+	 * generous side, so the rule flips a little early rather than late.
+	 */
+	const CHAR_W = 6.6;
+	const LABEL_H = 14;
+	const BELOW = 20;
+	const ABOVE = -12;
+	const labelY = $derived.by(() => {
+		const out = new Map<string, number>();
+		const taken: { x1: number; x2: number; y1: number; y2: number }[] = [];
+		const ordered = [...placed.nodes].sort((a, b) => a.x - b.x || a.y - b.y);
+		for (const node of ordered) {
+			const w = node.label.length * CHAR_W;
+			const x1 = labelSide(node.x) === 'start' ? node.x - 6 : node.x + 6 - w;
+			const x2 = x1 + w;
+			let chosen = BELOW;
+			for (const dy of [BELOW, ABOVE]) {
+				const y1 = node.y + dy - LABEL_H;
+				const y2 = node.y + dy;
+				const clash = taken.some((b) => x1 < b.x2 && x2 > b.x1 && y1 < b.y2 && y2 > b.y1);
+				if (!clash) {
+					chosen = dy;
+					break;
+				}
+			}
+			out.set(node.id, chosen);
+			taken.push({ x1, x2, y1: node.y + chosen - LABEL_H, y2: node.y + chosen });
+		}
+		return out;
+	});
 </script>
 
 <div class="frame" bind:clientWidth={measured}>
@@ -151,7 +187,7 @@ is information.
 						{/if}
 						<text
 							x={labelSide(node.x) === 'start' ? -6 : 6}
-							y="20"
+							y={labelY.get(node.id) ?? BELOW}
 							text-anchor={labelSide(node.x)}
 						>{node.label}</text>
 					</g>
