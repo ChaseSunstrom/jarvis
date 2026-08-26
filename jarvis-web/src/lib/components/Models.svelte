@@ -314,7 +314,7 @@ not answer is named at the foot with why.
 		width: var(--jv-space-2);
 		height: var(--jv-space-2);
 		margin-top: var(--jv-space-2);
-		border-radius: var(--jv-radius-pill);
+		border-radius: 50%;
 		border: 1px solid var(--jv-line-soft);
 		background: transparent;
 	}

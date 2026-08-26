@@ -450,3 +450,8 @@ is quiet. Done since:
   task again (m26's route-6 — the readers sat above `task` in the router), two
   images off :latest by digest (m28), the two new decisions in the format the
   decisions doc keeps (m30). Each re-runs after the table lands.
+- 14:40 — verify-all at m60 (its full suite). Three more reds read and fixed: the
+  sky block's note had been pushed out of the check's reach by the vision block
+  (m58); two 8-px dots used the pill radius where the console draws circles at
+  50 % (m50); the M45 check predates M47's catalog store and counted the
+  registry's own state as a subsystem (m45).

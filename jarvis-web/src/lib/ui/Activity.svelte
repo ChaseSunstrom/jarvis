@@ -93,7 +93,7 @@ The activity strip: what Jarvis is doing, as hairline rows — newest first.
 	.dot {
 		width: var(--jv-space-2);
 		height: var(--jv-space-2);
-		border-radius: var(--jv-radius-pill);
+		border-radius: 50%;
 		background: var(--jv-tick);
 	}
 	.dot.live {

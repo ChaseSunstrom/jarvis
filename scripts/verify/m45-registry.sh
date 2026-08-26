@@ -213,7 +213,10 @@ async def main():
         jarvis = Jarvis(config_dir=tmp)
         before = set(jarvis.data)
         assert await async_setup(jarvis, None) is True
-        grown = set(jarvis.data) - before - {"extensions"}
+        # The registry owns its catalog and its enabled/granted state since
+        # M47 (f8235aa); those two are the registry, not a subsystem started.
+        # What must not appear is MCP, plugins or skills coming up on their own.
+        grown = set(jarvis.data) - before - {"extensions", "extension_catalog", "extensions_state"}
         assert not grown, f"setting up the registry started {sorted(grown)}"
         listed = await jarvis.services.async_call("extensions", "list", {}, blocking=True, return_response=True)
         assert listed["extensions"] == [], listed

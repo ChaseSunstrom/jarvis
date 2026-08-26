@@ -570,6 +570,11 @@ vision:
   frigate:
     mqtt: false
 
+# The sky (M58): the next ISS pass for this house, what is overhead, the moon
+# and the planets, computed here with skyfield. Orbital elements come from
+# CelesTrak (OMM CSV, never more often than its two-hour cycle) and the
+# de421 ephemeris is downloaded once; both live under config/sky/. Offline
+# after the first download; a failed refresh keeps the cache.
 sky:
   tle_cache: sky/tle
   ephemeris: sky/de421.bsp
