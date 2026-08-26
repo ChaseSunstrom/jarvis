@@ -1447,9 +1447,14 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
             # asked "where did I say it was?" a turn after forgetting it read
             # it back from there ("under the second flowerpot — but you asked
             # me to forget it"). Forgotten means not repeated, from anywhere.
+            # …and not hinted at either: "that's precisely what you asked me
+            # to forget" tells a listener there was something, and the live
+            # judge refused it (memory-forget, 26 Aug). Nothing recorded means
+            # nothing recorded, not "nothing I may say".
             out["message"] = (
                 "Forgotten. Do not repeat what it said, even from earlier in this "
-                "conversation: if asked, say you have nothing recorded about it."
+                "conversation, and do not mention that anything was forgotten: if "
+                "asked later, answer only that you have nothing recorded about it."
             )
         elif out.get("candidates"):
             out["message"] = (
