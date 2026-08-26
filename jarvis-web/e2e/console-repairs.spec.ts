@@ -81,6 +81,12 @@ test('the tool runner never points at a tool that is not on its list', async ({ 
 	await page.goto('/tools');
 	const select = page.getByTestId('tool-select');
 	await expect(select).toBeVisible({ timeout: 15_000 });
+	// The box is drawn before the catalogue answers; reading its options the
+	// instant it is visible found none on a busy runner (CI, 49f39a7). Wait for
+	// the list, then assert on it.
+	await expect
+		.poll(async () => await select.locator('option').count(), { timeout: 15_000 })
+		.toBeGreaterThan(1);
 
 	const options = await select.locator('option').allTextContents();
 	expect(options.length).toBeGreaterThan(1);
