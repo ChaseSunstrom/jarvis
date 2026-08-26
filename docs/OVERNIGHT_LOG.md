@@ -670,3 +670,10 @@ is quiet. Done since:
   (load one under that alias in llama-swap, or choose a served one); served but no camera.
   What the house needs is BLOCKERS §4: a GGUF vision model served as `house-vision`. M65
   verified on the branch (gates 27/27, M55 21/21, M47 18/18, M46 15/15) and ticked.
+- 20:21 — the seventh rebuild: memory-forget passes all three turns (4/4 scenarios, 7/7
+  turns, median 1.58 s) — the chain of dedupe, confirmation, placeholder and the word holds.
+  The operator's live reports of the last hour, gathered into M66–M72 (questions answered by
+  voice and not spoken twice, settings under approval, search that falls back to the local
+  engine, entities removable by voice, a faster voice, enrolment complete, a writable coding
+  workspace); their new goal is to implement and verify all of them. Three go to agents in
+  worktrees now; search, speed and the workspace are done here.

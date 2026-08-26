@@ -1036,9 +1036,59 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the first panel after the one search box. Remote https sources stay unexercised (as
     under M47).
 
+- [ ] **M66 — Ask and answer** · size M · deps M43, M60 · parallel-ok M67, M68, M69, M70, M71
+  - Scope: the operator's reports of 26 Aug 20:21: when Jarvis asks something, the voice speaks
+    the reply AND the question (a double); a held question expires after five minutes and the
+    answer then fails with "unknown, expired or already-used approval request" / "ask_user was
+    not run"; and an answer or a confirmation should be sayable — the next spoken turn while a
+    question or an approval waits on this conversation resolves it ("turn everything off",
+    "yes, go ahead"), never from a turn that has read untrusted content. A question waits
+    thirty minutes; an expired one says so and how to ask again; the banner's clock and the
+    voice agree.
+  - Verify: `bash scripts/verify/m66-ask-and-answer.sh`
+- [ ] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66
+  - Scope: "how can I ask it to be able to edit settings with permission" — a `list_settings`
+    tool (Tier 1) over the console's settings registry and a `change_setting` tool (Tier 3,
+    pinned key and value in the approval) that writes through the same `config/settings/set`
+    the console uses, with the same validation and the same audit; "demo mode" is answered
+    with what the settings are called, not a guess.
+  - Verify: `bash scripts/verify/m67-settings-tool.sh`
+- [ ] **M68 — Search that works** · size S · deps M31 · parallel-ok M66
+  - Scope: "Latest news on Bitcoin — nothing was found for 4 searches": the configured SearXNG
+    (the operator's, over the tailnet) times out on every engine while the local one answers.
+    The web client tries the configured instance and then the local default, reports which
+    engines answered and which timed out, and research says "the search engine at X answered
+    nothing — every engine timed out" instead of "nothing was found".
+  - Verify: `bash scripts/verify/m68-search.sh`
+- [ ] **M69 — The house is editable by voice** · size M · deps M66 · parallel-ok M67
+  - Scope: "Can you remove all of the elements of the house?" — "I have no tool for deleting
+    entities". A `remove_entities` tool (Tier 3, entity ids pinned) and `remove_device` over
+    the entity/device registries the console's Devices and Areas screens already write, with
+    the confirmation sayable (M66); a removed thing leaves the graph, the dashboard and the
+    exposure list.
+  - Verify: `bash scripts/verify/m69-editable-house.sh`
+- [ ] **M70 — A faster voice** · size S · deps M35 · parallel-ok M66
+  - Scope: "can you have jarvis speak slightly faster" — Piper's length scale (`PIPER_LENGTH_SCALE`
+    in compose, pinned to `.env.example` and `configuration.yaml` as the other voice knobs are)
+    and Kokoro's `speed` as one `voice: tts: speed:` knob the Settings › Voice screen shows;
+    the deployed house at 1.1×, measured by the rig's WER staying under its threshold.
+  - Verify: `bash scripts/verify/m70-voice-speed.sh`
+- [ ] **M71 — Enrolment, complete** · size M · deps M35 · parallel-ok M66
+  - Scope: "make sure enrolment is completely implemented and complete" — an audit of voice
+    enrolment end to end (the console's EnrolVoice, the phone's flow, the server's speaker
+    store and verification, re-enrolment, removal, what the rig can prove) with every gap
+    closed and the unprovable ones named in `docs/ANDROID_DEVICE_TESTS.md`.
+  - Verify: `bash scripts/verify/m71-enrolment.sh`
+- [ ] **M72 — A coding job can create a repository** · size S · deps M19 · parallel-ok M66
+  - Scope: "Could not create the workspace /jarvis/workspaces: Permission denied": in the image
+    `~/jarvis/workspaces` is `/jarvis/workspaces`, which nothing may write. The core mounts the
+    `./jarvis-workspace:/workspace` crossover the sandbox shares, the config-init one-shot makes
+    it writable by uid 10003, the deployed config names `/workspace`, packaging pins the three.
+  - Verify: `bash scripts/verify/m72-workspace.sh`
+
 ## Final
 
-- [ ] **M23 — Final integration** · size M · deps M00–M64
+- [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,
     m30, m45, m58; m25/m26 re-measured after the next rebuild); the rest are M56 (no served
