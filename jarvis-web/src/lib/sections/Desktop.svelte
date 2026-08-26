@@ -15,7 +15,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { openConnection, type Connection, type ConnectionStatus } from '$lib/connection';
 	import type { CompanionDevice } from '$lib/jarvisClient';
-	import { Panel, Pill, Row, ScreenState } from '$lib/ui';
+	import { Panel, Pill, ScreenState } from '$lib/ui';
 
 	let conn = $state<Connection | null>(null);
 	let status = $state<ConnectionStatus>('connecting');
@@ -81,88 +81,131 @@
 	onDestroy(() => conn?.close());
 </script>
 
+<div class="stack">
+	<p class="lede" data-testid="desktop-lede" data-redialling={redialling}>
+		{inShell ? 'running inside the Jarvis shell' : 'running in a browser'} · link {status}
+	</p>
 
-<p class="lede" data-testid="desktop-lede" data-redialling={redialling}>
-	{inShell ? 'Running inside the Jarvis shell' : 'Running in a browser'} · link {status}
-</p>
+	<ScreenState
+		status={screen}
+		rows={3}
+		errorTitle="Could not reach the server"
+		errorDetail={err}
+		emptyTitle="No desktop is paired"
+		emptyBody="Run the desktop agent on a computer and pair it; it will appear here."
+		onretry={connect}
+		onreconnect={connect}
+		busy={redialling}
+		errorTestid="error"
+		emptyTestid="desktop-empty"
+	>
+		{#snippet children()}
+			<Panel title="This window" meta={inShell ? 'shell' : 'browser'}>
+				{#snippet children()}
+					{#if inShell}
+						<p class="prose" data-testid="shell-present">
+							You are in the Jarvis shell. The tray icon shows what the assistant is doing,
+							approvals arrive as native notifications, and <strong>Super+Space</strong> starts
+							a turn from anywhere.
+						</p>
+						{#if shellState}<p class="dim" data-testid="shell-state">Agent: {shellState}</p>{/if}
+					{:else}
+						<p class="prose" data-testid="shell-absent">
+							This is a browser tab. Everything works, with three exceptions the shell adds:
+							a tray icon, native notifications when Jarvis needs an approval, and a
+							push-to-talk key that works while another window has focus.
+						</p>
+					{/if}
+				{/snippet}
+			</Panel>
 
-<ScreenState
-	status={screen}
-	rows={3}
-	errorTitle="Could not reach the server"
-	errorDetail={err}
-	emptyTitle="No desktop is paired"
-	emptyBody="Run the desktop agent on a computer and pair it; it will appear here."
-	onretry={connect}
-	onreconnect={connect}
-	busy={redialling}
-	errorTestid="error"
-	emptyTestid="desktop-empty"
->
-	{#snippet children()}
-		<Panel title="This window" meta={inShell ? 'shell' : 'browser'}>
-			{#snippet children()}
-				{#if inShell}
-					<p data-testid="shell-present">
-						You are in the Jarvis shell. The tray icon shows what the assistant is doing,
-						approvals arrive as native notifications, and <strong>Super+Space</strong> starts
-						a turn from anywhere.
-					</p>
-					{#if shellState}<p class="dim" data-testid="shell-state">Agent: {shellState}</p>{/if}
-				{:else}
-					<p data-testid="shell-absent">
-						This is a browser tab. Everything works, with three exceptions the shell adds:
-						a tray icon, native notifications when Jarvis needs an approval, and a
-						push-to-talk key that works while another window has focus.
-					</p>
-				{/if}
-			{/snippet}
-		</Panel>
-
-		<Panel title="Paired computers" meta={`${desktops.length}`}>
-			{#snippet children()}
-				{#if desktops.length === 0}
-					<p class="dim">
-						None. The agent lives in <code>jarvis-desktop/</code>; pair it the way a phone
-						pairs, and what it will allow appears here.
-					</p>
-				{:else}
-					<ul class="devices" data-testid="desktop-devices">
-						{#each desktops as device (device.device_id)}
-							<li>
-								<Row>
-									{#snippet children()}
-										<Pill tone={device.connected ? 'ok' : 'neutral'}>
-											{device.connected ? 'online' : 'offline'}
-										</Pill>
-										<span class="grow">{device.name}</span>
-										<span class="dim">{device.platform ?? 'unknown'}</span>
-										<span class="dim">{device.action_count ?? device.actions?.length ?? 0} actions</span>
-									{/snippet}
-								</Row>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			{/snippet}
-		</Panel>
-	{/snippet}
-</ScreenState>
+			<Panel title="Paired computers" meta={`${desktops.length}`}>
+				{#snippet children()}
+					{#if desktops.length === 0}
+						<p class="dim">
+							None. The agent lives in <code>jarvis-desktop/</code>; pair it the way a phone
+							pairs, and what it will allow appears here.
+						</p>
+					{:else}
+						<ul class="devices" data-testid="desktop-devices">
+							{#each desktops as device (device.device_id)}
+								<li class="device">
+									<span class="name">{device.name}</span>
+									<code>{device.platform ?? 'unknown'}</code>
+									<code>{device.action_count ?? device.actions?.length ?? 0} actions</code>
+									<Pill tone={device.connected ? 'ok' : 'neutral'}>
+										{device.connected ? 'online' : 'offline'}
+									</Pill>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				{/snippet}
+			</Panel>
+		{/snippet}
+	</ScreenState>
+</div>
 
 <style>
+	.stack {
+		display: grid;
+		gap: var(--jv-space-4);
+	}
+	/* A sentence, so the body face: a whole paragraph in mono is the M48
+	   look the direction retired, and the look spec reads it as such. */
+	.lede {
+		margin: 0;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+	}
+	.prose {
+		margin: 0;
+		font-size: var(--jv-fs-sm);
+		line-height: 1.6;
+		color: var(--jv-text);
+		max-width: 70ch;
+	}
+	.prose strong {
+		font-weight: var(--jv-weight-label);
+		color: var(--jv-text-bright);
+	}
+	.dim {
+		margin: var(--jv-space-2) 0 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-dim);
+	}
+	code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+	}
 	.devices {
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-2);
 	}
-	.dim {
-		color: var(--jv-text-dim);
-		font-size: var(--jv-fs-2xs);
+	.device {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto auto;
+		align-items: center;
+		gap: var(--jv-space-4);
+		padding: var(--jv-space-3) 0;
+		border-bottom: 1px solid var(--jv-line-hair);
 	}
-	.grow {
-		flex: 1;
+	.device:last-child {
+		border-bottom: 0;
+	}
+	.name {
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	@media (max-width: 640px) {
+		.device {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
 	}
 </style>

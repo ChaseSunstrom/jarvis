@@ -159,33 +159,37 @@
 
 <div class="enrol" data-testid="enrol-voice">
 	{#if !session}
-		<div class="row">
-			<span class="name">
+		<div class="r">
+			<div class="what">
 				<b>{status?.enrolled ? 'Enrol again' : 'Enrol a voice'}</b>
-				<span class="eid">
+				<span class="dim">
 					{#if status?.enrolled}
 						adds samples to the existing profile — it widens it, it does not replace it
 					{:else}
 						read {status?.min_samples ?? 3} phrases aloud
 					{/if}
 				</span>
-			</span>
-			<Button variant="primary" testid="enrol-start" onclick={begin}>ENROL</Button>
+			</div>
+			<div class="acts">
+				<Button testid="enrol-start" title="Read the server's phrases into this browser's microphone" onclick={begin}>ENROL</Button>
+			</div>
 		</div>
-		{#if error}<p class="err" role="alert">{error}</p>{/if}
+		{#if error}<p class="bad" role="alert">{error}</p>{/if}
 	{:else}
-		<div class="row head">
-			<span class="name">
+		<div class="r head">
+			<div class="what">
 				<b>Enrolling</b>
-				<span class="eid" data-testid="enrol-remaining">
+				<span class="dim" data-testid="enrol-remaining">
 					{#if left > 0}
 						{left} more {left === 1 ? 'phrase' : 'phrases'} needed
 					{:else}
 						enough samples — more only makes it better
 					{/if}
 				</span>
-			</span>
-			<Button testid="enrol-cancel" onclick={cancel}>DONE</Button>
+			</div>
+			<div class="acts">
+				<Button testid="enrol-cancel" title="Stop enrolling; what was accepted is kept" onclick={cancel}>DONE</Button>
+			</div>
 		</div>
 
 		<!--
@@ -217,19 +221,20 @@
 					</span>
 					<span class="act">
 						{#if slot.state === 'sending'}
-							<span class="muted">checking…</span>
+							<span class="dim">checking…</span>
 						{:else if recording && i === session.at}
 							<span class="meter" aria-hidden="true">
 								<span class="meter-fill" style="width: {Math.min(100, level * 320)}%"></span>
 							</span>
-							<Button variant="danger" testid="enrol-stop-{i}"
-								onclick={() => finish(i)}
-							>
-								STOP
-							</Button>
+							<Button variant="danger" testid="enrol-stop-{i}" title="Stop recording this phrase" onclick={() => finish(i)}>STOP</Button>
 						{:else}
-							<Button variant="primary" testid="enrol-record-{i}"
+							<!-- The phrase to read next is the one lit control while a
+							     session is open; the others wait their turn. -->
+							<Button
+								variant={i === session.at ? 'primary' : 'ghost'}
+								testid="enrol-record-{i}"
 								disabled={recording}
+								title={recording ? 'Another phrase is being recorded' : 'Record this phrase'}
 								onclick={() => record(i)}
 							>
 								{slot.state === 'accepted' ? 'AGAIN' : slot.state === 'rejected' ? 'RETRY' : 'RECORD'}
@@ -242,20 +247,49 @@
 				</li>
 			{/each}
 		</ol>
-		{#if error}<p class="err" role="alert">{error}</p>{/if}
+		{#if error}<p class="bad" role="alert">{error}</p>{/if}
 	{/if}
 </div>
 
 <style>
-	/* Only what the shared chrome does not already provide. `.row`, `.btn`,
-	   `.name`, `.eid`, `.muted` and `.err` all come from chrome.css, so this
-	   panel inherits the console's type, spacing and colours rather than
-	   restating them and drifting. */
 	.enrol {
 		display: block;
 	}
-	.row.head {
+	.r {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--jv-space-2) var(--jv-space-4);
+		padding: var(--jv-space-3) 0;
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.r.head {
 		border-bottom: 0;
+	}
+	.what {
+		display: grid;
+		gap: var(--jv-space-1);
+		min-width: 0;
+	}
+	.what b {
+		font-weight: var(--jv-weight-label);
+		color: var(--jv-text-bright);
+	}
+	.dim {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.acts {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: var(--jv-space-2);
+	}
+	.bad {
+		margin: 0;
+		padding: var(--jv-space-2) 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-danger-text);
 	}
 	.bar {
 		height: var(--jv-space-1);
@@ -279,9 +313,9 @@
 		display: grid;
 		grid-template-columns: 1fr auto;
 		align-items: center;
-		gap: var(--jv-space-2);
-		padding: var(--jv-space-2) 0;
-		border-bottom: 1px dashed var(--jv-line-hair);
+		gap: var(--jv-space-2) var(--jv-space-3);
+		padding: var(--jv-space-2) var(--jv-space-2);
+		border-bottom: 1px solid var(--jv-line-hair);
 	}
 	.prompt:last-child {
 		border-bottom: 0;
@@ -290,10 +324,13 @@
 		display: flex;
 		gap: var(--jv-space-2);
 		min-width: 0;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
 	}
 	.mark {
 		font-family: var(--jv-font-chrome);
-		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
 		flex: 0 0 auto;
 	}
 	.prompt[data-state='accepted'] .mark {
@@ -302,8 +339,10 @@
 	.prompt[data-state='rejected'] .mark {
 		color: var(--jv-danger-text);
 	}
+	/* The phrase being read now: washed, with the live rule. */
 	.prompt.current {
 		background: var(--jv-wash);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
 	}
 	.act {
 		display: flex;
@@ -327,5 +366,10 @@
 		grid-column: 1 / -1;
 		color: var(--jv-danger-text);
 		font-size: var(--jv-fs-xs);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.fill {
+			transition: none;
+		}
 	}
 </style>

@@ -656,7 +656,9 @@ test("tools page degrades to the service catalogue on an older backend", async (
   await page.getByTestId("tool-run").click();
   await expect(page.getByTestId("error")).toContainText("not valid JSON");
 
-  // exposure toggle writes through the entity registry
+  // exposure toggle writes through the entity registry. It is behind the
+  // page's Entity exposure fold (M50), closed on load.
+  await page.getByTestId("tools-section-exposure").locator("summary").click();
   const expose = page.getByTestId("expose-light.lab_lights");
   await expect(expose).toHaveText("EXPOSED");
   await expose.click();

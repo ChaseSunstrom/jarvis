@@ -4,9 +4,9 @@
 	 *
 	 * A skill is a folder with a `SKILL.md` in it, dropped into the config
 	 * directory — so this panel is deliberately read-only apart from a reload
-	 * button. There is no "new skill" form and there should not be: a skill is
-	 * a document somebody wrote and put on disk, and an editor here would be a
-	 * second, worse way to write files on the server.
+	 * button. There is no "new skill" form here and there should not be: the
+	 * guided scaffold lives with the extensions list, and an editor here would
+	 * be a second, worse way to write files on the server.
 	 *
 	 * Two things it is really for:
 	 *
@@ -18,13 +18,17 @@
 	 * **Showing the ones that failed.** A mistyped frontmatter makes a skill
 	 * silently absent, which is the least diagnosable failure a folder-based
 	 * feature has. Errors are listed with the path and the reason.
+	 *
+	 * It draws no panel of its own: the tools page puts it behind a disclosure
+	 * whose header carries the count this reports through `count`.
 	 */
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
 	import { isUnsupported, type Skill, type SkillListing } from '$lib/jarvisClient';
 	import { toasts } from '$lib/toast';
+	import { Button } from '$lib/ui';
 
-	let { conn }: { conn: Connection | null } = $props();
+	let { conn, count = $bindable(0) }: { conn: Connection | null; count?: number } = $props();
 
 	let skills = $state<Skill[]>([]);
 	let errors = $state<{ path: string; error: string }[]>([]);
@@ -38,6 +42,7 @@
 	function take(listing: SkillListing | null | undefined): void {
 		skills = listing?.skills ?? [];
 		errors = listing?.errors ?? [];
+		count = skills.length;
 	}
 
 	async function refresh(connection: Connection): Promise<void> {
@@ -95,26 +100,24 @@
 </script>
 
 {#if supported && loaded}
-	<section class="panel" data-testid="skills-panel">
-		<div class="panel-head">
-			<span>Skills</span>
-			<button class="ghost" onclick={reload} disabled={busy} data-testid="skills-reload">
-				{busy ? 'reloading…' : 'reload'}
-			</button>
+	<div class="skills-panel" data-testid="skills-panel">
+		<div class="head">
+			<p class="note">
+				Folders with a <code>SKILL.md</code> in them, under the config directory. The assistant
+				sees each skill's <b>name and description</b> in every conversation; it reads the body
+				only when it decides the skill applies.
+			</p>
+			<Button testid="skills-reload" disabled={busy} title={busy ? 'Reloading' : 'Read the skills folder again'} onclick={reload}>
+				{busy ? 'RELOADING…' : 'RELOAD'}
+			</Button>
 		</div>
 
-		<p class="note">
-			Folders with a <code>SKILL.md</code> in them, under the config directory. The assistant
-			sees each skill's <b>name and description</b> in every conversation; it reads the body
-			only when it decides the skill applies.
-		</p>
-
 		{#if err}
-			<p class="error" role="alert" data-testid="skills-error">{err}</p>
+			<p class="bad" role="alert" data-testid="skills-error">{err}</p>
 		{/if}
 
 		{#if skills.length === 0}
-			<p class="empty" data-testid="skills-empty">
+			<p class="note" data-testid="skills-empty">
 				No skills loaded. Put a folder with a <code>SKILL.md</code> in it under
 				<code>config/skills/</code> and press reload.
 			</p>
@@ -122,7 +125,7 @@
 			<ul class="skills">
 				{#each skills as skill (skill.name)}
 					<li data-testid="skill-{skill.name}">
-						<button class="row" onclick={() => show(skill)} aria-expanded={open === skill.name}>
+						<button class="skill" onclick={() => show(skill)} aria-expanded={open === skill.name}>
 							<span class="name">{skill.name}</span>
 							<span class="desc">{skill.description}</span>
 							<span class="size">{skill.body_chars} chars</span>
@@ -130,14 +133,10 @@
 						{#if open === skill.name}
 							<div class="body" data-testid="skill-body-{skill.name}">
 								{#if skill.allowed_tools.length}
-									<p class="tools">
-										tools it narrows to: {skill.allowed_tools.join(', ')}
-									</p>
+									<p class="tools">tools it narrows to: {skill.allowed_tools.join(', ')}</p>
 								{/if}
 								{#if skill.resources.length}
-									<p class="tools">
-										beside it: {skill.resources.join(', ')} — read, never run
-									</p>
+									<p class="tools">beside it: {skill.resources.join(', ')} — read, never run</p>
 								{/if}
 								<pre>{bodies[skill.name] ?? 'reading…'}</pre>
 							</div>
@@ -154,25 +153,54 @@
 				{/each}
 			</ul>
 		{/if}
-	</section>
+	</div>
 {/if}
 
 <style>
-	.note,
-	.empty {
+	.head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--jv-space-4);
+		flex-wrap: wrap;
+		margin-bottom: var(--jv-space-2);
+	}
+	.note {
+		margin: 0;
+		flex: 1 1 24rem;
+		max-width: 70ch;
+		font-size: var(--jv-fs-xs);
+		line-height: 1.6;
 		color: var(--jv-text-dim);
-		font-size: var(--jv-fs-sm);
-		margin: var(--jv-space-2) 0 0;
+	}
+	.note b {
+		font-weight: var(--jv-weight-label);
+		color: var(--jv-text);
+	}
+	code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text);
+	}
+	.bad {
+		margin: 0;
+		padding: var(--jv-space-2) 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-danger-text);
 	}
 	.skills {
 		list-style: none;
-		margin: var(--jv-space-3) 0 0;
+		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--jv-space-1);
 	}
-	.row {
+	.skills > li {
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.skills > li:last-child {
+		border-bottom: 0;
+	}
+	/* The whole row is the disclosure; it has no button chrome. */
+	.skill {
 		display: grid;
 		grid-template-columns: minmax(6rem, max-content) 1fr max-content;
 		gap: var(--jv-space-3);
@@ -180,45 +208,57 @@
 		width: 100%;
 		text-align: left;
 		background: none;
-		border: 1px solid transparent;
-		border-radius: var(--jv-radius-sm);
-		padding: var(--jv-space-2);
+		border: 0;
+		padding: var(--jv-space-3) var(--jv-space-2);
 		color: inherit;
 		cursor: pointer;
 		font: inherit;
+		transition: background var(--jv-dur-fast) var(--jv-ease-out);
 	}
-	.row:hover,
-	.row:focus-visible {
-		border-color: var(--jv-line);
-		background: var(--jv-surface-2);
+	.skill:hover,
+	.skill[aria-expanded='true'] {
+		background: var(--jv-wash);
 	}
+	.skill:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: calc(-1 * var(--jv-focus-offset));
+	}
+	/* A skill's name is an identifier the model says: data, so mono. */
 	.name {
-		color: var(--jv-accent);
-		font-family: var(--jv-font-mono);
-		font-size: var(--jv-fs-sm);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-bright);
 	}
 	.desc {
-		color: var(--jv-text);
 		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
+		min-width: 0;
 	}
 	.size,
 	.tools {
-		color: var(--jv-text-dim);
-		font-size: var(--jv-fs-xs);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
+	}
+	.tools {
+		margin: 0 0 var(--jv-space-2);
 	}
 	.body {
-		padding: 0 var(--jv-space-2) var(--jv-space-2);
+		padding: 0 var(--jv-space-2) var(--jv-space-3);
 	}
 	.body pre {
+		margin: 0;
 		white-space: pre-wrap;
 		max-height: var(--jv-measure-log);
 		overflow: auto;
-		background: var(--jv-surface-2);
-		border: 1px solid var(--jv-line);
+		background: var(--jv-surface-sunken);
+		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-sm);
-		padding: var(--jv-space-2);
+		padding: var(--jv-space-3);
 		color: var(--jv-text-dim);
-		font-size: var(--jv-fs-xs);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.6;
 	}
 	.errors {
 		list-style: none;
@@ -227,8 +267,15 @@
 		color: var(--jv-warn);
 		font-size: var(--jv-fs-xs);
 	}
-	.error {
-		color: var(--jv-danger);
-		font-size: var(--jv-fs-sm);
+	.errors code {
+		color: var(--jv-warn);
+	}
+	@media (max-width: 640px) {
+		.skill {
+			grid-template-columns: minmax(0, 1fr) max-content;
+		}
+		.desc {
+			grid-column: 1 / -1;
+		}
 	}
 </style>

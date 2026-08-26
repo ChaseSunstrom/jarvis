@@ -7,15 +7,15 @@ what has been added to Jarvis, and what is it allowed to do. Three separate
 panels was the design this replaces — an operator asking "what can write to my
 memory" had to know which of the three a thing was before they could look.
 
-It lives on `/tools` rather than in a tab of its own. That page is already
-"what Jarvis can call and what it is allowed to call", and the console has ten
-top-level destinations too many.
+It lives on the tools page rather than in a tab of its own. That page is
+already "what Jarvis can call and what it is allowed to call".
 
 The row is the whole design: name, what it is, what it holds, whether it works,
 when it last ran, and one switch. Everything rarer than that — the tool list,
 the permission scope, where it came from — is behind the row's own expander,
 which is the difference between a page you can read and a page you have to
-study.
+study. It draws no panel of its own: the tools page puts it behind a
+disclosure whose header carries the count this reports through `count`.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -25,7 +25,6 @@ study.
 		EmptyState,
 		Field,
 		Input,
-		Panel,
 		Pill,
 		SkeletonRows,
 		Toggle
@@ -83,8 +82,10 @@ study.
 	interface Props {
 		/** The page's connection. Null while it is dialling. */
 		conn: Connection | null;
+		/** How many are installed, for the disclosure header above. */
+		count?: number;
 	}
-	let { conn }: Props = $props();
+	let { conn, count = $bindable(0) }: Props = $props();
 
 	let extensions = $state<Extension[]>([]);
 	let errors = $state<{ kind: string; id: string; location: string; error: string }[]>([]);
@@ -106,9 +107,9 @@ study.
 	let createError = $state('');
 
 	const KINDS: Record<string, string> = {
-		skill: 'SKILL',
-		mcp: 'MCP SERVER',
-		plugin: 'PLUGIN'
+		skill: 'Skills',
+		mcp: 'MCP servers',
+		plugin: 'Plugins'
 	};
 
 	async function load(): Promise<void> {
@@ -122,6 +123,7 @@ study.
 			extensions = answer.extensions ?? [];
 			errors = answer.errors ?? [];
 			permissions = answer.permissions ?? [];
+			count = extensions.length;
 			err = '';
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
@@ -258,11 +260,11 @@ study.
 	);
 </script>
 
-<Panel title="Extensions" meta={`${extensions.length} installed`} testid="extensions-panel">
+<div class="extensions" data-testid="extensions-panel">
 	{#if loading}
-		<SkeletonRows rows={4} />
+		<SkeletonRows rows={4} label="Loading what is installed" />
 	{:else if err}
-		<p class="notice" role="alert" data-testid="extensions-error">{err}</p>
+		<p class="bad" role="alert" data-testid="extensions-error">{err}</p>
 	{:else if extensions.length === 0}
 		<EmptyState
 			title="Nothing installed"
@@ -277,13 +279,14 @@ study.
 		</EmptyState>
 	{:else}
 		<div class="head">
-			<p class="muted">
+			<p class="note">
 				What has been added to Jarvis, and what each one is allowed to reach. Turning one off
 				takes its tools off the model, not just off this page.
 			</p>
 			<div class="actions">
 				<Button
 					testid="extensions-browse"
+					title="Search the configured catalog sources"
 					onclick={() => {
 						browsing = true;
 						void browse();
@@ -291,6 +294,8 @@ study.
 				>
 					BROWSE CATALOG
 				</Button>
+				<!-- The one lit control on the tools page: writing a skill is the
+				     thing this surface is for. -->
 				<Button variant="primary" testid="extensions-new" onclick={() => (creating = true)}>
 					NEW SKILL
 				</Button>
@@ -299,10 +304,11 @@ study.
 
 		{#each grouped as group (group.kind)}
 			{#if group.rows.length}
-				<h3 class="group">{KINDS[group.kind]}S</h3>
+				<h3 class="group">{KINDS[group.kind]}</h3>
 				{#each group.rows as row (row.key)}
-					<div class="row" class:off={!row.enabled} data-testid={`ext-${row.key}`}>
-						<div class="line">
+					<div class="ext" class:off={!row.enabled} data-testid={`ext-${row.key}`}>
+						<div class="ext-line">
+							<!-- The whole name is the expander; it has no button chrome. -->
 							<button
 								type="button"
 								class="name"
@@ -367,7 +373,7 @@ study.
 								<div class="scope">
 									<span class="scope-label">Permission scope</span>
 									{#if row.permissions.length === 0}
-										<span class="muted">It declared none.</span>
+										<span class="note">It declared none.</span>
 									{:else}
 										<div class="grants">
 											{#each row.permissions as permission (permission)}
@@ -381,12 +387,12 @@ study.
 											{/each}
 										</div>
 										{#if row.kind === 'skill'}
-											<p class="muted small">
+											<p class="note small">
 												A skill is a document: this narrows what the model is told it may use.
 												What stops it acting is each tool's own tier.
 											</p>
 										{:else}
-											<p class="muted small">
+											<p class="note small">
 												Taking one away withdraws the tools that need it, on the next call.
 											</p>
 										{/if}
@@ -401,11 +407,11 @@ study.
 	{/if}
 
 	{#if errors.length}
-		<h3 class="group">NOT LOADED</h3>
+		<h3 class="group">Not loaded</h3>
 		{#each errors as problem (problem.id)}
-			<div class="row bad" data-testid={`ext-rejected-${problem.id}`}>
-				<div class="line">
-					<span class="name">
+			<div class="ext rejected" data-testid={`ext-rejected-${problem.id}`}>
+				<div class="ext-line">
+					<span class="name plain">
 						<span class="id">{problem.id}</span>
 						<span class="what">{problem.error}</span>
 					</span>
@@ -413,12 +419,12 @@ study.
 				</div>
 			</div>
 		{/each}
-		<p class="muted small">
+		<p class="note small">
 			A manifest that does not validate is not loaded at all — not loaded with the bad parts
 			dropped, which would be a narrower allowlist than its author wrote.
 		</p>
 	{/if}
-</Panel>
+</div>
 
 <!--
   The catalog. Two dialogs on purpose: browsing is reading, installing is a
@@ -442,12 +448,12 @@ study.
 			<Button testid="catalog-search" onclick={browse}>SEARCH</Button>
 		</div>
 		{#if catalogError}
-			<p class="notice" role="alert" data-testid="catalog-error">{catalogError}</p>
+			<p class="bad" role="alert" data-testid="catalog-error">{catalogError}</p>
 		{/if}
 		{#each catalogEntries as entry (entry.source + entry.id)}
-			<div class="row" data-testid={`catalog-${entry.id}`}>
-				<div class="line">
-					<span class="name">
+			<div class="ext" data-testid={`catalog-${entry.id}`}>
+				<div class="ext-line">
+					<span class="name plain">
 						<span class="id">{entry.id}</span>
 						<span class="what">{entry.description}</span>
 					</span>
@@ -457,6 +463,7 @@ study.
 						<Button
 							testid={`catalog-install-${entry.id}`}
 							disabled={busy === entry.id}
+							title={busy === entry.id ? 'Fetching and hashing' : 'See exactly what installing it would do'}
 							onclick={() => propose(entry)}
 						>
 							REVIEW
@@ -464,7 +471,7 @@ study.
 					</div>
 				</div>
 				{#if entry.permissions.length}
-					<p class="muted small" data-testid={`catalog-perms-${entry.id}`}>
+					<p class="note small" data-testid={`catalog-perms-${entry.id}`}>
 						Asks for: {entry.permissions.join(', ')}
 					</p>
 				{/if}
@@ -495,9 +502,9 @@ study.
 			<dd>{proposal.files.join(', ')}</dd>
 		</dl>
 		{#if proposal.hooks.length}
-			<p class="notice" role="alert" data-testid="install-hooks">{proposal.warning}</p>
+			<p class="warn" role="alert" data-testid="install-hooks">{proposal.warning}</p>
 		{/if}
-		<p class="muted small">
+		<p class="note small">
 			Nothing in this payload is run — a skill folder is read, never executed. What it can do
 			is tell the model things, and every action it suggests still goes through that action's
 			own approval.
@@ -509,6 +516,7 @@ study.
 			variant="primary"
 			testid="install-confirm"
 			disabled={busy === proposal?.id}
+			title={busy === proposal?.id ? 'Installing' : 'Install exactly what is on screen'}
 			onclick={confirmInstall}
 		>
 			INSTALL
@@ -518,7 +526,7 @@ study.
 
 <Dialog open={creating} title="New skill" onclose={() => (creating = false)}>
 	<Field label="Name" hint="Lowercase, hyphens. It becomes the folder.">
-		<Input bind:value={newName} testid="new-skill-name" placeholder="bin-day" />
+		<Input bind:value={newName} testid="new-skill-name" placeholder="bin-day" mono />
 	</Field>
 	<Field label="What it is for" hint="The one line the model sees before it reads anything.">
 		<Input
@@ -528,9 +536,9 @@ study.
 		/>
 	</Field>
 	<Field label="Tools it may name" hint="Optional, space separated. The permissions follow.">
-		<Input bind:value={newTools} testid="new-skill-tools" placeholder="get_state web_search" />
+		<Input bind:value={newTools} testid="new-skill-tools" placeholder="get_state web_search" mono />
 	</Field>
-	{#if createError}<p class="notice" role="alert" data-testid="new-skill-error">{createError}</p>{/if}
+	{#if createError}<p class="bad" role="alert" data-testid="new-skill-error">{createError}</p>{/if}
 	{#snippet actions()}
 		<Button onclick={() => (creating = false)}>CANCEL</Button>
 		<Button
@@ -553,7 +561,7 @@ study.
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: var(--jv-space-4);
-		margin-bottom: var(--jv-space-3);
+		margin-bottom: var(--jv-space-2);
 		/*
 		 * Wrap, or the sentence is crushed.
 		 *
@@ -564,28 +572,51 @@ study.
 		 */
 		flex-wrap: wrap;
 	}
-	.head p {
-		margin: 0;
-		max-width: 60ch;
+	.head .note {
 		/* Its own line as soon as the buttons cannot sit beside it. */
 		flex: 1 1 24rem;
 	}
-	.group {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-chrome);
+	.note {
+		margin: 0;
+		max-width: 70ch;
+		font-size: var(--jv-fs-xs);
+		line-height: 1.6;
 		color: var(--jv-text-dim);
-		margin: var(--jv-space-4) 0 var(--jv-space-2);
 	}
-	.row {
-		border-top: 1px solid var(--jv-line-soft);
+	.small {
+		margin-top: var(--jv-space-2);
+	}
+	.bad {
+		margin: 0;
+		padding: var(--jv-space-2) 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-danger-text);
+	}
+	.warn {
+		margin: 0;
+		padding: var(--jv-space-2) 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-warn);
+	}
+	.group {
+		margin: var(--jv-space-4) 0 0;
+		padding-bottom: var(--jv-space-2);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-text-faint);
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.ext {
+		border-bottom: 1px solid var(--jv-line-hair);
 		padding: var(--jv-space-3) 0;
 	}
-	.row.off .id,
-	.row.off .what {
-		color: var(--jv-text-dim);
+	.ext.off .id,
+	.ext.off .what {
+		color: var(--jv-text-faint);
 	}
-	.line {
+	.ext-line {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -606,8 +637,17 @@ study.
 		font: inherit;
 		cursor: pointer;
 	}
+	.name.plain {
+		cursor: default;
+	}
+	.name:focus-visible {
+		outline: var(--jv-focus-outline);
+		outline-offset: var(--jv-focus-offset);
+	}
+	/* An extension's id is what the model and the manifest call it: data. */
 	.id {
 		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-sm);
 		letter-spacing: var(--jv-track-tight);
 		color: var(--jv-text-bright);
 	}
@@ -622,9 +662,9 @@ study.
 		flex-wrap: wrap;
 	}
 	.used {
-		font-size: var(--jv-fs-2xs);
 		font-family: var(--jv-font-chrome);
-		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
 	}
 	.detail {
 		margin-top: var(--jv-space-3);
@@ -639,30 +679,30 @@ study.
 		font-size: var(--jv-fs-xs);
 	}
 	dt {
-		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
-		color: var(--jv-text-dim);
+		text-transform: uppercase;
+		color: var(--jv-text-faint);
 	}
 	dd {
 		margin: 0;
+		color: var(--jv-text);
 		word-break: break-word;
 	}
 	.scope-label {
 		display: block;
-		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
 		letter-spacing: var(--jv-track-chrome);
-		color: var(--jv-text-dim);
+		text-transform: uppercase;
+		color: var(--jv-text-faint);
 		margin-bottom: var(--jv-space-2);
 	}
 	.grants {
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--jv-space-2) var(--jv-space-4);
-	}
-	.small {
-		font-size: var(--jv-fs-2xs);
-		margin: var(--jv-space-2) 0 0;
 	}
 	.actions {
 		display: flex;
@@ -675,11 +715,11 @@ study.
 		align-items: flex-end;
 		margin-bottom: var(--jv-space-3);
 	}
-	.search :global(label) {
+	.search :global(.in) {
 		flex: 1 1 auto;
 	}
 	.hash {
-		font-family: var(--jv-font-mono);
+		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
 		word-break: break-all;
 	}

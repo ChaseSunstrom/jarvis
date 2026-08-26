@@ -21,9 +21,11 @@
 	 * option that is simply absent reads as a missing feature.
 	 *
 	 * Everything about validation lives in `$lib/mcpDraft.ts` and is tested in
-	 * Node. This file owns the buttons.
+	 * Node. This file owns the buttons. It draws no panel of its own: the tools
+	 * page puts it behind a disclosure whose header carries the count this
+	 * reports through `count`.
 	 */
-	import { Button } from '$lib/ui';
+	import { Button, Field, Input, Pill, Select } from '$lib/ui';
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
 	import { isUnsupported, type McpListing, type McpServerDetail } from '$lib/jarvisClient';
@@ -40,7 +42,7 @@
 		type McpServer
 	} from '$lib/mcpDraft';
 
-	let { conn }: { conn: Connection | null } = $props();
+	let { conn, count = $bindable(0) }: { conn: Connection | null; count?: number } = $props();
 
 	let servers = $state<McpServer[]>([]);
 	let allowStdio = $state(false);
@@ -62,6 +64,7 @@
 	function take(listing: McpListing | null | undefined): void {
 		servers = listing?.servers ?? [];
 		allowStdio = Boolean(listing?.allow_stdio);
+		count = servers.length;
 	}
 
 	async function refresh(connection: Connection): Promise<void> {
@@ -135,7 +138,7 @@
 		const parsed = parseMcpForm(form, { allowStdio });
 		if (!parsed.ok) {
 			err = parsed.error;
-			document.getElementById(`mcp-${parsed.field}`)?.focus();
+			document.querySelector<HTMLElement>(`[data-testid="mcp-${parsed.field}"]`)?.focus();
 			return;
 		}
 		busy = 'add';
@@ -186,67 +189,67 @@
 			busy = '';
 		}
 	}
+
+	/** The tier tag's tone: a tier-1 server runs unasked, which is worth a colour. */
+	const tierTone = (tier: number | string | undefined): 'warn' | 'ok' | 'neutral' =>
+		String(tier) === '1' ? 'warn' : String(tier) === '3' ? 'ok' : 'neutral';
 </script>
 
 {#if supported}
-	<section class="panel" data-testid="mcp-panel">
-		<div class="panel-head">
-			<span>MCP servers</span>
-			<span class="muted">
-				{servers.length} configured{allowStdio ? ' · stdio allowed' : ''}
-			</span>
-		</div>
-
-		<p class="muted lede">
+	<div class="mcp" data-testid="mcp-panel">
+		<p class="note">
 			Any MCP server can lend Jarvis its tools. They arrive named
 			<code>mcp_&lt;server&gt;_&lt;tool&gt;</code> so nothing can shadow a built-in, everything they
 			return is treated as untrusted text, and they need confirming before they run unless you say
-			otherwise.
+			otherwise.{allowStdio ? ' stdio servers are allowed on this host.' : ''}
 		</p>
 
-		{#if err}<p class="err" role="alert" data-testid="mcp-error">{err}</p>{/if}
+		{#if err}<p class="bad" role="alert" data-testid="mcp-error">{err}</p>{/if}
 
 		{#if loaded && !servers.length && !adding}
-			<p class="muted" data-testid="mcp-empty">No MCP servers yet.</p>
+			<p class="note" data-testid="mcp-empty">No MCP servers yet.</p>
 		{/if}
 
 		<ul class="list">
 			{#each servers as server (server.name)}
 				<li data-testid="mcp-row-{server.name}" data-connected={server.connected}>
-					<div class="row head">
-						<span class="name">
-							<b>{server.name}</b>
-							<span class="eid" data-testid="mcp-detail-{server.name}">
-								{describeServer(server)}
-							</span>
-						</span>
-						<span class="acts">
-							<span class="pill" data-tier={server.tier}>{tierLabel(server.tier)}</span>
-							<Button testid="mcp-tools-{server.name}"
+					<div class="server">
+						<div class="what">
+							<b class:down={!server.connected}>{server.name}</b>
+							<span class="dim" data-testid="mcp-detail-{server.name}">{describeServer(server)}</span>
+						</div>
+						<div class="acts">
+							<Pill tone={tierTone(server.tier)}>{tierLabel(server.tier)}</Pill>
+							<Button
+								testid="mcp-tools-{server.name}"
 								aria-expanded={expanded === server.name}
+								title="What this server answers, and its tools' arguments"
 								onclick={() => inspect(server.name)}
 							>
 								{server.tools.length ? `${server.tool_count} TOOLS` : 'INSPECT'}
 							</Button>
-							<Button testid="mcp-reconnect-{server.name}"
+							<Button
+								testid="mcp-reconnect-{server.name}"
 								disabled={!!busy}
+								title={busy ? 'Working' : 'Dial it again'}
 								onclick={() => reconnect(server.name)}
 							>
 								{busy === server.name ? '…' : 'RECONNECT'}
 							</Button>
 							{#if server.editable}
-								<Button variant="danger" testid="mcp-remove-{server.name}"
+								<Button
+									variant="danger"
+									testid="mcp-remove-{server.name}"
 									disabled={!!busy}
+									title={busy ? 'Working' : 'Forget it; its tools are no longer offered'}
 									onclick={() => remove(server)}
 								>
 									REMOVE
 								</Button>
 							{:else}
-								<span class="eid" data-testid="mcp-readonly-{server.name}">
-									{readOnlyNote(server)}
-								</span>
+								<span class="dim" data-testid="mcp-readonly-{server.name}">{readOnlyNote(server)}</span>
 							{/if}
-						</span>
+						</div>
 					</div>
 					{#if expanded === server.name}
 						<div class="inspect" data-testid="mcp-inspect-{server.name}">
@@ -266,7 +269,7 @@
 									</dd>
 									{#if detail[server.name].last_error}
 										<dt>last error</dt>
-										<dd class="bad" data-testid="mcp-last-error-{server.name}">
+										<dd class="bad-text" data-testid="mcp-last-error-{server.name}">
 											{detail[server.name].last_error}
 											{#if detail[server.name].next_attempt_in > 0}
 												· retrying in {Math.round(detail[server.name].next_attempt_in)}s
@@ -278,15 +281,18 @@
 							<ul class="tools" data-testid="mcp-tool-list-{server.name}">
 								{#each detail[server.name]?.tools ?? server.tools as tool (tool.name)}
 									<li>
-										<code>{tool.name}</code>
-										<span class="eid">{tool.description}</span>
-										<Button testid="mcp-try-{tool.name}"
-											disabled={!!busy}
-											onclick={() => tryTool(tool.name)}
-											title="Call it through the same approval gate the assistant uses"
-										>
-											{busy === tool.name ? '…' : 'TEST CALL'}
-										</Button>
+										<div class="tool">
+											<code>{tool.name}</code>
+											<span class="dim">{tool.description}</span>
+											<Button
+												testid="mcp-try-{tool.name}"
+												disabled={!!busy}
+												onclick={() => tryTool(tool.name)}
+												title="Call it through the same approval gate the assistant uses"
+											>
+												{busy === tool.name ? '…' : 'TEST CALL'}
+											</Button>
+										</div>
 										{#if 'parameters' in tool && tool.parameters}
 											<pre class="schema" data-testid="mcp-schema-{tool.name}">{JSON.stringify(
 													tool.parameters,
@@ -295,9 +301,7 @@
 												)}</pre>
 										{/if}
 										{#if tried[tool.name]}
-											<pre class="result" data-testid="mcp-result-{tool.name}">{tried[
-													tool.name
-												]}</pre>
+											<pre class="result" data-testid="mcp-result-{tool.name}">{tried[tool.name]}</pre>
 										{/if}
 									</li>
 								{/each}
@@ -308,9 +312,11 @@
 			{/each}
 		</ul>
 
-		<div class="toolbar">
-			<Button variant="primary" testid="mcp-new"
+		<div class="foot">
+			<Button
+				testid="mcp-new"
 				aria-expanded={adding}
+				title={adding ? 'Close the form' : 'Point Jarvis at a server'}
 				onclick={() => {
 					adding = !adding;
 					err = '';
@@ -319,10 +325,7 @@
 				{adding ? 'CANCEL' : '+ ADD SERVER'}
 			</Button>
 			{#if servers.length}
-				<Button testid="mcp-reconnect-all"
-					disabled={!!busy}
-					onclick={() => reconnect()}
-				>
+				<Button testid="mcp-reconnect-all" disabled={!!busy} title={busy ? 'Working' : 'Dial every server again'} onclick={() => reconnect()}>
 					RECONNECT ALL
 				</Button>
 			{/if}
@@ -330,8 +333,9 @@
 
 		{#if adding}
 			<div class="editor" data-testid="mcp-editor">
-				<label for="mcp-name">Name</label>
-				<input id="mcp-name" type="text" bind:value={form.name} placeholder="nextcloud" />
+				<Field label="Name">
+					<Input bind:value={form.name} testid="mcp-name" placeholder="nextcloud" mono />
+				</Field>
 				{#if form.name && normalised !== form.name.trim()}
 					<!-- Shown BEFORE saving. Finding out afterwards, from a tool the
 					     model calls by a name you did not choose, is the confusing
@@ -346,13 +350,22 @@
 					</p>
 				{/if}
 
-				<label for="mcp-transport">Transport</label>
-				<select id="mcp-transport" bind:value={form.transport} data-testid="mcp-transport">
-					<option value="http">http — a URL Jarvis fetches</option>
-					<option value="stdio" disabled={!allowStdio}>
-						stdio — a program Jarvis starts{allowStdio ? '' : ' (not allowed)'}
-					</option>
-				</select>
+				<!--
+				  A raw select, because one of its options has to be DISABLED with
+				  its reason attached, and the library's Select has no per-option
+				  state. Drawn as Select is. Labelled with `for`, not wrapped in the
+				  label: a state check on an option inside a wrapping label is
+				  retargeted to the select, which is not disabled.
+				-->
+				<div class="field">
+					<label class="label" for="mcp-transport">Transport</label>
+					<select id="mcp-transport" class="sel" bind:value={form.transport} data-testid="mcp-transport">
+						<option value="http">http — a URL Jarvis fetches</option>
+						<option value="stdio" disabled={!allowStdio}>
+							stdio — a program Jarvis starts{allowStdio ? '' : ' (not allowed)'}
+						</option>
+					</select>
+				</div>
 				{#if !allowStdio}
 					<p class="hint" data-testid="mcp-stdio-note">
 						A stdio server runs a program on the Jarvis host. Turn it on with
@@ -362,44 +375,122 @@
 				{/if}
 
 				{#if form.transport === 'stdio'}
-					<label for="mcp-command">Command</label>
-					<input id="mcp-command" type="text" bind:value={form.command} placeholder="npx" />
-					<label for="mcp-args">Arguments, one per line</label>
-					<textarea id="mcp-args" rows="3" bind:value={form.args}></textarea>
+					<Field label="Command">
+						<Input bind:value={form.command} testid="mcp-command" placeholder="npx" mono />
+					</Field>
+					<Field label="Arguments, one per line">
+						<Input bind:value={form.args} testid="mcp-args" rows={3} mono />
+					</Field>
 				{:else}
-					<label for="mcp-url">URL</label>
-					<input
-						id="mcp-url"
-						type="text"
-						bind:value={form.url}
-						placeholder="http://127.0.0.1:9100/mcp"
-					/>
-					<label for="mcp-token">Token (optional)</label>
-					<input id="mcp-token" type="password" bind:value={form.token} autocomplete="off" />
+					<Field label="URL">
+						<Input bind:value={form.url} testid="mcp-url" placeholder="http://127.0.0.1:9100/mcp" mono />
+					</Field>
+					<!-- A password field: the library's Input has no `type`, and a
+					     token must not be a text one. Drawn as Input is. -->
+					<div class="field">
+						<label class="label" for="mcp-token">Token (optional)</label>
+						<input id="mcp-token" class="in" type="password" bind:value={form.token} data-testid="mcp-token" autocomplete="off" />
+					</div>
 				{/if}
 
-				<label for="mcp-tier">When it may run</label>
-				<select id="mcp-tier" bind:value={form.tier} data-testid="mcp-tier">
-					<option value="1">1 — run it and answer</option>
-					<option value="2">2 — confirm first</option>
-					<option value="3">3 — never without a yes</option>
-				</select>
+				<Field label="When it may run">
+					<Select
+						bind:value={form.tier}
+						testid="mcp-tier"
+						options={[
+							{ value: '1', label: '1 — run it and answer' },
+							{ value: '2', label: '2 — confirm first' },
+							{ value: '3', label: '3 — never without a yes' }
+						]}
+					/>
+				</Field>
 
-				<div class="row">
-					<Button variant="primary" testid="mcp-save"
-						disabled={busy === 'add'}
-						onclick={add}>
+				<div class="editor-acts">
+					<Button variant="primary" testid="mcp-save" disabled={busy === 'add'} title={busy === 'add' ? 'Connecting' : 'Add it and dial it'} onclick={add}>
 						{busy === 'add' ? 'CONNECTING…' : 'ADD'}
 					</Button>
 				</div>
 			</div>
 		{/if}
-	</section>
+	</div>
 {/if}
 
 <style>
+	.note,
+	.hint {
+		margin: 0;
+		font-size: var(--jv-fs-xs);
+		line-height: 1.6;
+		color: var(--jv-text-dim);
+		max-width: 70ch;
+	}
+	.note {
+		margin-bottom: var(--jv-space-3);
+	}
+	.hint {
+		color: var(--jv-text-faint);
+	}
+	code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text);
+	}
+	.bad {
+		margin: 0;
+		padding: var(--jv-space-2) 0;
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-danger-text);
+	}
+	.list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.list > li {
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.list > li:last-child {
+		border-bottom: 0;
+	}
+	.server {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--jv-space-4);
+		flex-wrap: wrap;
+		padding: var(--jv-space-3) 0;
+	}
+	.what {
+		display: grid;
+		gap: var(--jv-space-1);
+		flex: 1 1 16rem;
+		min-width: 0;
+	}
+	/* A server's name is what the model's tools are prefixed with: an id, so mono. */
+	.what b {
+		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+	}
+	.what b.down {
+		color: var(--jv-danger-text);
+	}
+	.dim {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+		overflow-wrap: anywhere;
+	}
+	.acts {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-2);
+		flex-wrap: wrap;
+	}
 	.inspect {
-		padding: var(--jv-space-2) 0 var(--jv-space-2) var(--jv-space-3);
+		padding: 0 0 var(--jv-space-3) var(--jv-space-3);
+		border-left: 1px solid var(--jv-line-soft);
+		margin-bottom: var(--jv-space-3);
 	}
 	.facts {
 		display: grid;
@@ -410,90 +501,99 @@
 		color: var(--jv-text-dim);
 	}
 	.facts dt {
-		color: var(--jv-text-faint);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-chrome);
 		text-transform: uppercase;
-		letter-spacing: var(--jv-track-wide);
+		color: var(--jv-text-faint);
 	}
 	.facts dd {
 		margin: 0;
 	}
-	.facts .bad {
-		color: var(--jv-danger);
-	}
-	.schema,
-	.result {
-		margin: var(--jv-space-1) 0 0;
-		padding: var(--jv-space-2);
-		background: var(--jv-surface-2);
-		border: 1px solid var(--jv-line);
-		border-radius: var(--jv-radius-sm);
-		color: var(--jv-text-dim);
-		font-size: var(--jv-fs-xs);
-		max-height: var(--jv-measure-log);
-		overflow: auto;
-		white-space: pre-wrap;
-	}
-
-	/* Only what the shared chrome does not provide — `.panel`, `.row`, `.btn`,
-	   `.name`, `.eid`, `.muted`, `.err` and `.editor` all come from chrome.css. */
-	.lede {
-		margin: 0 0 var(--jv-space-2);
-	}
-	.list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.list > li {
-		border-bottom: 1px dashed var(--jv-line-hair);
-	}
-	.list > li:last-child {
-		border-bottom: 0;
-	}
-	.acts {
-		display: flex;
-		align-items: center;
-		gap: var(--jv-space-2);
-		flex-wrap: wrap;
-	}
-	.pill {
-		font-family: var(--jv-font-chrome);
-		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-wide);
-		border: 1px solid var(--jv-line-soft);
-		border-radius: var(--jv-radius-pill);
-		padding: 1px var(--jv-space-2);
-		color: var(--jv-text-dim);
-	}
-	.pill[data-tier='1'] {
-		color: var(--jv-warn);
-		border-color: var(--jv-warn);
-	}
-	.pill[data-tier='3'] {
-		color: var(--jv-ok);
-	}
-	li[data-connected='false'] .name b {
+	.bad-text {
 		color: var(--jv-danger-text);
 	}
 	.tools {
 		list-style: none;
-		margin: 0 0 var(--jv-space-2);
-		padding: 0 0 0 var(--jv-space-3);
+		margin: 0;
+		padding: 0;
 	}
-	.tools li {
+	.tools > li {
+		padding: var(--jv-space-2) 0;
+		border-top: 1px solid var(--jv-line-hair);
+	}
+	.tool {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+	}
+	.tool .dim {
+		flex: 1 1 12rem;
+	}
+	.schema,
+	.result {
+		margin: var(--jv-space-2) 0 0;
+		padding: var(--jv-space-2) var(--jv-space-3);
+		background: var(--jv-surface-sunken);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-sm);
+		color: var(--jv-text-dim);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.6;
+		max-height: var(--jv-measure-log);
+		overflow: auto;
+		white-space: pre-wrap;
+	}
+	.foot {
 		display: flex;
 		gap: var(--jv-space-2);
-		font-size: var(--jv-fs-xs);
-		padding: var(--jv-rule-live) 0;
+		flex-wrap: wrap;
+		padding-top: var(--jv-space-3);
 	}
-	.hint {
-		margin: 0 0 var(--jv-space-2);
-		font-size: var(--jv-fs-xs);
-		color: var(--jv-text-faint);
+	/* The form, inset from the list it adds to. */
+	.editor {
+		display: grid;
+		gap: var(--jv-space-3);
+		margin-top: var(--jv-space-3);
+		padding: var(--jv-space-4);
+		border: 1px solid var(--jv-line-hair);
+		border-left: var(--jv-rule-live) solid var(--jv-accent);
+		border-radius: var(--jv-radius-md);
+		background: var(--jv-bg-raised);
 	}
-	.toolbar {
+	.field {
+		display: grid;
+		gap: var(--jv-space-1);
+	}
+	.label {
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
+	}
+	.sel,
+	.in {
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+		width: 100%;
+	}
+	.in {
+		font-family: var(--jv-font-chrome);
+	}
+	.sel:hover,
+	.in:hover {
+		border-color: var(--jv-line);
+	}
+	.editor-acts {
 		display: flex;
 		gap: var(--jv-space-2);
-		margin-top: var(--jv-space-2);
 	}
 </style>

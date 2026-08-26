@@ -32,9 +32,21 @@ async function tell(page: Page, frame: Record<string, unknown>): Promise<void> {
 	);
 }
 
+/**
+ * Open the MCP fold. The tools page keeps its rarer sections behind a
+ * disclosure (M50) — MCP servers among them — so the panel exists on load and
+ * is shown on a click; a reload closes it again.
+ */
+async function openMcp(page: Page): Promise<void> {
+	const fold = page.getByTestId('tools-section-mcp');
+	await expect(fold).toBeAttached({ timeout: 15_000 });
+	if (!(await fold.getAttribute('open'))) await fold.locator('summary').click();
+	await expect(page.getByTestId('mcp-panel')).toBeVisible({ timeout: 15_000 });
+}
+
 async function openTools(page: Page): Promise<void> {
 	await page.goto('/tools');
-	await expect(page.getByTestId('mcp-panel')).toBeVisible({ timeout: 15_000 });
+	await openMcp(page);
 }
 
 test('an http server can be added, and its tools are namespaced', async ({ page }) => {
@@ -44,11 +56,11 @@ test('an http server can be added, and its tools are namespaced', async ({ page 
 	// Typed with a space and a capital: the name is normalised, and the panel
 	// has to say so BEFORE saving. Finding out afterwards, from a tool the
 	// model calls by a name you did not choose, is the confusing version.
-	await page.locator('#mcp-name').fill('My Notes');
+	await page.getByTestId('mcp-name').fill('My Notes');
 	await expect(page.getByTestId('mcp-name-normalised')).toContainText('my_notes');
 	await expect(page.getByTestId('mcp-preview')).toContainText('mcp_my_notes_');
 
-	await page.locator('#mcp-url').fill('http://127.0.0.1:9200/mcp');
+	await page.getByTestId('mcp-url').fill('http://127.0.0.1:9200/mcp');
 	await page.getByTestId('mcp-save').click();
 
 	const row = page.getByTestId('mcp-row-my_notes');
@@ -77,7 +89,7 @@ test('stdio opens once the operator has said so in the file', async ({ page }) =
 	await openTools(page);
 	await tell(page, { type: 'jarvis/test/mcp_allow_stdio', allow: true });
 	await page.reload();
-	await expect(page.getByTestId('mcp-panel')).toBeVisible({ timeout: 15_000 });
+	await openMcp(page);
 
 	await page.getByTestId('mcp-new').click();
 	await expect(
@@ -85,10 +97,10 @@ test('stdio opens once the operator has said so in the file', async ({ page }) =
 	).toBeEnabled();
 	await expect(page.getByTestId('mcp-stdio-note')).toHaveCount(0);
 
-	await page.locator('#mcp-name').fill('files');
+	await page.getByTestId('mcp-name').fill('files');
 	await page.getByTestId('mcp-transport').selectOption('stdio');
-	await page.locator('#mcp-command').fill('npx');
-	await page.locator('#mcp-args').fill('-y\n@modelcontextprotocol/server-filesystem');
+	await page.getByTestId('mcp-command').fill('npx');
+	await page.getByTestId('mcp-args').fill('-y\n@modelcontextprotocol/server-filesystem');
 	await page.getByTestId('mcp-tier').selectOption('3');
 	await page.getByTestId('mcp-save').click();
 
@@ -111,8 +123,8 @@ test('a server from the config file cannot be removed from here', async ({ page 
 test('a console-added server can be removed, and its tools go with it', async ({ page }) => {
 	await openTools(page);
 	await page.getByTestId('mcp-new').click();
-	await page.locator('#mcp-name').fill('scratch');
-	await page.locator('#mcp-url').fill('http://127.0.0.1:9300/mcp');
+	await page.getByTestId('mcp-name').fill('scratch');
+	await page.getByTestId('mcp-url').fill('http://127.0.0.1:9300/mcp');
 	await page.getByTestId('mcp-save').click();
 	await expect(page.getByTestId('mcp-row-scratch')).toBeVisible({ timeout: 10_000 });
 
@@ -124,6 +136,7 @@ test('a server that has fallen over says why, and can be brought back', async ({
 	await openTools(page);
 	await tell(page, { type: 'jarvis/test/mcp_break', name: 'house', error: 'no route to host' });
 	await page.reload();
+	await openMcp(page);
 
 	const row = page.getByTestId('mcp-row-house');
 	await expect(row).toHaveAttribute('data-connected', 'false', { timeout: 15_000 });
@@ -136,8 +149,8 @@ test('a server that has fallen over says why, and can be brought back', async ({
 test('a url that is not one is caught before it is sent', async ({ page }) => {
 	await openTools(page);
 	await page.getByTestId('mcp-new').click();
-	await page.locator('#mcp-name').fill('typo');
-	await page.locator('#mcp-url').fill('notes.local/mcp');
+	await page.getByTestId('mcp-name').fill('typo');
+	await page.getByTestId('mcp-url').fill('notes.local/mcp');
 	await page.getByTestId('mcp-save').click();
 
 	await expect(page.getByTestId('mcp-error')).toContainText('http');
@@ -156,6 +169,7 @@ test('inspect shows the schemas and, when it is down, why', async ({ page }) => 
 	await openTools(page);
 	await tell(page, { type: 'jarvis/test/mcp_break', name: 'house', error: 'no route to host' });
 	await page.reload();
+	await openMcp(page);
 
 	await page.getByTestId('mcp-tools-house').click();
 	const detail = page.getByTestId('mcp-inspect-house');

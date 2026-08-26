@@ -7,7 +7,7 @@
 	import { TEXT_SIZES, applyTextSize, readTextSize, writeTextSize } from '$lib/textSize';
 	import { coerceSetting } from '$lib/settingsDraft';
 	import type { BusEvent, SettingRow, Subscription } from '$lib/jarvisClient';
-	import { Button, ScreenState, SkeletonRows } from '$lib/ui';
+	import { Button, Input, Panel, Pill, ScreenState, Select, SkeletonRows } from '$lib/ui';
 
 	interface ClientConfig {
 		pipeline?: string;
@@ -49,10 +49,10 @@
 	/**
 	 * The editable settings jarvis-core exposes, grouped as it groups them.
 	 *
-	 * Distinct from the `Backend` panel below, which shows *this web server's*
-	 * environment. Those are genuinely not editable from here: the admin token
-	 * never reaches the browser, so a page that offered to change it would be
-	 * offering something it cannot do.
+	 * Distinct from the `This console` panel below, which shows *this web
+	 * server's* environment. Those are genuinely not editable from here: the
+	 * admin token never reaches the browser, so a page that offered to change
+	 * it would be offering something it cannot do.
 	 */
 	let settings = $state<SettingRow[]>([]);
 	let settingsSupported = $state(true);
@@ -83,6 +83,8 @@
 	 * like". That is enforced on the server, not here.
 	 */
 	let speaker = $state<Record<string, any> | null>(null);
+	/** The same payload, never null: what the panel reads. A snippet does not carry the `{#if}`'s narrowing. */
+	const who = $derived<Record<string, any>>(speaker ?? {});
 	let speakerBusy = $state(false);
 	let speakerError = $state('');
 
@@ -139,6 +141,16 @@
 	function isDirty(row: SettingRow): boolean {
 		const current = row.value == null ? '' : String(row.value);
 		return drafts[row.key] !== undefined && drafts[row.key] !== current;
+	}
+
+	/** The choices a `<Select>` offers, with the configured value kept even when it is not among them. */
+	function choicesOf(row: SettingRow): { value: string; label: string }[] {
+		const choices = (row.choices ?? []).map((choice) => ({ value: choice, label: choice }));
+		const current = draftOf(row);
+		// What is configured is not among what could be discovered. Shown rather
+		// than silently reset to the first option.
+		if (!(row.choices ?? []).includes(current)) choices.push({ value: current, label: current || '(unset)' });
+		return choices;
 	}
 
 	function adopt(rows: SettingRow[]): void {
@@ -336,376 +348,587 @@
 	);
 </script>
 
-
-<p class="lede" data-testid="assistant-screen">link {status} · relay {typeof location === 'undefined' ? '' : relayUrl()}</p>
-
-<ScreenState
-	status={screen}
-	errorTitle="This page hit an error"
-	errorDetail={err}
-	onretry={connect}
-	onreconnect={connect}
-	busy={redialling}
-	errorTestid="error"
-/>
-
-{#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
-{#if config.problem}<p class="err" data-testid="config-problem" role="alert">{config.problem}</p>{/if}
-
-{#if restartNeeded.length}
-	<p class="notice" data-testid="restart-needed">
-		Saved, but {restartNeeded.length === 1 ? 'this setting needs' : 'these settings need'} a restart
-		of jarvis-core to take effect: {restartNeeded.join(', ')}.
+<div class="stack">
+	<p class="lede" data-testid="assistant-screen">
+		link {status} · relay <code>{typeof location === 'undefined' ? '' : relayUrl()}</code>
 	</p>
-{/if}
 
-{#if settingsSupported}
-	{#if !groups.length && status !== 'closed' && status !== 'error'}
-		<!-- Connected, and told nothing yet: the window a skeleton is for. The
-		     settings arrive in one command, so this is usually brief — and a brief
-		     blank page is still a blank page. -->
-		<section class="panel" aria-label="Loading settings">
-			<div class="panel-head"><span>Settings</span><span class="muted">…</span></div>
-			<SkeletonRows rows={6} label="Loading settings" />
-		</section>
+	<ScreenState
+		status={screen}
+		errorTitle="This page hit an error"
+		errorDetail={err}
+		onretry={connect}
+		onreconnect={connect}
+		busy={redialling}
+		errorTestid="error"
+	/>
+
+	{#if hint}<p class="line warn" data-testid="hint">{hint}</p>{/if}
+	{#if config.problem}<p class="line bad" data-testid="config-problem" role="alert">{config.problem}</p>{/if}
+
+	{#if restartNeeded.length}
+		<p class="line" data-testid="restart-needed">
+			<Pill tone="warn">needs a restart</Pill>
+			<span>
+				Saved, but {restartNeeded.length === 1 ? 'this setting needs' : 'these settings need'} a
+				restart of jarvis-core to take effect: {restartNeeded.join(', ')}.
+			</span>
+		</p>
 	{/if}
-	{#each groups as [group, rows] (group)}
-		<section class="panel" data-testid="group-{group.toLowerCase()}">
-			<div class="panel-head"><span>{group}</span></div>
-			{#each rows as row (row.key)}
-				{@const locked = row.source === 'package'}
-				<div class="row" data-testid="setting-{row.key}">
-					<span class="name">
-						<b>{row.label}</b>
-						<span class="eid">{row.key}</span>
-					</span>
 
-					{#if row.type === 'choice' && row.choices?.length}
-						<select
-							aria-label={row.label}
-							data-testid="input-{row.key}"
-							disabled={locked}
-							value={draftOf(row)}
-							onchange={(e) => (drafts = { ...drafts, [row.key]: e.currentTarget.value })}
-						>
-							{#each row.choices as choice (choice)}<option value={choice}>{choice}</option>{/each}
-							{#if !row.choices.includes(draftOf(row))}
-								<!-- What is configured is not among what could be discovered.
-								     Shown rather than silently reset to the first option. -->
-								<option value={draftOf(row)}>{draftOf(row) || '(unset)'}</option>
+	{#if settingsSupported}
+		{#if !groups.length && status !== 'closed' && status !== 'error'}
+			<!-- Connected, and told nothing yet: the window a skeleton is for. The
+			     settings arrive in one command, so this is usually brief — and a brief
+			     blank page is still a blank page. -->
+			<Panel title="Settings" meta="…">
+				{#snippet children()}<SkeletonRows rows={6} label="Loading settings" />{/snippet}
+			</Panel>
+		{/if}
+		{#each groups as [group, rows] (group)}
+			<Panel title={group} meta={`${rows.length}`} testid="group-{group.toLowerCase()}">
+				{#snippet children()}
+					{#each rows as row (row.key)}
+						{@const locked = row.source === 'package'}
+						<div class="setting" data-testid="setting-{row.key}">
+							<div class="what">
+								<b>{row.label}</b>
+								<code>{row.key}</code>
+							</div>
+							<div class="control">
+								{#if row.type === 'choice' && row.choices?.length}
+									<Select
+										value={draftOf(row)}
+										testid="input-{row.key}"
+										disabled={locked}
+										options={choicesOf(row)}
+										onchange={(e) =>
+											(drafts = { ...drafts, [row.key]: (e.currentTarget as HTMLSelectElement).value })}
+									/>
+								{:else if row.type === 'boolean'}
+									<Select
+										value={draftOf(row)}
+										testid="input-{row.key}"
+										disabled={locked}
+										options={[
+											{ value: 'true', label: 'on' },
+											{ value: 'false', label: 'off' }
+										]}
+										onchange={(e) =>
+											(drafts = { ...drafts, [row.key]: (e.currentTarget as HTMLSelectElement).value })}
+									/>
+								{:else}
+									<Input
+										value={draftOf(row)}
+										testid="input-{row.key}"
+										disabled={locked}
+										mono={row.type !== 'string'}
+										oninput={(e) =>
+											(drafts = { ...drafts, [row.key]: (e.currentTarget as HTMLInputElement).value })}
+									/>
+								{/if}
+							</div>
+							<div class="acts">
+								<Pill tone={row.source === 'overlay' ? 'live' : 'neutral'} testid="source-{row.key}">{row.source}</Pill>
+								<!-- SAVE is lit only once something changed: the accent is spent on
+								     the one thing on this page that is about to happen. -->
+								<Button
+									variant={isDirty(row) ? 'primary' : 'ghost'}
+									testid="save-{row.key}"
+									disabled={locked || busyKey === row.key || !isDirty(row)}
+									title={locked
+										? 'This setting is fixed in configuration.yaml'
+										: busyKey === row.key
+											? 'Saving'
+											: !isDirty(row)
+												? 'Nothing has changed yet'
+												: `Save ${row.label}`}
+									onclick={() => saveSetting(row)}
+								>
+									{busyKey === row.key ? '…' : 'SAVE'}
+								</Button>
+								{#if row.source === 'overlay' || row.source === 'unapplied'}
+									<Button
+										testid="reset-{row.key}"
+										disabled={busyKey === row.key}
+										title="Put the value in configuration.yaml back"
+										aria-label="Reset {row.label} to the value in configuration.yaml"
+										onclick={() => resetSetting(row)}
+									>
+										RESET
+									</Button>
+								{/if}
+							</div>
+							{#if row.note}<p class="note" data-testid="note-{row.key}">{row.note}</p>{/if}
+							{#if row.unapplied_reason}
+								<p class="note bad" data-testid="unapplied-{row.key}" role="alert">{row.unapplied_reason}</p>
+							{:else if locked}
+								<p class="note" data-testid="package-{row.key}">
+									Set by packages/{row.package}.yaml — edit that file to change it.
+								</p>
 							{/if}
-						</select>
-					{:else if row.type === 'boolean'}
-						<select
-							aria-label={row.label}
-							data-testid="input-{row.key}"
-							disabled={locked}
-							value={draftOf(row)}
-							onchange={(e) => (drafts = { ...drafts, [row.key]: e.currentTarget.value })}
-						>
-							<option value="true">on</option>
-							<option value="false">off</option>
-						</select>
-					{:else}
-						<input
-							type={row.type === 'string' || row.type === 'choice' ? 'text' : 'number'}
-							aria-label={row.label}
-							data-testid="input-{row.key}"
-							disabled={locked}
-							value={draftOf(row)}
-							oninput={(e) => (drafts = { ...drafts, [row.key]: e.currentTarget.value })}
-						/>
-					{/if}
+							{#if fieldError[row.key]}
+								<p class="note bad" data-testid="error-{row.key}" role="alert">{fieldError[row.key]}</p>
+							{/if}
+						</div>
+					{/each}
+				{/snippet}
+			</Panel>
+		{/each}
+	{/if}
 
-					<span class="pill" class:on={row.source === 'overlay'} data-testid="source-{row.key}">
-						{row.source}
-					</span>
+	<!--
+	  Text size.
 
-					<Button variant="primary" testid="save-{row.key}"
-						disabled={locked || busyKey === row.key || !isDirty(row)}
-						title={locked
-							? 'This setting is fixed in configuration.yaml'
-							: busyKey === row.key
-								? 'Saving'
-								: !isDirty(row)
-									? 'Nothing has changed yet'
-									: `Save ${row.label}`}
-						onclick={() => saveSetting(row)}
-					>
-						{busyKey === row.key ? '…' : 'SAVE'}
-					</Button>
-					{#if row.source === 'overlay' || row.source === 'unapplied'}
-						<Button testid="reset-{row.key}"
-							disabled={busyKey === row.key}
-							aria-label="Reset {row.label} to the value in configuration.yaml"
-							onclick={() => resetSetting(row)}
+	  Above the pairing panel because it is the one setting on this page that
+	  changes what you can read while you read it, and below the house settings
+	  because it changes nothing about the house. It is stored in this browser and
+	  goes nowhere near jarvis-core: the right size for a phone in a hallway and
+	  for a monitor on a desk are different answers to the same question, and a
+	  house-wide value would have to be wrong for one of them.
+	-->
+	<Panel title="Text size" meta="this browser only" testid="text-size">
+		{#snippet children()}
+			<div class="setting">
+				<div class="what">
+					<b>Scale</b>
+					<span class="dim">multiplies every size in the interface</span>
+				</div>
+				<!-- A segmented choice: the current size is raised, not lit. The accent
+				     is for what is about to happen, and a preference already in effect
+				     is not that. -->
+				<div class="seg" role="group" aria-label="Text size">
+					{#each TEXT_SIZES as size (size.id)}
+						<Button
+							pressed={textSize === size.id}
+							testid="text-size-{size.id}"
+							title={size.note}
+							onclick={() => chooseTextSize(size.id)}
 						>
-							RESET
+							{size.label}
 						</Button>
-					{/if}
+					{/each}
+				</div>
+			</div>
+			<p class="note">
+				STANDARD is whatever text size this browser is already set to — so raising it in the
+				browser and raising it here compound, which is the intent. Everything in the console and
+				the voice screen is sized in <code>rem</code>, so one number moves all of it at once.
+			</p>
+		{/snippet}
+	</Panel>
+
+	<Pairing />
+
+	<!--
+	  Whose voice Jarvis answers.
+
+	  Shown here because this is where an operator finds out what the house is
+	  doing; enrolled FROM THE PHONE, because that is where the microphone is. The
+	  numbers are on screen for the same reason the phone shows them: a biometric
+	  gate whose threshold was guessed is a gate that locks the owner out, and the
+	  only defence is being able to see the owner's own scores before enforcing.
+	-->
+	{#if who.supported}
+		<Panel title="Whose voice" meta={who.enrolled ? 'enrolled' : 'nobody enrolled'} testid="voice-identity">
+			{#snippet children()}
+				<div class="setting">
+					<div class="what"><b>Mode</b><code>voice: speaker: mode</code></div>
+					<span class="value">
+						<Pill tone={who.active ? 'live' : 'neutral'} testid="speaker-mode">{who.mode ?? 'off'}</Pill>
+					</span>
+				</div>
+				<div class="setting">
+					<div class="what"><b>Enrolled</b><code>voice_profile</code></div>
+					<span class="value" data-testid="speaker-samples">
+						{#if who.enrolled}
+							{who.samples} of {who.max_samples} samples
+						{:else}
+							nobody — the gate is inert until somebody enrols
+						{/if}
+					</span>
 				</div>
 
-				{#if row.note}<p class="muted note" data-testid="note-{row.key}">{row.note}</p>{/if}
-				{#if row.unapplied_reason}
-					<p class="err" data-testid="unapplied-{row.key}" role="alert">{row.unapplied_reason}</p>
-				{:else if locked}
-					<p class="muted" data-testid="package-{row.key}">
-						Set by packages/{row.package}.yaml — edit that file to change it.
-					</p>
+				{#if who.enrolled}
+					<div class="setting">
+						<div class="what">
+							<b>Threshold</b><span class="dim">mean squared z · lower is stricter</span>
+						</div>
+						<span class="value" data-testid="speaker-threshold">
+							{who.threshold}
+							{#if who.threshold_measured !== false && who.worst_self_score != null}
+								<span class="dim">
+									· their own worst sample scores {who.worst_self_score}, enrolment
+									suggests {who.suggested_threshold}
+								</span>
+							{:else}
+								<!--
+									Scoring one enrolment sample means holding it out and rebuilding the
+									profile from the rest, and that rebuilt profile needs the minimum too.
+									So at exactly the minimum there is nothing to measure with, and this
+									row used to print "their own worst sample scores Infinity, enrolment
+									suggests 4" — 4 being the server's default — beside advice that says
+									to read the scores before enforcing.
+								-->
+								<span class="dim">
+									· not measurable yet: scoring one sample needs {who.min_samples} others,
+									so this needs {who.measure_samples ?? who.min_samples + 1} in all.
+									{who.suggested_threshold} is the default, not a measurement.
+								</span>
+							{/if}
+						</span>
+					</div>
 				{/if}
-				{#if fieldError[row.key]}
-					<p class="err" data-testid="error-{row.key}" role="alert">{fieldError[row.key]}</p>
+
+				<EnrolVoice status={speaker} onDone={loadSpeaker} />
+
+				<div class="setting">
+					<div class="what"><b>Forget this voice</b><span class="dim">deletes the voiceprint</span></div>
+					<div class="acts">
+						<Button
+							variant="danger"
+							testid="speaker-forget"
+							disabled={!who.enrolled || speakerBusy}
+							title={!who.enrolled
+								? 'Nobody is enrolled'
+								: speakerBusy
+									? 'Deleting'
+									: 'Delete the voiceprint — Jarvis answers any voice again'}
+							onclick={forgetVoice}
+						>
+							{speakerBusy ? 'deleting…' : 'FORGET'}
+						</Button>
+					</div>
+				</div>
+				{#if speakerError}
+					<p class="note bad" data-testid="speaker-error" role="alert">{speakerError}</p>
 				{/if}
-			{/each}
-		</section>
-	{/each}
-{/if}
 
-<!--
-  Text size.
+				<p class="note">
+					Enrol here or from the phone; both read the same phrases from the server, and
+					samples add up rather than replacing each other. Whether Jarvis <i>refuses</i> other voices is
+					<code>voice: speaker: mode</code> in <code>configuration.yaml</code>, and the honest
+					order is enrol, leave it in <code>observe</code> for a few days, read the scores, then
+					<code>enforce</code>. It stops a guest, a television and a stranger at the window; it
+					does not stop a recording, and it is not a second factor — the tier system still asks a
+					human before anything irreversible.
+				</p>
+			{/snippet}
+		</Panel>
+	{/if}
 
-  Above the pairing panel because it is the one setting on this page that
-  changes what you can read while you read it, and below the house settings
-  because it changes nothing about the house. It is stored in this browser and
-  goes nowhere near jarvis-core: the right size for a phone in a hallway and
-  for a monitor on a desk are different answers to the same question, and a
-  house-wide value would have to be wrong for one of them.
--->
-<section class="panel" data-testid="text-size">
-	<div class="panel-head">
-		<span>Text size</span>
-		<span class="muted">this browser only</span>
-	</div>
-	<div class="row">
-		<span class="name">
-			<b>Scale</b><span class="eid">multiplies every size in the interface</span>
-		</span>
-		{#each TEXT_SIZES as size (size.id)}
-			<Button
-				variant="primary"
-				pressed={textSize === size.id}
-				testid="text-size-{size.id}"
-				title={size.note}
-				onclick={() => chooseTextSize(size.id)}
-			>
-				{size.label}
-			</Button>
-		{/each}
-	</div>
-	<p class="muted">
-		STANDARD is whatever text size this browser is already set to — so raising it in the
-		browser and raising it here compound, which is the intent. Everything in the console and
-		the HUD is sized in <code>rem</code>, so one number moves all of it at once.
-	</p>
-</section>
+	<!--
+	  This console's OWN environment, as opposed to the house settings above.
 
-<Pairing />
-
-<!--
-  Whose voice Jarvis answers.
-
-  Shown here because this is where an operator finds out what the house is
-  doing; enrolled FROM THE PHONE, because that is where the microphone is. The
-  numbers are on screen for the same reason the phone shows them: a biometric
-  gate whose threshold was guessed is a gate that locks the owner out, and the
-  only defence is being able to see the owner's own scores before enforcing.
--->
-{#if speaker?.supported}
-	<section class="panel" data-testid="voice-identity">
-		<div class="panel-head">
-			<span>Whose voice</span>
-			<span class="pill" class:on={speaker.active} data-testid="speaker-mode">
-				{speaker.mode ?? 'off'}
-			</span>
-		</div>
-
-		<div class="row">
-			<span class="name"><b>Enrolled</b><span class="eid">voice_profile</span></span>
-			<span class="muted" data-testid="speaker-samples">
-				{#if speaker.enrolled}
-					{speaker.samples} of {speaker.max_samples} samples
-				{:else}
-					nobody — the gate is inert until somebody enrols
-				{/if}
-			</span>
-		</div>
-
-		{#if speaker.enrolled}
-			<div class="row">
-				<span class="name">
-					<b>Threshold</b><span class="eid">mean squared z · lower is stricter</span>
+	  Everything in this panel is a server-side environment variable of the web
+	  server, readable and not settable from a browser — the token in particular
+	  never leaves the server. Keeping it visually apart from the editable groups
+	  is the point: a row you cannot change, sitting among rows you can, reads as
+	  a control that is broken.
+	-->
+	<Panel title="This console" meta={config.backend ?? '…'} live={status === 'open'} testid="console-env">
+		{#snippet children()}
+			<div class="setting">
+				<div class="what"><b>Backend</b><span class="dim">how this console reaches Jarvis</span></div>
+				<span class="value">
+					<Pill tone={status === 'open' ? 'live' : 'neutral'} testid="backend-kind">{config.backend ?? '…'}</Pill>
 				</span>
-				<span class="muted" data-testid="speaker-threshold">
-					{speaker.threshold}
-					{#if speaker.threshold_measured !== false && speaker.worst_self_score != null}
-						<span class="eid">
-							· their own worst sample scores {speaker.worst_self_score}, enrolment
-							suggests {speaker.suggested_threshold}
-						</span>
-					{:else}
-						<!--
-							Scoring one enrolment sample means holding it out and rebuilding the
-							profile from the rest, and that rebuilt profile needs the minimum too.
-							So at exactly the minimum there is nothing to measure with, and this
-							row used to print "their own worst sample scores Infinity, enrolment
-							suggests 4" — 4 being the server's default — beside advice that says
-							to read the scores before enforcing.
-						-->
-						<span class="eid">
-							· not measurable yet: scoring one sample needs {speaker.min_samples} others,
-							so this needs {speaker.measure_samples ?? speaker.min_samples + 1} in all.
-							{speaker.suggested_threshold} is the default, not a measurement.
-						</span>
+			</div>
+			<div class="setting">
+				<div class="what"><b>URL</b><code>{config.backendUrlVar ?? 'JARVIS_URL'}</code></div>
+				<span class="value mono" data-testid="backend-url">{config.backendUrl || 'not configured'}</span>
+			</div>
+			<div class="setting">
+				<div class="what"><b>Token</b><code>{config.backendTokenVar ?? 'JARVIS_TOKEN'}</code></div>
+				<span class="value" data-testid="backend-token">
+					{config.tokenConfigured ? '•••••••• held server-side' : 'not configured'}
+				</span>
+			</div>
+			<div class="setting">
+				<div class="what"><b>Version</b><span class="dim">reported by the backend</span></div>
+				<span class="value mono">{backendConfig?.version ?? backendConfig?.ha_version ?? 'unknown'}</span>
+			</div>
+			<div class="setting">
+				<div class="what"><b>Voice pipeline</b><code>JARVIS_PIPELINE</code></div>
+				<span class="value" data-testid="pipeline-name">
+					{config.pipeline || 'not set'}{#if pipelineNames.length}
+						<span class="dim"> · available: {pipelineNames.join(', ')}</span>
 					{/if}
 				</span>
 			</div>
-		{/if}
+			<p class="note">
+				These are server-side environment variables — the browser never receives the token. Change
+				<code>JARVIS_BACKEND</code>, <code>JARVIS_URL</code>, <code>JARVIS_TOKEN</code> or
+				<code>JARVIS_PIPELINE</code> where the web server runs, then restart it.
+			</p>
+		{/snippet}
+	</Panel>
 
-		<EnrolVoice status={speaker} onDone={loadSpeaker} />
+	<!--
+	  A diagnostic, folded away.
 
-		<div class="row">
-			<span class="name"><b>Forget this voice</b><span class="eid">deletes the voiceprint</span></span>
-			<Button variant="danger" testid="speaker-forget"
-				disabled={!speaker.enrolled || speakerBusy}
-				onclick={forgetVoice}>
-				{speakerBusy ? 'deleting…' : 'FORGET'}
-			</Button>
+	  It is a raw firehose of every event on the bus, and it was sitting open at
+	  the bottom of the settings page as if it were a setting — the longest panel
+	  on the screen, below the things people actually came to change. Collapsed by
+	  default, one click away, and the summary says what is inside so nobody has to
+	  open it to find out.
+	-->
+	<details class="fold" data-testid="event-stream">
+		<summary>
+			<span>Event stream</span>
+			<span class="meta" data-testid="live-filter">{liveFilter || '(all events)'}</span>
+		</summary>
+		<div class="fold-body">
+			<div class="stream-bar">
+				<label class="jv-sr-only" for="event-filter">Event type filter</label>
+				<input
+					id="event-filter"
+					class="stream-filter"
+					type="text"
+					placeholder="event_type filter (blank = everything)  ( / )"
+					data-testid="event-filter"
+					data-jv-filter
+					bind:value={eventFilter}
+					onkeydown={(e) => e.key === 'Enter' && applyFilter()}
+				/>
+				<Button testid="apply-filter" onclick={applyFilter}>SUBSCRIBE</Button>
+				<Button testid="pause" aria-pressed={paused} onclick={() => (paused = !paused)}>
+					{paused ? 'RESUME' : 'PAUSE'}
+				</Button>
+				<Button aria-label="Clear the event log" onclick={() => (log = [])}>CLEAR</Button>
+				<span class="count" data-testid="event-count">{log.length}</span>
+			</div>
+			<pre data-testid="event-log" aria-label="Live event stream">{log
+					.map((e) => `${e.at}  ${e.type}  ${e.body}`)
+					.join('\n') || 'waiting for events…'}</pre>
 		</div>
-		{#if speakerError}
-			<p class="err" data-testid="speaker-error" role="alert">{speakerError}</p>
-		{/if}
-
-		<p class="muted">
-			Enrol here or from the phone; both read the same phrases from the server, and
-			samples add up rather than replacing each other. Whether Jarvis <i>refuses</i> other voices is
-			<code>voice: speaker: mode</code> in <code>configuration.yaml</code>, and the honest
-			order is enrol, leave it in <code>observe</code> for a few days, read the scores, then
-			<code>enforce</code>. It stops a guest, a television and a stranger at the window; it
-			does not stop a recording, and it is not a second factor — the tier system still asks a
-			human before anything irreversible.
-		</p>
-	</section>
-{/if}
-
-<!--
-  This console's OWN environment, as opposed to the house settings above.
-
-  Everything in this panel is a server-side environment variable of the web
-  server, readable and not settable from a browser — the token in particular
-  never leaves the server. Keeping it visually apart from the editable groups
-  is the point: a row you cannot change, sitting among rows you can, reads as
-  a control that is broken.
--->
-<section class="panel" data-testid="console-env">
-	<div class="panel-head">
-		<span>This console</span>
-		<span class="pill" class:on={status === 'open'} data-testid="backend-kind">
-			{config.backend ?? '…'}
-		</span>
-	</div>
-	<div class="row">
-		<span class="name"><b>URL</b><span class="eid">{config.backendUrlVar ?? 'JARVIS_URL'}</span></span>
-		<span class="muted" data-testid="backend-url">{config.backendUrl || 'not configured'}</span>
-	</div>
-	<div class="row">
-		<span class="name">
-			<b>Token</b><span class="eid">{config.backendTokenVar ?? 'JARVIS_TOKEN'}</span>
-		</span>
-		<span class="muted" data-testid="backend-token">
-			{config.tokenConfigured ? '•••••••• held server-side' : 'not configured'}
-		</span>
-	</div>
-	<div class="row">
-		<span class="name"><b>Version</b><span class="eid">reported by the backend</span></span>
-		<span class="muted">{backendConfig?.version ?? backendConfig?.ha_version ?? 'unknown'}</span>
-	</div>
-	<div class="row">
-		<span class="name"><b>Voice pipeline</b><span class="eid">JARVIS_PIPELINE</span></span>
-		<span class="muted" data-testid="pipeline-name">
-			{config.pipeline || 'not set'}{#if pipelineNames.length}
-				<span class="eid"> · available: {pipelineNames.join(', ')}</span>
-			{/if}
-		</span>
-	</div>
-	<p class="muted">
-		These are server-side environment variables — the browser never receives the token. Change
-		<code>JARVIS_BACKEND</code>, <code>JARVIS_URL</code>, <code>JARVIS_TOKEN</code> or
-		<code>JARVIS_PIPELINE</code> where the web server runs, then restart it.
-	</p>
-</section>
-
-<!--
-  A diagnostic, folded away.
-
-  It is a raw firehose of every event on the bus, and it was sitting open at
-  the bottom of the settings page as if it were a setting — the longest panel
-  on the screen, below the things people actually came to change. Collapsed by
-  default, one click away, and the summary says what is inside so nobody has to
-  open it to find out.
--->
-<details class="panel" data-testid="event-stream">
-	<summary class="panel-head">
-		<span>Event stream</span>
-		<span class="muted" data-testid="live-filter">{liveFilter || '(all events)'}</span>
-	</summary>
-	<div class="row">
-		<label class="jv-sr-only" for="event-filter">Event type filter</label>
-		<input
-			id="event-filter"
-			type="text"
-			placeholder="event_type filter (blank = everything)  ( / )"
-			data-testid="event-filter"
-			data-jv-filter
-			bind:value={eventFilter}
-			onkeydown={(e) => e.key === 'Enter' && applyFilter()}
-		/>
-		<Button variant="primary" testid="apply-filter" onclick={applyFilter}>
-			SUBSCRIBE
-		</Button>
-		<Button testid="pause"
-			aria-pressed={paused}
-			onclick={() => (paused = !paused)}
-		>
-			{paused ? 'RESUME' : 'PAUSE'}
-		</Button>
-		<Button aria-label="Clear the event log" onclick={() => (log = [])}>
-			CLEAR
-		</Button>
-		<span class="muted" data-testid="event-count">{log.length}</span>
-	</div>
-	<pre data-testid="event-log" aria-label="Live event stream">{log
-			.map((e) => `${e.at}  ${e.type}  ${e.body}`)
-			.join('\n') || 'waiting for events…'}</pre>
-</details>
+	</details>
+</div>
 
 <style>
-	/* A setting's note belongs under its row, indented to the row's control
-	   column so it reads as belonging to that setting and not the next one. */
-	.note {
-		margin: 0 0 var(--jv-space-2);
+	/* Panels stack down the page with one gutter between them. */
+	.stack {
+		display: grid;
+		gap: var(--jv-space-4);
+	}
+	/* The section's one-line status. The destination's title and lede sit
+	   above in the layout; this is what only this section knows. Set in the
+	   body face — it is a sentence — with only the address in mono: the look
+	   spec reads a whole mono paragraph as M48's monospace prose come back. */
+	.lede {
+		margin: 0;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+	}
+	.lede code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text);
+	}
+	.line {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+		margin: 0;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+	}
+	.line.warn {
+		color: var(--jv-warn);
+	}
+	.line.bad,
+	.note.bad {
+		color: var(--jv-danger-text);
 	}
 
-	/* The collapsed diagnostic. `.panel-head` already lays this out; the marker
-	   is replaced with one that reads as part of the console's chrome rather
-	   than as a browser default triangle. */
-	details.panel > summary {
+	/* One setting: what it is, the control, the actions — on a hairline. */
+	.setting {
+		display: grid;
+		grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 1.4fr) auto;
+		align-items: center;
+		gap: var(--jv-space-2) var(--jv-space-4);
+		padding: var(--jv-space-3) 0;
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.setting:last-child {
+		border-bottom: 0;
+	}
+	.what {
+		display: grid;
+		gap: var(--jv-space-1);
+		min-width: 0;
+	}
+	.what b {
+		font-weight: var(--jv-weight-label);
+		color: var(--jv-text-bright);
+	}
+	.what code,
+	.value.mono {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+		overflow-wrap: anywhere;
+	}
+	.dim {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.control {
+		min-width: 0;
+	}
+	.value {
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.acts {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: var(--jv-space-2);
+		flex-wrap: wrap;
+	}
+	.note {
+		grid-column: 1 / -1;
+		margin: 0;
+		font-size: var(--jv-fs-xs);
+		line-height: 1.6;
+		color: var(--jv-text-dim);
+		max-width: 80ch;
+	}
+	code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text);
+	}
+
+	/* The segmented choice: the pressed segment is raised on the surface. */
+	.seg {
+		grid-column: 2 / -1;
+		display: inline-flex;
+		justify-self: end;
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		overflow: hidden;
+	}
+	.seg :global(.btn) {
+		border: 0;
+		border-right: 1px solid var(--jv-line-hair);
+		border-radius: 0;
+	}
+	.seg :global(.btn:last-child) {
+		border-right: 0;
+	}
+	.seg :global(.btn.on) {
+		color: var(--jv-text-bright);
+		background: var(--jv-surface-2);
+	}
+
+	/* The folded diagnostic: a panel whose head is its own disclosure. */
+	.fold {
+		background: var(--jv-panel);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		overflow: hidden;
+	}
+	.fold > summary {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: var(--jv-space-3);
+		padding: var(--jv-space-3) var(--jv-space-4);
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
 		cursor: pointer;
 		list-style: none;
 	}
-	details.panel > summary::-webkit-details-marker {
+	.fold > summary::-webkit-details-marker {
 		display: none;
 	}
-	details.panel > summary::after {
+	.fold > summary::after {
 		content: '▸';
 		color: var(--jv-text-faint);
-		margin-left: auto;
 		transition: transform var(--jv-dur-fast) var(--jv-ease-out);
 	}
-	details.panel[open] > summary::after {
+	.fold[open] > summary {
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.fold[open] > summary::after {
 		transform: rotate(90deg);
 	}
+	.meta,
+	.count {
+		font-family: var(--jv-font-chrome);
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		text-transform: none;
+		color: var(--jv-text-faint);
+		margin-left: auto;
+	}
+	.fold-body {
+		padding: var(--jv-space-4);
+	}
+	.stream-bar {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-2);
+		flex-wrap: wrap;
+		margin-bottom: var(--jv-space-3);
+	}
+	/* The one raw input on the page: `/` focuses it (data-jv-filter) and the
+	   library's Input has no `id` for the label to bind to. Drawn as Input is. */
+	.stream-filter {
+		flex: 1 1 18rem;
+		min-width: 0;
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+	}
+	.stream-filter::placeholder {
+		color: var(--jv-text-faint);
+	}
+	.stream-filter:hover {
+		border-color: var(--jv-line);
+	}
+	pre {
+		margin: 0;
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		line-height: 1.6;
+		color: var(--jv-text-dim);
+		background: var(--jv-surface-sunken);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-sm);
+		padding: var(--jv-space-3);
+		overflow-x: auto;
+		max-height: var(--jv-measure-log);
+	}
+
+	@media (max-width: 720px) {
+		.setting {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.acts {
+			justify-content: flex-start;
+		}
+		.seg {
+			grid-column: 1;
+			justify-self: start;
+		}
+	}
 	@media (prefers-reduced-motion: reduce) {
-		details.panel > summary::after {
+		.fold > summary::after {
 			transition: none;
 		}
 	}

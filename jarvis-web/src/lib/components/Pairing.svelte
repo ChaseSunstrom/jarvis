@@ -23,7 +23,7 @@
 	 * this file at all until a session has been proved. See
 	 * `$lib/server/consoleAuth` for what that keeps and what it changes.
 	 */
-	import { Button } from '$lib/ui';
+	import { Button, Input, Panel } from '$lib/ui';
 	import { onDestroy, onMount } from 'svelte';
 	import { qrSvg } from '$lib/qr';
 	import { describeError, openConnection, type Connection } from '$lib/connection';
@@ -451,197 +451,206 @@
 	});
 </script>
 
-<section class="panel" data-testid="pairing">
-	<div class="panel-head">
-		<span>Pair a phone</span>
-		{#if live}
-			<span class="muted" data-testid="pair-expiry">{secondsLeft}s left</span>
+<Panel title="Pair a phone" meta={live ? `${secondsLeft}s left` : lock === 'open' ? 'unlocked' : lock === 'loading' ? '…' : 'locked'} live={live} testid="pairing">
+	{#snippet children()}
+		<p class="note">
+			Scan this in the Jarvis app — PHONE → SCAN QR. The code is single-use and lasts five
+			minutes; it is not a token, so a photograph of this screen is worthless once it expires.
+			Enter the console password once and every code after that is one press.
+		</p>
+		{#if live}<span class="expiry" data-testid="pair-expiry">{secondsLeft}s left</span>{/if}
+
+		{#if lock === 'choose'}
+			<!--
+			  No password yet. This is the one moment it can be chosen from a
+			  browser, and it has to be offered here: anything that reaches this
+			  console can already use its admin token, so a console nobody has
+			  locked is a console with no second factor at all.
+			-->
+			<div class="r" data-testid="pair-choose">
+				<div class="what">
+					<b>Choose a console password</b><span class="dim">{minChars} characters or more</span>
+				</div>
+				<input
+					class="secret-in"
+					type="password"
+					aria-label="Choose a console password"
+					data-testid="pair-password"
+					autocomplete="new-password"
+					bind:value={password}
+					onkeydown={(e) => e.key === 'Enter' && unlock()}
+					placeholder="nobody has set one"
+				/>
+				<div class="acts">
+					<Button
+						variant="primary"
+						testid="pair-unlock"
+						disabled={unlocking || password.trim().length < minChars}
+						title={unlocking
+							? 'Setting the password'
+							: password.trim().length < minChars
+								? `At least ${minChars} characters`
+								: 'Set this console password'}
+						onclick={unlock}
+					>
+						{unlocking ? 'SETTING…' : 'SET PASSWORD'}
+					</Button>
+				</div>
+			</div>
+			<p class="note">
+				Stored as a scrypt hash in {passwordFile || '.storage/console-password'} — set
+				{passwordVar} where the console runs to choose it there instead.
+			</p>
+		{:else if lock === 'locked'}
+			<div class="r" data-testid="pair-lockform">
+				<div class="what">
+					<b>Console password</b><code>{passwordVar}</code>
+				</div>
+				<input
+					class="secret-in"
+					type="password"
+					aria-label="Console password"
+					data-testid="pair-password"
+					autocomplete="current-password"
+					bind:value={password}
+					onkeydown={(e) => e.key === 'Enter' && unlock()}
+					placeholder="set where the console runs"
+				/>
+				<div class="acts">
+					<Button
+						variant="primary"
+						testid="pair-unlock"
+						disabled={unlocking || !password.trim()}
+						title={unlocking
+							? 'Checking'
+							: !password.trim()
+								? 'Type the console password first'
+								: 'Unlock pairing'}
+						onclick={unlock}
+					>
+						{unlocking ? 'CHECKING…' : 'UNLOCK'}
+					</Button>
+				</div>
+			</div>
+			<p class="note">
+				Minting a code needs it as well as the console's own access, because anything that can
+				reach this console can already use its token — so the token alone must not be enough to
+				make a permanent one.
+			</p>
+		{:else if lock === 'open'}
+			<div class="r" data-testid="pair-unlocked">
+				<div class="what">
+					<b>Console unlocked</b><span class="dim">for this browser session</span>
+				</div>
+				<div class="acts">
+					<Button testid="pair-relock" title="Lock pairing again for this browser" onclick={relock}>LOCK</Button>
+				</div>
+			</div>
 		{/if}
-	</div>
 
-	<p class="muted">
-		Scan this in the Jarvis app — PHONE → SCAN QR. The code is single-use and lasts five
-		minutes; it is not a token, so a photograph of this screen is worthless once it expires.
-		Enter the console password once and every code after that is one press.
-	</p>
+		{#if lock === 'open' && !secretHeld}
+			<!--
+			  The console holds no pairing secret, so it cannot mint on the
+			  operator's behalf. Typed once and kept in the SERVER's memory for the
+			  life of the process — not in this tab, and not on disk beside the
+			  admin token.
+			-->
+			<div class="r" data-testid="pair-secret-form">
+				<div class="what">
+					<b>Pairing secret</b><code>{secretVar}</code>
+				</div>
+				<input
+					class="secret-in"
+					type="password"
+					aria-label="Pairing secret"
+					data-testid="pair-secret"
+					autocomplete="off"
+					bind:value={secretDraft}
+					onkeydown={(e) => e.key === 'Enter' && adoptSecret()}
+					placeholder="set where jarvis-core runs"
+				/>
+				<div class="acts">
+					<Button
+						variant="primary"
+						testid="pair-secret-save"
+						disabled={busy || !secretDraft.trim()}
+						title={busy ? 'Working' : !secretDraft.trim() ? 'Paste the pairing secret first' : 'Hand it to the console'}
+						onclick={adoptSecret}
+					>
+						HOLD IT
+					</Button>
+				</div>
+			</div>
+			<p class="note">
+				jarvis-core prints it on first run. Set {secretVar} where this console runs and it survives
+				a restart; given here it lives in the server's memory only.
+			</p>
+		{/if}
 
-	{#if lock === 'choose'}
-		<!--
-		  No password yet. This is the one moment it can be chosen from a
-		  browser, and it has to be offered here: anything that reaches this
-		  console can already use its admin token, so a console nobody has
-		  locked is a console with no second factor at all.
-		-->
-		<div class="row" data-testid="pair-choose">
-			<span class="name">
-				<b>Choose a console password</b><span class="eid">{minChars} characters or more</span>
-			</span>
-			<input
-				type="password"
-				aria-label="Choose a console password"
-				data-testid="pair-password"
-				autocomplete="new-password"
-				bind:value={password}
-				onkeydown={(e) => e.key === 'Enter' && unlock()}
-				placeholder="nobody has set one"
-			/>
-			<button
-				type="button"
-				class="btn"
-				data-testid="pair-unlock"
-				disabled={unlocking || password.trim().length < minChars}
-				title={unlocking
-					? 'Setting the password'
-					: password.trim().length < minChars
-						? `At least ${minChars} characters`
-						: 'Set this console password'}
-				onclick={unlock}
+		{#if lock === 'open' && secretHeld}
+			<div class="r" data-testid="pair-secret-row">
+				<div class="what">
+					<b>Pairing secret</b><code>{secretSource === 'env' ? secretVar : 'held for this process'}</code>
+				</div>
+				{#if revealed}
+					<code class="revealed" data-testid="pair-secret-value">{revealed}</code>
+					<div class="acts">
+						<Button testid="pair-conceal" title="Take it off the screen" onclick={hideSecret}>HIDE</Button>
+					</div>
+				{:else}
+					<span></span>
+					<div class="acts">
+						<Button testid="pair-reveal" disabled={revealing} title={revealing ? 'Reading' : 'Read it back from the server, for one minute'} onclick={reveal}>
+							{revealing ? 'READING…' : 'SHOW PAIRING SECRET'}
+						</Button>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
+		{#if claimedBy}
+			<p class="note ok" data-testid="pair-claimed" role="status">
+				Paired <b>{claimedBy}</b>. That code is spent — press GENERATE for the next device.
+			</p>
+		{/if}
+
+		<div class="r">
+			<div class="what"><b>Address</b><span class="dim">what the phone will connect to</span></div>
+			<div class="control">
+				<Input bind:value={url} mono testid="pair-url" placeholder="http://jarvis.local:8199" />
+			</div>
+		</div>
+
+		{#if err}<p class="note bad" data-testid="pair-error" role="alert">{err}</p>{/if}
+		{#if passwordHint}<p class="note bad" data-testid="pair-password-problem">{passwordHint}</p>{/if}
+
+		{#if live}
+			<div class="qr" data-testid="pair-qr">
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -- qrSvg emits its
+				     own markup from numbers; nothing user-supplied reaches it unescaped. -->
+				{@html svg}
+			</div>
+			<p class="payload" data-testid="pair-payload">{payload}</p>
+		{/if}
+
+		<div class="foot">
+			<!-- The one lit control on this panel, once it can do anything: until
+			     the console is unlocked the UNLOCK button above is that control. -->
+			<Button
+				variant={canIssue ? 'primary' : 'ghost'}
+				testid="pair-new"
+				disabled={busy || !canIssue}
+				title={issueBlockedBecause || 'Generate a one-time pairing code.'}
+				onclick={issue}
 			>
-				{unlocking ? 'SETTING…' : 'SET PASSWORD'}
-			</button>
-		</div>
-		<p class="muted small">
-			Stored as a scrypt hash in {passwordFile || '.storage/console-password'} — set
-			{passwordVar} where the console runs to choose it there instead.
-		</p>
-	{:else if lock === 'locked'}
-		<div class="row" data-testid="pair-lockform">
-			<span class="name">
-				<b>Console password</b><span class="eid">{passwordVar}</span>
-			</span>
-			<input
-				type="password"
-				aria-label="Console password"
-				data-testid="pair-password"
-				autocomplete="current-password"
-				bind:value={password}
-				onkeydown={(e) => e.key === 'Enter' && unlock()}
-				placeholder="set where the console runs"
-			/>
-			<Button variant="primary" testid="pair-unlock"
-				disabled={unlocking || !password.trim()}
-				title={unlocking
-					? 'Checking'
-					: !password.trim()
-						? 'Type the console password first'
-						: 'Unlock pairing'}
-				onclick={unlock}>
-				{unlocking ? 'CHECKING…' : 'UNLOCK'}
+				{busy ? 'GENERATING…' : 'GENERATE CODE'}
 			</Button>
-		</div>
-		<p class="muted small">
-			Minting a code needs it as well as the console's own access, because anything that can
-			reach this console can already use its token — so the token alone must not be enough to
-			make a permanent one.
-		</p>
-	{:else if lock === 'open'}
-		<div class="row" data-testid="pair-unlocked">
-			<span class="name">
-				<b>Console unlocked</b><span class="eid">for this browser session</span>
-			</span>
-			<Button testid="pair-relock" onclick={relock}>
-				LOCK
-			</Button>
-		</div>
-	{/if}
-
-	{#if lock === 'open' && !secretHeld}
-		<!--
-		  The console holds no pairing secret, so it cannot mint on the
-		  operator's behalf. Typed once and kept in the SERVER's memory for the
-		  life of the process — not in this tab, and not on disk beside the
-		  admin token.
-		-->
-		<div class="row" data-testid="pair-secret-form">
-			<span class="name">
-				<b>Pairing secret</b><span class="eid">{secretVar}</span>
-			</span>
-			<input
-				type="password"
-				aria-label="Pairing secret"
-				data-testid="pair-secret"
-				autocomplete="off"
-				bind:value={secretDraft}
-				onkeydown={(e) => e.key === 'Enter' && adoptSecret()}
-				placeholder="set where jarvis-core runs"
-			/>
-			<Button variant="primary" testid="pair-secret-save"
-				disabled={busy || !secretDraft.trim()}
-				onclick={adoptSecret}>
-				HOLD IT
-			</Button>
-		</div>
-		<p class="muted small">
-			jarvis-core prints it on first run. Set {secretVar} where this console runs and it survives
-			a restart; given here it lives in the server's memory only.
-		</p>
-	{/if}
-
-	{#if lock === 'open' && secretHeld}
-		<div class="row" data-testid="pair-secret-row">
-			<span class="name">
-				<b>Pairing secret</b><span class="eid">
-					{secretSource === 'env' ? secretVar : 'held for this process'}
-				</span>
-			</span>
-			{#if revealed}
-				<code class="small" data-testid="pair-secret-value">{revealed}</code>
-				<Button testid="pair-conceal" onclick={hideSecret}>
-					HIDE
-				</Button>
-			{:else}
-				<Button testid="pair-reveal"
-					disabled={revealing}
-					onclick={reveal}>
-					{revealing ? 'READING…' : 'SHOW PAIRING SECRET'}
-				</Button>
+			{#if live}
+				<Button testid="pair-hide" title="Take the code off the screen" onclick={forget}>HIDE</Button>
 			{/if}
 		</div>
-	{/if}
-
-	{#if claimedBy}
-		<p class="ok" data-testid="pair-claimed" role="status">
-			Paired <b>{claimedBy}</b>. That code is spent — press GENERATE for the next device.
-		</p>
-	{/if}
-
-	<div class="row">
-		<span class="name"><b>Address</b><span class="eid">what the phone will connect to</span></span>
-		<input
-			type="text"
-			aria-label="Server address for the phone"
-			data-testid="pair-url"
-			bind:value={url}
-			placeholder="http://jarvis.local:8199"
-		/>
-	</div>
-
-	{#if err}<p class="err" data-testid="pair-error" role="alert">{err}</p>{/if}
-	{#if passwordHint}<p class="err" data-testid="pair-password-problem">{passwordHint}</p>{/if}
-
-	{#if live}
-		<div class="qr" data-testid="pair-qr">
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -- qrSvg emits its
-			     own markup from numbers; nothing user-supplied reaches it unescaped. -->
-			{@html svg}
-		</div>
-		<p class="muted small" data-testid="pair-payload">{payload}</p>
-	{/if}
-
-	<div class="row">
-		<Button variant="primary" testid="pair-new"
-			disabled={busy || !canIssue}
-			title={issueBlockedBecause || 'Generate a one-time pairing code.'}
-			onclick={issue}>
-			{busy ? 'GENERATING…' : 'GENERATE CODE'}
-		</Button>
-		{#if live}
-			<Button testid="pair-hide" onclick={forget}>
-				HIDE
-			</Button>
-		{/if}
-	</div>
-</section>
+	{/snippet}
+</Panel>
 
 {#if tokensSupported}
 	<!--
@@ -650,46 +659,144 @@
 	  failed to load would otherwise render as "no devices" over a live
 	  full-privilege credential, with no way to revoke it.
 	-->
-	<section class="panel" data-testid="tokens">
-		<div class="panel-head">
-			<span>What can reach this house</span>
-			<span class="muted">{tokens.length} credential{tokens.length === 1 ? '' : 's'}</span>
-		</div>
-		{#if !tokens.length}
-			<p class="muted" data-testid="tokens-empty">
-				Nothing is stored. The server may be running on a token from its environment, which
-				is not revocable from here — change it where jarvis-core runs.
+	<Panel title="What can reach this house" meta={`${tokens.length} credential${tokens.length === 1 ? '' : 's'}`} testid="tokens">
+		{#snippet children()}
+			{#if !tokens.length}
+				<p class="note" data-testid="tokens-empty">
+					Nothing is stored. The server may be running on a token from its environment, which
+					is not revocable from here — change it where jarvis-core runs.
+				</p>
+			{/if}
+			{#each tokens as row (row.id)}
+				<div class="r" data-testid="token-{row.id}">
+					<div class="what">
+						<b>{row.name}</b><code>{row.id}</code>
+					</div>
+					<span class="state" class:on={row.connected} data-testid="token-state-{row.id}">{row.connected ? 'connected now' : 'not connected'}</span>
+					<div class="acts">
+						<Button
+							variant="danger"
+							testid="token-revoke-{row.id}"
+							disabled={revoking === row.id}
+							title={revoking === row.id ? 'Revoking' : `Cut ${row.name} off, including any open connection`}
+							onclick={() => revoke(row)}
+						>
+							REVOKE
+						</Button>
+					</div>
+				</div>
+			{/each}
+			<p class="note">
+				Revoking cuts a device off immediately, including any connection it already has open —
+				otherwise "revoked" would mean "revoked the next time it reconnects", and a phone holds
+				its connection for days.
 			</p>
-		{/if}
-		{#each tokens as row (row.id)}
-			<div class="row" data-testid="token-{row.id}">
-				<span class="name">
-					<b>{row.name}</b><span class="eid">{row.id}</span>
-				</span>
-				<span class="muted" data-testid="token-state-{row.id}">
-					{row.connected ? 'connected now' : 'not connected'}
-				</span>
-				<Button variant="danger" testid="token-revoke-{row.id}"
-					disabled={revoking === row.id}
-					onclick={() => revoke(row)}
-				>
-					REVOKE
-				</Button>
-			</div>
-		{/each}
-		<p class="muted small">
-			Revoking cuts a device off immediately, including any connection it already has open —
-			otherwise "revoked" would mean "revoked the next time it reconnects", and a phone holds
-			its connection for days.
-		</p>
-	</section>
+		{/snippet}
+	</Panel>
 {/if}
 
 <style>
+	/* One row: what it is, the control or value, the actions — on a hairline. */
+	.r {
+		display: grid;
+		grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 1.4fr) auto;
+		align-items: center;
+		gap: var(--jv-space-2) var(--jv-space-4);
+		padding: var(--jv-space-3) 0;
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.what {
+		display: grid;
+		gap: var(--jv-space-1);
+		min-width: 0;
+	}
+	.what b {
+		font-weight: var(--jv-weight-label);
+		color: var(--jv-text-bright);
+	}
+	code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+		overflow-wrap: anywhere;
+	}
+	.dim {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.control {
+		min-width: 0;
+	}
+	.acts {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: var(--jv-space-2);
+		flex-wrap: wrap;
+	}
+	.state {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
+	}
+	.state.on {
+		color: var(--jv-ok);
+	}
+	.note {
+		margin: 0;
+		padding: var(--jv-space-2) 0;
+		font-size: var(--jv-fs-xs);
+		line-height: 1.6;
+		color: var(--jv-text-dim);
+		max-width: 80ch;
+	}
+	.note.ok {
+		color: var(--jv-ok);
+	}
+	.note.bad {
+		color: var(--jv-danger-text);
+	}
+	.expiry {
+		display: none;
+	}
+	/*
+	 * A password field. The library's Input has no `type`, and a password is
+	 * the one input that must not be a text one — so this is drawn as Input is.
+	 */
+	.secret-in {
+		width: 100%;
+		min-width: 0;
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.secret-in::placeholder {
+		color: var(--jv-text-faint);
+	}
+	.secret-in:hover {
+		border-color: var(--jv-line);
+	}
+	/*
+	 * A secret is read off the screen and typed elsewhere, so the glyphs have
+	 * to be distinguishable — l/1 and O/0 in particular. That is what
+	 * `--jv-font-chrome` is: a monospace stack.
+	 */
+	.revealed {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-bright);
+		user-select: all;
+		word-break: break-all;
+	}
 	.qr {
 		display: flex;
 		justify-content: center;
-		padding: var(--jv-space-3) 0;
+		padding: var(--jv-space-4) 0 var(--jv-space-2);
 	}
 	.qr :global(svg) {
 		width: min(var(--jv-measure-qr), 60vw);
@@ -699,23 +806,28 @@
 		background: var(--jv-paper);
 		border-radius: var(--jv-radius-sm);
 	}
-	.small {
-		font-size: var(--jv-fs-xs);
+	.payload {
+		margin: 0;
+		padding: 0 0 var(--jv-space-2);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
+		text-align: center;
 		word-break: break-all;
 	}
-	.ok {
-		color: var(--jv-ok);
+	.foot {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-2);
+		flex-wrap: wrap;
+		padding-top: var(--jv-space-3);
 	}
-	code {
-		/*
-		 * A secret is read off the screen and typed elsewhere, so the glyphs have
-		 * to be distinguishable — l/1 and O/0 in particular. That is what
-		 * `--jv-font-chrome` is: a monospace stack. It used to ask for
-		 * `--jv-font-mono`, which no file declares, so the one string on this
-		 * console whose characters must not be guessable was rendered in the
-		 * fallback — and the fallback was the body face.
-		 */
-		font-family: var(--jv-font-chrome);
-		user-select: all;
+	@media (max-width: 720px) {
+		.r {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.acts {
+			justify-content: flex-start;
+		}
 	}
 </style>
