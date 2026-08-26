@@ -99,19 +99,27 @@ from .dsp import (
 _LOGGER = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_LABEL",
     "EMBEDDING_DIMS",
     "ENROLMENT_PROMPTS",
     "Embedder",
     "Embedding",
+    "LabelError",
     "MAX_ENROLMENT_SAMPLES",
+    "MAX_LABEL_CHARS",
+    "MAX_PEOPLE",
     "MIN_ENROLMENT_SAMPLES",
     "MIN_MEASURABLE_SAMPLES",
     "MIN_SPEECH_MS",
     "SpeakerError",
+    "SpeakerGate",
     "Verdict",
     "VoiceProfile",
     "embed",
     "embed_wav",
+    "normalise_label",
+    "profiles_from_dict",
+    "profiles_to_dict",
     "speech_ms",
 ]
 
@@ -340,6 +348,14 @@ class Verdict:
     reason: str
     #: Per-block mean squared z, so "it was the pitch" is answerable.
     blocks: dict[str, float] = field(default_factory=dict)
+    #: WHO, when it is somebody: the label of the profile that accepted this
+    #: utterance, and None otherwise. Never set on a refusal — a consumer that
+    #: reads "label: owner" as "the owner spoke" must not be handed the
+    #: nearest miss under the same key, which is what :attr:`nearest` is for.
+    label: str | None = None
+    #: The enrolled person this utterance came closest to, accepted or not.
+    #: What a refusal on the console says: "not recognised (nearest: Ted)".
+    nearest: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """JSON-safe, which for this type means non-finite floats become null.
@@ -365,6 +381,8 @@ class Verdict:
             "confidence": _finite(self.confidence),
             "reason": self.reason,
             "blocks": {k: _finite(v) for k, v in self.blocks.items()},
+            "label": self.label,
+            "nearest": self.nearest,
         }
 
 
@@ -948,6 +966,11 @@ class VoiceProfile:
             confidence=_confidence(score, self.threshold),
             reason=reason,
             blocks=blocks,
+            # A verdict names who it was measured against, so a gate holding
+            # several people can report which one, and a refusal can say who
+            # it was nearest to without claiming that person spoke.
+            label=self.label if accepted else None,
+            nearest=self.label,
         )
 
     def self_scores(self) -> list[float]:
@@ -1139,99 +1162,318 @@ ON_REJECT_SILENT = "silent"
 DEFAULT_REFUSAL = "I'm sorry, I don't recognise that voice."
 
 
-@dataclass
+# --- who: labels, and how many people a gate holds --------------------------
+#: The label a sample is enrolled under when the caller names nobody. It is
+#: also what every profile written before labels existed is called on load,
+#: so a phone or a console that predates this keeps enrolling the same person
+#: it always did.
+DEFAULT_LABEL = "owner"
+
+#: Longest label accepted. A label is a name on a settings screen and a word
+#: in a prompt line ("the person speaking was recognised as …"), not a note.
+MAX_LABEL_CHARS = 40
+
+#: How many people one gate will hold. Verifying costs one z-test per person
+#: on an embedding computed once, so the bound is not the CPU: it is that
+#: every profile is a voice an impostor could sound like, and the false-accept
+#: surface grows with each one. A household is a handful of people; a store
+#: with dozens of voiceprints is a store nobody is curating.
+MAX_PEOPLE = 8
+
+
+class LabelError(SpeakerError):
+    """A label that cannot name a person: empty, too long, or unprintable."""
+
+
+def normalise_label(raw: Any) -> str:
+    """One canonical form for a person's name, or :class:`LabelError`.
+
+    Whitespace is trimmed and collapsed so "Ted " and "Ted" are one person;
+    matching elsewhere is case-insensitive for the same reason. A line-feed
+    is whitespace, so it collapses to a space rather than surviving into a
+    log line or a prompt as a second line nobody typed. Any other control
+    character is refused rather than stripped, because a name with one in it
+    was not typed by a person on a settings screen.
+    """
+    if raw is None:
+        return DEFAULT_LABEL
+    text = " ".join(str(raw).split())
+    if not text:
+        return DEFAULT_LABEL
+    if len(text) > MAX_LABEL_CHARS:
+        raise LabelError(f"a name is at most {MAX_LABEL_CHARS} characters")
+    if any(not ch.isprintable() for ch in text):
+        raise LabelError("a name may not contain control characters")
+    return text
+
+
+def _same_label(left: str, right: str) -> bool:
+    return left.casefold() == right.casefold()
+
+
+#: The on-disk shape since people got names. Version 1 was one profile's
+#: dict at the top level; :func:`profiles_from_dict` still reads it.
+STORE_VERSION = 2
+
+
+def profiles_to_dict(profiles: list[VoiceProfile]) -> dict[str, Any]:
+    """What goes in the store: every person, and nothing about any turn."""
+    return {
+        "version": STORE_VERSION,
+        "people": [profile.as_dict() for profile in profiles],
+    }
+
+
+def profiles_from_dict(payload: Any) -> list[VoiceProfile]:
+    """Every person in a store payload, in either shape it has ever had.
+
+    A version-1 store is one profile's dict at the top level, written before
+    anyone had a name; it loads as one person called :data:`DEFAULT_LABEL`,
+    because that is who the phone and the console were enrolling. Two entries
+    with the same name (case-insensitively) keep the first: a store is written
+    by this module only, so a duplicate is corruption, and merging two
+    people's samples into one profile would be a worse answer than dropping
+    one of them.
+    """
+    if not isinstance(payload, dict):
+        return []
+    if "people" in payload:
+        raw = payload.get("people")
+        entries = raw if isinstance(raw, list) else []
+    elif "samples" in payload:
+        entries = [payload]
+    else:
+        return []
+    people: list[VoiceProfile] = []
+    for entry in entries:
+        profile = VoiceProfile.from_dict(entry)
+        if profile is None:
+            continue
+        try:
+            profile.label = normalise_label(profile.label)
+        except LabelError:
+            profile.label = DEFAULT_LABEL
+        if any(_same_label(profile.label, kept.label) for kept in people):
+            _LOGGER.warning(
+                "Voice store holds %r twice; keeping the first and ignoring the other",
+                profile.label,
+            )
+            continue
+        people.append(profile)
+    return people[:MAX_PEOPLE]
+
+
 class SpeakerGate:
-    """Profile plus policy: the thing the pipeline actually consults."""
+    """Profiles plus policy: the thing the pipeline actually consults.
 
-    profile: VoiceProfile | None = None
-    mode: str = MODE_OFF
-    on_reject: str = ON_REJECT_SPEAK
-    refusal: str = DEFAULT_REFUSAL
-    #: Below this, a turn is *unverifiable* rather than refused. Whether an
-    #: unverifiable turn runs is :attr:`allow_unverifiable`.
-    min_speech_ms: float = MIN_SPEECH_MS
-    #: What to do with a turn too short, too quiet or too breathy to judge.
-    #:
-    #: True by default, and this is the single most consequential default in
-    #: the file. "Stop", "yes", "louder", "no, the other one" are all under
-    #: half a second, and an assistant that refuses every short word is not
-    #: usable. The exposure it buys back is bounded: an attacker who can only
-    #: pass unverifiable audio can only say things too short to carry a
-    #: sentence, and everything dangerous is still behind the tier system's
-    #: human approval. Set it false if that trade is wrong for you.
-    allow_unverifiable: bool = True
+    Holds every enrolled person. A turn is compared with each of them and the
+    verdict names the best match, so "who is speaking" is answerable rather
+    than only "is this the owner". Not a dataclass any more: `profile` is a
+    property over :attr:`profiles` so that every caller written when there
+    was one person — the tests, the API, the store — keeps working while the
+    list underneath grows.
+    """
 
-    #: Keep learning the owner's voice from ordinary turns.
-    #:
-    #: OFF by default, and that is not timidity — it is that switching it on
-    #: changes what a biometric gate will accept tomorrow, and a default that
-    #: does that on upgrade is a default nobody consented to. One line of YAML
-    #: turns it on; `docs/voice-identity.md` says what it costs.
-    #:
-    #: What it buys: a profile enrolled once in a quiet room slowly stops
-    #: matching the same person in the kitchen with the extractor running, and
-    #: the failure looks like "Jarvis stopped answering me". Adapting from
-    #: confident matches tracks the microphone, the room and the voice as they
-    #: drift.
-    #:
-    #: What it risks, and what the three guards below are for: every adaptive
-    #: system can be walked. An impostor who scores just inside the threshold
-    #: gets added to the profile, moving it a little toward them, which lets
-    #: them in a little more easily next time. So —
-    adapt: bool = False
-    #: 1. **A much stricter bar than acceptance.** Adaptation requires a score
-    #:    at or under this FRACTION of the threshold, so a turn that merely
-    #:    scraped past teaches nothing. At the default an accepted-but-marginal
-    #:    turn at 0.9x threshold is ignored; only a turn deep inside the
-    #:    owner's own distribution counts.
-    adapt_margin: float = 0.5
-    #: 2. **A rate limit.** At most one adapted sample per this many seconds,
-    #:    so a burst of attempts cannot become a burst of learning. Ten minutes
-    #:    is far below the timescale of a cold or a new microphone and far
-    #:    above the timescale of somebody standing at the door trying voices.
-    adapt_min_interval: float = 600.0
-    #: 3. **Anchors**, on the profile itself: the samples a person deliberately
-    #:    enrolled are never evicted, so the profile can never consist entirely
-    #:    of what it taught itself. See :attr:`VoiceProfile.anchors`.
+    def __init__(
+        self,
+        profile: VoiceProfile | None = None,
+        *,
+        profiles: list[VoiceProfile] | None = None,
+        mode: str = MODE_OFF,
+        on_reject: str = ON_REJECT_SPEAK,
+        refusal: str = DEFAULT_REFUSAL,
+        min_speech_ms: float = MIN_SPEECH_MS,
+        allow_unverifiable: bool = True,
+        adapt: bool = False,
+        adapt_margin: float = 0.5,
+        adapt_min_interval: float = 600.0,
+        configured_threshold: float | None = None,
+    ) -> None:
+        #: Everyone enrolled, in enrolment order. Empty means the gate is inert.
+        self.profiles: list[VoiceProfile] = list(profiles or [])
+        if profile is not None:
+            self.profiles.append(profile)
+        self.mode = mode
+        self.on_reject = on_reject
+        self.refusal = refusal
+        #: Below this, a turn is *unverifiable* rather than refused. Whether an
+        #: unverifiable turn runs is :attr:`allow_unverifiable`.
+        self.min_speech_ms = min_speech_ms
+        #: What to do with a turn too short, too quiet or too breathy to judge.
+        #:
+        #: True by default, and this is the single most consequential default
+        #: in the file. "Stop", "yes", "louder", "no, the other one" are all
+        #: under half a second, and an assistant that refuses every short word
+        #: is not usable. The exposure it buys back is bounded: an attacker who
+        #: can only pass unverifiable audio can only say things too short to
+        #: carry a sentence, and everything dangerous is still behind the tier
+        #: system's human approval. Set it false if that trade is wrong for you.
+        self.allow_unverifiable = allow_unverifiable
+        #: Keep learning a person's voice from ordinary turns.
+        #:
+        #: OFF by default, and that is not timidity — it is that switching it
+        #: on changes what a biometric gate will accept tomorrow, and a default
+        #: that does that on upgrade is a default nobody consented to. One line
+        #: of YAML turns it on; `docs/voice-identity.md` says what it costs.
+        #:
+        #: What it buys: a profile enrolled once in a quiet room slowly stops
+        #: matching the same person in the kitchen with the extractor running,
+        #: and the failure looks like "Jarvis stopped answering me". Adapting
+        #: from confident matches tracks the microphone, the room and the voice
+        #: as they drift.
+        #:
+        #: What it risks, and what the three guards below are for: every
+        #: adaptive system can be walked. An impostor who scores just inside
+        #: the threshold gets added to the profile, moving it a little toward
+        #: them, which lets them in a little more easily next time. So —
+        self.adapt = adapt
+        #: 1. **A much stricter bar than acceptance.** Adaptation requires a
+        #:    score at or under this FRACTION of the threshold, so a turn that
+        #:    merely scraped past teaches nothing. At the default an
+        #:    accepted-but-marginal turn at 0.9x threshold is ignored; only a
+        #:    turn deep inside the person's own distribution counts.
+        self.adapt_margin = adapt_margin
+        #: 2. **A rate limit.** At most one adapted sample per this many
+        #:    seconds, so a burst of attempts cannot become a burst of
+        #:    learning. Ten minutes is far below the timescale of a cold or a
+        #:    new microphone and far above the timescale of somebody standing
+        #:    at the door trying voices.
+        self.adapt_min_interval = adapt_min_interval
+        #: 3. **Anchors**, on the profile itself: the samples a person
+        #:    deliberately enrolled are never evicted, so a profile can never
+        #:    consist entirely of what it taught itself. See
+        #:    :attr:`VoiceProfile.anchors`.
 
-    #: Set when :meth:`check` changed the profile, so the caller knows to
-    #: persist it. The caller clears it; this class never writes to disk.
-    profile_dirty: bool = False
-    _last_adapt: float = 0.0
+        #: `voice: speaker: threshold:` from the config, or None when the file
+        #: names none. Kept on the gate rather than written INTO the profiles,
+        #: because enrolment recomputes each profile's own suggestion after
+        #: every sample — and used to overwrite the configured number with it
+        #: until the next restart put it back. So a person typed 8.8, enrolled
+        #: one more phrase, and was gated at 5.1 for the rest of the day. The
+        #: profile keeps its measurement; this wins over it whenever
+        #: :meth:`apply_threshold` runs, which is on load and after each sample.
+        self.configured_threshold = configured_threshold
+        #: Set when :meth:`check` changed a profile, so the caller knows to
+        #: persist. The caller clears it; this class never writes to disk.
+        self.profile_dirty = False
+        self._last_adapt = 0.0
+        self.apply_threshold()
+
+    # --- who is enrolled ------------------------------------------------------
+    @property
+    def profile(self) -> VoiceProfile | None:
+        """The first person, for callers that predate there being more than one."""
+        return self.profiles[0] if self.profiles else None
+
+    @profile.setter
+    def profile(self, value: VoiceProfile | None) -> None:
+        self.profiles = [] if value is None else [value]
+        self.apply_threshold()
+
+    def profile_for(self, label: str, *, create: bool = False) -> VoiceProfile | None:
+        """The profile for one person, by name; made on request.
+
+        Raises :class:`LabelError` for a name that cannot be one, and
+        :class:`SpeakerError` when creating would exceed :data:`MAX_PEOPLE` —
+        the caller turns that into a 409 that says "forget somebody first",
+        rather than quietly evicting whoever was enrolled longest.
+        """
+        wanted = normalise_label(label)
+        for profile in self.profiles:
+            if _same_label(profile.label, wanted):
+                return profile
+        if not create:
+            return None
+        if len(self.profiles) >= MAX_PEOPLE:
+            raise SpeakerError(
+                f"this Jarvis holds at most {MAX_PEOPLE} voices; forget one before "
+                f"enrolling {wanted!r}"
+            )
+        profile = VoiceProfile(label=wanted)
+        self.profiles.append(profile)
+        return profile
+
+    def remove(self, label: str) -> bool:
+        """Forget one person. False when nobody of that name was enrolled."""
+        wanted = normalise_label(label)
+        before = len(self.profiles)
+        self.profiles = [p for p in self.profiles if not _same_label(p.label, wanted)]
+        return len(self.profiles) < before
+
+    def people(self) -> list[dict[str, Any]]:
+        """Every person's :meth:`VoiceProfile.summary`. Never a vector."""
+        return [profile.summary() for profile in self.profiles]
+
+    def apply_threshold(self) -> None:
+        """Put the configured threshold, if there is one, in force everywhere."""
+        if self.configured_threshold is None:
+            return
+        value = _sane_threshold(self.configured_threshold)
+        for profile in self.profiles:
+            profile.threshold = value
 
     @property
     def enrolled(self) -> bool:
-        return self.profile is not None and self.profile.enrolled
+        return any(profile.enrolled for profile in self.profiles)
 
     @property
     def active(self) -> bool:
         """Whether this gate does anything at all this turn."""
         return self.mode in (MODE_OBSERVE, MODE_ENFORCE) and self.enrolled
 
+    # --- the verdict ----------------------------------------------------------
+    def verify_embedding(self, embedding: Embedding | None, label: str | None = None) -> Verdict:
+        """Compare one embedding with everyone, or with one named person.
+
+        The best verdict wins: an accepted one over a refusal, and among
+        accepted ones the lowest score — so with two enrolled people who sound
+        alike the utterance is credited to whoever it fits better, never to
+        whoever happened to be enrolled first. Among refusals the lowest score
+        is kept too, so :attr:`Verdict.nearest` names the closest person.
+
+        Pure: nothing is learned here. :meth:`check` is what may adapt.
+        """
+        if label is not None:
+            profile = self.profile_for(label)
+            if profile is None:
+                return Verdict(False, math.inf, 0.0, 0.0, 0.0, "not-enrolled")
+            return profile.verify(embedding)
+        if not self.profiles:
+            return Verdict(False, math.inf, 0.0, 0.0, 0.0, "not-enrolled")
+        best: Verdict | None = None
+        for profile in self.profiles:
+            candidate = profile.verify(embedding)
+            if best is None or _better(candidate, best):
+                best = candidate
+        assert best is not None
+        return best
+
     def check(self, pcm: bytes, rate: int = DEFAULT_RATE, width: int = DEFAULT_WIDTH) -> Verdict:
         """Verify one utterance, and learn from it when that is safe.
 
         Blocking — call it in a thread.
         """
-        if self.profile is None:
+        if not self.profiles:
             return Verdict(False, math.inf, 0.0, 0.0, 0.0, "not-enrolled")
         embedding = embed(pcm, rate, width)
-        verdict = self.profile.verify(embedding)
-        if self._should_adapt(verdict, embedding):
-            self.profile.add(embedding, anchor=False)
+        verdict = self.verify_embedding(embedding)
+        profile = self.profile_for(verdict.label) if verdict.label else None
+        if profile is not None and self._should_adapt(verdict, embedding, profile):
+            profile.add(embedding, anchor=False)
             self._last_adapt = time.time()
             self.profile_dirty = True
             _LOGGER.info(
-                "speaker: learned from a turn scoring %.2f (threshold %.2f); "
+                "speaker: learned %r from a turn scoring %.2f (threshold %.2f); "
                 "profile now %d enrolled + %d adapted",
+                profile.label,
                 verdict.score,
-                self.profile.threshold,
-                min(self.profile.anchors, len(self.profile.samples)),
-                self.profile.adapted_samples,
+                profile.threshold,
+                min(profile.anchors, len(profile.samples)),
+                profile.adapted_samples,
             )
         return verdict
 
-    def _should_adapt(self, verdict: Verdict, embedding: Any) -> bool:
+    def _should_adapt(self, verdict: Verdict, embedding: Any, profile: VoiceProfile) -> bool:
         """Every condition that has to hold before a turn may teach.
 
         Written as one list on purpose. Each clause is a guard somebody could
@@ -1240,7 +1482,7 @@ class SpeakerGate:
         margin alone would admit them the moment the mode is `off` and nothing
         is being enforced at all.
         """
-        if not self.adapt or self.profile is None or embedding is None:
+        if not self.adapt or embedding is None:
             return False
         # Never while the gate is doing nothing. In `off` there is no
         # enforcement and nobody is watching the scores, so "it accepted this"
@@ -1250,10 +1492,10 @@ class SpeakerGate:
             return False
         if not verdict.accepted:
             return False
-        # Deep inside the owner's distribution, not merely inside the gate.
+        # Deep inside the person's own distribution, not merely inside the gate.
         if not math.isfinite(verdict.score):
             return False
-        if verdict.score > self.profile.threshold * max(0.0, self.adapt_margin):
+        if verdict.score > profile.threshold * max(0.0, self.adapt_margin):
             return False
         # An utterance with no measurable pitch is refused as a MATCH by
         # `verify`, so it cannot reach here — but it must never become an
@@ -1278,6 +1520,13 @@ class SpeakerGate:
         if self.allow_unverifiable and verdict.reason in _UNVERIFIABLE:
             return False
         return True
+
+
+def _better(candidate: Verdict, incumbent: Verdict) -> bool:
+    """Whether `candidate` should replace `incumbent` as the gate's answer."""
+    if candidate.accepted != incumbent.accepted:
+        return candidate.accepted
+    return candidate.score < incumbent.score
 
 
 #: Reasons that mean "could not judge", as opposed to "judged and it was not

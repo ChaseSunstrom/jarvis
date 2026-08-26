@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "The wire contract for who the voice gate heard (M71).",
+    "",
+    "`speaker-end` already reaches the client that ran the turn. This event",
+    "is for everything else watching the house — the console's activity",
+    "strip and the phone's — which otherwise had no way to draw 'a stranger",
+    "spoke to the kitchen satellite'. Three readers hold to it: jarvis-core's",
+    "tests/test_speaker_gate.py asserts the pipeline fires exactly these",
+    "fields; jarvis-web/src/lib/activity.test.ts and",
+    "android-app/tools/activity_mirror_test.py hold the two strips to the row",
+    "rule below. A shared table rather than a comment saying 'keep in step',",
+    "because a comment has never once kept anything in step.",
+    "",
+    "`label` is WHO, and it is set only when the gate accepted the voice; a",
+    "refusal carries `label: null` and names the closest enrolled person in",
+    "`nearest`, so a consumer that reads 'label: Ted' as 'Ted spoke' is never",
+    "handed the nearest miss under the same key. `reason` is the verifier's",
+    "own word; the ones in `unverifiable_reasons` mean 'could not judge' —",
+    "too short, no pitch — and a strip must not paint those as a stranger.",
+    "",
+    "No event ever carries audio, a vector, or the transcript. The voiceprint",
+    "never leaves the server, and the bus is not the place to start."
+  ],
+  "version": 1,
+  "event": "jarvis_speaker_verdict",
+  "required": [
+    "accepted",
+    "reason",
+    "label",
+    "nearest",
+    "score",
+    "threshold",
+    "confidence",
+    "mode",
+    "enforced",
+    "run_id",
+    "pipeline",
+    "device_id",
+    "at"
+  ],
+  "never": ["vector", "vectors", "samples", "mean", "audio", "pcm", "text", "transcript"],
+  "unverifiable_reasons": ["no-speech", "unverifiable-no-pitch", "unverifiable-transcript"],
+  "row": {
+    "kind": "speaker",
+    "accepted": { "title": "<label>", "state": "done" },
+    "unverifiable": { "title": "unverified", "state": "done" },
+    "refused": {
+      "title": "not recognised",
+      "state": "failed when `enforced`, done when only observed",
+      "detail": "names `nearest` when there is one"
+    }
+  }
+}

@@ -2,10 +2,16 @@
 
 Four routes, all on the authenticated router:
 
-    GET    /api/voice/speaker            what is enrolled, and how well it fits
+    GET    /api/voice/speaker            who is enrolled, and how well each fits
     POST   /api/voice/speaker/enrol      add one sample (WAV or raw PCM)
     POST   /api/voice/speaker/verify     score a sample without enrolling it
-    DELETE /api/voice/speaker            forget the voiceprint entirely
+    DELETE /api/voice/speaker            forget one person, or everyone
+
+Every route takes an optional ``label`` — the person's name — in the query
+string. Without one, `enrol` adds to :data:`DEFAULT_LABEL` ("owner"), which
+is what a phone or a console written before people had names is enrolling;
+`verify` compares with everyone and says who it was; `DELETE` forgets
+everyone, which is what the console's FORGET has always meant.
 
 ## What never crosses this boundary
 
@@ -19,6 +25,17 @@ The **audio** is not stored at all. A sample is embedded in a worker thread and
 the bytes are dropped when the request ends. Nothing here writes a recording to
 disk, and there is no debug flag that makes it.
 
+## Why this is a REST write and not a tool
+
+Enrolment is a durable write about a person: it changes whose voice Jarvis
+answers, for good, until somebody deletes it. It is deliberately NOT in the
+model's toolbox and has no websocket command, so no turn — and in particular
+no turn that has read untrusted content — can reach it. The credentials that
+can are the bearer token (the phone) and the console password (the browser),
+both things a person holds. `docs/security.md` says why that is the right
+tier, and `tests/test_speaker_gate.py` pins that no tool and no command can
+enrol.
+
 ## Why enrol takes one sample at a time
 
 Because the useful feedback is per sample. Enrolment has to cover the range of
@@ -27,8 +44,9 @@ a gate that works and one that locks you out), and the surface asking for the
 phrases needs to be able to say "that one was too quiet, say it again" between
 them. A batch endpoint can only fail the whole set.
 
-Each response carries the running :meth:`VoiceProfile.summary`, so a client
-watches `self_scores` and `suggested_threshold` settle as it goes.
+Each response carries the running :meth:`VoiceProfile.summary` for the person
+just enrolled, so a client watches `self_scores` and `suggested_threshold`
+settle as it goes.
 """
 
 from __future__ import annotations
@@ -39,14 +57,18 @@ from typing import TYPE_CHECKING, Any
 
 from ..voice.audio import DEFAULT_RATE, DEFAULT_WIDTH
 from ..voice.speaker import (
+    DEFAULT_LABEL,
     ENROLMENT_PROMPTS,
     MAX_ENROLMENT_SAMPLES,
+    MAX_LABEL_CHARS,
+    MAX_PEOPLE,
     MIN_ENROLMENT_SAMPLES,
     MODES,
+    LabelError,
     SpeakerError,
-    VoiceProfile,
     embed,
     embed_wav,
+    normalise_label,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -77,10 +99,39 @@ def _gate(jarvis: "Jarvis") -> Any:
     return data.speaker
 
 
-def status(jarvis: "Jarvis") -> dict[str, Any]:
-    """What the console and the phone draw the enrolment screen from."""
+def _label(raw: Any) -> str:
+    """A person's name from the query string, or a 400 that says what is wrong."""
+    try:
+        return normalise_label(raw)
+    except LabelError as err:
+        raise EnrolError(str(err)) from err
+
+
+def _empty_person(label: str) -> dict[str, Any]:
+    """The summary of somebody not yet enrolled: the same keys, all at zero."""
+    return {
+        "enrolled": False,
+        "samples": 0,
+        "anchor_samples": 0,
+        "adapted_samples": 0,
+        "label": label,
+        "self_scores": [],
+        "self_score": None,
+        "worst_self_score": None,
+        "threshold_measured": False,
+    }
+
+
+def status(jarvis: "Jarvis", label: str | None = None) -> dict[str, Any]:
+    """What the console and the phone draw the enrolment screen from.
+
+    The top level describes ONE person — `label` when given, otherwise the
+    first enrolled — under the keys the screens have always read, so a client
+    that knows nothing about labels keeps working; `people` lists everyone.
+    `enrolled` at the top level is whether ANYBODY is, because that is what
+    "does the gate do anything" means.
+    """
     gate = _gate(jarvis)
-    profile = gate.profile
     payload: dict[str, Any] = {
         "mode": gate.mode,
         "modes": list(MODES),
@@ -93,11 +144,26 @@ def status(jarvis: "Jarvis") -> dict[str, Any]:
         "prompts": list(ENROLMENT_PROMPTS),
         "min_samples": MIN_ENROLMENT_SAMPLES,
         "max_samples": MAX_ENROLMENT_SAMPLES,
+        "max_people": MAX_PEOPLE,
+        "max_label_chars": MAX_LABEL_CHARS,
+        "default_label": DEFAULT_LABEL,
+        "people": gate.people(),
+        # Whether `voice: speaker: threshold:` is in force over every
+        # profile's own measurement. A screen that shows "enrolment suggests
+        # 5.1" beside a gate running at 8.8 must be able to say which is live.
+        "configured_threshold": gate.configured_threshold,
     }
-    if profile is None:
-        payload.update({"enrolled": False, "samples": 0})
+    if label is not None:
+        wanted = _label(label)
+        profile = gate.profile_for(wanted)
     else:
-        payload.update(profile.summary())
+        wanted = DEFAULT_LABEL
+        profile = gate.profile
+        if profile is not None:
+            wanted = profile.label
+    payload.update(profile.summary() if profile is not None else _empty_person(wanted))
+    payload["enrolled"] = gate.enrolled
+    payload["person_enrolled"] = profile is not None and profile.enrolled
     return payload
 
 
@@ -133,11 +199,13 @@ async def async_enrol(
     content_type: str = "",
     rate: int = DEFAULT_RATE,
     width: int = DEFAULT_WIDTH,
+    label: str | None = None,
 ) -> dict[str, Any]:
-    """Add one sample to the profile and report where enrolment now stands."""
-    from ..integrations.voice import async_save_profile
+    """Add one sample to a person's profile and report where enrolment stands."""
+    from ..integrations.voice import async_save_profiles
 
     gate = _gate(jarvis)
+    wanted = _label(label)
     embedding = await _embed(body, content_type, rate, width)
 
     # A pitchless enrolment sample would teach the profile a pitch histogram
@@ -149,19 +217,26 @@ async def async_enrol(
             "breathy, or too far from the microphone to enrol from"
         )
 
-    if gate.profile is None:
-        gate.profile = VoiceProfile(samples=[embedding.vector])
-    else:
-        gate.profile.add(embedding)
+    try:
+        profile = gate.profile_for(wanted, create=True)
+    except SpeakerError as err:
+        # The store is full. 409 rather than 400: the request was fine, the
+        # state is what refuses it, and the remedy is a DELETE.
+        raise EnrolError(str(err), 409) from err
+    profile.add(embedding)
 
     # The threshold follows the samples. Enrolment is the only place that has
     # the leave-one-out spread to work it out from, so it is recomputed on
-    # every sample rather than left at whatever the first three implied.
-    if gate.profile.enrolled:
-        gate.profile.threshold = gate.profile.suggested_threshold()
+    # every sample rather than left at whatever the first three implied. The
+    # measurement is what is STORED; a configured threshold is re-applied over
+    # it afterwards, so the config wins in memory and the profile keeps its
+    # own number for the day the config line is removed.
+    if profile.enrolled:
+        profile.threshold = profile.suggested_threshold()
 
-    await async_save_profile(jarvis, gate.profile)
-    payload = status(jarvis)
+    await async_save_profiles(jarvis, gate.profiles)
+    gate.apply_threshold()
+    payload = status(jarvis, wanted)
     payload["accepted"] = True
     payload["sample"] = embedding.as_dict() | {"vector": None}
     return payload
@@ -173,18 +248,26 @@ async def async_verify(
     content_type: str = "",
     rate: int = DEFAULT_RATE,
     width: int = DEFAULT_WIDTH,
+    label: str | None = None,
 ) -> dict[str, Any]:
-    """Score a sample against the profile without changing anything.
+    """Score a sample against the profiles without changing anything.
 
     This is how you find your threshold without being locked out while you look
     for it: record yourself, and a friend, and read the two numbers. It is also
-    what the console's "test my voice" button calls.
+    what TEST MY VOICE calls, on the phone and on the console. With no `label`
+    the sample is compared with everyone and the verdict names who it was; with
+    one it is compared with that person only.
     """
     gate = _gate(jarvis)
-    if gate.profile is None or not gate.profile.enrolled:
+    if not gate.enrolled:
         raise EnrolError("nobody is enrolled yet", 409)
+    wanted = _label(label) if label is not None else None
+    if wanted is not None:
+        person = gate.profile_for(wanted)
+        if person is None or not person.enrolled:
+            raise EnrolError(f"{wanted!r} is not enrolled", 404)
     embedding = await _embed(body, content_type, rate, width)
-    verdict = gate.profile.verify(embedding)
+    verdict = gate.verify_embedding(embedding, wanted)
     return {
         "verdict": verdict.as_dict(),
         "would_block": gate.blocks(verdict),
@@ -193,12 +276,19 @@ async def async_verify(
     }
 
 
-async def async_forget(jarvis: "Jarvis") -> dict[str, Any]:
-    """Delete the voiceprint. A real delete, not a flag."""
-    from ..integrations.voice import async_save_profile
+async def async_forget(jarvis: "Jarvis", label: str | None = None) -> dict[str, Any]:
+    """Delete one person's voiceprint, or everyone's. A real delete, not a flag."""
+    from ..integrations.voice import async_save_profiles
 
     gate = _gate(jarvis)
-    gate.profile = None
-    await async_save_profile(jarvis, None)
-    _LOGGER.info("Voiceprint deleted; the speaker gate is inert until re-enrolled")
+    if label is None:
+        gate.profiles = []
+        await async_save_profiles(jarvis, [])
+        _LOGGER.info("Every voiceprint deleted; the speaker gate is inert until re-enrolled")
+        return status(jarvis)
+    wanted = _label(label)
+    if not gate.remove(wanted):
+        raise EnrolError(f"{wanted!r} is not enrolled", 404)
+    await async_save_profiles(jarvis, gate.profiles)
+    _LOGGER.info("Voiceprint for %r deleted; %d people remain", wanted, len(gate.profiles))
     return status(jarvis)

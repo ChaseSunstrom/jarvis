@@ -967,7 +967,7 @@ async def speaker_status(request: Request) -> dict[str, Any]:
     from . import speaker as speaker_api
 
     try:
-        return speaker_api.status(get_jarvis(request))
+        return speaker_api.status(get_jarvis(request), request.query_params.get("label"))
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
 
@@ -978,7 +978,9 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
 
     Raw PCM is accepted because the phone already has the samples in that shape
     and wrapping them in a container to send them back would be ceremony. The
-    rate and width can be named in the query string for anything else.
+    rate and width can be named in the query string for anything else, and
+    `label` names the person — "owner" when absent, which is who every client
+    written before labels existed was enrolling.
     """
     from . import speaker as speaker_api
 
@@ -989,6 +991,7 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
             request.headers.get("content-type", ""),
             int(request.query_params.get("rate") or 16000),
             int(request.query_params.get("width") or 2),
+            request.query_params.get("label"),
         )
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
@@ -998,7 +1001,11 @@ async def speaker_enrol(request: Request) -> dict[str, Any]:
 
 @api_router.post("/voice/speaker/verify")
 async def speaker_verify(request: Request) -> dict[str, Any]:
-    """Score a sample without enrolling it — how you find your threshold."""
+    """Score a sample without enrolling it — how you find your threshold.
+
+    With no `label` the sample is compared with everyone and the verdict names
+    who it was; with one, with that person only.
+    """
     from . import speaker as speaker_api
 
     try:
@@ -1008,6 +1015,7 @@ async def speaker_verify(request: Request) -> dict[str, Any]:
             request.headers.get("content-type", ""),
             int(request.query_params.get("rate") or 16000),
             int(request.query_params.get("width") or 2),
+            request.query_params.get("label"),
         )
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
@@ -1017,10 +1025,13 @@ async def speaker_verify(request: Request) -> dict[str, Any]:
 
 @api_router.delete("/voice/speaker")
 async def speaker_forget(request: Request) -> dict[str, Any]:
+    """Forget one person (`label`), or everyone when no label is given."""
     from . import speaker as speaker_api
 
     try:
-        return await speaker_api.async_forget(get_jarvis(request))
+        return await speaker_api.async_forget(
+            get_jarvis(request), request.query_params.get("label")
+        )
     except speaker_api.EnrolError as err:
         raise HTTPException(status_code=err.status, detail=str(err)) from err
 

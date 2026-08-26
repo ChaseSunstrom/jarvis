@@ -775,6 +775,30 @@ class ConversationAgent:
         """The parts that vary with the turn: the house now, the notes for it, the clock."""
         return [self.house_summary(), self.remembered_notes(query, semantic), self.clock_line()]
 
+    def speaker_line(self, speaker: str | None) -> str:
+        """One line naming who the voice gate recognised, or nothing (M71).
+
+        Only ever a name the gate ACCEPTED. The pipeline passes None for every
+        turn it did not verify — typed text, `mode: off`, an utterance too
+        short to judge — and this says nothing for those rather than
+        "unknown", because a prompt that called the owner with a cold
+        "unrecognised" would have the model treating them as an intruder.
+        "Unverified" and "stranger" are different claims, and only the second
+        is ever refused, before the turn reaches here.
+
+        It is context, not authority: nothing here unlocks anything, the tier
+        system still asks a human before anything irreversible, and the model
+        is not asked to decide who may do what. The name is a label a person
+        typed at enrolment, already limited to printable characters by
+        `normalise_label`; the whitespace collapse here is the one line of
+        defence this module keeps for itself, so a label can never write a
+        second line into the prompt.
+        """
+        name = " ".join(str(speaker or "").split())
+        if not name:
+            return ""
+        return f"The person speaking was recognised by voice as {name}."
+
     def prompt_tokens(self, query: str = "") -> int:
         """An estimate of the system prompt's size in tokens.
 
@@ -1065,6 +1089,7 @@ class ConversationAgent:
         *,
         model: str | None = None,
         think: bool | None = None,
+        speaker: str | None = None,
     ) -> AsyncIterator[str]:
         """Run one turn, yielding text deltas as the model produces them.
 
@@ -1075,6 +1100,11 @@ class ConversationAgent:
         nobody hears it; None is the agent's setting. A turn the model asks
         to think about (the think tool) still escalates. Nothing else about
         the turn changes: same tools, same persona, same history.
+
+        ``speaker`` is who the voice gate recognised this turn (M71), or None
+        for every turn it did not — typed text, a gate that is off, audio too
+        short to judge. See :meth:`speaker_line` for what it does and does
+        not mean.
 
         ``on_event`` is this turn's side channel: tool calls as they start and
         finish, and reasoning as it is produced. Everything it reports is also
@@ -1103,12 +1133,19 @@ class ConversationAgent:
         # rewrite to gain nothing.
         semantic = await self._semantic_hits(message)
 
+        system = self.system_prompt(message, semantic)
+        who = self.speaker_line(speaker)
+        if who:
+            # Last, after every cached part: a name changes from turn to turn
+            # in a house with two people, and putting it before the clock
+            # would throw the prefix cache away on every change of speaker.
+            system = f"{system}\n\n{who}"
         messages: list[dict[str, Any]] = [
             # The turn is handed to the prompt builder, not just appended after
             # it: the memory block is chosen by relevance to what was just
             # said, and it is built before the history so the notes it picks
             # are about this turn rather than the one twenty turns ago.
-            {"role": "system", "content": self.system_prompt(message, semantic)},
+            {"role": "system", "content": system},
             *conversation.messages(),
             {"role": "user", "content": message},
         ]

@@ -48,6 +48,8 @@ from ...voice.speaker import (
     ON_REJECT_SILENT,
     ON_REJECT_SPEAK,
     SpeakerGate,
+    profiles_from_dict,
+    profiles_to_dict,
     VoiceProfile,
 )
 from ...voice.wyoming import (
@@ -283,11 +285,18 @@ def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = True) -
     takes_model = "model" in parameters
     if not takes_model and "think" not in parameters:
         return converse
+    takes_var_kw = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
 
     def spoken(text: str, conversation_id: str | None = None, *args: Any, **kwargs: Any) -> Any:
         fast = str(getattr(agent, "fast_model", "") or "").strip()
         if fast:
             kwargs.setdefault("model", fast)
+        # This wrapper takes `**kwargs`, so the pipeline sees a converse that
+        # accepts `speaker` and passes it (M71). Forwarded only when the real
+        # converse can take it — an agent from before names existed must not
+        # fall over on the first turn the gate recognises somebody.
+        if "speaker" in kwargs and "speaker" not in parameters and not takes_var_kw:
+            kwargs.pop("speaker")
         # `voice: think: false` trades the reasoning block for the first word
         # sooner — measured at 3.1 s against 5.9 s, and 87 % intent against
         # 93 % — which is why it is a switch and not the default.
@@ -580,6 +589,17 @@ def _speaker_gate(config: dict[str, Any]) -> SpeakerGate:
         on_reject = ON_REJECT_SPEAK
 
     gate = SpeakerGate(mode=mode, on_reject=on_reject)
+    # Held on the gate, not poked into a profile: a profile's threshold is
+    # rewritten by every enrolment sample, and a configured number that lived
+    # there was lost from the first new sample until the next restart.
+    if "threshold" in section:
+        try:
+            gate.configured_threshold = float(section["threshold"])
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "voice: speaker: threshold: %r is not a number; using each profile's own",
+                section["threshold"],
+            )
     refusal = section.get("refusal")
     if isinstance(refusal, str) and refusal.strip():
         gate.refusal = refusal.strip()
@@ -635,24 +655,34 @@ def _positive_float(
 
 
 async def async_load_profile(jarvis: "Jarvis", data: VoiceData) -> None:
-    """Read the enrolled voiceprint off disk into [data.speaker]."""
+    """Read every enrolled voiceprint off disk into [data.speaker].
+
+    Reads both shapes the store has had — one profile at the top level, or
+    `people: [...]` — so an upgrade never loses whoever was enrolled. Each
+    profile carries the threshold enrolment worked out for it; the gate's
+    `configured_threshold` (`voice: speaker: threshold:`) is applied over
+    them afterwards, because an explicit number a person typed beats one a
+    computer suggested.
+    """
     from ...store import Store
 
     store = Store(jarvis.config_dir, STORE_SPEAKER)
     payload = await store.load()
-    # The profile carries the threshold enrolment worked out for it, and that
-    # is the one in force unless `voice: speaker: threshold:` overrides it —
-    # an explicit number a person typed beats one a computer suggested. See
-    # async_setup, which applies the override after this.
-    data.speaker.profile = VoiceProfile.from_dict(payload) if payload else None
+    data.speaker.profiles = profiles_from_dict(payload) if payload else []
+    data.speaker.apply_threshold()
 
 
-async def async_save_profile(jarvis: "Jarvis", profile: VoiceProfile | None) -> None:
-    """Persist (or clear) the enrolled voiceprint."""
+async def async_save_profiles(jarvis: "Jarvis", profiles: list[VoiceProfile]) -> None:
+    """Persist every voiceprint, or clear the store when the list is empty.
+
+    An empty list writes `{}` rather than `{"people": []}` so the file after
+    FORGET carries no shape at all — `test_forgetting_is_a_real_delete` reads
+    it back and expects nothing recognisable in it.
+    """
     from ...store import Store
 
     store = Store(jarvis.config_dir, STORE_SPEAKER)
-    await store.save(profile.as_dict() if profile is not None else {})
+    await store.save(profiles_to_dict(profiles) if profiles else {})
 
 
 async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
@@ -699,9 +729,6 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
     jarvis.data.setdefault(DATA_TTS_CACHE, {})
 
     await async_load_profile(jarvis, data)
-    speaker_section = _section(config, "speaker") or {}
-    if "threshold" in speaker_section and data.speaker.profile is not None:
-        data.speaker.profile.threshold = float(speaker_section["threshold"])
     if data.speaker.mode != MODE_OFF and not data.speaker.enrolled:
         # Asked for, and impossible to honour. Saying so is the difference
         # between "voice identity is on" and "voice identity is on and doing

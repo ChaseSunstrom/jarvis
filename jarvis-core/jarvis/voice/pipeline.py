@@ -102,7 +102,11 @@ EVENT_ERROR = "error"
 #: events would give you nothing to set a threshold from.
 EVENT_SPEAKER_END = "speaker-end"
 
-#: The turn was refused because the voice was not the enrolled owner's.
+#: The verdict, on the house bus, for surfaces that did not run the turn.
+#: Shape and field names: `tests/contracts/speaker_verdict.json`.
+EVENT_SPEAKER_VERDICT = "jarvis_speaker_verdict"
+
+#: The turn was refused because the voice was not an enrolled person's.
 #: Distinct from every stt code: "I heard you and you are not who this belongs
 #: to" is a different thing from "I could not make out what you said", and a
 #: client that shows them the same way is lying to whichever one it is.
@@ -682,17 +686,19 @@ class PipelineRun:
                         "server never heard, and the speaker gate is enforcing",
                         "an on-device recogniser",
                     )
-                    await self._emit(
-                        EVENT_SPEAKER_END,
-                        {
-                            "speaker_output": {
-                                "accepted": False,
-                                "reason": "unverifiable-transcript",
-                                "mode": gate.mode,
-                                "enforced": True,
-                            }
-                        },
-                    )
+                    refused = {
+                        "accepted": False,
+                        "reason": "unverifiable-transcript",
+                        "label": None,
+                        "nearest": None,
+                        "score": None,
+                        "threshold": None,
+                        "confidence": None,
+                        "mode": gate.mode,
+                        "enforced": True,
+                    }
+                    await self._emit(EVENT_SPEAKER_END, {"speaker_output": refused})
+                    self._fire_speaker_verdict(refused)
                     await self._fail(
                         PipelineError(
                             ERROR_NOT_RECOGNISED,
@@ -728,6 +734,7 @@ class PipelineRun:
         payload["mode"] = getattr(gate, "mode", "unknown")
         payload["enforced"] = bool(gate.blocks(verdict))
         await self._emit(EVENT_SPEAKER_END, {"speaker_output": payload})
+        self._fire_speaker_verdict(payload)
 
         if not gate.blocks(verdict):
             return None
@@ -739,11 +746,60 @@ class PipelineRun:
             getattr(verdict, "reason", "?"),
         )
         await self._fail(
-            PipelineError(ERROR_NOT_RECOGNISED, "that voice is not the enrolled owner's")
+            PipelineError(ERROR_NOT_RECOGNISED, "that voice is not an enrolled person's")
         )
         if getattr(gate, "on_reject", "speak") != "speak":
             return ""
         return str(getattr(gate, "refusal", "") or "")
+
+    def _fire_speaker_verdict(self, payload: dict[str, Any]) -> None:
+        """Put the verdict on the bus, under its own name.
+
+        `speaker-end` already reaches the client that ran the turn. This is
+        for everything else watching the house — the console's activity strip,
+        the phone's — which otherwise had no way to draw "a stranger spoke to
+        the kitchen satellite" because the pipeline mirror on the bus carries
+        every event of every run under one type. The fields are the contract
+        in `tests/contracts/speaker_verdict.json`; the console, the phone and
+        `tests/test_speaker_gate.py` all read it. Never audio, never a vector.
+        """
+        if self.jarvis is None:
+            return
+        event = {
+            key: payload.get(key)
+            for key in (
+                "accepted", "reason", "label", "nearest", "score", "threshold",
+                "confidence", "mode", "enforced",
+            )
+        }
+        event.update(
+            {
+                "run_id": self.run_id,
+                "pipeline": self.pipeline_id,
+                "device_id": self.device_id,
+                "at": time.time(),
+            }
+        )
+        try:
+            self.jarvis.bus.fire(EVENT_SPEAKER_VERDICT, event)
+        except Exception:  # pragma: no cover - a bad listener must not kill a run
+            _LOGGER.debug("Could not fire %s", EVENT_SPEAKER_VERDICT, exc_info=True)
+
+    def speaker_label(self) -> str | None:
+        """Who this turn's voice was recognised as, or None.
+
+        None for every turn the gate did not accept: no gate, `off`, typed
+        text, a refusal let through in `observe`, and audio too short to
+        judge. It is what the agent is told about the speaker, so it says
+        nothing rather than guessing — "unverified" and "stranger" are not the
+        same claim, and a prompt line that conflated them would have the model
+        treating the owner with a cold as an intruder.
+        """
+        verdict = self.speaker_verdict
+        if verdict is None or not getattr(verdict, "accepted", False):
+            return None
+        label = getattr(verdict, "label", None)
+        return str(label) if label else None
 
     async def _persist_adapted_profile(self) -> None:
         """Write the profile back if this turn changed it.
@@ -756,13 +812,13 @@ class PipelineRun:
         if not getattr(gate, "profile_dirty", False):
             return
         gate.profile_dirty = False
-        profile = getattr(gate, "profile", None)
-        if profile is None or self.jarvis is None:
+        profiles = getattr(gate, "profiles", None)
+        if not profiles or self.jarvis is None:
             return
         try:
-            from ..integrations.voice import async_save_profile
+            from ..integrations.voice import async_save_profiles
 
-            await async_save_profile(self.jarvis, profile)
+            await async_save_profiles(self.jarvis, list(profiles))
         except Exception:
             _LOGGER.exception("Could not save the adapted voice profile")
 
@@ -1105,6 +1161,16 @@ class PipelineRun:
         # two-line coroutine — takes two arguments, and passing a third would
         # break all of them for a feature only the real agent implements.
         wants_events = "on_event" in params or takes_var_kw
+        # Who is speaking, for an agent that can take it — the same opt-in
+        # rule, and only when there is somebody to name: a turn the gate did
+        # not accept passes nothing, so the agent cannot mistake "unverified"
+        # for "a stranger" (see :meth:`speaker_label`). Not sent to a converse
+        # that lacks the parameter, or a stand-in in a test would break on the
+        # day the gate first recognised anyone.
+        extra: dict[str, Any] = {}
+        speaker = self.speaker_label()
+        if speaker is not None and ("speaker" in params or takes_var_kw):
+            extra["speaker"] = speaker
         positional = [
             p
             for p in params.values()
@@ -1112,7 +1178,11 @@ class PipelineRun:
         ]
         takes_var = any(p.kind is p.VAR_POSITIONAL for p in params.values())
         if wants_events:
-            return self.converse(text, self.conversation_id, on_event=self._on_turn_event)
+            return self.converse(
+                text, self.conversation_id, on_event=self._on_turn_event, **extra
+            )
+        if extra:
+            return self.converse(text, self.conversation_id, **extra)
         if len(positional) >= 2 or takes_var:
             return self.converse(text, self.conversation_id)
         if "conversation_id" in params:
