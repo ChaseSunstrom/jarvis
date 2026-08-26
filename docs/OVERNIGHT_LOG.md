@@ -567,3 +567,11 @@ is quiet. Done since:
   entry that matched every word when no other did, and every empty outcome says NOTHING was
   forgotten in the reply's own words. Smoke set green on the rebuilt stack; the eight are
   running.
+- 18:50 — the eight scenarios M25 lost, alone on the stack rebuilt with the evening's rule and
+  guard changes: 9 of 11 variants pass — the broker (sensors-discovered), the research/house
+  boundary (task-live-ui, task-cancel-mid-run), the starting state (thread continuity), the
+  handbook's address (research-deep-report, delegation-across-backends) and
+  subagents-parallel-work all hold; the median over these heavy scenarios 5.25 s. Only
+  resilience-core-restart fails, text and voice, the claimed action after the restart —
+  the guard sees "do the same in the bedroom" as an action since ca6c57c, which the second
+  rebuild measures. CI green on 6bf9214 (fourth all-green head); ca6c57c pushed.
