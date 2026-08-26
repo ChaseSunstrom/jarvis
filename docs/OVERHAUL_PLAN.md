@@ -47,11 +47,13 @@ This document is the spine. Each numbered item is a milestone in
   reads (M55).
 - Speed: the prompt prefix is kept on the server and ordered stable-first,
   the first sentence is spoken before the reply is finished, whisper runs
-  int8, `llm.fast_model` is the voice path's when set; a small model's
-  narrated tool call is retried under a schema. Measured: the full-mode
-  median round trip 5.90 s (10:27) from 6.67 s (06:54), to `run-end`, which
-  does not credit the early first sentence; the 2 s threshold is hardware
-  (BLOCKERS §2) and is recorded missed, not lowered.
+  int8, `llm.fast_model` is the voice path's when set, and a spoken turn does
+  not reason unless `voice: think: true`; a small model's narrated tool call
+  is retried under a schema, and a turn that repeats the same call is ended
+  and told to answer. Measured: the full-mode median round trip 5.90 s
+  (10:27, before the last two of those) from 6.67 s (06:54), to `run-end`,
+  which does not credit the early first sentence; the 2 s threshold is
+  hardware (BLOCKERS §2) and is recorded missed, not lowered.
 
 ## The milestones, in order
 

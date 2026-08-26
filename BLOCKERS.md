@@ -45,9 +45,10 @@ shared vCPUs (~11 s), prefilling a large system prompt into a 256k window on
 every turn, and starting synthesis. M60 took the parts of that this
 repository can change — the prompt prefix kept on the server and ordered
 stable-first, the first sentence spoken before the reply is finished, whisper
-int8, `llm.fast_model` on the voice path when the operator sets one, and no
-reasoning block on a spoken turn unless asked for — and
-the full-mode median moved from 6.67 s to 5.90 s (before the last of those) (10:27; the rig measures to
+int8, `llm.fast_model` on the voice path when the operator sets one, and a
+switch to drop the reasoning block on a spoken turn (measured: 3.1 s median
+at 87 % intent against 5.9 s at 93 %, so it ships on) — and the full-mode
+median moved from 6.67 s to 5.90 s (10:27; the rig measures to
 `run-end`, so early speech is not in that number). What remains is hardware,
 and still needs one of:
 

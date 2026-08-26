@@ -132,13 +132,13 @@ sun:
 # sentence rather than the last; the console plays the chunks and then the
 # remainder. Off for an install whose only client cannot play chunks.
 
-# A spoken turn does not reason (M60): the block is generated at full cost and
-# stripped before the ear, and on this house it was minutes before the first
-# word. The model can still ask to think on a turn that needs it (the think
-# tool). Text turns keep the model's own default. `think: true` puts it back.
+# Reasoning on a spoken turn (M60). `think: false` skips the block and was
+# measured on 26 August: the median round trip fell from 5.9 s to 3.1 s and
+# intent accuracy from 93 % to 87 % — the model chose worse tools without it.
+# Intelligence first, so it stays on; flip it for a house that wants the speed.
 voice:
   early_speech: true
-  think: false
+  think: true
   language: en
   stt:
     host: 127.0.0.1

@@ -434,17 +434,18 @@ tens of milliseconds a sentence, and it buys the console its first word at
 the first sentence rather than the last. M61 teaches the phone to play chunks
 and the remainder, after which the whole-reply clip goes.
 
-## 19. A spoken turn does not reason by default (M60)
+## 19. A spoken turn keeps its reasoning block, and the switch to drop it is measured (M60)
 
 Qwen3 reasons before it answers unless told not to, and the block is
-generated at full cost and stripped before the ear. On this house a research
-question reasoned for four minutes on the rig and timed out; a light switch
-reasons for seconds nobody hears. `voice: think: false` is therefore the
-shipped default for the voice path only: text turns keep the model's own
-default, and the think tool lets the model ask for a reasoning turn when a
-question needs one. The trade is deliberate and reversible in one line, and
-the live suite's intent accuracy is the number that says whether it cost
-anything (docs/verification.md, "Known failures").
+generated at full cost and stripped before the ear. `voice: think: false`
+skips it for spoken turns only, and the live suite measured the trade on
+26 August: the full-mode median round trip fell from 5.90 s to 3.07 s, and
+intent accuracy fell from 93 % to 87 % and routing from 95 % to 85 % — a
+lookup that asked which handbook instead of searching, a plan that read the
+sensors instead of delegating. The brief puts intelligence before speed, so
+the shipped default is `think: true`; the switch stays, with both numbers
+beside it in `configuration.yaml`, for a house that wants the first word
+sooner and knows the price.
 
 ## Licensing notes
 

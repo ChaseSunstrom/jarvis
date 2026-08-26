@@ -122,9 +122,11 @@ class VoiceData:
     #: `voice: early_speech: false` turns it off for a client that cannot
     #: play chunks and must not hear the reply twice.
     early_speech: bool = True
-    #: Let a spoken turn reason (M60 turns it off by default: a minute of
-    #: thinking before the first word is the wait the operator hears).
-    think: bool = False
+    #: Let a spoken turn reason. Off was measured (M60): the median round trip
+    #: fell from 5.9 s to 3.1 s and intent accuracy from 93 % to 87 % — the
+    #: model chose worse tools without the block. The brief puts intelligence
+    #: first, so on is the default and `voice: think: false` is the speed.
+    think: bool = True
 
     #: What the running services say they can do, from their own `describe`.
     #:
@@ -258,9 +260,9 @@ def async_create_run(
     return data.async_create_run(pipeline, **kwargs)
 
 
-def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = False) -> Any:
+def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = True) -> Any:
     """The agent's converse for a spoken turn (M60): `fast_model` when one is
-    set, and no reasoning unless `voice: think: true`.
+    set, and no reasoning when `voice: think: false`.
 
     Read at call time, not wrapped once: the settings are live. An agent whose
     converse takes neither `model` nor `think` (a stand-in in a test) is used
@@ -280,10 +282,9 @@ def _on_the_fast_model(agent: Any, converse: Any, think_on_voice: bool = False) 
         fast = str(getattr(agent, "fast_model", "") or "").strip()
         if fast:
             kwargs.setdefault("model", fast)
-        # A spoken turn does not reason unless the house says so: the block is
-        # generated at full cost, stripped before the ear, and is the largest
-        # avoidable part of the wait before the first word. The think tool
-        # still lets the model ask for it on a turn that needs it.
+        # `voice: think: false` trades the reasoning block for the first word
+        # sooner — measured at 3.1 s against 5.9 s, and 87 % intent against
+        # 93 % — which is why it is a switch and not the default.
         if not think_on_voice and "think" in parameters:
             kwargs.setdefault("think", False)
         return converse(text, conversation_id, *args, **kwargs)
@@ -302,7 +303,7 @@ def resolve_conversation_agent(jarvis: "Jarvis") -> Any:
 
     llm = jarvis.data.get("llm")
     voice = jarvis.data.get(DATA_VOICE)
-    think_on_voice = bool(getattr(voice, "think", False))
+    think_on_voice = bool(getattr(voice, "think", True))
     for attr in ("async_converse", "converse", "async_process", "process"):
         method = getattr(llm, attr, None)
         if callable(method):
@@ -678,7 +679,7 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         language=language,
         tts_voice=tts_voice,
         early_speech=bool(config.get("early_speech", True)),
-        think=bool(config.get("think", False)),
+        think=bool(config.get("think", True)),
         wake_word=wake_word,
     )
     jarvis.data[DATA_VOICE] = data

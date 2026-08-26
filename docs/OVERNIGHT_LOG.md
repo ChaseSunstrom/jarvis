@@ -422,3 +422,7 @@ is quiet. Done since:
   reason unless `voice: think: true` (think per turn on the agent, `enable_thinking`
   on the OpenAI wire); text keeps the model's default. Stack rebuilt; the final
   full-mode run with the report starts now.
+- 11:26 — The full run without reasoning on spoken turns: median 3.07 s, intent
+  87.2 %, routing 84.6 % (47/58). Worse tool choices on voice; the brief puts
+  intelligence first, so the default is back to reasoning and the switch stays
+  with both numbers beside it. Rebuilding; the final full run follows.

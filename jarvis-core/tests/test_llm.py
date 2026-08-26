@@ -2195,12 +2195,11 @@ async def test_a_turn_that_repeats_the_same_call_is_ended_and_answered(tmp_path)
 
 
 async def test_a_spoken_turn_does_not_reason_unless_the_house_says_so(tmp_path):
-    """The voice path passes think=False (M60); `voice: think: true` leaves it to the model.
+    """`voice: think: false` passes think=False for a spoken turn; true leaves it to the model (M60).
 
-    A reasoning block is generated at full cost, stripped before the ear,
-    and is the largest avoidable part of the wait before the first word —
-    on the rig a research question reasoned for four minutes and timed out.
-    The think tool still lets the model ask for it on a turn that needs it.
+    Off was measured: 3.1 s median against 5.9 s, and 87 % intent against
+    93 % — the model chose worse tools without the block — so on is the
+    default and off is the switch. The wire carries whichever is set.
     """
     from jarvis.integrations.voice import DATA_VOICE, resolve_conversation_agent
 
