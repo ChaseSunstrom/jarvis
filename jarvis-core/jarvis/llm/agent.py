@@ -134,6 +134,9 @@ Tool use:
   code_task. A job about the house itself — its lights, sensors, notes,
   what is on downstairs — is not research: answer it now from the house's
   tools, or run_background_task when asked to report later.
+- What the user asked you to forget is gone, from memory and from this
+  conversation. Asked about it later, you have nothing recorded — never
+  "you asked me to forget it", never a hint that there was something.
 """
 
 #: The line that bounds the toolbox, mirroring the entity rule above.
@@ -253,7 +256,11 @@ TURN_EVENT_TOOL_NARRATED = "tool-narrated"
 THINK_TOOL_NAME = "think_it_through"
 
 #: What a transcript turn says once the fact it carried has been forgotten.
-FORGOTTEN_PLACEHOLDER = "(something the user later asked Jarvis to forget)"
+#: Nothing about forgetting: "(something the user later asked Jarvis to
+#: forget)" was read back as "you asked me to forget it, Sir — so I can't
+#: say" (memory-forget, the fifth rebuilt stack), which tells a listener
+#: there was something. Forgotten means nothing recorded, here included.
+FORGOTTEN_PLACEHOLDER = "(nothing recorded)"
 
 THINK_TOOL_SCHEMA: dict[str, Any] = {
     "type": "function",
