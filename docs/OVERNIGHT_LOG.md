@@ -545,3 +545,8 @@ is quiet. Done since:
   user never sees them (f1e3795). The stack is rebuilt with these after the sequence, and
   the smoke set, the eight M25 scenarios, the scorecard and the M51/M61/M64 gates run again
   on it. Broker and search engine up beside the stack since 17:55.
+- 18:40 — M61 (20/20) and M64 (64/64) ticked from the main checkout, live smoke slices
+  included; M63 32/32 again, M58 21/21; M23 12/13 with M56 its one open check. 63 of 64
+  overhaul milestones ticked. CI on 570158b: CI, APK, compose smoke and the desktop workflow
+  green; End-to-end running. The sequence's last step, the full live run with its report,
+  is under way; the rebuild-and-remeasure chain follows it.
