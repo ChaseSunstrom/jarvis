@@ -20,14 +20,26 @@ function walk(dir, out) {
 const files = roots.flatMap((r) => { try { return walk(r, []); } catch { return []; } });
 const hits = [];
 for (const file of files) {
-	const text = readFileSync(file, 'utf8');
+	// Comments are not controls. A doc block saying "a raw `<button>` purely
+	// for a class:on directive" was three dead controls to this scanner, in
+	// the one component every page's buttons go through. Block comments, HTML
+	// comments and `*`/`//` comment lines are blanked (not removed, so the
+	// reported line numbers stay right).
+	const text = readFileSync(file, 'utf8')
+		.replace(/<!--[\s\S]*?-->|\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+		.replace(/^[ \t]*(\*|\/\/)[^\n]*/gm, (m) => m.replace(/[^\n]/g, ' '));
 	const tagRe = /<(button|a)\b([^>]*)>/gs;
 	let m;
 	while ((m = tagRe.exec(text))) {
 		const [, tag, attrs] = m;
 		const line = text.slice(0, m.index).split('\n').length;
 		if (tag === 'button') {
-			const handled = /\b(on:?click|on:?mousedown|on:?pointerdown|on:?keydown|use:)/.test(attrs);
+			// `{onclick}` — Svelte 5's shorthand for `onclick={onclick}` — is a
+			// handler too. The library's <Button> forwards its handler that way
+			// and this reported it as three dead controls, which made the one
+			// component every page's buttons go through the one thing the
+			// check could not see.
+			const handled = /\b(on:?click|on:?mousedown|on:?pointerdown|on:?keydown|use:)|\{(onclick|onmousedown|onpointerdown|onkeydown)\}/.test(attrs);
 			const submit = /type\s*=\s*["']?submit/.test(attrs) || /\bform\s*=/.test(attrs);
 			const spread = /\{\.\.\./.test(attrs);
 			if (!handled && !submit && !spread) hits.push(`${file}:${line}: <button> without a handler`);
