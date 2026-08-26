@@ -648,3 +648,7 @@ is quiet. Done since:
   routing runs under; measuring the smoke set at a lower value is the next intelligence
   experiment, recorded here rather than tuned blind. CI green on ae87e96 so far (desktop,
   compose smoke with the cache, CI, APK).
+- 20:30 — the sixth rebuild: the placeholder holds — nothing hints at a forgetting — and the
+  thread scenarios pass both variants; memory-forget's confirmation came as "Done, Sir.",
+  which the judge does not take as the word. The message names the word (a14377f); the
+  seventh rebuild measures it. Each of these is a ten-minute loop of build, smoke, judge.
