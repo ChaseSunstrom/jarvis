@@ -84,7 +84,7 @@ check_sh "test_packaging agrees: compose, config and .env.example" \
     "$PYTEST tests/test_packaging.py 2>&1 | tail -2"
 
 # --- the rig's own camera -----------------------------------------------------
-require_file testing/live/fixtures/camera/kitchen.jpg
+require_file testing/live/fixtures/handbook/camera/kitchen.jpg
 check "the fixture site serves /camera/kitchen.jpg as a real JPEG" python3 -c '
 import sys, urllib.request; sys.path.insert(0, ".")
 from testing.live.fixture_site import Site

@@ -35,7 +35,8 @@ class FixtureWeb:
         by_name = dict(zip(SITES, (site.url for site in self.sites)))
         self.search = Search(by_name).start()
         self.browser = Browser([site.url for site in self.sites]).start()
-        return {"search": self.search.url, "browser": self.browser.url}
+        # `handbook` is the site itself: the fixture camera lives there too.
+        return {"search": self.search.url, "browser": self.browser.url, "handbook": by_name["handbook"]}
 
     def stop(self) -> None:
         for closing in (self.browser, self.search, *self.sites):

@@ -266,6 +266,8 @@ def build_config(
     rerank_url: str = "",
     rerank_model: str = "",
     code: dict[str, Any] | None = None,
+    vision_model: str = "",
+    vision_camera_url: str = "",
 ) -> str:
     """A complete jarvis-core configuration.yaml, pointed at the fakes.
 
@@ -301,6 +303,29 @@ def build_config(
             f"  rerank_model: {rerank_model}\n"
         )
 
+    # A camera and a vision model, when the caller has both (M56): the fixture
+    # site's still and a GGUF VLM the model server serves. Half of it would be
+    # a house with a camera nobody can look through, so it is all or nothing.
+    vision_block = (
+        f"""
+# One fixture camera, looked at on the OpenAI wire through the same model
+# server as the chat model. Consent `always`: the rig is the operator here.
+vision:
+  backend: openai
+  url: {ollama_url}
+  model: {vision_model}
+  api_key_env: LLM_API_KEY
+  local_only: false
+  cameras:
+    - name: Kitchen
+      platform: still
+      url: {vision_camera_url}
+      area: Kitchen
+      consent: always
+"""
+        if vision_model and vision_camera_url
+        else ""
+    )
     web_block = (
         f"""
 # Private search and page fetching. Pointed at whatever the caller passed —
@@ -378,7 +403,7 @@ sun:
 demo:
   create_areas: true
 
-{web_block}{code_block}
+{web_block}{code_block}{vision_block}
 # Researching a question: several searches, read the best pages, write it up
 # with citations. Needs `web:` above, which the caller has to point somewhere.
 research:
@@ -610,6 +635,8 @@ class Harness:
         browser_url: str | None = None,
         browser_token: str | None = None,
         embeddings_url: str | None = None,
+        vision_model: str | None = None,
+        vision_camera_url: str | None = None,
         embeddings_model: str | None = None,
         rerank_url: str | None = None,
         rerank_model: str | None = None,
@@ -678,6 +705,8 @@ class Harness:
         self.ollama_url = ""
         # The gateway's key, when one is in front (M40). From the environment
         # by default, so every caller does not have to know about it.
+        self.vision_model = str(vision_model or "")
+        self.vision_camera_url = str(vision_camera_url or "")
         self.llm_api_key = str(
             llm_api_key if llm_api_key is not None else os.environ.get("LLM_API_KEY", "")
         )
@@ -916,6 +945,8 @@ class Harness:
                 host=self.host,
                 ollama_url=self.ollama_url,
                 llm_api_key=self.llm_api_key,
+                vision_model=self.vision_model,
+                vision_camera_url=self.vision_camera_url,
                 stt_port=self.ports["stt"],
                 tts_port=self.ports["tts"],
                 wake_port=self.ports["wake"],

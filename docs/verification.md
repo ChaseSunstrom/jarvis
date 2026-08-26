@@ -689,6 +689,23 @@ person-shaped probe asks; what the suite found, written up.
 | Every route opens in the real console against the running stack with no console error and only palette colours | Automated | `python3 testing/live/console_pass.py` — a real browser against the container on :8199 |
 | Whether it is *good* | **Needs eyes** | `docs/ui-review/` and `docs/motion-review/` |
 
+### Cameras and local vision (M56)
+
+`bash scripts/verify/m56-vision.sh`. Two wires, one refusal rule, the events the voice tab draws.
+
+| Claim | Level | Proof |
+|---|---|---|
+| A look is one OpenAI-wire request with the frame as a base64 `image_url` part, the key from the env, the model as configured | Automated | `tests/test_vision_openai.py` — the request's exact shape against a fake model server |
+| A refused look (consent, a fenced question, an unknown camera) sends nothing to the camera and nothing to the model | Automated | `test_vision_openai.py`, `test_vision.py` — the fake transport records every request |
+| A model url off the LAN is refused before any frame is read while `local_only` holds | Automated | `test_a_public_model_url_is_refused_when_local_only` |
+| A 4xx/5xx or an unreachable model is a clean could-not-look record, never a traceback | Automated | `test_vision_openai.py` |
+| Every look fires the three events with the contract's fields and never a frame | Automated | `test_the_events_carry_the_contract_and_never_a_frame` against `tests/contracts/vision_events.json` |
+| Frigate events become moments, one per event id | Automated | `test_frigate_events_become_moments_one_per_event_id` |
+| go2rtc is behind `--profile cameras`, pinned, on loopback; `platform: go2rtc` resolves to its snapshot endpoint; compose, config and `.env.example` agree | Automated | the gate; `tests/test_packaging.py` |
+| The fixture camera is served and the scenario asks the right question | Automated | the gate: the fixture site serves `/camera/kitchen.jpg` as a real JPEG; `vision-look-fixture` parses, gated on M56 |
+| Jarvis describes the kitchen camera on the fixture ground | Live | `VISION_MODEL=<served vlm> python3 -m testing.live.runner --full --only vision-look-fixture` — needs a vision model on the model server (none is loaded today) |
+| A real camera in this house | **Manual** | none configured; `vision: cameras:` in configuration.yaml names them |
+
 ### The sky (M58)
 
 `bash scripts/verify/m58-sky.sh`. Green on unit tests alone, by design: everything below

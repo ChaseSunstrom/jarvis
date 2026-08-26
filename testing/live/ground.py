@@ -190,6 +190,10 @@ class HarnessGround(Ground):
             browser_url=browser_url,
             browser_token=browser_token,
             code=self._coding_fixture(Path(work_dir)),
+            # The fixture camera is a still the handbook site serves; the model is
+            # whatever GGUF VLM the model server has (VISION_MODEL), or nothing.
+            vision_model=os.environ.get("VISION_MODEL", ""),
+            vision_camera_url=(self.web.get("handbook", "") + "/camera/kitchen.jpg") if self.web.get("handbook") else "",
         )
         self.harness.start()
         self.base_url = self.harness.base_url

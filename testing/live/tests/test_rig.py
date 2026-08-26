@@ -222,7 +222,10 @@ def test_only_scenarios_that_need_our_own_web_leave_the_stack():
     # this repository serves, and pointing an injection probe at the open web
     # would be testing somebody else's server. The channel probes are here for
     # the same reason — the message they send is one we wrote.
-    allowed = {"research", "coding", "subagents", "skills", "security"}
+    # `vision` joined with M56: the camera the scenario looks through is a
+    # JPEG this repository renders and its fixture site serves, so the answer
+    # ("a red mug") is one we can assert on. No real camera is.
+    allowed = {"research", "coding", "subagents", "skills", "security", "vision"}
     off_stack = {s.name: s.capability for s in load_all() if s.ground == "fixture"}
     strays = {name: cap for name, cap in off_stack.items() if cap not in allowed}
     assert not strays, f"these do not need the fixture web: {strays}"

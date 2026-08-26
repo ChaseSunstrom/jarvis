@@ -356,3 +356,10 @@ is quiet. Done since:
   breathes for three seconds before restarting a core at the end of a run
   (piper logged a reset each time a core was torn down mid-synthesis;
   `ISSUES.md`).
+- 08:05 — M58 (`d8cc870`) ticked and committed. M56 brought onto the branch
+  from its worktree and finished: the OpenAI wire's tests written, a public
+  model url refused before any frame is read (documented by the agent, not
+  enforced), go2rtc and Frigate wired into the setup, the harness given a
+  fixture camera, `vision:` switched on in the deployed config with no
+  cameras yet. Both vision suites green (116). Gate running; the live check
+  needs a vision model on the model server, which serves none today.

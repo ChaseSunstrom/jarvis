@@ -8,6 +8,23 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M56 — cameras and local vision.** The `vision` integration speaks the OpenAI wire: a look is
+  one `/v1/chat/completions` call with the frame as a base64 `image_url` part, to the same model
+  server as the chat model (a GGUF vision model behind llama-swap and the gateway; `house-vision`
+  is the alias to give it) — never a URL for the model host to fetch, the key from the env name
+  the config gives, and a model url that resolves off the LAN refused before any frame is read,
+  the rule `llm:` already applies. Ollama's wire stays for an install that runs one. go2rtc
+  restreams RTSP / USB / ONVIF cameras behind `--profile cameras` (pinned, host networking, its
+  API on loopback; `jarvis-core/go2rtc/go2rtc.yaml` names the streams) and `platform: go2rtc`
+  names a stream rather than a URL; Frigate's events become moments (kind `camera`, one per
+  event id, debounced) when `vision: frigate: mqtt: true`. Every look fires `vision_look_started`
+  / `_finished` / `_denied` with the fields `tests/contracts/vision_events.json` pins — id,
+  camera, question, duration — never a frame or a description; the voice tab's strip draws them.
+  Consent, fencing and the audit are unchanged. Switched on in the deployed config with no
+  cameras yet: the operator names them. The rig has a fixture camera (a kitchen table and a red
+  mug the fixture site serves), the harness writes a vision block only when it is given a camera
+  and a model, and `vision-look-fixture` asks "what do you see on the kitchen camera?" — it
+  needs `VISION_MODEL`, a vision model the server serves, and says so.
 - **M58 — the sky.** A `sky` integration shaped like `sun`: the next ISS pass for the house,
   what is overhead now, the moon's phase, the planets tonight — computed here with skyfield
   from orbital elements cached under `<config>/sky/` and a 17 MB ephemeris downloaded once,

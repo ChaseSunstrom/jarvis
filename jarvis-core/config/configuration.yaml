@@ -502,14 +502,29 @@ notes:
 notifications:
   max_entries: 200        # oldest READ entries go first; unread ones are kept
 
-# The sky (M58): the next ISS pass for the house, what is overhead now, the
-# moon's phase, the planets tonight — computed here with skyfield. Orbital
-# elements come from CelesTrak as OMM CSV, cached under sky/tle and refreshed
-# when older than a day; the 17 MB ephemeris is downloaded once into sky/.
-# After that it answers offline for as long as the elements are worth
-# anything (about two weeks), and every answer says how old they are. The
-# location is `jarvis:` above. Switched on here, not only in the harness's
-# generated config, for the reason the notes and notifications blocks give.
+# Vision through cameras (M56). Looks go to a vision model on the same model
+# server as the chat model, on the OpenAI wire (a GGUF VLM llama-swap serves —
+# `house-vision` is the alias to give it; until one is loaded the MODELS panel
+# says "not served" and a look says it could not). Cameras: go2rtc restreams
+# RTSP / USB / ONVIF cameras behind `--profile cameras` (jarvis-core/go2rtc/
+# go2rtc.yaml names the streams); a still camera is a URL. Consent is asked
+# for every look unless a camera says `always`; every look is on the audit.
+vision:
+  backend: openai
+  model: house-vision
+  api_key_env: LLM_API_KEY
+  local_only: true
+  go2rtc_url: http://127.0.0.1:1984
+  cameras: []
+  # cameras:
+  #   - name: Front Door
+  #     platform: go2rtc
+  #     stream: front_door
+  #     area: Front Porch
+  #     consent: ask
+  frigate:
+    mqtt: false
+
 sky:
   tle_cache: sky/tle
   ephemeris: sky/de421.bsp

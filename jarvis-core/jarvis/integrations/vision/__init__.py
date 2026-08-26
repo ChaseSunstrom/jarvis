@@ -141,6 +141,11 @@ DATA_FRIGATE = "frigate"
 #: `allowed`, …) plus the cleaned `question`; the finish carries `ok` and
 #: `duration_ms`. `tests/contracts/vision_events.json` is the table the
 #: console's activity strip reads from.
+#: A look refused because the configured model server resolves off the LAN
+#: while `local_only` holds — the same rule `llm:` applies, before any frame
+#: is fetched, so no picture of the house can go where the model would.
+MODEL_URL_PUBLIC = "model_url_public"
+
 EVENT_LOOK_STARTED = "vision_look_started"
 EVENT_LOOK_FINISHED = "vision_look_finished"
 EVENT_LOOK_DENIED = "vision_look_denied"
@@ -222,6 +227,11 @@ def _insecure_client(jarvis: "Jarvis", cfg: VisionConfig) -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 # rate limiting
 # ---------------------------------------------------------------------------
+def _elapsed_ms(started: float) -> int:
+    """Milliseconds since a `time.monotonic()` stamp — what a look cost, for the audit and the strip."""
+    return int(round((time.monotonic() - started) * 1000))
+
+
 class RateLimiter:
     """Per-camera budget: a minimum gap, and a ceiling per hour.
 
@@ -287,7 +297,10 @@ class VisionManager:
         audit: AuditTrail,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         description_ttl: float = DEFAULT_DESCRIPTION_TTL,
+        model_refused: str = "",
     ) -> None:
+        #: Why the model may not be used at all (a public url under local_only), or "".
+        self.model_refused = model_refused
         self.jarvis = jarvis
         self.config = config
         self.sources = sources
@@ -582,6 +595,21 @@ class VisionManager:
             )
         question_text = clean_question(question)
 
+        if self.model_refused:
+            # Before the camera is resolved, let alone read: a frame must not
+            # be fetched for a model that is not allowed to see it.
+            _, refused = self._refuse(
+                camera, action, requester, MODEL_URL_PUBLIC,
+                reason=self.model_refused, error=self.model_refused, question=question_text,
+            )
+            return _error(
+                f"Refused: the vision model's url is not on the LAN ({self.model_refused}). "
+                "Point `vision: url:` at a local model server, or set `local_only: false` "
+                "if that is really what you want.",
+                decision=MODEL_URL_PUBLIC,
+                audit_id=refused.id,
+            )
+
         source = self.resolve(camera)
         if source is None:
             return self._unknown_camera(camera, action, requester, question_text)
@@ -673,11 +701,24 @@ class VisionManager:
                 )
         return result
 
-    def _failed(self, record: LookRecord, outcome: str, message: str) -> dict[str, Any]:
+    def _failed(
+        self,
+        record: LookRecord,
+        outcome: str,
+        message: str,
+        started: float | None = None,
+        question: str = "",
+    ) -> dict[str, Any]:
         record.outcome = outcome
         record.error = message
         self.audit.add(record)
-        self._fire(EVENT_LOOK_FINISHED, record, ok=False)
+        # The finished event carries the contract's fields whether the look
+        # succeeded or not: the strip draws "looked" or the reason from it.
+        self._fire(
+            EVENT_LOOK_FINISHED, record,
+            ok=False, question=question,
+            duration_ms=_elapsed_ms(started) if started is not None else 0,
+        )
         return _error(
             message,
             camera=record.camera,
@@ -759,11 +800,14 @@ def _camera_configs(options: dict[str, Any]) -> list[CameraConfig]:
     raw = options.get("cameras")
     if isinstance(raw, dict):
         raw = [raw]
+    # `platform: go2rtc` cameras name a stream, not a URL; the base they are
+    # read from is the integration's `go2rtc_url`, or the one this stack ships.
+    go2rtc_url = str(options.get("go2rtc_url") or DEFAULT_GO2RTC_URL).strip() or DEFAULT_GO2RTC_URL
     configs: list[CameraConfig] = []
     seen: set[str] = set()
     for entry in raw or []:
         try:
-            cfg = CameraConfig.from_config(entry)
+            cfg = CameraConfig.from_config(entry, go2rtc_url=go2rtc_url)
         except ValueError as exc:
             _LOGGER.error("vision: skipping a camera — %s", exc)
             continue
@@ -780,6 +824,17 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     options = _options(config)
     cfg = VisionConfig.from_config(options)
     store = _store(jarvis)
+    # The same rule `llm:` applies: a model url that resolves off the LAN is
+    # refused while `local_only` holds. Decided once, here; every look that
+    # follows is refused before any camera is read.
+    model_refused = ""
+    if cfg.local_only and cfg.url:
+        from ..llm import is_local_url
+
+        local, why = is_local_url(cfg.url)
+        if not local:
+            model_refused = why or f"{cfg.url} is not a local address"
+            _LOGGER.error("vision: refusing the model url — %s", model_refused)
     client = create_client(jarvis, cfg)
 
     configs = _camera_configs(options)
@@ -829,8 +884,20 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         AuditTrail(size=int(_number("audit_size", 200))),
         max_concurrent=int(_number("max_concurrent", DEFAULT_MAX_CONCURRENT)),
         description_ttl=_number("description_ttl", DEFAULT_DESCRIPTION_TTL),
+        model_refused=model_refused,
     )
     store[DATA_MANAGER] = manager
+    # An NVR's events as moments. Subscribed through the mqtt integration when
+    # it is there; without a broker Frigate stays a line in the log, not a
+    # reason for the cameras above not to work.
+    frigate_cfg = FrigateConfig.from_config(options.get("frigate"))
+    if frigate_cfg.enabled:
+        events = FrigateEvents(jarvis, frigate_cfg)
+        try:
+            await events.async_setup()
+            store[DATA_FRIGATE] = events
+        except Exception as err:  # noqa: BLE001 - the cameras do not depend on the NVR
+            _LOGGER.warning("vision: Frigate events not subscribed (%s)", err)
     store["platform"] = platform
 
     _register_services(jarvis, manager)

@@ -920,6 +920,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     optional Frigate events become moments; snapshot and "looking" on the voice tab; consent,
     fencing and audit unchanged. Research: `docs/research/vision-and-cameras.md`.
   - Verify: `bash scripts/verify/m56-vision.sh`
+  - 26 Aug: built and on the branch; gate 27/28 — the one open check is the live look
+    through a served VLM, which needs `VISION_MODEL` on the model server (it serves
+    `house` and `house-fast` today). The operator's line; ticked when it runs.
 - [ ] **M57 — Any sensor** · size L · deps M52 · parallel-ok M56, M58
   - Scope: Home Assistant MQTT discovery ingested — Zigbee2MQTT, ESPHome, rtl_433, Tasmota
     payloads as fixtures — into entities with history; tools to read, aggregate and compare
