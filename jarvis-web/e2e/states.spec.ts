@@ -45,7 +45,19 @@ const STATEFUL = SCREENS.filter((screen) => sectionsOf(screen.path).length === 0
 for (const screen of STATEFUL) {
 	test(`${screen.name} renders, and says so when the link drops`, async ({ page }) => {
 		const sockets: { close: () => void }[] = [];
+		// Once the link is "dropped" it stays dropped: a new connection is
+		// closed at once instead of relayed. Closing only the sockets open at
+		// that moment left the mock reachable, the client reconnected within
+		// its first backoff, and whether the offline state was ever painted
+		// depended on how busy the machine was — Console, Assistant and Tools
+		// each failed once that way, here and on CI. A jarvis-core that has
+		// gone away does not accept the reconnect either; this is that.
+		let down = false;
 		await page.routeWebSocket(/\/ws$/, (ws) => {
+			if (down) {
+				ws.close();
+				return;
+			}
 			const server = ws.connectToServer();
 			ws.onMessage((message) => server.send(message));
 			server.onMessage((message) => ws.send(message));
@@ -58,6 +70,7 @@ for (const screen of STATEFUL) {
 		});
 		await expect(page.getByTestId('link-dropped')).toHaveCount(0);
 
+		down = true;
 		for (const socket of sockets.splice(0)) socket.close();
 
 		const dropped = page.getByTestId('link-dropped');

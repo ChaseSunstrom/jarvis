@@ -74,7 +74,15 @@ jobs:
       # a hang is one named failing test and the rest of the suite still runs.
       - name: Run tests
         working-directory: ${{ matrix.suite.dir }}
-        run: python -m pytest ${{ matrix.suite.paths }} -q --timeout=120 --timeout-method=signal
+        run: |
+          set -uo pipefail
+          # The job log needs a token to read; the check run's annotations do
+          # not. A failing test is named on the check run, so a red job can be
+          # reproduced from the public API. (`-rf`: pytest's own FAILED lines.)
+          python -m pytest ${{ matrix.suite.paths }} -q -rf --timeout=120 --timeout-method=signal 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(FAILED|ERROR) ' pytest.log | head -n 30 | sed 's/^/::error::/'
+          exit "$status"
 
   legacy-suites:
     name: python · orchestrator/sandbox/evals
