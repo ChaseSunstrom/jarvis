@@ -157,7 +157,7 @@ class VoiceIdentityActivity : Activity() {
     // --- UI -----------------------------------------------------------------
     private fun buildUi(): ViewGroup {
         val column = JarvisUi.column(this)
-        column.addView(JarvisUi.title(this, "YOUR VOICE"))
+        column.addView(JarvisUi.screenTitle(this, "Your voice", "Teach Jarvis what you sound like, so it answers you and not the television."))
         column.addView(
             JarvisUi.hint(
                 this,
@@ -239,7 +239,7 @@ class VoiceIdentityActivity : Activity() {
         stepList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         column.addView(stepList, matchWidth())
 
-        column.addView(JarvisUi.spacer(this, 12))
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
         // TAP, not hold.
         //
         // It was push-to-talk, on the reasoning that a VAD which clips the last
@@ -266,7 +266,7 @@ class VoiceIdentityActivity : Activity() {
         forgetButton = JarvisUi.button(this, "FORGET MY VOICE") { forget() }
         column.addView(forgetButton, matchWidth())
 
-        column.addView(JarvisUi.spacer(this, 12))
+        column.addView(JarvisUi.spacer(this, JarvisUi.Space.GAP))
         column.addView(
             JarvisUi.hint(
                 this,
@@ -616,7 +616,7 @@ class VoiceIdentityActivity : Activity() {
                     setTextColor(tone)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.HINT)
                     typeface = Typeface.MONOSPACE
-                    setPadding(0, JarvisUi.dp(this@VoiceIdentityActivity, 3), 0, 0)
+                    setPadding(0, JarvisUi.dp(this@VoiceIdentityActivity, JarvisUi.Space.MICRO), 0, 0)
                     // The glyphs are drawings. TalkBack reads "[ok]" as
                     // bracket-o-k-bracket, so the row says it in English
                     // instead — and the current one says so, because "which

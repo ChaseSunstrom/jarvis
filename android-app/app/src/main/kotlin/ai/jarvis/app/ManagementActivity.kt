@@ -7,6 +7,7 @@ import ai.jarvis.app.config.ServerUrl
 import ai.jarvis.app.ui.ConsoleFrame
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.ScreenStates
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
@@ -15,7 +16,6 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -31,7 +31,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayInputStream
 
@@ -80,13 +79,13 @@ class ManagementActivity : Activity() {
     private var webView: WebView? = null
     private var serverOrigin: Origin? = null
     private var tab: ConsoleTab = ConsoleTab.DEFAULT
-    /** Holds the tab strip, so marking the current tab can rebuild it. */
-    private var tabSlot: FrameLayout? = null
+    /** The bar: the brand, the readout and the tabs. Marking the current tab slides its underline. */
+    private var strip: ConsoleFrame.Strip? = null
 
     /**
-     * Jarvis's own "loading" and "that did not work", drawn over the WebView.
+     * Jarvis's own loading, error and offline moments, drawn over the WebView.
      *
-     * This screen had neither, and the result was the worst-looking failure in
+     * This screen had none, and the result was the worst-looking failure in
      * the app: an unreachable console rendered **Chromium's** white
      * "webpage not available" page — system fonts, a Chrome error code, a
      * RELOAD button that is not this app's — full-bleed inside an all-black
@@ -94,11 +93,13 @@ class ManagementActivity : Activity() {
      * loaded. There was no `onReceivedError` override, no
      * `onReceivedHttpError`, and no progress indicator of any kind, so a slow
      * console was indistinguishable from a dead one for as long as it took.
+     *
+     * The three are the console's own ([ScreenStates]): skeleton rows while a
+     * section is fetched, the offline state when the server did not answer,
+     * the error state when it answered and said no. They were a centred
+     * accent title in bold mono, which is not a state the console has.
      */
-    private var statusPanel: LinearLayout? = null
-    private var statusTitle: TextView? = null
-    private var statusDetail: TextView? = null
-    private var statusRetry: android.widget.Button? = null
+    private var statusPanel: FrameLayout? = null
 
     /**
      * Set when the current navigation failed, so [onPageFinished] does not
@@ -191,14 +192,27 @@ class ManagementActivity : Activity() {
      * eventually changes.
      */
     private fun showLoading(next: ConsoleTab) {
-        statusTitle?.text = "LOADING ${next.label.uppercase()}"
-        statusDetail?.text = serverOrigin?.host.orEmpty()
-        statusRetry?.visibility = android.view.View.GONE
-        statusPanel?.visibility = android.view.View.VISIBLE
+        show(ScreenStates.loading(this, label = "Loading ${next.label.lowercase()}"))
+        strip?.setStatus(LOADING, ConsoleFrame.Tone.NEUTRAL)
     }
 
     private fun hideStatus() {
         statusPanel?.visibility = android.view.View.GONE
+        strip?.setStatus(LINK_OK, ConsoleFrame.Tone.LIVE)
+    }
+
+    /** Put [state] over the WebView, in place of whatever was there. */
+    private fun show(state: android.view.View) {
+        val panel = statusPanel ?: return
+        panel.removeAllViews()
+        panel.addView(
+            state,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        panel.visibility = android.view.View.VISIBLE
     }
 
     /**
@@ -218,10 +232,21 @@ class ManagementActivity : Activity() {
     private fun showError(title: String, detail: String) {
         failed = true
         webView?.loadData("", "text/html", "utf-8")
-        statusTitle?.text = title
-        statusDetail?.text = detail
-        statusRetry?.visibility = android.view.View.VISIBLE
-        statusPanel?.visibility = android.view.View.VISIBLE
+        show(ScreenStates.error(this, title, detail) { reload() })
+        strip?.setStatus(ERROR, ConsoleFrame.Tone.WARN)
+    }
+
+    /**
+     * The server did not answer at all: the offline state, not the error one.
+     * The two send the user to different places — a network to fix rather
+     * than a token to re-pair — and the console draws them differently for
+     * that reason. Blanked the same way as [showError], for the same reason.
+     */
+    private fun showOffline(detail: String) {
+        failed = true
+        webView?.loadData("", "text/html", "utf-8")
+        show(ScreenStates.offline(this, detail, onReconnect = { reload() }))
+        strip?.setStatus(NO_LINK, ConsoleFrame.Tone.OFF)
     }
 
     private fun buildUi(view: WebView): ViewGroup {
@@ -230,49 +255,21 @@ class ManagementActivity : Activity() {
             setBackgroundColor(JarvisUi.BG)
         }
 
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            val p = JarvisUi.dp(this@ManagementActivity, 12)
-            setPadding(p, p, p, p)
-        }
-        bar.addView(
-            TextView(this).apply {
-                text = serverOrigin?.host ?: ""
-                setTextColor(JarvisUi.ACCENT)
-                textSize = JarvisUi.Type.HINT
-                letterSpacing = 0.16f
-                typeface = android.graphics.Typeface.MONOSPACE
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        bar.addView(JarvisUi.button(this, "RELOAD") { reload() })
+        // The console's own bar and nav, on the phone.
+        //
+        // Without the nav this screen was the console's front door and nothing
+        // else: reaching Tools meant going back to the home screen and starting
+        // again, because the page's own nav is inside a WebView whose links do
+        // not carry the bearer header. Switching here re-issues an
+        // authenticated navigation, which is the only kind that works. The bar
+        // above it carries the brand and the link readout the console's does;
+        // RELOAD is the phone's own, because a WebView has no other way to ask
+        // for the page again with the bearer on it.
+        val bar = tabBar()
+        strip = bar
+        bar.brand.addAction(JarvisUi.button(this, "RELOAD") { reload() })
         root.addView(
             bar,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-
-        // The console's own nav, on the phone.
-        //
-        // Without it this screen was the console's front door and nothing else:
-        // reaching Tools meant going back to the home screen and starting again,
-        // because the page's own nav is inside a WebView whose links do not
-        // carry the bearer header. Switching here re-issues an authenticated
-        // navigation, which is the only kind that works.
-        val slot = FrameLayout(this)
-        tabSlot = slot
-        slot.addView(
-            tabBar(),
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        root.addView(
-            slot,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -313,43 +310,20 @@ class ManagementActivity : Activity() {
      * underneath it, and a half-loaded console is exactly the thing not to be
      * tapping at.
      */
-    private fun buildStatusPanel(): LinearLayout {
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+    private fun buildStatusPanel(): FrameLayout {
+        val panel = FrameLayout(this).apply {
             setBackgroundColor(JarvisUi.BG)
             isClickable = true
             val p = JarvisUi.dp(this@ManagementActivity, JarvisUi.Space.SCREEN)
             setPadding(p, p, p, p)
             visibility = android.view.View.GONE
-        }
-        statusTitle = TextView(this).apply {
-            setTextColor(JarvisUi.ACCENT)
-            textSize = JarvisUi.Type.LABEL
-            letterSpacing = 0.2f
-            typeface = android.graphics.Typeface.create(
-                android.graphics.Typeface.MONOSPACE,
-                android.graphics.Typeface.BOLD,
-            )
-            gravity = Gravity.CENTER
-            // Read out when it changes: this is the only thing on screen that
-            // says whether the console arrived, and a blank black rectangle
-            // announces nothing on its own.
+            // Read out when what is in it changes: this is the only thing on
+            // screen that says whether the console arrived, failed, or is still
+            // coming, and a blank black rectangle announces nothing on its own.
+            // The region is the panel rather than each state's title so that a
+            // state swapped in whole is announced whole.
             JarvisUi.liveRegion(this)
         }
-        panel.addView(statusTitle)
-        statusDetail = JarvisUi.hint(this, "").apply { gravity = Gravity.CENTER }
-        panel.addView(statusDetail)
-        statusRetry = JarvisUi.button(this, "TRY AGAIN") { reload() }.apply {
-            visibility = android.view.View.GONE
-        }
-        panel.addView(
-            statusRetry,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = JarvisUi.dp(this@ManagementActivity, JarvisUi.Space.GAP) }
-        )
         statusPanel = panel
         return panel
     }
@@ -360,28 +334,19 @@ class ManagementActivity : Activity() {
      * [ConsoleFrame] because the settings screen shows the same strip, and two
      * copies of one nav is what this change exists to stop.
      */
-    private fun tabBar(): ViewGroup =
+    private fun tabBar(): ConsoleFrame.Strip =
         ConsoleFrame.tabBar(this, current = tab, onPhone = false) { load(it) }
 
     /**
-     * Which tab you are on, said in the one way a ghost button can say it.
+     * Which tab you are on: the strip slides its one underline there.
      *
-     * The strip is rebuilt rather than repainted: it is seven small views, it
-     * is rebuilt only on a tab switch, and the alternative was this class
-     * keeping a parallel list of buttons in step with a strip built somewhere
-     * else — which is the bookkeeping that made two copies of the nav drift in
-     * the first place.
+     * The strip used to be rebuilt on every switch — seven views thrown away
+     * and made again — so a tab change was one underline vanishing and another
+     * appearing. The console measures one underline and moves it, and a tab
+     * change reads as "the same thing, elsewhere"; the strip does that now.
      */
     private fun markCurrentTab() {
-        val slot = tabSlot ?: return
-        slot.removeAllViews()
-        slot.addView(
-            tabBar(),
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
+        strip?.select(tab)
     }
 
     private fun reload() {
@@ -527,12 +492,11 @@ class ManagementActivity : Activity() {
             } else {
                 ""
             }
-            showError(
-                "CANNOT REACH THE CONSOLE",
+            showOffline(
                 "${serverOrigin?.host ?: "That address"} did not answer" +
                     (if (detail.isEmpty()) "." else ": $detail.") +
-                    "\n\nCheck the server is running and that this phone is on the " +
-                    "same network — or on the VPN — then try again."
+                    " Check the server is running and that this phone is on the " +
+                    "same network — or on the VPN — then reconnect."
             )
         }
 
@@ -553,7 +517,7 @@ class ManagementActivity : Activity() {
             if (!request.isForMainFrame) return
             val code = response.statusCode
             showError(
-                "THE CONSOLE ANSWERED $code",
+                "The console answered $code",
                 when (code) {
                     401, 403 ->
                         "Your server refused this phone's access token. Re-pair the " +
@@ -582,7 +546,7 @@ class ManagementActivity : Activity() {
             // so the panel says the same thing where it will still be readable
             // in ten seconds.
             showError(
-                "TLS ERROR",
+                "The certificate was not trusted",
                 "The certificate your server presented was not trusted, so nothing " +
                     "was loaded. A private CA belongs in this app's network security " +
                     "config, never in a “continue anyway”."
@@ -701,6 +665,12 @@ class ManagementActivity : Activity() {
     }
 
     companion object {
+        /** What the bar's readout says, as the console's `StatusReadout` says it. */
+        const val LINK_OK = "LINK OK"
+        const val LOADING = "LOADING"
+        const val NO_LINK = "NO LINK"
+        const val ERROR = "ERROR"
+
         /**
          * Identifies this app to jarvis-core without advertising the device
          * model, the Android version, or anything else a fingerprinter enjoys.

@@ -101,9 +101,13 @@ class JarvisOrbView @JvmOverloads constructor(
     /** The single colour the chrome wears; the blend's current value. */
     private var currentColor = mode.color
 
-    /** Live reactor colours, blended toward the mode's over [COLOR_BLEND_MS]. */
-    private val blobColors = SiriPalette.blobs(mode.tone).copyOf()
-    private var coreColor = SiriPalette.core(mode.tone)
+    /**
+     * Live reactor colours, blended toward the mode's over [COLOR_BLEND_MS].
+     * Read from [ReactorOrb.Palette], not [SiriPalette] directly: at rest the
+     * instrument is the accent's, as the console's is (see the palette).
+     */
+    private val blobColors = ReactorOrb.Palette.blobs(mode.tone).copyOf()
+    private var coreColor = ReactorOrb.Palette.core(mode.tone)
 
     /** Where the blend started. */
     private var blendFrom = blobColors.copyOf()
@@ -118,8 +122,19 @@ class JarvisOrbView @JvmOverloads constructor(
     private var amplitude = 0f
     private var smoothedAmplitude = 0f
 
-    /** Draw brackets + wordmark + caption (for the activation popup). */
+    /** Draw the field and the caption (for the activation popup). */
     var chromeEnabled = true
+
+    /**
+     * The person asked for no motion (see [JarvisUi.reducedMotion]). Read on
+     * attach and when the clock starts, not per frame — it is a
+     * content-provider query, and this view draws sixty times a second. When
+     * true the reactor's clock does not advance: no blades, no coil, no iris,
+     * no breath. What still changes is what carries information — the level
+     * arc follows the voice, the colours follow the state — so the instrument
+     * responds without ever moving for its own sake.
+     */
+    private var stillness = false
 
     /**
      * Paint the full-view vignette behind the orb.
@@ -160,12 +175,10 @@ class JarvisOrbView @JvmOverloads constructor(
     private val frameSpec = ReactorOrb.Frame()
 
     private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    // The wordmark in the label face and the caption in mono — the caption
-    // is a state readout, which is data; the wordmark is a word.
-    private val wordmarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = JarvisUi.LABEL_FACE
-        textAlign = Paint.Align.CENTER
-    }
+    // The caption in mono: a state readout, which is data. There is no
+    // wordmark here any more — the brand is the bar's (see ConsoleFrame.brand),
+    // as it is on the console, where the reactor sits under the top bar and
+    // nothing is painted over it.
     private val captionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = JarvisUi.MONO_FACE
         textAlign = Paint.Align.CENTER
@@ -296,20 +309,23 @@ class JarvisOrbView @JvmOverloads constructor(
         lastFrameMs = nowMs
         val dt = dtMs / 1000f
 
-        spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
-        timeSeconds += dt
-        breathPhase = (breathPhase + dt * ReactorOrb.TWO_PI / breathPeriodSeconds()) %
-            ReactorOrb.TWO_PI
-        // The blob field drifts at the same per-state rate the overlay uses, and
-        // faster with a voice, so both surfaces move alike.
-        val hz = SiriPalette.orbitHz(mode.tone) * (1f + 0.6f * smoothedAmplitude)
-        orbitPhase = (orbitPhase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
+        if (!stillness) {
+            spinDeg = (spinDeg + dt * spinDegPerSecond()) % 360f
+            timeSeconds += dt
+            breathPhase = (breathPhase + dt * ReactorOrb.TWO_PI / breathPeriodSeconds()) %
+                ReactorOrb.TWO_PI
+            // The blob field drifts at the same per-state rate the overlay uses, and
+            // faster with a voice, so both surfaces move alike.
+            val hz = SiriPalette.orbitHz(mode.tone) * (1f + 0.6f * smoothedAmplitude)
+            orbitPhase = (orbitPhase + dt * hz * ReactorOrb.TWO_PI) % ReactorOrb.TWO_PI
+        }
         smoothedAmplitude += (amplitude - smoothedAmplitude) * 0.22f
         invalidate()
     }
 
     private fun startClock() {
         clockRunning = true
+        stillness = JarvisUi.reducedMotion(context)
         // Do not even start an animator the platform has already said it will
         // not run. At scale 0 `start()` ends it inside the same call, and the
         // end listener would restart the view on the vsync clock a frame later
@@ -511,11 +527,11 @@ class JarvisOrbView @JvmOverloads constructor(
     }
 
     private fun applyBlend(t: Float) {
-        val target = SiriPalette.blobs(mode.tone)
+        val target = ReactorOrb.Palette.blobs(mode.tone)
         for (i in blobColors.indices) {
             blobColors[i] = argbEvaluator.evaluate(t, blendFrom[i], target[i]) as Int
         }
-        coreColor = argbEvaluator.evaluate(t, blendCoreFrom, SiriPalette.core(mode.tone)) as Int
+        coreColor = argbEvaluator.evaluate(t, blendCoreFrom, ReactorOrb.Palette.core(mode.tone)) as Int
         currentColor = argbEvaluator.evaluate(t, blendRimFrom, mode.color) as Int
     }
 
@@ -531,6 +547,7 @@ class JarvisOrbView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        stillness = JarvisUi.reducedMotion(context)
         // The clock is torn down on detach; a view that comes back (a popup
         // reused by singleTask, a re-added overlay) must start turning again.
         if (wasRunning) startClock()
@@ -660,17 +677,15 @@ class JarvisOrbView @JvmOverloads constructor(
 
     private fun drawText(canvas: Canvas, cx: Float, cy: Float, a: Float) {
         if (a <= 0f) return
-        // The wordmark: bright, not glowing. It is a word, and the reactor
-        // beneath it is the thing that is lit.
-        wordmarkPaint.color = withAlpha(JarvisTokens.Color.TEXT_BRIGHT, (235 * a).toInt())
-        wordmarkPaint.textSize = dp(WORDMARK_DP)
-        wordmarkPaint.letterSpacing = WORDMARK_SPACING
-        canvas.drawText("JARVIS", cx, wordmarkBaselineY(), wordmarkPaint)
-
-        // The caption: the state, in the state's colour — the one line under
-        // the instrument that says which of five things Jarvis is doing.
-        captionPaint.color = withAlpha(currentColor, (200 * a).toInt())
-        captionPaint.textSize = dp(CAPTION_DP)
+        // The caption: the one line under the instrument that says which of
+        // five things Jarvis is doing. The console's `.cap`: the chrome face
+        // at the `--jv-fs-2xs` step, wide tracking, ALWAYS the accent at rest
+        // — the instrument above it carries the state's colour, and a caption
+        // that changed colour with it said the same thing twice. It was tinted
+        // per state and sized in dp, which does not follow the user's text
+        // size.
+        captionPaint.color = withAlpha(JarvisTokens.Color.ACCENT_DEEP, (255 * a).toInt())
+        captionPaint.textSize = JarvisUi.sp(context, JarvisUi.Type.LABEL)
         captionPaint.letterSpacing = JarvisUi.TRACK_WIDE
         val botY = min(height - dp(CAPTION_MARGIN_DP), cy + restingOuterRadius() + dp(CAPTION_MARGIN_DP))
         canvas.drawText(stateLabel, cx, botY, captionPaint)
@@ -701,15 +716,18 @@ class JarvisOrbView @JvmOverloads constructor(
     /**
      * The outer boundary radius with the breathing and the mic level taken out.
      * The chrome is positioned against this rather than the live radius so the
-     * wordmark and the caption stay put while the orb breathes — and so the
-     * boot animation can land its own wordmark on exactly this baseline.
+     * caption stays put while the orb breathes — and so the boot animation can
+     * resolve its wordmark against the instrument's real bezel.
      */
     private fun restingOuterRadius(): Float = baseRadius() * ReactorOrb.OUTER_FACTOR
 
     /**
-     * Baseline of the JARVIS wordmark. [JarvisBootAnimation] calls this so the
-     * letters it resolves in finish exactly where the idle wordmark lives —
-     * there is no jump at the handoff because there is nowhere to jump to.
+     * Baseline of the wordmark [JarvisBootAnimation] resolves above the
+     * instrument during the power-on. This view no longer paints one of its
+     * own — the brand is the bar's, as on the console — so the boot's letters
+     * fade with the rest of its chrome at the handoff; they are placed off the
+     * bezel here so that they sit where the wordmark did, above the reactor
+     * and clear of it, whatever the screen.
      */
     fun wordmarkBaselineY(): Float =
         max(dp(72f), height / 2f - restingOuterRadius() - dp(48f))
@@ -767,7 +785,12 @@ class JarvisOrbView @JvmOverloads constructor(
         const val RING_GAUGE = ReactorOrb.RING_GAUGE
         const val RING_COUNT = ReactorOrb.RING_COUNT
 
-        /** Wordmark metrics, shared with [JarvisBootAnimation]. */
+        /**
+         * Wordmark metrics, for [JarvisBootAnimation]'s letters. Kept here
+         * because the boot resolves its wordmark against this view's geometry
+         * and `boot_timeline_test.py` pins the spacing to the timeline's end
+         * value; the view itself draws no wordmark since M64.
+         */
         const val WORDMARK_DP = 26f
         const val WORDMARK_SPACING = 0.55f
 
@@ -803,8 +826,7 @@ class JarvisOrbView @JvmOverloads constructor(
         private const val FIELD_MID = 1.62f
         private const val FIELD_FAR = 2.2f
 
-        /** The caption under the instrument: its size and its distance from the bezel, in dp. */
-        private const val CAPTION_DP = 12f
+        /** The caption's distance from the bezel, in dp. Its size is the label step. */
         private const val CAPTION_MARGIN_DP = 56f
 
         /**

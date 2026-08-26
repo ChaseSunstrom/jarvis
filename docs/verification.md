@@ -730,6 +730,30 @@ person-shaped probe asks; what the suite found, written up.
 | The shipped House opens first on a fresh install, names no device nobody owns (its tile is `sun.sun`), and leaves the camera unnamed | Automated | `test_dashboards.py` "the shipped house…", "a fresh install opens on the house…" |
 | It looks like the design — near-black, hairline cards, the display face on the big figures, tabular numerals, one cyan on the hero's live value — at three widths | Manual | `docs/ui-review/dashboards/{desktop,tablet,mobile}.png`, rendered by the gate and looked at on 26 Aug |
 | A still from a real camera on this host, and the sky from real downloaded elements | **Unproven** | this host has no camera configured and the sky cache is the fixture's; the paths are proven against the M56 fake camera and the M58 fixture, and the widgets say "no camera is configured" / "not fetched yet" on this box, which is the truth |
+### The phone looks like the console (M64)
+
+`bash scripts/verify/m64-phone-look.sh`. Build, unit, lint and goldens — no device. An audit put
+the native screens beside `jarvis-web/src` and listed fourteen mismatches; the gate reads the
+Kotlin for each one.
+
+| Claim | Level | Proof |
+|---|---|---|
+| The tab strip is `TopBar.svelte` under 720px: the mark and JARVIS, the readout, tabs at the smallest step with tight tracking, ONE underline the anchor's width that slides on `motion.dur.base`, the current tab scrolled into view, the overflowing edge faded to the ground | Automated | the gate greps `ConsoleFrame.kt` (no `withUnderline`, one `UNDERLINE_TAG`, `Motion.Dur.BASE`, `getSolidColor`) and `ManagementActivity.markCurrentTab` (no rebuild); `console_parity_test.py` holds `ConsoleTab` and PHONE where they were; the `console-frame` golden |
+| Rows are one panel with a hairline between (`JarvisUi.rows`); `checkRow` and the activity strip no longer box themselves | Automated | the gate greps `JarvisUi.kt`, `ActivityStrip.kt`, `SystemCheckActivity.kt`, `CrashLogActivity.kt`; the `settings-fields` and `voice-activity` goldens |
+| APPROVE is the accent primary (`Approvals.svelte`), not OK green; the held bar's action is the screen's primary | Automated | the gate reads `consentButton` and `banner`; the `approval-banner` golden |
+| An activity row spends the accent on a dot — glow and pulse while live, danger when failed, tick at rest — with the body face for the title and tabular mono for the datum | Automated | `StateDot.kt` on `motion.dur.pulse`; the `voice-activity` golden |
+| Every chrome word is the label recipe; no `letterSpacing` literal and no `dp(this@Activity, N)` literal remains, and the lint now catches both | Automated | `scripts/verify/token_lint.py` (`KT_TRACK`, `KT_SPACE` with any receiver) — 55 literals it had missed (46 dp, 9 tracking) are on the scale; the baseline is still empty; the gate plants one of each and checks the lint reports them |
+| No `Color.WHITE`; failure text is `--jv-danger-text`, never the mark colour | Automated | the gate greps `ToolActivityView.kt`, `CompanionAskActivity.kt`, `TaskProgressView.kt` and every `setTextColor(JarvisUi.DENY)` |
+| The reactor rests in `--jv-accent-deep` with an accent dot on both surfaces, as `Reactor.svelte`'s `.reactor` block does; `SiriPalette` stays pinned; the caption is the console's; no wordmark over the orb | Automated | `android-app/tools/reactor_orb_test.py` reads the web's resting block and `ReactorOrb.Palette` and both views; `design/build.py --check`; the `orb-idle` golden |
+| Screen titles are `ScreenTitle`: left, display face, sentence case, a lede — and every literal the instrumented suite taps is still on its screen | Automated | `instrumentation_contract_test.py` (the caps button labels stay; `textIgnoringCase` matches the sentence-case titles) |
+| Every screen has the four states: `ScreenStates.kt` draws loading, empty, error and offline as the console does; the console screen uses three, the crash log the fourth | Automated | the gate greps both activities; `accessibility_labels_test.py` (the status panel is a live region); the `screen-states` golden |
+| Settings has the console's section strip, in-page, over one scrollable column | Automated | the gate greps `SectionStrip.kt` and `SettingsActivity.kt`; the `section-strip` golden |
+| Controls take the console's geometry: buttons 16×10, fields space-2/space-3, a chooser as a value | Automated | the gate reads the three builders; the `components` and `settings-fields` goldens |
+| Bars are flat; the sweep runs on `motion.dur.sweep` | Automated | no `LinearGradient` / `Orientation.LEFT_RIGHT` in either bar; the `task-overlay` golden |
+| Graph labels are the body face knocked out of the ground; memories are a faint dot, not gold; a name never leaves the box | Automated | `knowledge_graph_mirror_test.py`; the `voice-graph` golden |
+| Lists enter staggered on `motion.stagger.step/cap` over `motion.dur.enter`; under reduced motion the orb's drift, the live dot, the task sweep and every entrance stop | Automated | `JarvisUi.reducedMotion` and `JarvisUi.enter`, read by the gate in the orb views, `StateDot.kt` and `TaskProgressView.kt` |
+| It builds, its 207 unit tests pass, lint is clean, fourteen Roborazzi goldens verify (`screen-states` and `section-strip` new; eight re-recorded and looked at) | Automated | `gradle :app:assembleDebug testDebugUnitTest lintDebug verifyRoborazziDebug` |
+| What only a handset can confirm: the slide, the resting colour on a panel, reduced motion against a real setting, the strip following a real scroll, whether the two surfaces read as one | **Manual** | `docs/ANDROID_DEVICE_TESTS.md` ADT-047…051 |
 
 ### The phone, the equal of the web (M61, first stage)
 

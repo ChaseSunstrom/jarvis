@@ -376,7 +376,7 @@ class JarvisBootAnimation @JvmOverloads constructor(
     private fun drawChecks(canvas: Canvas, t: Long, chrome: Float) {
         if (lines.isEmpty()) return
         checkPaint.textSize = dp(12.5f)
-        checkPaint.letterSpacing = 0.14f
+        checkPaint.letterSpacing = JarvisUi.TRACK_CHROME
 
         val right = width - dp(26f)
         val lineHeight = dp(20f)

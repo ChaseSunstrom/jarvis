@@ -14,8 +14,9 @@ What counts as a hit:
            sizing, type, radius, shadow or motion property (CSS and <style>).
            `0` and `1px` (a hairline) are the only literals allowed.
   android  (android-app/app/src/main/kotlin — .kt)
-           0xAARRGGBB colour ints · Color.parseColor/rgb/argb · dp(ctx, N) ·
-           textSize = N · COMPLEX_UNIT_SP, N.
+           0xAARRGGBB colour ints · Color.parseColor/rgb/argb · dp(<any receiver>, N)
+           · textSize = N · COMPLEX_UNIT_SP, N · letterSpacing = N (0 is allowed:
+           it is the absence of tracking, not a value).
   desktop  (jarvis-desktop/jarvis_desktop — .py)  #hex.
 
 Exempt: generated files (they carry the `@generated from design/tokens.json`
@@ -77,8 +78,22 @@ KT_COLOUR = re.compile(
     r"|Color\.parseColor\("
     r"|Color\.(?:rgb|argb)\(\s*[0-9]"
 )
-KT_SPACE = re.compile(r"\bdp\(\s*\w+\s*,\s*\d+(?:\.\d+)?\s*\)")
+#: A dp literal, whatever the receiver is written as.
+#:
+#: The receiver used to be `\w+`, which is `ctx` and `context` and `this` — and
+#: not `this@MainActivity`, which is how every Activity that builds a view
+#: inside an `apply { }` block has to name itself. Forty-five literals in
+#: eleven files slipped past on the `@` alone (`dp(this@MainActivity, 200)`,
+#: `dp(this@SettingsActivity, 14)`), and a lint that misses the common spelling
+#: of the thing it exists to catch is a lint that reports clean by accident.
+#: `view.context` is allowed as a receiver for the same reason.
+KT_SPACE = re.compile(r"\bdp\(\s*[\w@.]+\s*,\s*\d+(?:\.\d+)?f?\s*\)")
 KT_TYPE = re.compile(r"\btextSize\s*=\s*\d+(?:\.\d+)?f?\b|COMPLEX_UNIT_SP\s*,\s*\d+(?:\.\d+)?f?\b")
+#: Tracking typed by hand. Nine screens had `letterSpacing = 0.14f`, `0.16f`,
+#: `0.2f`, `0.24f` and `0.3f` for the same idea — an uppercase label — where
+#: the console has two steps (`--jv-track-chrome`, `--jv-track-wide`) and the
+#: phone names them `JarvisUi.TRACK_*`. `0f` is not a value, it is no tracking.
+KT_TRACK = re.compile(r"\bletterSpacing\s*=\s*(?!(?:0|0\.0+)f?(?![\d.]))\d*\.?\d+f?\b")
 
 
 def walk(root: Path, suffixes: tuple[str, ...]):
@@ -156,6 +171,8 @@ def scan_kotlin(text: str) -> list[str]:
             hits.append(f"{n}: raw dp: {raw.strip()[:110]}")
         if KT_TYPE.search(line):
             hits.append(f"{n}: raw sp: {raw.strip()[:110]}")
+        if KT_TRACK.search(line):
+            hits.append(f"{n}: raw tracking: {raw.strip()[:110]}")
     return hits
 
 

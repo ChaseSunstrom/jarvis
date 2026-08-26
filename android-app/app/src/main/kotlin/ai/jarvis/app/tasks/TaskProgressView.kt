@@ -4,7 +4,6 @@ import ai.jarvis.app.R
 import ai.jarvis.app.ui.JarvisUi
 import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
@@ -30,6 +29,11 @@ import ai.jarvis.app.ui.theme.JarvisTokens
  * percentage in the accessibility description either, because a screen reader
  * announcing "0 percent" about a task that is working is the same lie out loud.
  *
+ * The bar is flat (M64), as `StagesBar.svelte`'s segments are: the line
+ * colour for the track, the accent for what is running, the dim text colour
+ * for what is done, the danger colour for what broke — never a gradient, which
+ * is decoration. The header is the label recipe and the figures are readouts.
+ *
  * All arithmetic is in [TaskBoard], which has no Android in it and is pinned by
  * `android-app/tools/task_board_test.py`. This class only paints.
  */
@@ -48,12 +52,14 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        label = chrome("TASKS", JarvisUi.DIM)
-        headline = chrome("", JarvisUi.ACCENT)
+        label = JarvisUi.labelText(context, "TASKS", JarvisUi.DIM, JarvisUi.TRACK_CHROME)
+        headline = JarvisUi.readout(context, "", JarvisUi.ACCENT)
         headline.gravity = Gravity.END
+        headline.maxLines = 1
+        headline.ellipsize = TextUtils.TruncateAt.END
         header.addView(label, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         header.addView(headline, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        addView(header, wide(bottom = 6))
+        addView(header, wide(bottom = JarvisUi.Space.SNUG))
 
         list = LinearLayout(context).apply { orientation = VERTICAL }
         addView(list, wide())
@@ -75,7 +81,8 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
         while (rowViews.size < shown.size) {
             val row = RowView(context)
             rowViews.add(row)
-            list.addView(row, wide(top = 6))
+            list.addView(row, wide(top = JarvisUi.Space.SNUG))
+            JarvisUi.enter(row, rowViews.size - 1)
         }
         for ((i, view) in rowViews.withIndex()) {
             if (i < shown.size) {
@@ -92,16 +99,6 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
         if (visibility == GONE) return
         visibility = GONE
         for (view in rowViews) view.bind(null)
-    }
-
-    private fun chrome(text: String, color: Int): TextView = TextView(context).apply {
-        this.text = text
-        setTextColor(color)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
-        typeface = Typeface.MONOSPACE
-        letterSpacing = 0.16f
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
     }
 
     private fun wide(top: Int = 0, bottom: Int = 0, height: Int = LayoutParams.WRAP_CONTENT) =
@@ -127,6 +124,7 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
             title = TextView(context).apply {
                 setTextColor(JarvisUi.TEXT)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.BODY)
+                typeface = JarvisUi.BODY_FACE
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 // Silent to a screen reader: the ROW carries the description,
@@ -134,7 +132,8 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
                 // together they are the sentence.
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            badge = chrome("", JarvisUi.DIM).apply {
+            badge = JarvisUi.readout(context, "", JarvisUi.DIM).apply {
+                maxLines = 1
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
             top.addView(title, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
@@ -147,17 +146,17 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
             addView(top, wide())
 
             bar = BarView(context)
-            addView(bar, wide(top = 4, height = JarvisUi.dp(context, TRACK_DP)))
+            addView(bar, wide(top = JarvisUi.Space.TIGHT, height = JarvisUi.dp(context, JarvisUi.Space.TIGHT)))
 
             says = TextView(context).apply {
                 setTextColor(JarvisUi.FAINT)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
-                typeface = Typeface.MONOSPACE
+                typeface = JarvisUi.MONO_FACE
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            addView(says, wide(top = 2))
+            addView(says, wide(top = JarvisUi.Space.MICRO))
         }
 
         fun bind(row: TaskBoard.Row?) {
@@ -172,13 +171,14 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
                     TaskBoard.Status.RUNNING -> JarvisUi.ACCENT
                     TaskBoard.Status.BLOCKED -> JarvisUi.GOLD
                     TaskBoard.Status.DONE -> JarvisUi.APPROVE
-                    TaskBoard.Status.ERROR -> JarvisUi.DENY
+                    TaskBoard.Status.ERROR -> JarvisUi.DENY_TEXT
                     else -> JarvisUi.DIM
                 }
             )
             says.text = row.says
+            // Danger as words is the danger TEXT colour; the mark colour is the bar's.
             says.setTextColor(
-                if (row.status == TaskBoard.Status.ERROR) JarvisUi.DENY else JarvisUi.FAINT
+                if (row.status == TaskBoard.Status.ERROR) JarvisUi.DENY_TEXT else JarvisUi.FAINT
             )
             bar.show(row)
 
@@ -206,6 +206,11 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
      * alive and how far along is unknown". A determinate fill on a timer would
      * be a decoration that lies; a sweep on a timer is the honest drawing of
      * "no number exists".
+     *
+     * Under reduced motion the sweep does not run. What is drawn instead is
+     * the sweep's segment held in the middle of the track: a segment that is
+     * not anchored to the left edge cannot be read as "this much done", which
+     * is the one thing an indeterminate bar must not say.
      */
     private inner class BarView(context: Context) : FrameLayout(context) {
         private val fill: View
@@ -215,10 +220,15 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
 
         init {
             background = GradientDrawable().apply {
-                cornerRadius = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat()
+                cornerRadius = JarvisUi.dp(context, JarvisTokens.Radius.SM).toFloat()
                 setColor(TRACK_COLOR)
             }
-            fill = View(context)
+            fill = View(context).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = JarvisUi.dp(context, JarvisTokens.Radius.SM).toFloat()
+                    setColor(JarvisUi.ACCENT)
+                }
+            }
             addView(fill, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT))
             // The first event arrives before the track has been measured, so
             // without this the bar is stuck at zero for exactly the run it
@@ -227,14 +237,19 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
         }
 
         fun show(row: TaskBoard.Row) {
-            val colours = when (row.status) {
-                TaskBoard.Status.ERROR -> intArrayOf(JarvisUi.GOLD, JarvisUi.DENY)
-                TaskBoard.Status.CANCELLED -> intArrayOf(TRACK_COLOR, TRACK_COLOR)
-                else -> intArrayOf(FILL_START, JarvisUi.ACCENT)
-            }
-            fill.background = GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT, colours
-            ).apply { cornerRadius = JarvisUi.dp(context, JarvisUi.Space.MICRO).toFloat() }
+            // `StagesBar.svelte`: the accent for the live one, the dim text
+            // colour for a finished one, the danger colour for one that broke,
+            // the warn colour for one that is held, and nothing for a
+            // cancelled one. Flat.
+            (fill.background as? GradientDrawable)?.setColor(
+                when (row.status) {
+                    TaskBoard.Status.ERROR -> JarvisUi.DENY
+                    TaskBoard.Status.CANCELLED -> TRACK_COLOR
+                    TaskBoard.Status.BLOCKED -> JarvisUi.GOLD
+                    TaskBoard.Status.DONE -> JarvisTokens.Color.TEXT_DIM
+                    else -> JarvisUi.ACCENT
+                }
+            )
 
             mode = row.bar
             percent = row.percent
@@ -260,8 +275,12 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
 
         private fun startSweep() {
             if (sweeper != null) return
+            if (JarvisUi.reducedMotion(context)) {
+                holdSweepStill()
+                return
+            }
             val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = SWEEP_MS
+                duration = JarvisTokens.Motion.Dur.SWEEP.toLong()
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = LinearInterpolator()
                 addUpdateListener { a ->
@@ -273,6 +292,13 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
             }
             sweeper = animator
             animator.start()
+        }
+
+        /** The sweep's segment, parked in the middle — see the class note. */
+        private fun holdSweepStill() {
+            val span = width.toFloat()
+            if (span <= 0f) return
+            fill.translationX = (span - fill.width) / 2f
         }
 
         private fun stopSweep() {
@@ -298,18 +324,17 @@ class TaskProgressView(context: Context) : LinearLayout(context) {
                 TaskBoard.Bar.INDETERMINATE -> (span * SWEEP_FRACTION).toInt()
                 TaskBoard.Bar.NONE -> 0
             }
-            if (params.width == target) return
-            params.width = target
-            fill.layoutParams = params
+            if (params.width != target) {
+                params.width = target
+                fill.layoutParams = params
+            }
+            if (mode == TaskBoard.Bar.INDETERMINATE && sweeper == null) holdSweepStill()
         }
     }
 
     companion object {
-        private const val TRACK_DP = 3
-        private const val SWEEP_MS = 1_400L
         /** How much of the track the sweep occupies. */
         private const val SWEEP_FRACTION = 0.4f
-        private const val TRACK_COLOR = JarvisTokens.Color.TRACK
-        private val FILL_START = JarvisTokens.Color.ACCENT_DEEP
+        private const val TRACK_COLOR = JarvisTokens.Color.LINE
     }
 }

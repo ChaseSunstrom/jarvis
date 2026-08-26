@@ -24,6 +24,25 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   that does not redirect. It was a section of HOUSE from M48, two taps behind the device list.
   `/house/dashboards` redirects (308); bookmarks, notes and an un-updated phone still land. The
   bar has six tabs now, not five — the M48 cap, spent deliberately (`DEVIATIONS.md` §20).
+- **M64 — the phone looks like the console.** The Android app's native screens now copy the
+  console rather than resembling it: the tab strip is `TopBar.svelte`'s — the reactor mark and
+  JARVIS at the left, the link readout at the right, one accent underline that slides to the
+  current tab (`motion.dur.base`), tabs at the smallest step with tight tracking so all of them
+  fit a handset, the current one scrolled into view and the overflowing edge faded rather than
+  scrolled. Lists are one panel with a hairline between rows; APPROVE is the accent primary and
+  the held bar's action the screen's; an activity row spends the accent on a dot that glows and
+  pulses while live. Every chrome word is one label recipe, and `scripts/verify/token_lint.py`
+  now catches `letterSpacing =` and `dp(this@Activity, N)` literals — the 55 it had been missing
+  are on the scale. Failure text is `--jv-danger-text`, never the mark colour or pure white. The
+  reactor rests in `--jv-accent-deep` with an accent dot on both surfaces, exactly as
+  `Reactor.svelte` does (the indigo blob at rest is gone), the caption is the console's, and the
+  JARVIS wordmark over it is gone — the brand is the bar's. Screen titles are the console's
+  `ScreenTitle`; `ScreenStates.kt` gives the console screen skeleton, error and offline moments
+  and the crash log an empty one; Settings has the console's section strip; buttons, fields and
+  choosers take the console's geometry; bars are flat; the graph's labels are the body face
+  knocked out of the ground and memories are a faint dot; lists enter staggered on
+  `motion.stagger.*`, and under reduced motion the orb's drift, the live dot's pulse and the
+  task sweep stop. `scripts/verify/m64-phone-look.sh` reads the Kotlin for each of the fourteen.
 - **M61 (first stage) — the phone, the equal of the web.** The voice screens draw the living
   activity around the reactor from the same vocabulary as the console (`ActivityRows.kt` mirrors
   `tests/contracts/activity_rows.json`; the device subscribes to every event in it) and the

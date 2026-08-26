@@ -11,7 +11,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PersistableBundle
 import android.text.format.DateFormat
-import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -65,56 +64,62 @@ class CrashLogActivity : Activity() {
 
     private fun showList() {
         val records = JarvisCrashHandler.recent(this)
-        val col = JarvisUi.column(this, padDp = 20)
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
 
-        col.addView(JarvisUi.title(this, "CRASH LOGS"))
+        // The console's ScreenTitle, sentence case with its lede. The
+        // settings screen's CRASH LOGS button keeps the caps label the
+        // instrumented suite taps to get here.
         col.addView(
-            JarvisUi.hint(
+            JarvisUi.screenTitle(
                 this,
-                "Written to ${JarvisCrashHandler.file(this).path}. App-private, excluded " +
-                    "from backups, and never sent anywhere."
-            )
+                "Crash logs",
+                "Every crash this phone recorded, newest first. Written to " +
+                    "${JarvisCrashHandler.file(this).path} — app-private, excluded from backups, " +
+                    "never sent anywhere.",
+            ),
+            matchWidth()
         )
 
         if (records.isEmpty()) {
-            col.addView(JarvisUi.spacer(this, 24))
+            // The console's empty state: what would be here, and how it gets
+            // here — not a faint mono sentence in the middle of nothing.
             col.addView(
-                TextView(this).apply {
-                    text = "No crashes recorded."
-                    setTextColor(JarvisUi.FAINT)
-                    textSize = JarvisUi.Type.BODY
-                    gravity = Gravity.CENTER
-                    typeface = android.graphics.Typeface.MONOSPACE
-                }
+                ScreenStates.empty(
+                    this,
+                    "No crashes recorded",
+                    "When Jarvis closes unexpectedly, the stack trace lands here — on this phone, and nowhere else.",
+                ),
+                matchWidth()
             )
         } else {
             col.addView(JarvisUi.label(this, "${records.size} recorded, newest first"))
-            for (record in records) {
-                col.addView(rowFor(record), matchWidth().apply { topMargin = JarvisUi.dp(this@CrashLogActivity, 8) })
-            }
-            col.addView(JarvisUi.spacer(this, 16))
+            val rows = records.map { rowFor(it) }
+            col.addView(JarvisUi.rows(this, rows), matchWidth())
+            rows.forEachIndexed { index, row -> JarvisUi.enter(row, index) }
+            col.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
             col.addView(
                 JarvisUi.button(this, "COPY ALL") { copy(records.joinToString("\n\n---\n\n") { it.toText() }) },
                 matchWidth()
             )
             col.addView(
                 JarvisUi.button(this, "CLEAR") { clearAll() },
-                matchWidth().apply { topMargin = JarvisUi.dp(this@CrashLogActivity, 8) }
+                matchWidth().apply { topMargin = JarvisUi.dp(this@CrashLogActivity, JarvisUi.Space.STEP) }
             )
         }
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
         replaceContent(col)
     }
 
+    /** One crash, as a row for [JarvisUi.rows]: no box of its own. */
     private fun rowFor(record: CrashRecord): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        val p = JarvisUi.dp(this@CrashLogActivity, 12)
+        val p = JarvisUi.dp(this@CrashLogActivity, JarvisUi.Space.GAP)
         setPadding(p, p, p, p)
-        background = JarvisUi.panel(this@CrashLogActivity)
         addView(
             TextView(this@CrashLogActivity).apply {
                 text = record.headline()
-                setTextColor(JarvisUi.DENY)
+                // Danger as words: the text colour, not the mark's.
+                setTextColor(JarvisUi.DENY_TEXT)
                 textSize = JarvisUi.Type.MONO
                 typeface = android.graphics.Typeface.MONOSPACE
             }
@@ -126,7 +131,7 @@ class CrashLogActivity : Activity() {
                 setTextColor(JarvisUi.FAINT)
                 textSize = JarvisUi.Type.LABEL
                 typeface = android.graphics.Typeface.MONOSPACE
-                setPadding(0, JarvisUi.dp(this@CrashLogActivity, 4), 0, 0)
+                setPadding(0, JarvisUi.dp(this@CrashLogActivity, JarvisUi.Space.TIGHT), 0, 0)
             }
         )
         setOnClickListener { showRecord(record) }
@@ -136,29 +141,19 @@ class CrashLogActivity : Activity() {
 
     private fun showRecord(record: CrashRecord) {
         showing = record
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "CRASH"))
-        col.addView(
-            TextView(this).apply {
-                text = formatTime(record.timestamp)
-                setTextColor(JarvisUi.DIM)
-                textSize = JarvisUi.Type.HINT
-                gravity = Gravity.CENTER
-                typeface = android.graphics.Typeface.MONOSPACE
-            }
-        )
-        col.addView(JarvisUi.spacer(this, 12))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Crash", formatTime(record.timestamp)), matchWidth())
         col.addView(JarvisUi.mono(this, record.toText()), matchWidth())
-        col.addView(JarvisUi.spacer(this, 16))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
         col.addView(JarvisUi.button(this, "COPY") { copy(record.toText()) }, matchWidth())
         col.addView(
             JarvisUi.button(this, "BACK TO LIST") {
                 showing = null
                 showList()
             },
-            matchWidth().apply { topMargin = JarvisUi.dp(this@CrashLogActivity, 8) }
+            matchWidth().apply { topMargin = JarvisUi.dp(this@CrashLogActivity, JarvisUi.Space.STEP) }
         )
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
         replaceContent(col)
     }
 

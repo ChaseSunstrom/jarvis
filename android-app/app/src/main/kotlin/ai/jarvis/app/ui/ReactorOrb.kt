@@ -35,7 +35,8 @@ import kotlin.math.sin
  * reactor.test.ts` holds the web to the same file). The clock is
  * `motion.reactor.*` from `design/tokens.json`, generated into
  * [JarvisTokens.Motion.Reactor]; the palette is `color.orb.*`, handed in by
- * the caller from [SiriPalette] so the five states are one table.
+ * the caller from [Palette] — which is [SiriPalette] for every state but
+ * IDLE, so the five states are one table and rest is the accent's.
  *
  * ## What it draws, outside in
  *
@@ -71,6 +72,38 @@ import kotlin.math.sin
  * needed no retuning to assemble a different reactor.
  */
 class ReactorOrb(private val density: Float) {
+
+    /**
+     * What each state hands the renderer to draw in.
+     *
+     * Every state but IDLE is `color.orb.*` through [SiriPalette], the table
+     * `design/build.py --check` pins to `design/tokens.json`. IDLE is not: at
+     * rest the instrument is the accent's — `--jv-accent-deep` for what is
+     * lit (the level arc, the lens rim, the iris) AND for the lens's deep
+     * stop, and `--jv-accent` for the hot dot — exactly as `Reactor.svelte`'s
+     * `.reactor` block sets `--rx-live`, `--rx-deep` and `--rx-hot` before any
+     * `[data-state]` overrides them. The phone read `SiriPalette.blobs(IDLE)`
+     * instead, whose second colour is an indigo (`color.orb.idle.blob-1`), so
+     * the resting lens was cyan at its rim and purple at its heart: two hues
+     * at rest where the console has one. `SiriPalette` stays as it is —
+     * listening, thinking, speaking and error still drift through three
+     * blobs — and the overlay's floating orb and the home screen's read this,
+     * so both rest the same way. `android-app/tools/reactor_orb_test.py`
+     * holds this to the web's block.
+     */
+    object Palette {
+        fun blobs(tone: SiriPalette.Tone): IntArray =
+            if (tone == SiriPalette.Tone.IDLE) {
+                intArrayOf(JarvisTokens.Color.ACCENT_DEEP, JarvisTokens.Color.ACCENT_DEEP, JarvisTokens.Color.ACCENT_DEEP)
+            } else {
+                SiriPalette.blobs(tone)
+            }
+
+        fun core(tone: SiriPalette.Tone): Int =
+            if (tone == SiriPalette.Tone.IDLE) JarvisTokens.Color.ACCENT else SiriPalette.core(tone)
+
+        fun rim(tone: SiriPalette.Tone): Int = blobs(tone)[0]
+    }
 
     /**
      * One frame's worth of inputs. Mutable and reused: this is written 60 times

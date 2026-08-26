@@ -22,6 +22,8 @@ import ai.jarvis.app.ui.ConsoleFrame
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisUi
 import ai.jarvis.app.ui.ReactorOrb
+import ai.jarvis.app.ui.ScreenStates
+import ai.jarvis.app.ui.SectionStrip
 import ai.jarvis.app.ui.SiriPalette
 import ai.jarvis.app.ui.theme.JarvisTheme
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -50,15 +52,16 @@ import org.robolectric.annotation.GraphicsMode
  * `design_token_test.py` proves the *values* agree; this proves they are what
  * actually gets drawn.
  *
- * ## What the ten goldens are
+ * ## What the goldens are
  *
  * The instrument in its four states (`orb-*`), because that is the picture
  * the whole look is built around and the one that changed most with
- * Reactor II; the console frame's strip with its underline; the widgets every
- * screen is built from; the held bar; the task overlay; the settings widgets;
- * and the generated Compose theme. Each is one nameable moment — the
- * animations are frozen at a fixed time — or it would record the scheduler's
- * mood.
+ * Reactor II; the console frame's bar with its brand, readout and underline;
+ * the widgets every screen is built from; the held bar; the task overlay; the
+ * settings widgets; the voice screen's strip and graph (M61); the four screen
+ * states and the section strip (M64); and the generated Compose theme. Each
+ * is one nameable moment — the animations are frozen at a fixed time — or it
+ * would record the scheduler's mood.
  *
  * ## What it is not
  *
@@ -138,9 +141,11 @@ class ScreenshotTest {
             time = 1.2f
             phase = 1.2f
             spinDeg = 42f
-            blobs = SiriPalette.blobs(tone)
-            core = SiriPalette.core(tone)
-            rim = SiriPalette.rim(tone)
+            // Through the renderer's palette, as both views read it: at rest
+            // the instrument is the accent's, not SiriPalette's indigo.
+            blobs = ReactorOrb.Palette.blobs(tone)
+            core = ReactorOrb.Palette.core(tone)
+            rim = ReactorOrb.Palette.rim(tone)
             idle = tone == SiriPalette.Tone.IDLE
             rimAlpha =
                 if (tone == SiriPalette.Tone.LISTENING || tone == SiriPalette.Tone.SPEAKING) {
@@ -186,10 +191,19 @@ class ScreenshotTest {
     fun `the component sheet`() {
         val column = JarvisUi.column(context).apply {
             setBackgroundColor(JarvisUi.BG)
-            addView(JarvisUi.title(context, "Jarvis"))
+            addView(JarvisUi.screenTitle(context, "Jarvis", "The widgets every screen is built from."))
             addView(JarvisUi.label(context, "STATUS"))
             addView(JarvisUi.hint(context, "Listening for the wake word"))
+            addView(JarvisUi.readout(context, "wake 0.62  ·  vad 550 ms"))
             addView(JarvisUi.mono(context, "wake 0.62  ·  vad 550 ms"))
+            addView(JarvisUi.spacer(context, JarvisUi.Space.TIGHT))
+            addView(
+                JarvisUi.statusTag(context, "live", JarvisUi.TAG_LIVE),
+                LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            )
             addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
             // The one filled control on a screen, and the quiet one beside it.
             addView(JarvisUi.primary(context, "PAIR") {})
@@ -200,7 +214,8 @@ class ScreenshotTest {
     }
 
     /**
-     * The strip the console screens share, with HOUSE current.
+     * The bar the console screens share, with HOUSE current and the link up:
+     * the brand row, the readout, the tabs and the one underline.
      *
      * The frame wants an Activity (it starts one for PHONE), so this is the
      * one golden hung off a host. A bare [Activity], not one of ours: what is
@@ -211,6 +226,7 @@ class ScreenshotTest {
     fun `the console frame`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val strip = ConsoleFrame.tabBar(activity, ConsoleTab.DEFAULT) {}
+        strip.setStatus("LINK OK", ConsoleFrame.Tone.LIVE)
         val holder = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(JarvisUi.BG)
@@ -218,6 +234,55 @@ class ScreenshotTest {
             addView(JarvisUi.spacer(activity, JarvisUi.Space.SECTION))
         }
         bitmapOf(holder, width = 1233).captureRoboImage(golden("console-frame"))
+    }
+
+    /** The four states every screen owes its user, stacked: loading, empty, error, offline. */
+    @Test
+    fun `the screen states`() {
+        val column = JarvisUi.column(context).apply {
+            setBackgroundColor(JarvisUi.BG)
+            addView(ScreenStates.loading(context, rows = 3, label = "Loading tasks"))
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            addView(
+                ScreenStates.empty(
+                    context,
+                    "No tasks have run today",
+                    "Ask Jarvis for something, or schedule one.",
+                )
+            )
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            addView(
+                ScreenStates.error(
+                    context,
+                    "Couldn't load tasks",
+                    "The backend answered 500.",
+                ) {}
+            )
+            addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
+            addView(ScreenStates.offline(context, onReconnect = {}))
+        }
+        // At a phone's width, as the console frame is: the offline state is a
+        // row, and at the sheet's default 300 dp its text folds word by word
+        // beside the Reconnect control, which no handset is narrow enough for.
+        bitmapOf(column, width = 1233).captureRoboImage(golden("screen-states"))
+    }
+
+    /** The section strip, with the second section current. */
+    @Test
+    fun `the section strip`() {
+        val strip = SectionStrip(context, listOf("Server", "Voice", "Listen", "Headset", "Permissions")) {}
+        strip.select(1)
+        val holder = JarvisUi.column(context).apply {
+            setBackgroundColor(JarvisUi.BG)
+            addView(
+                strip,
+                LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            )
+        }
+        bitmapOf(holder).captureRoboImage(golden("section-strip"))
     }
 
     @Test
@@ -288,25 +353,36 @@ class ScreenshotTest {
             addView(JarvisUi.chooser(context, "Wake word", listOf("hey jarvis", "ok jarvis"), 0) {})
             addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))
             addView(JarvisUi.label(context, "CHECKS"))
+            // One panel, hairline rows: the three kinds of row in it.
             addView(
-                JarvisUi.checkRow(
+                JarvisUi.rows(
                     context,
-                    satisfied = true,
-                    essential = true,
-                    label = "Microphone",
-                    why = "Hearing the wake word.",
-                    onClick = null,
-                )
-            )
-            addView(JarvisUi.spacer(context, JarvisUi.Space.TIGHT))
-            addView(
-                JarvisUi.checkRow(
-                    context,
-                    satisfied = false,
-                    essential = false,
-                    label = "Notifications",
-                    why = "Saying when a job finishes.",
-                    onClick = {},
+                    listOf(
+                        JarvisUi.checkRow(
+                            context,
+                            satisfied = true,
+                            essential = true,
+                            label = "Microphone",
+                            why = "Hearing the wake word.",
+                            onClick = null,
+                        ),
+                        JarvisUi.checkRow(
+                            context,
+                            satisfied = false,
+                            essential = true,
+                            label = "Network",
+                            why = "Reaching your server at all.",
+                            onClick = {},
+                        ),
+                        JarvisUi.checkRow(
+                            context,
+                            satisfied = false,
+                            essential = false,
+                            label = "Notifications",
+                            why = "Saying when a job finishes.",
+                            onClick = {},
+                        ),
+                    ),
                 )
             )
             addView(JarvisUi.spacer(context, JarvisUi.Space.GAP))

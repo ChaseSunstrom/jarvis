@@ -987,6 +987,24 @@ web and of Tasker. Local only. Each row here is planned in that document.
     served by the mock; a shipped, read-only House the console opens on, its empty pieces
     saying how each thing gets there. The inventory row allows the tile's one switch at rest.
   - Verify: `bash scripts/verify/m63-dashboard-widgets.sh`
+- [ ] **M64 — The phone looks like the console** · size L · deps M51, M61 · parallel-ok M56, M63
+  - Scope: an audit put the phone's native screens beside the console and found fourteen
+    mismatches; each is closed by copying the console, not by inventing. The tab strip is
+    `TopBar.svelte` under 720px — the mark and JARVIS, the readout, ONE measured underline
+    that slides on `motion.dur.base`, tabs at the smallest step with tight tracking, the
+    current one scrolled into view, the overflowing edge faded to the ground. Rows are one
+    panel with hairlines between (`JarvisUi.rows`). APPROVE is the accent primary; the held
+    bar's action is the screen's primary. Activity rows spend the accent on a pulsing dot.
+    Every chrome word goes through the label recipe; the token lint now sees
+    `dp(this@Foo, N)` and `letterSpacing =` literals, and the 55 it had missed are on the
+    scale. No `Color.WHITE`; failure text is `--jv-danger-text`. The reactor rests in the
+    accent's two tokens as `Reactor.svelte` does, the caption is the console's, the wordmark
+    over the orb is gone. Screen titles are `ScreenTitle`. `ScreenStates.kt` gives every
+    screen the four states; Settings gets the console's section strip; controls take the
+    console's geometry; bars are flat; graph labels are the body face knocked out of the
+    ground and memories are not gold; lists enter staggered on `motion.stagger.*` and
+    nothing decorative moves under reduced motion. Build, unit, lint and goldens — no device.
+  - Verify: `bash scripts/verify/m64-phone-look.sh`
 
 ## Final
 

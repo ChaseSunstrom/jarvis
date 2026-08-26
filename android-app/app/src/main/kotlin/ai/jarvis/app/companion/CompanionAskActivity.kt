@@ -6,6 +6,7 @@ import ai.jarvis.app.assist.TtsPlayer
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.JarvisUi
+import ai.jarvis.app.ui.theme.JarvisTokens
 import ai.jarvis.app.ui.ReadabilityScrim
 import android.Manifest
 import android.app.Activity
@@ -350,20 +351,22 @@ class CompanionAskActivity : Activity() {
             background = ReadabilityScrim()
         }
 
+        // The label recipe (Panel.svelte's head), in the accent: this is the
+        // one eyebrow on a screen whose whole purpose is the question under it.
         column.addView(
-            TextView(ctx).apply {
-                text = if (mode == CompanionProtocol.MODE_ASK) "JARVIS ASKS" else "JARVIS"
-                setTextColor(JarvisUi.ACCENT)
-                textSize = JarvisUi.Type.HINT
-                letterSpacing = 0.24f
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                gravity = Gravity.CENTER
-            }
+            JarvisUi.labelText(
+                ctx,
+                if (mode == CompanionProtocol.MODE_ASK) "JARVIS ASKS" else "JARVIS",
+                JarvisUi.ACCENT,
+            ).apply { gravity = Gravity.CENTER }
         )
 
         questionView = TextView(ctx).apply {
             text = CompanionAskGate.HIDDEN_TEXT
-            setTextColor(Color.WHITE)
+            // The one line to read first, in the colour and face the reply
+            // line uses everywhere else. Pure white is not on the palette.
+            setTextColor(JarvisTokens.Color.TEXT_BRIGHT)
+            typeface = JarvisUi.DISPLAY_FACE
             // Was 21f against `JarvisUi.responseView`'s 20f, for no reason
             // anybody could state — which is the argument for the scale. This
             // IS Jarvis speaking, so it is the response step.

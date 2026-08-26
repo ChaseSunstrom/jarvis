@@ -7,7 +7,6 @@ import ai.jarvis.app.ui.SiriOrbView
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
-import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
@@ -204,7 +203,6 @@ class AssistOverlay(
     fun setMode(mode: JarvisOrbView.Mode, label: String) {
         orb?.setMode(mode)
         caption?.text = label
-        caption?.setTextColor(mode.color)
     }
 
     fun setAmplitude(level: Float) {
@@ -263,12 +261,15 @@ class AssistOverlay(
             LinearLayout.LayoutParams(JarvisUi.dp(context, ORB_DP), JarvisUi.dp(context, ORB_DP))
         )
 
+        // The console's `.cap`: the chrome face, the smallest step, wide
+        // tracking, always the accent at rest — the reactor above it carries
+        // the state's colour. It was tinted per state and tracked by hand.
         val captionView = TextView(context).apply {
             text = "LISTENING"
-            setTextColor(JarvisOrbView.Mode.LISTENING.color)
+            setTextColor(JarvisTokens.Color.ACCENT_DEEP)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
-            letterSpacing = 0.2f
-            typeface = Typeface.MONOSPACE
+            letterSpacing = JarvisUi.TRACK_WIDE
+            typeface = JarvisUi.MONO_FACE
             gravity = Gravity.CENTER
             setPadding(0, JarvisUi.dp(context, JarvisUi.Space.STEP), 0, 0)
         }

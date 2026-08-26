@@ -2,20 +2,29 @@ package ai.jarvis.app.ui
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.provider.Settings
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.PathInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import ai.jarvis.app.ui.theme.JarvisTokens
+import kotlin.math.min
 
 /**
  * Shared look-and-feel for every Jarvis surface, on Reactor II: near-black
@@ -68,6 +77,17 @@ object JarvisUi {
     const val FAINT = JarvisTokens.Color.TEXT_FAINT // --jv-text-faint
     const val APPROVE = JarvisTokens.Color.OK // --jv-ok
     const val DENY = JarvisTokens.Color.DANGER // --jv-danger
+
+    /**
+     * Danger as WORDS. `--jv-danger-text`.
+     *
+     * [DENY] is the mark colour — a dot, a stroke, the fill of the no button's
+     * edge — and the console never sets a sentence in it (`CallLine.svelte`
+     * draws the failed dot in `--jv-danger` and the reason beside it in
+     * `--jv-danger-text`). The phone did: every "it failed" line was in the
+     * mark colour, one step short of the text colour that was made for it.
+     */
+    const val DENY_TEXT = JarvisTokens.Color.DANGER_TEXT // --jv-danger-text
 
     /**
      * Wants attention, but nothing is broken.
@@ -198,6 +218,92 @@ object JarvisUi {
     fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).toInt()
 
+    /** A type step in pixels, for a `Paint` that draws its own text. */
+    fun sp(context: Context, v: Float): Float =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, context.resources.displayMetrics)
+
+    // --- motion ---------------------------------------------------------------
+
+    /** `--jv-ease-out`, for an animator: a tab sliding, a row entering. */
+    val EASE_OUT: PathInterpolator
+        get() = JarvisTokens.Motion.Ease.OUT.let { PathInterpolator(it[0], it[1], it[2], it[3]) }
+
+    /** `--jv-ease-in-out`, for something that breathes. */
+    val EASE_IN_OUT: PathInterpolator
+        get() = JarvisTokens.Motion.Ease.IN_OUT.let { PathInterpolator(it[0], it[1], it[2], it[3]) }
+
+    /**
+     * The person asked for no motion.
+     *
+     * Android has no `prefers-reduced-motion`. What it has is two scales in
+     * developer options that a battery saver also drives to zero: the animator
+     * duration scale, which kills every `ValueAnimator` on its first frame, and
+     * the transition scale, which the boot sequence already reads as "do not
+     * play this". Either at zero is the only way the platform lets somebody
+     * say it, so either counts. Nothing decorative moves when this is true —
+     * the reactor's drift, a live dot's pulse, the task sweep, a row's
+     * entrance — while the things that carry information (the level arc,
+     * a colour change, a bar's width) still change, without easing.
+     *
+     * Read at the moment it is needed rather than cached for the process: a
+     * user flips the setting and comes back to the app, and a value read at
+     * startup would describe the phone they no longer have. Callers that draw
+     * sixty times a second read it once per attach, not per frame — this is a
+     * content-provider query.
+     */
+    fun reducedMotion(context: Context): Boolean = try {
+        val resolver = context.contentResolver
+        Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) <= 0f ||
+            Settings.Global.getFloat(resolver, Settings.Global.TRANSITION_ANIMATION_SCALE, 1f) <= 0f
+    } catch (t: Throwable) {
+        // GrapheneOS is strict about what a third-party app may read out of
+        // Settings, and a decoration must never be the thing that throws.
+        false
+    }
+
+    /**
+     * Bring [view] in the way the console's panels arrive: from a step below,
+     * fading up over `--jv-dur-enter`, [index] steps of `--jv-stagger-step`
+     * after the first, capped at `--jv-stagger-cap`.
+     *
+     * The stagger tokens were generated into [JarvisTokens.Motion.Stagger]
+     * and read by nothing; every list on the phone simply appeared. Starts on
+     * attach when the view is not on screen yet — a screen builds its rows
+     * before `setContentView` — and does nothing at all when the view is
+     * never attached (a golden is drawn off a window), so a screenshot cannot
+     * record a row at the alpha it started from. Under reduced motion the row
+     * is simply there.
+     */
+    fun enter(view: View, index: Int = 0) {
+        if (reducedMotion(view.context)) return
+        val start = {
+            view.alpha = 0f
+            view.translationY = dp(view.context, Space.STEP).toFloat()
+            view.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay(
+                    min(index * JarvisTokens.Motion.Stagger.STEP, JarvisTokens.Motion.Stagger.CAP)
+                        .toLong()
+                )
+                .setDuration(JarvisTokens.Motion.Dur.ENTER.toLong())
+                .setInterpolator(EASE_OUT)
+                .start()
+        }
+        if (view.isAttachedToWindow) {
+            start()
+            return
+        }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                v.removeOnAttachStateChangeListener(this)
+                start()
+            }
+
+            override fun onViewDetachedFromWindow(v: View) = Unit
+        })
+    }
+
     // --- the faces ------------------------------------------------------------
     //
     // Reactor II sets interface text in a body face and data in mono. The phone
@@ -219,6 +325,15 @@ object JarvisUi {
 
     /** The tracking on an uppercase label — the web's `--jv-track-chrome`. */
     const val TRACK_CHROME = 0.16f
+
+    /**
+     * The tracking a tab label gives up to on a phone — the web's
+     * `--jv-track-tight`. `TopBar.svelte` drops its tabs from chrome to tight
+     * tracking under 720px because five tracked words do not fit across a
+     * handset; the phone kept chrome tracking at every width, which is what
+     * put the strip behind an invisible scroll.
+     */
+    const val TRACK_TIGHT = 0.08f
 
     /** The tracking on a wider label — the web's `--jv-track-wide`. */
     const val TRACK_WIDE = 0.24f
@@ -413,25 +528,139 @@ object JarvisUi {
 
     // --- text ---------------------------------------------------------------
 
-    /** The JARVIS wordmark / screen title: the display face, bright, no glow. */
+    /**
+     * A screen's title: the display face, light, bright, at the left — the
+     * console's `ScreenTitle.svelte` h1. Sentence case is the caller's: the
+     * console titles a page "Settings", not "SETTINGS", and a caps title over
+     * caps labels made every phone screen one shout.
+     *
+     * Was centred. Nothing else on a screen is centred — the labels, the
+     * fields, the rows all hang from the left — so the title was the one line
+     * that did not line up with anything under it.
+     */
     fun title(context: Context, text: String): TextView = TextView(context).apply {
         this.text = text
         setTextColor(JarvisTokens.Color.TEXT_BRIGHT)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.TITLE)
         letterSpacing = TRACK_SNUG
         typeface = DISPLAY_FACE
-        gravity = Gravity.CENTER
+        gravity = Gravity.START
+    }
+
+    /**
+     * The console's `ScreenTitle`: the title and one sentence under it saying
+     * what the screen is for, in the body face and the dim text colour, with
+     * the console's gap to whatever follows. Every destination opens this way
+     * so the eye knows where it is; a phone screen that opened with a
+     * wordmark and a tracked caps word did not.
+     */
+    fun screenTitle(context: Context, title: String, lede: String = ""): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                title(context, title),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            if (lede.isNotEmpty()) {
+                addView(
+                    TextView(context).apply {
+                        text = lede
+                        setTextColor(JarvisTokens.Color.TEXT_DIM)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.BODY)
+                        typeface = BODY_FACE
+                        setLineSpacing(dp(context, Space.TIGHT).toFloat(), 1f)
+                        setPadding(0, dp(context, Space.TIGHT), 0, 0)
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                )
+            }
+            setPadding(0, 0, 0, dp(context, Space.SCREEN))
+        }
+
+    /**
+     * The label recipe, bare: uppercase, the label face, tracked, the
+     * `--jv-fs-2xs` step. `Panel.svelte`'s head and `Button.svelte`'s face are
+     * this recipe; so is every chrome word on the phone now. It exists because
+     * nine screens typed the same idea by hand in mono with a tracking each
+     * remembered differently (0.14, 0.16, 0.2, 0.24, 0.3), and mono is for
+     * DATA — a heading in the data face reads as a readout.
+     *
+     * [tracking] is [TRACK_WIDE] for a heading over a block and
+     * [TRACK_CHROME] for a word inside a control or a tag; nothing else.
+     */
+    fun labelText(
+        context: Context,
+        text: String,
+        color: Int = JarvisTokens.Color.TEXT_DIM,
+        tracking: Float = TRACK_WIDE,
+    ): TextView = TextView(context).apply {
+        this.text = text.uppercase()
+        setTextColor(color)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
+        letterSpacing = tracking
+        typeface = LABEL_FACE
     }
 
     /** Small all-caps label above a field or a block: tracked, dim, the label face. */
-    fun label(context: Context, text: String): TextView = TextView(context).apply {
-        this.text = text.uppercase()
-        setTextColor(JarvisTokens.Color.TEXT_DIM)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
-        letterSpacing = TRACK_WIDE
-        typeface = LABEL_FACE
+    fun label(context: Context, text: String): TextView = labelText(context, text).apply {
         setPadding(0, dp(context, Space.GAP), 0, dp(context, Space.TIGHT))
     }
+
+    /**
+     * A readout: data, in the data face. `StatusReadout.svelte`'s word, a
+     * count, a duration, a host. Mono, the smallest step, snug tracking,
+     * tabular digits so a changing number does not jitter its neighbours.
+     * Never a heading — see [labelText].
+     */
+    fun readout(
+        context: Context,
+        text: String,
+        color: Int = JarvisTokens.Color.TEXT_DIM,
+    ): TextView = TextView(context).apply {
+        this.text = text
+        setTextColor(color)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
+        letterSpacing = TRACK_SNUG
+        typeface = MONO_FACE
+        fontFeatureSettings = TABULAR_DIGITS
+    }
+
+    /**
+     * `Pill.svelte`: a small status word on a hairline — square-cornered, the
+     * label recipe at chrome tracking, its tone in the word AND the colour so
+     * the colour is never the only signal. [tone] is one of [TAG_NEUTRAL],
+     * [TAG_LIVE], [TAG_OK], [TAG_WARN], [TAG_DANGER].
+     */
+    fun statusTag(context: Context, text: String, tone: Int = TAG_NEUTRAL): TextView =
+        labelText(context, text, tracking = TRACK_CHROME).apply {
+            val (ink, edge) = when (tone) {
+                TAG_LIVE -> ACCENT to atAlpha(ACCENT, FILL_ALPHA_STRONG)
+                TAG_OK -> APPROVE to atAlpha(APPROVE, FILL_ALPHA_STRONG)
+                TAG_WARN -> GOLD to atAlpha(GOLD, FILL_ALPHA_STRONG)
+                TAG_DANGER -> DENY_TEXT to atAlpha(DENY, FILL_ALPHA_STRONG)
+                else -> JarvisTokens.Color.TEXT_DIM to JarvisTokens.Color.LINE_HAIR
+            }
+            setTextColor(ink)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(context, JarvisTokens.Radius.SM).toFloat()
+                setColor(Color.TRANSPARENT)
+                setStroke(dp(context, Space.HAIRLINE), edge)
+            }
+            setPadding(dp(context, Space.SNUG), 0, dp(context, Space.SNUG), 0)
+            maxLines = 1
+        }
+
+    const val TAG_NEUTRAL = 0
+    const val TAG_LIVE = 1
+    const val TAG_OK = 2
+    const val TAG_WARN = 3
+    const val TAG_DANGER = 4
 
     /** Explanatory body copy. */
     fun hint(context: Context, text: String): TextView = TextView(context).apply {
@@ -476,6 +705,43 @@ object JarvisUi {
             setStroke(dp(context, Space.HAIRLINE), stroke)
         }
 
+    /** `--jv-line-hair` as a rule the width of its parent. */
+    fun hairline(context: Context): View = View(context).apply {
+        setBackgroundColor(JarvisTokens.Color.LINE_HAIR)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(context, Space.HAIRLINE)
+        )
+    }
+
+    /**
+     * A list as the console draws one: ONE panel, and a hairline between each
+     * row and the next (`Panel.svelte` around `Activity.svelte`'s
+     * `border-top: 1px solid var(--jv-line-hair)`). Rows carry their own
+     * padding and no background.
+     *
+     * Every row used to be a box of its own — fill, stroke and radius — and a
+     * column of eight boxes with a gap between each is a stack of cards, which
+     * is the previous direction. Density comes from hairlines over boxes.
+     */
+    fun rows(context: Context, rows: List<View>): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = panel(context)
+        showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
+        dividerDrawable = GradientDrawable().apply {
+            setSize(0, dp(context, Space.HAIRLINE))
+            setColor(JarvisTokens.Color.LINE_HAIR)
+        }
+        for (row in rows) {
+            addView(
+                row,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+    }
+
     /** Vertical column with the standard screen padding. */
     fun column(context: Context, padDp: Int = Space.SCREEN): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -495,8 +761,11 @@ object JarvisUi {
      * Used for "Network permission denied", which on GrapheneOS is by far the
      * most common reason nothing works. The warn colour as an INSET rule down
      * the left — a stripe, not a border, so it never moves the layout — over a
-     * flat panel, the words in the body face, and the action as a quiet
-     * button. Amber rather than red: this is a thing the user can fix in two
+     * flat panel, the words in the body face, and the action as the screen's
+     * one filled control: a held bar is on screen because the one thing to do
+     * next is the thing on it, and `Approvals.svelte` fills APPROVE for the
+     * same reason. It was a quiet hairline button, which made the fix look
+     * optional. Amber rather than red: this is a thing the user can fix in two
      * taps, not a failure. The button is the whole point; a bar that only
      * complains makes the user go hunting through Settings themselves.
      */
@@ -537,7 +806,7 @@ object JarvisUi {
             }
         )
         body.addView(
-            button(context, actionLabel, onAction),
+            primary(context, actionLabel, onAction),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -548,9 +817,9 @@ object JarvisUi {
 
     /**
      * One line of a checklist: a state glyph, a label, and an explanation, as
-     * a hairline row. The glyph is text rather than an icon so it survives any
-     * font and any accessibility scale, and so it copies into a bug report
-     * as-is.
+     * a row for [rows] — no box of its own. The glyph is text rather than an
+     * icon so it survives any font and any accessibility scale, and so it
+     * copies into a bug report as-is.
      */
     fun checkRow(
         context: Context,
@@ -561,14 +830,18 @@ object JarvisUi {
         onClick: (() -> Unit)?,
     ): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
-        val p = dp(context, Space.ROW)
-        setPadding(p, p, p, p)
+        setPadding(0, dp(context, Space.ROW), dp(context, Space.GAP), dp(context, Space.ROW))
         // A missing essential is the one row that is not quiet: the warn
-        // colour on its hairline says "held" where every other row says
-        // nothing.
-        background = panel(
-            context,
-            stroke = if (!satisfied && essential) JarvisTokens.Color.WARN_40 else JarvisTokens.Color.LINE_HAIR
+        // colour as an inset rule down its left says "held" where every other
+        // row says nothing — the held bar's own mark, so it reads as the same
+        // idea. Drawn transparent on the others rather than left out, so the
+        // rows' text lines up whether or not one of them is held.
+        addView(
+            View(context).apply {
+                setBackgroundColor(if (!satisfied && essential) GOLD else Color.TRANSPARENT)
+            },
+            LinearLayout.LayoutParams(dp(context, Space.MICRO), ViewGroup.LayoutParams.MATCH_PARENT)
+                .apply { rightMargin = dp(context, Space.ROW) }
         )
 
         val tone = when {
@@ -650,8 +923,9 @@ object JarvisUi {
         }
         setSingleLine(!secret)
         background = panel(context, fill = JarvisTokens.Color.FIELD, stroke = JarvisTokens.Color.LINE_SOFT)
-        val p = dp(context, Space.GAP)
-        setPadding(p, p, p, p)
+        // `Input.svelte`: space-2 above and below, space-3 at the sides. It
+        // was GAP all round, a step deeper than the console's on every edge.
+        setPadding(dp(context, Space.ROW), dp(context, Space.STEP), dp(context, Space.ROW), dp(context, Space.STEP))
         // An EditText with a hint is announced by the hint, and every field on
         // every screen has one — so the label above it would be read twice.
         // Stated here so a later screen does not add a second one.
@@ -674,11 +948,15 @@ object JarvisUi {
                 setColor(Color.TRANSPARENT)
                 setStroke(dp(context, Space.HAIRLINE), JarvisTokens.Color.LINE)
             }
+            // `Button.svelte`: space-2 by space-4 — 16 across, 10 down. It
+            // was 20 by 12, and a control a step bigger than the console's on
+            // every screen is what made the phone feel like a bigger, looser
+            // copy rather than the same thing.
             setPadding(
-                dp(context, Space.SCREEN),
-                dp(context, Space.GAP),
-                dp(context, Space.SCREEN),
-                dp(context, Space.GAP),
+                dp(context, Space.SECTION),
+                dp(context, Space.ROW),
+                dp(context, Space.SECTION),
+                dp(context, Space.ROW),
             )
             setOnClickListener { onClick() }
         }
@@ -701,19 +979,28 @@ object JarvisUi {
                 setColor(ACCENT)
                 setStroke(dp(context, Space.HAIRLINE), ACCENT)
             }
+            // The same geometry as [button]: the fill is what makes it the
+            // primary, not a wider box. It was 34 by 12.
             setPadding(
-                dp(context, Size.WIDE_BUTTON),
-                dp(context, Space.GAP),
-                dp(context, Size.WIDE_BUTTON),
-                dp(context, Space.GAP),
+                dp(context, Space.SECTION),
+                dp(context, Space.ROW),
+                dp(context, Space.SECTION),
+                dp(context, Space.ROW),
             )
             setOnClickListener { onClick() }
         }
 
     /**
-     * A tab in a strip: the label alone, tracked, with no box of its own. The
-     * strip draws the one underline under whichever tab is current
-     * ([ConsoleFrame]), so a tab is not a button that happens to sit in a row.
+     * A tab in a strip: the label alone, with no box of its own. The strip
+     * draws the one underline under whichever tab is current ([ConsoleFrame]),
+     * so a tab is not a button that happens to sit in a row.
+     *
+     * Sized as `TopBar.svelte` sizes its tabs under 720px: the smallest chrome
+     * step, TIGHT tracking, and space-1 of padding at the sides — so the
+     * underline, which is this control's own width, is the word's width and
+     * not the word plus a gap either side. The gap between tabs belongs to the
+     * strip. It was chrome tracking with GAP all round at every width, which is
+     * what made five labels overflow a handset.
      */
     fun tab(context: Context, label: String, onClick: () -> Unit): Button =
         Button(context).apply {
@@ -721,16 +1008,16 @@ object JarvisUi {
             isAllCaps = true
             setTextColor(JarvisTokens.Color.TEXT_DIM)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.LABEL)
-            letterSpacing = TRACK_CHROME
+            letterSpacing = TRACK_TIGHT
             typeface = LABEL_FACE
             background = null
             minWidth = 0
             minimumWidth = 0
             setPadding(
-                dp(context, Space.GAP),
-                dp(context, Space.GAP),
-                dp(context, Space.GAP),
-                dp(context, Space.GAP),
+                dp(context, Space.TIGHT),
+                dp(context, Space.STEP),
+                dp(context, Space.TIGHT),
+                dp(context, Space.STEP),
             )
             setOnClickListener { onClick() }
         }
@@ -759,8 +1046,28 @@ object JarvisUi {
         labels: List<String>,
         selected: Int,
         onPick: (Int) -> Unit,
-    ): Button = button(context, labels.getOrNull(selected) ?: "—", {}).apply {
+    ): Button = Button(context).apply {
+        // `Select.svelte`, not a button: a VALUE, in the body face at the
+        // body step, untracked, at the left, on the field ground with a
+        // chevron at the end. It inherited [button]'s label recipe, so
+        // "08:00" rendered tracked, centred and in the chrome face — a value
+        // dressed as a heading.
+        text = labels.getOrNull(selected) ?: "—"
         isAllCaps = false
+        setTextColor(JarvisTokens.Color.TEXT_BRIGHT)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.BODY)
+        typeface = BODY_FACE
+        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        minWidth = 0
+        minimumWidth = 0
+        background = panel(context, fill = JarvisTokens.Color.FIELD, stroke = JarvisTokens.Color.LINE_SOFT)
+        setPadding(dp(context, Space.ROW), dp(context, Space.STEP), dp(context, Space.ROW), dp(context, Space.STEP))
+        // The absolute setter, not the relative one: a relative drawable is
+        // applied only once the view's layout direction resolves, which a
+        // view drawn off a window (a golden) never does, so the chevron
+        // silently did not appear in the picture that was meant to prove it.
+        setCompoundDrawablesWithIntrinsicBounds(null, null, Chevron(context), null)
+        compoundDrawablePadding = dp(context, Space.STEP)
         var current = selected
         setOnClickListener {
             android.app.AlertDialog.Builder(context)
@@ -777,27 +1084,33 @@ object JarvisUi {
     }
 
     /**
-     * Consent buttons. [tone] is [APPROVE] or [DENY].
+     * Consent buttons. [tone] is [APPROVE] or [DENY], and says which half this
+     * is; it is not the colour.
      *
-     * The yes half is FILLED in its tone with the ink on it — the one primary
-     * on a screen whose only purpose is this answer — and the no half is a
-     * quiet hairline in the danger text colour, so saying yes and saying no
-     * are not two equally loud controls and a thumb cannot mistake one for the
-     * other by shape.
+     * The yes half is the screen's primary — the accent as a fill with the ink
+     * on it, exactly `Approvals.svelte`'s `<Button variant="primary">APPROVE`
+     * — because a screen whose only purpose is this answer has one primary
+     * action and this is it. It was filled in the OK green, which is a
+     * semantic colour: green says "this succeeded", and nothing has happened
+     * yet. The no half is a quiet hairline in the danger text colour, so
+     * saying yes and saying no are not two equally loud controls and a thumb
+     * cannot mistake one for the other by shape. The console's hairline-OK
+     * `approve` variant is for the yes of a QUESTION Jarvis asked, not for
+     * consent, and no phone screen draws one yet.
      */
     fun consentButton(context: Context, label: String, tone: Int, onClick: () -> Unit): Button =
         Button(context).apply {
             text = label
             isAllCaps = true
             val yes = tone == APPROVE
-            setTextColor(if (yes) JarvisTokens.Color.ACCENT_INK else JarvisTokens.Color.DANGER_TEXT)
+            setTextColor(if (yes) JarvisTokens.Color.ACCENT_INK else DENY_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, Type.FIELD)
             letterSpacing = TRACK_CHROME
             typeface = LABEL_FACE
             background = GradientDrawable().apply {
                 cornerRadius = dp(context, JarvisTokens.Radius.MD).toFloat()
-                setColor(if (yes) tone else Color.TRANSPARENT)
-                setStroke(dp(context, Space.HAIRLINE), if (yes) tone else atAlpha(tone, FILL_ALPHA_STRONG))
+                setColor(if (yes) ACCENT else Color.TRANSPARENT)
+                setStroke(dp(context, Space.HAIRLINE), if (yes) ACCENT else atAlpha(DENY, FILL_ALPHA_STRONG))
             }
             setPadding(dp(context, Space.SCREEN), dp(context, Size.INSET), dp(context, Space.SCREEN), dp(context, Size.INSET))
             // Refuse taps that arrive through another window sitting on top of
@@ -808,12 +1121,52 @@ object JarvisUi {
         }
 
     /** A colour at an opacity, without writing either of them down twice. */
-    private fun atAlpha(color: Int, alpha: Int): Int =
+    fun atAlpha(color: Int, alpha: Int): Int =
         (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
 
-    /** The stroke on a quiet danger control: enough to read the tone, not to shout. */
+    /**
+     * The stroke on a quiet danger control, and the edge of a toned tag:
+     * enough to read the tone, not to shout. `Pill.svelte` mixes its edge at
+     * 40 %; this is the phone's one such value.
+     */
     private const val FILL_ALPHA_STRONG = 0x73
+
+    /** `font-variant-numeric: tabular-nums`, for a readout whose digits change. */
+    private const val TABULAR_DIGITS = "tnum"
 
     /** What a held bar says above its message. */
     private const val HELD_LABEL = "HELD · ASKS BEFORE IT GOES ON"
+
+    /**
+     * The chevron at the end of a [chooser]: two hairline strokes meeting at a
+     * point, in the dim text colour, the size of a label glyph. Drawn rather
+     * than a glyph because "▾" is a font's decision and the platform's mono
+     * face renders it as a filled block.
+     */
+    private class Chevron(context: Context) : Drawable() {
+        private val size = dp(context, Space.ROW)
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = dp(context, Space.HAIRLINE).toFloat()
+            color = JarvisTokens.Color.TEXT_DIM
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val path = Path().apply {
+                moveTo(b.left + b.width() * 0.25f, b.top + b.height() * 0.4f)
+                lineTo(b.exactCenterX(), b.top + b.height() * 0.65f)
+                lineTo(b.right - b.width() * 0.25f, b.top + b.height() * 0.4f)
+            }
+            canvas.drawPath(path, paint)
+        }
+
+        override fun getIntrinsicWidth(): Int = size
+        override fun getIntrinsicHeight(): Int = size
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
 }

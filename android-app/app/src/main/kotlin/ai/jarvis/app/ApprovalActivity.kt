@@ -300,7 +300,8 @@ class ApprovalActivity : Activity() {
             TextView(ctx).apply {
                 // Remote text. Rendered as text and nothing else.
                 text = reason.ifEmpty { "(no reason given — treat that as suspicious)" }
-                setTextColor(if (reason.isEmpty()) JarvisUi.DENY else JarvisTokens.Color.TEXT_BRIGHT)
+                // Danger as words is the danger TEXT colour; DENY is the mark's.
+                setTextColor(if (reason.isEmpty()) JarvisUi.DENY_TEXT else JarvisTokens.Color.TEXT_BRIGHT)
                 textSize = JarvisUi.Type.FIELD
                 typeface = JarvisUi.BODY_FACE
                 setTextIsSelectable(true)

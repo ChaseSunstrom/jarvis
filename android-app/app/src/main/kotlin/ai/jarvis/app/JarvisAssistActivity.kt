@@ -25,7 +25,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.graphics.Typeface
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -202,12 +201,15 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
 
         // The state readout the orb used to paint itself. A real view, so it is
         // in the accessibility tree and a test can read it.
+        // The console's `.cap`: the chrome face, the smallest step, wide
+        // tracking, always the accent at rest — the reactor above it carries
+        // the state's colour. It was tinted per state and tracked by hand.
         captionView = TextView(this).apply {
             text = "LISTENING"
-            setTextColor(JarvisOrbView.Mode.LISTENING.color)
+            setTextColor(JarvisTokens.Color.ACCENT_DEEP)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, JarvisUi.Type.LABEL)
-            letterSpacing = 0.2f
-            typeface = Typeface.MONOSPACE
+            letterSpacing = JarvisUi.TRACK_WIDE
+            typeface = JarvisUi.MONO_FACE
             gravity = Gravity.CENTER
             setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
             // "A real view, so it is in the accessibility tree" — it was in the
@@ -222,20 +224,16 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
         // What the turn is DOING, above what it is saying. Hidden until there
         // is something to show, so an ordinary question looks exactly as it did.
         toolActivityView = ToolActivityView(this).apply {
-            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 10), 0, 0)
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.ROW), 0, 0)
         }
         root.addView(toolActivityView, fullWidth())
         // And what the HOUSE did around the turn (M61): the same rows the console draws.
         activityStrip = ActivityStrip(this)
         root.addView(activityStrip, fullWidth())
+        // Sized by the graph itself (the console's 2:1 box), not a number
+        // typed here.
         knowledgeGraphView = KnowledgeGraphView(this)
-        root.addView(
-            knowledgeGraphView,
-            android.widget.LinearLayout.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                JarvisUi.dp(this@JarvisAssistActivity, 160)
-            )
-        )
+        root.addView(knowledgeGraphView, fullWidth())
 
         transcriptView = JarvisUi.transcriptView(this).apply {
             // Brighter than the shared transcript colour, for the same reason
@@ -243,7 +241,7 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
             setTextColor(JarvisUi.TEXT)
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, 12), 0, 0)
+            setPadding(0, JarvisUi.dp(this@JarvisAssistActivity, JarvisUi.Space.GAP), 0, 0)
         }
         responseView = JarvisUi.responseView(this).apply {
             maxLines = 4
@@ -315,7 +313,6 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     override fun onMode(mode: JarvisOrbView.Mode, label: String) {
         orbView.setMode(mode)
         captionView.text = label
-        captionView.setTextColor(mode.color)
     }
 
     override fun onAmplitude(level: Float) = orbView.setAmplitude(level)
@@ -327,7 +324,6 @@ class JarvisAssistActivity : Activity(), JarvisConversation.Ui {
     override fun onError(message: String) {
         responseView.text = message
         captionView.text = "ERROR"
-        captionView.setTextColor(JarvisOrbView.Mode.ERROR.color)
         orbView.setMode(JarvisOrbView.Mode.ERROR)
     }
 

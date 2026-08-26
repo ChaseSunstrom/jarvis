@@ -20,6 +20,12 @@ it:
     that both Android views own one instance of it, and that the five states
     are one table (`SiriPalette`, pinned to `color.orb.*` by
     `design/build.py --check`).
+  * At rest (M64) the instrument is the accent's on both surfaces: the web's
+    `.reactor` block sets `--rx-live`/`--rx-deep` to `--jv-accent-deep` and
+    `--rx-hot` to `--jv-accent` before any `[data-state]` overrides them, and
+    `ReactorOrb.Palette` hands the Canvas the same two tokens for IDLE. The
+    phone read `SiriPalette.blobs(IDLE)` directly, whose second colour is an
+    indigo, so its resting lens was two hues where the console's is one.
 
 Run:  python3 android-app/tools/reactor_orb_test.py
 """
@@ -213,6 +219,54 @@ def check_the_phone_reads_the_contract() -> list[str]:
     return failures
 
 
+def check_rest_is_the_accents_on_both_surfaces() -> list[str]:
+    """IDLE reads `accent.deep` (live and deep) and `accent` (the dot), as the web does.
+
+    Pinned from both ends: the web's resting block must still name those two
+    tokens, the phone's `ReactorOrb.Palette` must hand IDLE the same two, and
+    both Android views must read the palette rather than `SiriPalette`
+    directly — the drift this catches is one view resting in indigo again.
+    """
+    failures = []
+    web = WEB_REACTOR.read_text(encoding="utf-8")
+    rest = re.search(r"\.reactor \{(.*?)\}", web, re.S)
+    if not rest:
+        return ["Reactor.svelte has no `.reactor` block to read the resting palette from"]
+    block = rest.group(1)
+    for var, token in (
+        ("--rx-live", "--jv-accent-deep"),
+        ("--rx-deep", "--jv-accent-deep"),
+        ("--rx-hot", "--jv-accent"),
+    ):
+        if not re.search(rf"{re.escape(var)}:\s*var\({re.escape(token)}\)", block):
+            failures.append(f"Reactor.svelte's resting block does not set {var} to var({token})")
+
+    src = REACTOR.read_text(encoding="utf-8")
+    palette = re.search(r"object Palette \{(.*?)\n    \}", src, re.S)
+    if not palette:
+        return failures + ["ReactorOrb.kt has no Palette object; IDLE reads SiriPalette's indigo again"]
+    body = palette.group(1)
+    blobs = re.search(r"fun blobs\(.*?SiriPalette\.Tone\.IDLE\)\s*\{\s*\n\s*intArrayOf\(([^)]*)\)", body, re.S)
+    if not blobs or set(c.strip() for c in blobs.group(1).split(",")) != {"JarvisTokens.Color.ACCENT_DEEP"}:
+        failures.append("ReactorOrb.Palette.blobs(IDLE) is not accent-deep for live and deep alike")
+    if not re.search(r"fun core\(.*?Tone\.IDLE\) JarvisTokens\.Color\.ACCENT\b", body, re.S):
+        failures.append("ReactorOrb.Palette.core(IDLE) is not the accent")
+
+    # `SiriPalette.rim(` is allowed: it is `Mode.color`, the chrome's tint, which
+    # `check_the_state_machines_are_one` pins to exactly that expression.
+    for path in (SIRI_VIEW, HUD_VIEW):
+        view = path.read_text(encoding="utf-8")
+        for direct in ("SiriPalette.blobs(", "SiriPalette.core("):
+            if direct in view:
+                failures.append(
+                    f"{path.name} reads {direct}…) directly; the frame's colours come from "
+                    "ReactorOrb.Palette so IDLE rests in the accent"
+                )
+        if "ReactorOrb.Palette" not in view:
+            failures.append(f"{path.name} does not read ReactorOrb.Palette")
+    return failures
+
+
 def main() -> int:
     for path in (CONTRACT, WEB_REACTOR, REACTOR, SIRI_VIEW, HUD_VIEW, PALETTE):
         if not path.is_file():
@@ -226,6 +280,7 @@ def main() -> int:
         + check_both_views_draw_the_same_object()
         + check_the_state_machines_are_one()
         + check_the_phone_reads_the_contract()
+        + check_rest_is_the_accents_on_both_surfaces()
     )
     for failure in failures:
         print(f"FAIL  {failure}", file=sys.stderr)
@@ -234,7 +289,8 @@ def main() -> int:
         return 1
     print(
         f"reactor: {len(KEYS)} geometry constants agree with the contract on the web, "
-        "8 periods are tokens, both Android views draw one renderer, 5 states are one table"
+        "8 periods are tokens, both Android views draw one renderer, 5 states are one table, "
+        "rest is the accent's on both surfaces"
     )
     return 0
 

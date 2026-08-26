@@ -171,8 +171,8 @@ class AutomationsActivity : Activity() {
     }
 
     private fun unavailableColumn(): LinearLayout {
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "PHONE TASKS"))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Phone tasks", "The tasks this phone runs by itself, and the consent each one has."))
         col.addView(
             JarvisUi.hint(
                 this,
@@ -188,8 +188,8 @@ class AutomationsActivity : Activity() {
         admissions: Map<String, TaskAdmission>,
     ): LinearLayout {
         val rt = runtime
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "PHONE TASKS"))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Phone tasks", "The tasks this phone runs by itself, and the consent each one has."))
 
         val store = policy
         val live = store?.automationLive ?: false
@@ -222,7 +222,7 @@ class AutomationsActivity : Activity() {
                     }
                     refresh()
                 },
-                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 12) }
+                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.GAP) }
             )
         }
 
@@ -249,12 +249,12 @@ class AutomationsActivity : Activity() {
                     }
                     refresh()
                 },
-                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.STEP) }
             )
         }
 
         if (tasks.isEmpty()) {
-            col.addView(JarvisUi.spacer(this, 24))
+            col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
             col.addView(
                 TextView(this).apply {
                     text = "No automations yet."
@@ -277,19 +277,19 @@ class AutomationsActivity : Activity() {
             for (task in tasks) {
                 col.addView(
                     rowFor(task, admissions[task.id]),
-                    matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+                    matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.STEP) }
                 )
             }
         }
 
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
         return col
     }
 
     private fun rowFor(task: TaskDefinition, admission: TaskAdmission?): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            val p = JarvisUi.dp(this@AutomationsActivity, 12)
+            val p = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.GAP)
             setPadding(p, p, p, p)
             background = JarvisUi.panel(this@AutomationsActivity)
 
@@ -308,7 +308,7 @@ class AutomationsActivity : Activity() {
                         this.text = text
                         setTextColor(JarvisUi.DIM)
                         textSize = JarvisUi.Type.HINT
-                        setPadding(0, JarvisUi.dp(this@AutomationsActivity, 4), 0, 0)
+                        setPadding(0, JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.TIGHT), 0, 0)
                     }
                 )
             }
@@ -320,7 +320,7 @@ class AutomationsActivity : Activity() {
                     setTextColor(JarvisUi.FAINT)
                     textSize = JarvisUi.Type.LABEL
                     typeface = Typeface.MONOSPACE
-                    setPadding(0, JarvisUi.dp(this@AutomationsActivity, 4), 0, 0)
+                    setPadding(0, JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.TIGHT), 0, 0)
                 }
             )
 
@@ -331,9 +331,9 @@ class AutomationsActivity : Activity() {
                 addView(
                     TextView(this@AutomationsActivity).apply {
                         text = heldOff
-                        setTextColor(JarvisUi.DENY)
+                        setTextColor(JarvisUi.DENY_TEXT)
                         textSize = JarvisUi.Type.LABEL
-                        setPadding(0, JarvisUi.dp(this@AutomationsActivity, 6), 0, 0)
+                        setPadding(0, JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.SNUG), 0, 0)
                     }
                 )
             }
@@ -345,7 +345,7 @@ class AutomationsActivity : Activity() {
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+                ).apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.STEP) }
             )
 
             setOnClickListener {
@@ -355,8 +355,8 @@ class AutomationsActivity : Activity() {
         }
 
     private fun detailColumn(task: TaskDefinition, admission: TaskAdmission?): LinearLayout {
-        val col = JarvisUi.column(this, padDp = 20)
-        col.addView(JarvisUi.title(this, "TASK"))
+        val col = JarvisUi.column(this, padDp = JarvisUi.Space.SCREEN)
+        col.addView(JarvisUi.screenTitle(this, "Task"))
         col.addView(
             TextView(this).apply {
                 text = task.name
@@ -416,7 +416,7 @@ class AutomationsActivity : Activity() {
             matchWidth()
         )
 
-        col.addView(JarvisUi.spacer(this, 16))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.SECTION))
         col.addView(
             JarvisUi.button(this, if (task.enabled) "SWITCH OFF" else "SWITCH ON") {
                 toggleEnabled(task)
@@ -430,14 +430,14 @@ class AutomationsActivity : Activity() {
         if (task.enabled) {
             col.addView(
                 JarvisUi.button(this, "RUN NOW") { runNow(task) },
-                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.STEP) }
             )
             col.addView(
                 JarvisUi.button(this, "CANCEL RUN") {
                     val cancelled = runtime?.engine?.cancel(task.id) ?: false
                     toast(if (cancelled) "Cancelled" else "That task is not running")
                 },
-                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+                matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.STEP) }
             )
         }
         col.addView(
@@ -445,9 +445,9 @@ class AutomationsActivity : Activity() {
                 showing = null
                 refresh()
             },
-            matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, 8) }
+            matchWidth().apply { topMargin = JarvisUi.dp(this@AutomationsActivity, JarvisUi.Space.STEP) }
         )
-        col.addView(JarvisUi.spacer(this, 24))
+        col.addView(JarvisUi.spacer(this, JarvisUi.Space.WIDE))
         return col
     }
 

@@ -13,6 +13,7 @@ import ai.jarvis.app.automation.JarvisAutomationService
 import ai.jarvis.app.compat.GrapheneCompat
 import ai.jarvis.app.config.JarvisConfig
 import ai.jarvis.app.ui.JarvisBootAnimation
+import ai.jarvis.app.ui.ConsoleFrame
 import ai.jarvis.app.ui.ConsoleTab
 import ai.jarvis.app.ui.JarvisOrbView
 import ai.jarvis.app.ui.ActivityStrip
@@ -90,6 +91,15 @@ class MainActivity : Activity(), JarvisConversation.Ui {
      */
     private var askHost: ConversationAskHost? = null
     private var boot: JarvisBootAnimation? = null
+
+    /**
+     * The console's bar, less its tabs: the mark, JARVIS and the readout.
+     * The voice screen in a browser sits under the same `TopBar`; on the phone
+     * the brand used to be a wordmark painted over the reactor, and the state
+     * was only the caption. The readout says the state now, as the console's
+     * says STANDBY beside its dot.
+     */
+    private lateinit var brandBar: ConsoleFrame.Brand
 
     /** True between [onResume] and [onPause]: whether this screen may hold the mic. */
     private var inForeground = false
@@ -372,10 +382,14 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         val animation = JarvisBootAnimation(this).apply {
             orb = orbView
             actionCount = JarvisBootAnimation.lastActionCount(this@MainActivity)
-            onHomeAlpha = { a -> homeControls.alpha = a }
+            onHomeAlpha = { a ->
+                homeControls.alpha = a
+                brandBar.alpha = a
+            }
             onComplete = {
                 boot = null
                 homeControls.alpha = 1f
+                brandBar.alpha = 1f
                 showIdle()
                 refreshStatusBanner()
                 // And open the microphone, which onResume declined to do while
@@ -388,6 +402,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         }
         boot = animation
         homeControls.alpha = 0f
+        brandBar.alpha = 0f
         root.addView(
             animation,
             FrameLayout.LayoutParams(
@@ -430,11 +445,21 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             )
         )
 
+        brandBar = ConsoleFrame.brand(this).apply { setStatus(IDLE_CAPTION, ConsoleFrame.Tone.NEUTRAL) }
+        root.addView(
+            brandBar,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+        )
+
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            val m = JarvisUi.dp(this@MainActivity, 24)
-            setPadding(m, 0, m, JarvisUi.dp(this@MainActivity, 36))
+            val m = JarvisUi.dp(this@MainActivity, JarvisUi.Space.WIDE)
+            setPadding(m, 0, m, JarvisUi.dp(this@MainActivity, JarvisUi.Size.SHEET))
         }
         homeControls = col
 
@@ -459,7 +484,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             setTextColor(JarvisUi.DIM)
             textSize = JarvisUi.Type.LABEL
             gravity = Gravity.CENTER
-            setPadding(0, JarvisUi.dp(this@MainActivity, 4), 0, 0)
+            setPadding(0, JarvisUi.dp(this@MainActivity, JarvisUi.Space.TIGHT), 0, 0)
         }
 
         // One way in to everything that is not this screen.
@@ -480,11 +505,11 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, JarvisUi.dp(this@MainActivity, 14), 0, 0)
+            setPadding(0, JarvisUi.dp(this@MainActivity, JarvisUi.Space.SECTION), 0, 0)
             addView(JarvisUi.primary(this@MainActivity, "MANAGE") { openConsole(ConsoleTab.DEFAULT) })
             addView(
                 android.view.View(this@MainActivity),
-                LinearLayout.LayoutParams(JarvisUi.dp(this@MainActivity, 10), 1)
+                LinearLayout.LayoutParams(JarvisUi.dp(this@MainActivity, JarvisUi.Space.ROW), 1)
             )
             // PHONE, back on the home screen — and not as a walking-back of the
             // dedup that removed the other five.
@@ -509,21 +534,21 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 14) }
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, JarvisUi.Space.SECTION) }
         )
         col.addView(
             toolActivityView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, JarvisUi.Space.ROW) }
         )
         col.addView(
             activityStrip,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, JarvisUi.Space.ROW) }
         )
         // What Jarvis knows, drawn as the console draws it (M61): hidden until
         // there is a note or a memory to draw.
@@ -531,8 +556,8 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             knowledgeGraphView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                JarvisUi.dp(this@MainActivity, 200)
-            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, 10) }
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = JarvisUi.dp(this@MainActivity, JarvisUi.Space.ROW) }
         )
         col.addView(transcriptView)
         col.addView(responseView)
@@ -541,14 +566,14 @@ class MainActivity : Activity(), JarvisConversation.Ui {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = JarvisUi.dp(this@MainActivity, 22) }
+            ).apply { topMargin = JarvisUi.dp(this@MainActivity, JarvisUi.Space.SCREEN) }
         )
         col.addView(
             listenButton,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = JarvisUi.dp(this@MainActivity, 10) }
+            ).apply { topMargin = JarvisUi.dp(this@MainActivity, JarvisUi.Space.ROW) }
         )
         col.addView(listenReason, fullWidthParams())
         col.addView(nav, fullWidthParams())
@@ -786,6 +811,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         orbView.setAmplitude(0f)
         orbView.setMode(JarvisOrbView.Mode.IDLE)
         orbView.setStateLabel(IDLE_CAPTION)
+        brandBar.setStatus(IDLE_CAPTION, ConsoleFrame.Tone.NEUTRAL)
         refreshMuteButton()
         if (!config.isConfigured) {
             responseView.text = "Tap MANAGE to point me at your Jarvis server."
@@ -797,6 +823,10 @@ class MainActivity : Activity(), JarvisConversation.Ui {
     override fun onMode(mode: JarvisOrbView.Mode, label: String) {
         orbView.setMode(mode)
         orbView.setStateLabel(label)
+        brandBar.setStatus(
+            label,
+            if (mode == JarvisOrbView.Mode.IDLE) ConsoleFrame.Tone.NEUTRAL else ConsoleFrame.Tone.LIVE,
+        )
         // Reaching LISTENING is the proof that the whole chain works — socket,
         // token, pipeline, microphone — so it is what clears the backoff.
         // Clearing on start instead would reset it on the very failure it
@@ -822,6 +852,7 @@ class MainActivity : Activity(), JarvisConversation.Ui {
         responseView.text = message
         orbView.setStateLabel("ERROR")
         orbView.setMode(JarvisOrbView.Mode.ERROR)
+        brandBar.setStatus("ERROR", ConsoleFrame.Tone.WARN)
     }
 
     override fun onTools(run: ToolRun) = toolActivityView.render(run)
