@@ -955,8 +955,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m61-android-tasker.sh`
   - 26 Aug: the strip, the graph, chunked speech and the reactor's moves on the phone from
     the shared contracts; fourteen Tasker rows closed, six gap for permissions the app does
-    not request or a camera pipeline, one no. The Kotlin compiles, lints and its JVM tests
-    pass here (M08's toolchain under $HOME, which the gate first failed to look for).
+    not request or a camera pipeline, one no. The Kotlin compiles, lints, passes its JVM
+    tests and holds its goldens here (M08's toolchain under $HOME, which the gate first
+    failed to look for): gate 18/19, the one open check being the six gap rows, which
+    stay gap until the app asks for those permissions — a product decision, not a build.
 
 ## Final
 

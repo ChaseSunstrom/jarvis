@@ -1330,6 +1330,11 @@ class ConversationAgent:
         #: Set by the nudge below: the next round answers under a tool-call
         #: schema, so a model that narrated a call cannot narrate it twice.
         constrain_next = False
+        #: What the user asked, for the check below: a reply that says "done"
+        #: to an imperative when nothing was called is a claimed action.
+        request_text = next(
+            (str(m.get("content") or "") for m in reversed(messages) if m.get("role") == "user"), ""
+        )
         #: The calls each round made, as one signature per round: a model that
         #: makes the same calls three rounds running — polling task_status for
         #: a job it just started, re-reading the same page — is not converging
@@ -1412,6 +1417,32 @@ class ConversationAgent:
                             if name not in already
                         ),
                     )
+                    # The other shape of the same lie (M60): no call written
+                    # out, no call made, and a reply that says it is done — "Done,
+                    # Sir — the bed light is off" to "now turn it off again",
+                    # with nothing called. The rule says never claim an action
+                    # you have not called; when the model does, it is told so
+                    # once and asked to call or to say plainly that it did not.
+                    if not narrated and claimed_action(request_text, "".join(said)):
+                        nudged = True
+                        _LOGGER.warning(
+                            "The model said it had done %r without calling any tool; asking it to call or say so",
+                            request_text[:80],
+                        )
+                        result.preamble += "".join(said)
+                        messages.append(self._assistant_message_text("".join(said)))
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "You said that was done, but you called no tool, so "
+                                    "nothing changed. Make the tool call now, or tell me "
+                                    "plainly that you did not do it and why."
+                                ),
+                            }
+                        )
+                        constrain_next = self.constrained_retry
+                        continue
                     if narrated:
                         nudged = True
                         _LOGGER.warning(
@@ -1853,6 +1884,46 @@ _INTENT_RE = re.compile(
 #: sentence about calling it; narrow enough that a cue three paragraphs away
 #: does not count.
 _CUE_WINDOW = 60
+
+
+#: An imperative that wants a tool, and a reply that says it happened.
+_ACTION_REQUEST = re.compile(
+    r"\b(turn|switch|set|lock|unlock|open|close|dim|brighten|start|stop|play|pause|"
+    r"mute|unmute|arm|disarm|run|trigger|enable|disable|cancel)\b",
+    re.IGNORECASE,
+)
+_ACTION_CLAIMED = re.compile(
+    r"\b(done|is (?:now )?(?:on|off|locked|unlocked|open|closed|set|running|stopped|paused|"
+    r"playing|armed|disarmed|enabled|disabled|cancelled|canceled)|"
+    r"(?:turned|switched|locked|unlocked|opened|closed|set|started|stopped|paused|"
+    r"muted|armed|disarmed|enabled|disabled|cancelled|canceled) (?:it|them|the|that|off|on))\b",
+    re.IGNORECASE,
+)
+_ACTION_DECLINED = re.compile(
+    r"\b(can(?:'|no)t|cannot|unable|not able|won't|will not|did not|didn't|haven't|"
+    r"have not|no such|isn't|is not|already|waiting on|needs your|approval)\b",
+    re.IGNORECASE,
+)
+
+
+def claimed_action(request: str, reply: str) -> bool:
+    """Did the reply claim an action the turn never made?
+
+    True when the request is an imperative that wants a tool (turn, lock,
+    set, start …), the reply says it happened (done, is off, locked it …),
+    and the reply is not the honest alternative — a refusal, a "can't", an
+    "already", an approval waiting. The caller has checked that no tool ran.
+    Narrow on purpose: a question ("is the light on?") answered "it is on"
+    is a report, not a claim, and a wrong nudge costs the user a round.
+    """
+    request, reply = str(request or ""), str(reply or "")
+    if not request.strip() or not reply.strip():
+        return False
+    if not _ACTION_REQUEST.search(request):
+        return False
+    if _ACTION_DECLINED.search(reply):
+        return False
+    return bool(_ACTION_CLAIMED.search(reply))
 
 
 def narrated_tool_call(text: str, names: Iterable[str]) -> str:

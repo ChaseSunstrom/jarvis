@@ -437,3 +437,8 @@ is quiet. Done since:
   the m08 gate proved this host has M08's toolchain: M61's Kotlin compiles,
   lints and passes its JVM tests here — its gate is 17/19, the goldens for the
   strip and the graph being recorded, the six gap rows staying gap.
+- 12:45 — M61's gate 18/19 with the toolchain: build, JVM tests, lint and the goldens
+  (the strip and the graph recorded and looked at; the graph's labels fixed on the
+  first look) all green here; the six gap rows are the one open check. The smoke
+  failure named: "Done, Sir — the bed light is off" with nothing called; a guard
+  now sends that back to call or to say so.

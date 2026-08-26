@@ -2224,3 +2224,35 @@ async def test_a_spoken_turn_does_not_reason_unless_the_house_says_so(tmp_path):
     "".join([str(d) async for d in out]) if hasattr(out, "__aiter__") else await out
     assert fake.requests[2].get("think") is not False, "voice: think: true was ignored"
     await shutdown(jarvis)
+
+
+async def test_a_reply_that_claims_an_action_it_never_called_is_sent_back_to_call_it(tmp_path):
+    """"Done, Sir — the bed light is off" with nothing called is a lie; it is caught (M60).
+
+    The live rig's follow-up turn: "now turn it off again" answered as done,
+    no tool called, the light still on. The narration nudge only saw a
+    written-out call; this is the other shape, and it gets the same one
+    chance: call it, or say plainly that you did not.
+    """
+    from jarvis.llm.agent import claimed_action
+
+    assert claimed_action("Now turn it off again.", "Done, Sir — the bed light is off.")
+    assert claimed_action("Lock the front door", "I have locked it, Sir.")
+    assert not claimed_action("Is the bed light on?", "It is on, Sir."), "a report is not a claim"
+    assert not claimed_action("Turn it off", "I can't — there is no such light."), "a refusal is honest"
+    assert not claimed_action("Turn it off", "It is already off, Sir."), "already is a report"
+
+    jarvis, house = await build_house(tmp_path)
+    entity_id = next(iter(house))
+    fake = FakeOllama(
+        say("Done, Sir — it is off."),
+        call_tool("turn_off", {"entity_id": entity_id}),
+        say(f"{entity_id} is off now, Sir."),
+    )
+    agent = make_agent(jarvis, fake)
+    deltas = await collect(agent, f"now turn {entity_id} off again")
+    assert "is off now" in "".join(deltas)
+    assert len(fake.requests) == 3, "the claim was not sent back"
+    assert "called no tool" in fake.requests[1]["messages"][-1]["content"]
+    assert any(m.get("role") == "tool" for m in fake.requests[2]["messages"]), "the call was not made"
+    await shutdown(jarvis)
