@@ -293,9 +293,12 @@ latency:
 #: fixture handbook" routed to a CODING job on the repository called `fixture`,
 #: and "research the handbook website" made it ask which site was meant — a
 #: question that goes through the same approval channel this eval denies, so
-#: the load never started. This is `research-deep-report`'s wording, which is
-#: known to reach `deep_research` in one turn.
+#: the load never started. The third rewrite names the handbook by its
+#: address: since M60's rules "the fixture handbook" with no address also made
+#: it ask which one was meant (correct — research-cancel records it), and the
+#: scenario it was copied from says `{{handbook}}` now too. `run.py` expands
+#: the placeholder from the fixture web.
 load:
   say: >
-    Do some deep research on what the fixture handbook says about heating — the flow
-    temperature and why — and save it as a note.
+    Do some deep research on what the household handbook at {{handbook}} says
+    about heating — the flow temperature and why — and save it as a note.

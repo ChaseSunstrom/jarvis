@@ -428,9 +428,15 @@ class Intelligence:
         await self._probe(probes, "idle")
 
         print("\nlatency, under load", flush=True)
-        load = (data.get("load") or {}).get("say") or ""
+        load = str((data.get("load") or {}).get("say") or "").strip()
+        # `{{handbook}}` → the fixture web's address for this run, as the rig's
+        # runner does for its scenarios: a name the house has no note of is a
+        # question back through the approval channel this eval denies, and
+        # then no job runs and the pass is "not measurable" (26 Aug, twice).
+        for name, url in (getattr(self.ground, "web", None) or {}).items():
+            load = load.replace("{{" + str(name) + "}}", str(url).rstrip("/"))
         before = {str(task.get("id")) for task in await self.observer.tasks()}
-        spoken = await self.ask(str(load).strip(), None)
+        spoken = await self.ask(load, None)
         await asyncio.sleep(2.0)
         # A NEW task, not any running one: the first run reported a leftover
         # from an earlier section as the load, which is a real background job
