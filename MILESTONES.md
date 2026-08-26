@@ -945,7 +945,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     read-only steps; the evals re-measured and never lowered. Research:
     `docs/research/local-intelligence.md`.
   - Verify: `bash scripts/verify/m60-intelligence.sh`
-- [ ] **M61 — Android: the equal of the web, and of Tasker** · size XL · deps M51, M52, M53 · parallel-ok M56, M57, M58, M59, M60
+- [x] **M61 — Android: the equal of the web, and of Tasker** · size XL · deps M51, M52, M53 · parallel-ok M56, M57, M58, M59, M60
   - Scope: the phone's screens the console's — voice with the graph and activity, motion on
     Canvas, one state machine; the action registry audited against Tasker's categories and
     completed (comms, connectivity, device settings, media, apps, screen, clipboard, NFC,
@@ -953,6 +953,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     triggers as profiles; "on my phone, do X" end to end from the hub. Build, unit, lint and
     goldens only — never a device.
   - Verify: `bash scripts/verify/m61-android-tasker.sh`
+  - 26 Aug 18:30: gate 20/20 from the main checkout on the rebuilt stack — twenty Tasker rows
+    done and none gap, 226 JVM tests, lint, goldens, the mirrors, and the live smoke slice.
+    What only a phone shows is ADT-036…046, Unproven.
   - 26 Aug: the strip, the graph, chunked speech and the reactor's moves on the phone from
     the shared contracts; fourteen Tasker rows closed, six gap for permissions the app does
     not request or a camera pipeline, one no. The Kotlin compiles, lints, passes its JVM
