@@ -1211,13 +1211,24 @@ one). 51 of 58 scenario variants, 78 of 84 turns, intent 92.9 %, routing
 median still miss their thresholds; both recorded. The seven failures:
 
 - `memory-forget` — the model called `forget` twice and said "Forgotten", and
-  the store still held the fact. A defect, under investigation, not a
-  model miss.
+  the store still held the fact. Two defects (23a8d5b): a query like "shed
+  key" was called ambiguous because "key" alone cleared the floor for another
+  note, so the tool answered with candidates and a count of zero; and a count
+  of zero carried only a `reason`, which the model read as success. `forget`
+  takes the one entry that matched the whole query when no other did, and
+  every empty outcome says NOTHING was forgotten in the reply's words.
+  Re-measured on the next rebuilt stack.
 - `interactions-proactive-moment` — the background sensor audit ended
-  `jarvis_task_failed` rather than completed; the task's error is being read.
+  `jarvis_task_failed`: "interrupted when Jarvis restarted", like every failed
+  task in the store — `resilience-core-restart`, later in the run, restarts
+  the core under whatever an earlier scenario left running. A restart turn
+  now waits up to three minutes for running tasks first (23a8d5b).
 - `task-cancel-mid-run`, `delegation-across-backends` — routed to
   `deep_research` (this image predates b4010d0's research/house boundary and
-  b7543dd's addresses); re-measured on the rebuilt stack.
+  b7543dd's addresses). Re-measured at 18:50 on the rebuilt stack, alone with
+  the six others: both pass, as do sensors-discovered, thread continuity,
+  research-deep-report and subagents-parallel-work — 9 of 11 variants; only
+  resilience-core-restart still fails.
 - `subagents-parallel-work` — the rig's HTTP client timed out waiting for the
   turn; the specialists' lookups run through a SearXNG whose upstream engines
   time out (the environment fault BLOCKERS records).
