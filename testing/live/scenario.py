@@ -27,6 +27,8 @@ full mode does. Nothing is ever "skipped" — `PROCESS.md` §2.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -153,7 +155,36 @@ class Scenario:
 
     @property
     def gated(self) -> bool:
-        return bool(self.gated_on)
+        """Waiting on a milestone that has not landed.
+
+        `gated-on` names a milestone; a scenario is gated while that milestone
+        is unticked in `MILESTONES.md` and not a moment longer. This used to be
+        `bool(self.gated_on)`, which made "gated" permanent: twenty-five
+        scenarios written against M16, M18 and M25 were still being skipped by
+        `--implemented-only` months after those milestones were ticked, and the
+        one place they ran at all was each milestone's own `--capability`
+        slice. Full mode ran them, and full mode had never been run.
+        """
+        return bool(self.gated_on) and self.gated_on not in ticked_milestones()
+
+
+_TICKED: set[str] | None = None
+
+
+def ticked_milestones(ledger: Path | None = None) -> set[str]:
+    """Every `- [x] **Mnn` in MILESTONES.md, read once."""
+    global _TICKED
+    if _TICKED is None or ledger is not None:
+        path = ledger or (Path(__file__).resolve().parents[2] / "MILESTONES.md")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        found = set(re.findall(r"^- \[x\] \*\*(M\d{2})", text, re.M))
+        if ledger is not None:
+            return found
+        _TICKED = found
+    return _TICKED
 
 
 def _turn(raw: Any, index: int, name: str) -> Turn:
