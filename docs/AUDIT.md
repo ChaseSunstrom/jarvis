@@ -208,7 +208,8 @@ Audited in `jarvis-core/jarvis/` (llm, integrations, automation, api) and `jarvi
 (`{"task": Task.as_dict()}` with steps, fraction, done/total), `jarvis_tool_started/finished`
 (name, arguments, round, index, total, ok, status, error, duration_ms — conversation turns only),
 `jarvis_tool_called`, `jarvis_approval_required/resolved` (`PendingRequest` with pinned args,
-expiry, taint, choices), `voice_pipeline_event`, in-run `intent-*` events, `jarvis_schedule_fired`,
+expiry, taint, choices, and `summary` — one sentence from the pinned args, M67), `jarvis_setting_changed`
+(key, label, previous, value, applied, restart_required, origin, action — from the one write path, M67), `voice_pipeline_event`, in-run `intent-*` events, `jarvis_schedule_fired`,
 `jarvis_background_task`. REST/WS: `/api/tasks*`, `jarvis/tasks/*`, `/api/jarvis/approve`,
 `jarvis/approve`, pending list only via the service `llm.pending_requests`. **No shared contract
 fixture** pins any of these — `tests/contracts/` holds only `entity_id_rename.json` and

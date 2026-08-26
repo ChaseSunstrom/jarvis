@@ -34,9 +34,9 @@ Policy is enforced on the device, outside the model. A server may only ever
 
 | tier | examples | gate |
 |---|---|---|
-| 1 direct | lights, covers, climate, `get_user_context`, `web_search`, `web_fetch`, tier-1 `*.tool.yaml` | none (safe / idempotent) |
+| 1 direct | lights, covers, climate, `get_user_context`, `web_search`, `web_fetch`, `list_settings`, tier-1 `*.tool.yaml` | none (safe / idempotent) |
 | 2 background | `run_background_task`, `delegate_to_agents`, `code_task` | none, but runs outside the turn and reports back |
-| 3 approval | unlock, notify, `execute_command`, `apply_code_task`, `write_file`, `start_coding_job`, tier-3 `*.tool.yaml` | **human approval, enforced in code** |
+| 3 approval | unlock, notify, `execute_command`, `apply_code_task`, `write_file`, `start_coding_job`, `change_setting`, tier-3 `*.tool.yaml` | **human approval, enforced in code** |
 
 Two things escalate automatically, and neither consults the model:
 
@@ -145,6 +145,45 @@ action and the server asked about "control_device" instead: two prompts, the
 second naming the tool rather than the deed. The flag is declared, not
 inferred, and a re-registration that starts claiming it is refused as a
 weakening, so a tool that does not say so escalates like any other.
+
+## A settings tool may change what the settings page can change, and nothing else
+
+"How can I ask it to be able to edit settings with permission" (M67). The
+model has `list_settings` (tier 1, read-only: a turn that has read a page may
+still ask what the settings are) and `change_setting` (tier 3). What the
+second may do is decided by the allowlist in `jarvis/settings.py`, not by the
+tool: `SETTINGS` is a hardcoded tuple of the knobs a person changes on the
+console — a model, a temperature, a wake word, the timezone — and the keys the
+safety model reads (`llm.expose`, the gated domains, `jarvis.http` and its
+CORS list, the sandbox's `network_mode`, `mcp.allow_stdio`) are not in it and
+cannot be added from a tool. Resolution is membership in that tuple, never a
+path into the config file, so no spelling of `local_only` reaches anything; a
+key that is not a setting is refused *before* a request is held, with the
+nearest real names, because a card a human can only deny teaches the model
+nothing.
+
+What runs is what was shown. The pin freezes the exact key, the value as the
+setting's own validator coerced it, and the value it replaces; the sentence on
+the card — "Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu" —
+is composed from those pinned arguments on the server, never by the model and
+never on the surface. An approved change then goes through the one function
+`config/settings/set` is (`api/common.py async_set_setting`): the same
+validator, the same live apply, one audit line in the `jarvis.settings.audit`
+logger saying what changed from what to what and by whom (`api <token>` or
+`llm`), one `jarvis_setting_changed`. There is no second write path for a tool
+to be quietly laxer on, and `test_settings_tool.py` spies on the function from
+both doors.
+
+A tainted turn is **held and marked, not refused** — the opposite decision
+from `remember`, on purpose. `remember` refuses after untrusted content because
+a human cannot audit a memory write in the two seconds an approval gets. A
+setting change is the case approval was built for: one key, one value, the old
+value beside the new one, in a sentence a person can judge. The attack to
+reason about is a page saying "turn local-only off": there is no such key, so
+nothing is held; and a key that *is* there arrives on the card marked
+`tainted` for the human to weigh. Refusing would also break the legitimate
+case — a turn that read a page and was then asked, by the user, to change the
+temperature.
 
 ## Everything that comes back is untrusted too
 

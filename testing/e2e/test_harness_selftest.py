@@ -27,6 +27,8 @@ a slow CI runner makes this slower, never flaky.
 from __future__ import annotations
 
 import asyncio
+import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -439,6 +441,165 @@ async def test_a_model_failure_is_reported_and_does_not_kill_the_server(client, 
 
     harness.set_ollama_script(None)
     assert (await client.healthz())["status"] == "ok"
+
+
+# ===========================================================================
+# the settings tools: held, approved, written through the console's path (M67)
+# ===========================================================================
+async def test_a_setting_change_is_held_approved_written_and_audited(client, harness):
+    """"How can I ask it to be able to edit settings with permission."
+
+    The whole path, against the real server. The model asks for
+    `change_setting` by the setting's plain name; the gate holds it with the
+    exact key, the coerced value and the value it replaces pinned, and one
+    sentence composed from them; nothing has changed yet. A human approves
+    through the same `llm.approve` the console's banner calls. The write goes
+    through the function `config/settings/set` is, so the console's own list
+    reads the new value at once, `jarvis_setting_changed` says who made the
+    change, and the server's log has one audit line: what, from what, to
+    what, by whom. The reset afterwards is audited the same way, as `api`.
+    """
+    key = "llm.options.temperature"
+    harness.set_ollama_script(
+        {
+            "rules": [
+                {
+                    "match": "be more inventive",
+                    "responses": [
+                        {
+                            "tool_calls": [
+                                {
+                                    "name": "change_setting",
+                                    # The plain name, as a model repeats what a
+                                    # person said: the pin resolves it to the
+                                    # one setting it names.
+                                    "arguments": {"key": "temperature", "value": 0.5},
+                                }
+                            ]
+                        },
+                        {"say": "That needs your approval, Sir."},
+                    ],
+                }
+            ]
+        }
+    )
+
+    async def row() -> dict:
+        listed = await client.command("config/settings/list")
+        return next(r for r in listed["settings"] if r["key"] == key)
+
+    before = await row()
+    assert before["value"] == 0 and before["source"] != "overlay", before
+
+    changed = await client.subscribe_events("jarvis_setting_changed")
+    try:
+        reply = await client.conversation("be more inventive")
+        assert reply["response"]["speech"]["plain"]["speech"] == "That needs your approval, Sir."
+        calls = reply["response"]["data"]["tool_calls"]
+        assert [call["name"] for call in calls] == ["change_setting"]
+        held = calls[0]["result"]
+        assert held["status"] == "approval_required", held
+        # Pinned: the exact key, the value as the validator coerced it, the
+        # value it replaces, and the label — and the sentence the card shows.
+        assert held["arguments"] == {
+            "key": key, "value": 0.5, "previous": 0, "label": "Temperature",
+        }
+        assert held["summary"] == "Change Temperature (llm.options.temperature) from 0 to 0.5"
+        # Nothing has changed.
+        assert (await row())["value"] == 0
+
+        # A human says yes, through the service the console's banner calls.
+        outcome = (
+            await client.call_service(
+                "llm", "approve",
+                {"request_id": held["request_id"], "approved": True},
+                return_response=True,
+            )
+        )["response"]
+        assert outcome["status"] == "executed", outcome
+        result = outcome["result"]
+        assert result["status"] == "ok", result
+        assert result["summary"] == (
+            "Changed Temperature (llm.options.temperature) from 0 to 0.5."
+        )
+        assert result["restart_required"] is False
+
+        # What the console reads now says so, from the overlay.
+        after = await row()
+        assert after["value"] == 0.5 and after["source"] == "overlay", after
+
+        # And the bus said who.
+        event = await changed.wait_for(
+            lambda e: e.get("event_type") == "jarvis_setting_changed", timeout=15
+        )
+        assert event["data"]["key"] == key
+        assert (event["data"]["previous"], event["data"]["value"]) == (0, 0.5)
+        assert event["data"]["origin"] == "llm"
+        assert event["data"]["action"] == "set"
+    finally:
+        await changed.unsubscribe()
+        # Back to the file's value through the console's own reset — which is
+        # a change too, and is audited as one.
+        await client.command("config/settings/reset", key=key)
+
+    assert (await row())["value"] == 0
+
+    # The audit lines, in the server's own log. stderr is line-buffered, but
+    # the write and this read race on a slow runner, so: a deadline, no sleep
+    # without one.
+    log_path = Path(harness.info()["logs"]["jarvis-core"])
+    wanted = (
+        "set llm.options.temperature: 0 -> 0.5 (by llm; applied live)",
+        "reset llm.options.temperature: 0.5 -> 0 (by api",
+    )
+    deadline = time.monotonic() + 15
+    while True:
+        log = log_path.read_text(errors="replace")
+        if all(line in log for line in wanted):
+            break
+        assert time.monotonic() < deadline, f"no audit line in {log_path}:\n{log[-3000:]}"
+        await asyncio.sleep(0.2)
+    audit = [line for line in log.splitlines() if "jarvis.settings.audit" in line]
+    assert len(audit) == 2, audit
+
+
+async def test_a_setting_that_does_not_exist_is_refused_with_the_nearest_and_nothing_is_held(
+    client, harness
+):
+    """"Demo mode" is answered with what the settings are called, not a guess
+    and not a card a human can only deny."""
+    harness.set_ollama_script(
+        {
+            "rules": [
+                {
+                    "match": "demo mode",
+                    "responses": [
+                        {
+                            "tool_calls": [
+                                {
+                                    "name": "change_setting",
+                                    "arguments": {"key": "demo mode", "value": True},
+                                }
+                            ]
+                        },
+                        {"say": "There is no demo mode, Sir."},
+                    ],
+                }
+            ]
+        }
+    )
+    reply = await client.conversation("turn on demo mode")
+    refused = reply["response"]["data"]["tool_calls"][0]["result"]
+    assert refused["status"] == "error", refused
+    assert "no setting called 'demo mode'" in refused["error"]
+    assert "the nearest are " in refused["error"]
+    named = refused["error"].split("the nearest are ")[1].split(". Call")[0].split(", ")
+    keys = {r["key"] for r in (await client.command("config/settings/list"))["settings"]}
+    assert named and set(named) <= keys, named
+    pending = (
+        await client.call_service("llm", "pending_requests", {}, return_response=True)
+    )["response"]["pending"]
+    assert [p for p in pending if p["tool"] == "change_setting"] == []
 
 
 # ===========================================================================

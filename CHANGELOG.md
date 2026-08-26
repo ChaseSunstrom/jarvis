@@ -8,6 +8,19 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M67 — settings under approval.** "How can I ask it to be able to edit settings with
+  permission": the model can now list the settings the console can change (`list_settings`, Tier 1
+  — the registry the Settings screens read, with key, label, type and current value, and with a
+  word to filter by what each one does and accepts) and ask to change one (`change_setting`, Tier
+  3). The change is held with the exact key, the coerced value and the value it replaces pinned,
+  and the approvals banner reads "Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu"
+  rather than raw `key: value` pairs; approving writes through the very function
+  `config/settings/set` is, so the validation, the audit line and the event are the console's.
+  Asked for a setting that does not exist ("demo mode") it is told so with the nearest real names,
+  and nothing is held. Every setting write — console, REST or model — now logs one line in
+  `jarvis.settings.audit` (what, from, to, by whom) and fires `jarvis_setting_changed`;
+  `config/settings/set` and `/reset` answer with `label` and `previous`. A turn that has read
+  untrusted content has its change held and marked, not refused (`docs/security.md` says why).
 - **M68 — search that answers.** "Nothing was found for 4 searches" was a SearXNG that could not
   search at all: `SEARXNG_URL` named an instance elsewhere whose every engine timed out, and its
   empty answer read as no results. `web.search` now tells the two apart — an empty answer with

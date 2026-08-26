@@ -1048,10 +1048,14 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m66-ask-and-answer.sh`
 - [ ] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66
   - Scope: "how can I ask it to be able to edit settings with permission" — a `list_settings`
-    tool (Tier 1) over the console's settings registry and a `change_setting` tool (Tier 3,
-    pinned key and value in the approval) that writes through the same `config/settings/set`
-    the console uses, with the same validation and the same audit; "demo mode" is answered
-    with what the settings are called, not a guess.
+    tool (Tier 1, read-only) over the console's settings registry, compact for the whole list and
+    detailed for a filtered one, and a `change_setting` tool (Tier 3) with the exact key, the
+    coerced value and the value it replaces pinned in the approval and one sentence composed from
+    them, which writes through the same `async_set_setting` the console's `config/settings/set`
+    and the REST route use — the same validation, one audit line in `jarvis.settings.audit`, one
+    `jarvis_setting_changed`. "Demo mode" is answered with what the settings are called, not a
+    guess, and nothing is held for it; the banner reads "Change Wake word (voice.wake_word) from
+    hey_jarvis to ok_nabu"; a tainted turn is held and marked, not refused.
   - Verify: `bash scripts/verify/m67-settings-tool.sh`
 - [x] **M68 — Search that works** · size S · deps M31 · parallel-ok M66
   - Scope: "Latest news on Bitcoin — nothing was found for 4 searches": the configured SearXNG
