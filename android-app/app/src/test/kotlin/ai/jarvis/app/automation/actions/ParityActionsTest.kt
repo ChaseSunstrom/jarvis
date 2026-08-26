@@ -3,6 +3,11 @@ package ai.jarvis.app.automation.actions
 import ai.jarvis.app.automation.actions.builtin.Builtins
 import ai.jarvis.app.automation.actions.builtin.GetNetworkInfo
 import ai.jarvis.app.automation.actions.builtin.MediaControl
+import ai.jarvis.app.automation.actions.builtin.MediaNowPlaying
+import ai.jarvis.app.automation.actions.builtin.PlayMedia
+import ai.jarvis.app.automation.actions.builtin.RecordAudio
+import ai.jarvis.app.automation.actions.builtin.SetBluetooth
+import ai.jarvis.app.automation.actions.builtin.SetWallpaper
 import ai.jarvis.app.automation.actions.builtin.ParityActions
 import ai.jarvis.app.automation.actions.builtin.SendIntent
 import ai.jarvis.app.automation.actions.builtin.SetScreenTimeout
@@ -30,6 +35,7 @@ class ParityActionsTest {
             listOf(
                 "show_toast", "set_auto_brightness", "set_rotation_lock", "set_screen_timeout",
                 "get_network_info", "send_intent", "launch_shortcut", "media_control",
+                "media_now_playing", "play_media", "set_wallpaper", "record_audio", "set_bluetooth",
             ),
             ParityActions.all.map { it.id },
         )
@@ -105,5 +111,41 @@ class ParityActionsTest {
         assertEquals("Home", GetNetworkInfo.ssidOf("\"Home\""))
         assertNull(GetNetworkInfo.ssidOf("<unknown ssid>"))
         assertNull(GetNetworkInfo.ssidOf(null))
+    }
+
+    @Test
+    fun `media_now_playing says what it knows and never invents a title`() {
+        assertEquals("nothing is playing", MediaNowPlaying.describe(null, null, null, false))
+        assertEquals("something is playing in com.spotify.music", MediaNowPlaying.describe("", null, "com.spotify.music", true))
+        assertEquals("playing Blue Monday — New Order in com.spotify.music", MediaNowPlaying.describe("Blue Monday", "New Order", "com.spotify.music", true))
+        assertEquals("paused: Blue Monday", MediaNowPlaying.describe("Blue Monday", " ", null, false))
+    }
+
+    @Test
+    fun `play_media takes a web url or a sandbox file and nothing else`() {
+        assertTrue(PlayMedia.sourceOf("https://example.invalid/a.mp3") is PlayMedia.Source.Url)
+        assertEquals(PlayMedia.Source.SandboxFile("sounds/chime.mp3"), PlayMedia.sourceOf("sounds/chime.mp3"))
+        assertTrue(PlayMedia.sourceOf("../../etc/passwd") is PlayMedia.Source.Rejected)
+        assertTrue(PlayMedia.sourceOf("file:///sdcard/x.mp3") is PlayMedia.Source.Rejected)
+        assertTrue(PlayMedia.sourceOf("") is PlayMedia.Source.Rejected)
+    }
+
+    @Test
+    fun `set_wallpaper knows three screens and record_audio a sane length`() {
+        assertEquals(android.app.WallpaperManager.FLAG_SYSTEM, SetWallpaper.flagsFor(null))
+        assertEquals(android.app.WallpaperManager.FLAG_LOCK, SetWallpaper.flagsFor("lock"))
+        assertNull(SetWallpaper.flagsFor("fridge"))
+        assertEquals(ActionTier.NOTIFY, SetWallpaper.tier)
+        assertEquals(ActionTier.CONFIRM, RecordAudio.tier)
+        assertNull(RecordAudio.secondsOf(JSONObject().put("seconds", 0)))
+        assertNull(RecordAudio.secondsOf(JSONObject().put("seconds", 3600)))
+        assertEquals(10, RecordAudio.secondsOf(JSONObject().put("seconds", 10)))
+    }
+
+    @Test
+    fun `set_bluetooth flips the radio itself only where Android still allows`() {
+        assertTrue(SetBluetooth.directOn(android.os.Build.VERSION_CODES.S_V2))
+        assertTrue(!SetBluetooth.directOn(android.os.Build.VERSION_CODES.TIRAMISU))
+        assertEquals(ActionTier.NOTIFY, SetBluetooth.tier)
     }
 }

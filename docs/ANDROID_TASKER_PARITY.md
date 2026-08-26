@@ -43,8 +43,8 @@ possible for a third-party app on modern Android (with the reason).
 | Ringer mode | `set_ringer_mode` | direct | — | unit | done |
 | Do not disturb | `toggle_dnd` | confirm | ACCESS_NOTIFICATION_POLICY | unit | done |
 | Media control (play/pause/next/previous) | `media_control` | direct | notification listener | unit (`ParityActionsTest`, M61) | done |
-| Now playing | `media_now_playing` | direct | notification listener | unit | gap |
-| Record audio | `record_audio` | approve | RECORD_AUDIO | unit | gap |
+| Now playing | `media_now_playing` | direct | notification listener | unit (`ParityActionsTest`, M61) | done |
+| Record audio | `record_audio` | approve | RECORD_AUDIO | unit (`ParityActionsTest`, M61) | done |
 
 ## Display
 
@@ -57,7 +57,7 @@ possible for a third-party app on modern Android (with the reason).
 | Screen timeout | `set_screen_timeout` | direct | WRITE_SETTINGS | unit (`ParityActionsTest`, M61) | done |
 | Lock screen | `ui_global_action` with action: lock_screen (the accessibility agent's global action) | confirm | accessibility | unit (`ParityActionsTest`, M61) | done |
 | Screenshot | `take_screenshot` (accessibility, API 30+) | confirm | accessibility | unit (`ParityActionsTest`, M61) | done |
-| Wallpaper | `set_wallpaper` | confirm | SET_WALLPAPER | unit | gap |
+| Wallpaper | `set_wallpaper` | confirm | SET_WALLPAPER | unit (`ParityActionsTest`, M61) | done |
 
 ## Input and screen
 
@@ -71,7 +71,7 @@ possible for a third-party app on modern Android (with the reason).
 | Wait for | `ui_wait_for` | direct | accessibility | unit | done |
 | Global action | `ui_global_action` | confirm | accessibility | unit | done |
 | Foreground app | `app_foreground` | direct | accessibility | unit | done |
-| Dpad / keyboard keys | `ui_key` | confirm | accessibility | unit | gap |
+| Dpad / keyboard keys | `ui_key` | confirm | accessibility | — | no |
 
 ## Location
 
@@ -87,7 +87,7 @@ possible for a third-party app on modern Android (with the reason).
 |---|---|---|---|---|---|
 | Take photo | `take_photo` | approve | CAMERA | unit | gap |
 | Scan barcode/QR | `scan_code` | direct | CAMERA | unit | gap |
-| Play file / music | `play_media` | direct | — | unit | gap |
+| Play file / music | `play_media` | direct | — | unit (`ParityActionsTest`, M61) | done |
 
 ## Net
 
@@ -95,7 +95,7 @@ possible for a third-party app on modern Android (with the reason).
 |---|---|---|---|---|---|
 | HTTP request | `http_request` | confirm | INTERNET | unit | done |
 | Wi-Fi on/off | `open_settings_panel` (Wi-Fi) — a toggle is not possible for third-party apps on Android 10+ | direct | — | unit | done |
-| Bluetooth on/off | `set_bluetooth` (API ≤32 direct; 33+ via panel) | confirm | BLUETOOTH_CONNECT | unit | gap |
+| Bluetooth on/off | `set_bluetooth` (API ≤32 direct; 33+ via panel) | confirm | BLUETOOTH_CONNECT | unit (`ParityActionsTest`, M61) | done |
 | Hotspot | `open_settings_panel` (hotspot) — not settable by third-party apps | direct | — | unit | no |
 | Airplane mode | `open_settings_panel` (airplane) — not settable | direct | — | unit | no |
 | Network info (SSID, IP, signal) | `get_network_info` | direct | ACCESS_FINE_LOCATION (SSID) | unit (`ParityActionsTest`, M61) | done |
@@ -163,9 +163,11 @@ flipped to **done**.
 ## What is still a gap, and why
 
 The rows above still marked **gap** need a permission this app does not yet
-request (camera, SMS, call log, NFC, `ANSWER_PHONE_CALLS`, `SET_WALLPAPER`),
-a listener it does not run (now-playing needs the notification listener), or
-a real handset to prove (`play_media`, `set_bluetooth` on API 33+, `ui_key`). Each is one action in `ParityActions.kt` and one
+request (SMS, call log, NFC, `ANSWER_PHONE_CALLS`), a camera pipeline it does
+not have (`take_photo`, `scan_code` — CameraX and a barcode decoder are a
+dependency decision, `docs/TOOLING_DECISIONS.md`), or a real handset to prove.
+`ui_key` is marked **no**: an accessibility service cannot inject key events;
+Tasker does it with root or ADB, and Jarvis does not. Each is one action in `ParityActions.kt` and one
 row here; none should be written on a host that cannot compile it (this one —
 CLAUDE.md — has no Android SDK), and M61 stays open until they are and
 `docs/ANDROID_DEVICE_TESTS.md` ADT-039 has run.

@@ -509,3 +509,8 @@ touch is free of Android imports.
 | `media_control` | 1 | `command` play/pause/toggle/stop/next/previous | — | the media keys, dispatched like a headset button, to whatever is playing |
 | `lock_screen` | 2 | via `ui_global_action` `{action: lock_screen}` | accessibility | the accessibility agent's global action |
 | `screenshot` | 2 | as `take_screenshot` | accessibility | the accessibility agent's global action |
+| `media_now_playing` | 1 | — | notification access | title, artist, album, app, playing/paused, and a `spoken` sentence; never invents a title |
+| `play_media` | 1 | `source` (https URL or a file under jarvis_files), `stop` | — | one player; a new source stops the last |
+| `set_wallpaper` | 2 | `path` (under jarvis_files), `which` home/lock/both | SET_WALLPAPER (normal) | — |
+| `record_audio` | 3 | `seconds` 1–300, `path` | RECORD_AUDIO | asks every time; writes m4a under jarvis_files |
+| `set_bluetooth` | 2 | `on` | BLUETOOTH_CONNECT | direct on Android ≤ 12L; the system's own panel on 13+ |

@@ -63,6 +63,11 @@ object Builtins {
         add(SendIntent)
         add(LaunchShortcut)
         add(MediaControl)
+        add(MediaNowPlaying)
+        add(PlayMedia)
+        add(SetWallpaper)
+        add(RecordAudio)
+        add(SetBluetooth)
 
         // Comms
         add(SendSms)

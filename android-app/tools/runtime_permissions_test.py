@@ -156,6 +156,7 @@ NOT_DANGEROUS = {
     "android.permission.VIBRATE",
     "android.permission.WAKE_LOCK",
     "android.permission.WRITE_SETTINGS",
+    "android.permission.SET_WALLPAPER",  # normal: set_wallpaper (M61) writes an image the user asked for
     # Shizuku's service, not a permission the app is granted.
     "moe.shizuku.privileged.api",
 }

@@ -274,11 +274,246 @@ object MediaControl : JarvisAction {
     }
 }
 
+/** Tier 1 — what is playing, from the active media session (needs notification access). */
+object MediaNowPlaying : JarvisAction {
+    override val id = "media_now_playing"
+    override val tier = ActionTier.AUTO
+    override val description = "What is playing right now: title, artist, album, the app, and whether it is playing or paused."
+    override val paramsSchema = emptyMap<String, String>()
+    override val capability = "media"
+
+    /** The answer as one sentence, from the fields a session reports (any may be missing). */
+    fun describe(title: String?, artist: String?, app: String?, playing: Boolean): String {
+        val what = listOfNotNull(title?.takeIf { it.isNotBlank() }, artist?.takeIf { it.isNotBlank() }).joinToString(" — ")
+        val who = app?.takeIf { it.isNotBlank() }?.let { " in $it" }.orEmpty()
+        return when {
+            what.isEmpty() && app.isNullOrBlank() -> "nothing is playing"
+            what.isEmpty() -> (if (playing) "something is playing" else "something is paused") + who
+            else -> (if (playing) "playing " else "paused: ") + what + who
+        }
+    }
+
+    override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
+        val component = ai.jarvis.app.automation.actions.ActionEnv.notificationListener
+            ?: return ActionResult.error("now-playing needs notification access; enable Jarvis in Settings > Notifications > Device & app notifications")
+        val msm = ctx.getSystemService(android.media.session.MediaSessionManager::class.java)
+            ?: return ActionResult.error("no media session service")
+        val controller = try {
+            msm.getActiveSessions(component).firstOrNull()
+        } catch (e: SecurityException) {
+            return ActionResult.error("notification access is not granted; enable Jarvis in Settings > Notifications > Device & app notifications")
+        } ?: return ActionResult.ok(json("playing" to false, "spoken" to describe(null, null, null, false)))
+        val meta = controller.metadata
+        val title = meta?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
+        val artist = meta?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
+        val album = meta?.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM)
+        val playing = controller.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING
+        return ActionResult.ok(
+            json("title" to title, "artist" to artist, "album" to album, "app" to controller.packageName, "playing" to playing,
+                "spoken" to describe(title, artist, controller.packageName, playing))
+        )
+    }
+}
+
+/** Tier 1 — play a sound file from the sandbox or a URL, through the media stream. */
+object PlayMedia : JarvisAction {
+    override val id = "play_media"
+    override val tier = ActionTier.AUTO
+    override val description = "Play an audio file: a URL (http/https) or a file under Jarvis's own files. Stops whatever this action played before."
+    override val paramsSchema = mapOf(
+        "source" to "string: https://… or a path under jarvis_files",
+        "stop" to "bool (optional): stop playback instead"
+    )
+    override val capability = "media"
+
+    sealed class Source {
+        data class Url(val url: String) : Source()
+        data class SandboxFile(val relative: String) : Source()
+        data class Rejected(val reason: String) : Source()
+    }
+
+    /** Where the sound comes from: a web URL or a file inside the sandbox — never a path outside it. */
+    fun sourceOf(raw: String?): Source {
+        val text = raw?.trim().orEmpty()
+        if (text.isEmpty()) return Source.Rejected("source is required")
+        if (text.startsWith("http://") || text.startsWith("https://")) return Source.Url(text)
+        if (text.contains("://")) return Source.Rejected("only http(s) URLs or files under jarvis_files can be played")
+        return when (val r = ai.jarvis.app.automation.actions.PathScope.normalize(text)) {
+            is ai.jarvis.app.automation.actions.PathScope.Result.Allowed -> Source.SandboxFile(r.relative)
+            is ai.jarvis.app.automation.actions.PathScope.Result.Rejected -> Source.Rejected(r.reason)
+        }
+    }
+
+    @Volatile
+    private var player: android.media.MediaPlayer? = null
+
+    override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
+        if (params.optBoolean("stop", false)) {
+            player?.let { runCatching { it.stop(); it.release() } }
+            player = null
+            return ActionResult.ok(json("stopped" to true))
+        }
+        val source = sourceOf(params.str("source"))
+        val uri = when (source) {
+            is Source.Rejected -> return ActionResult.error(source.reason)
+            is Source.Url -> android.net.Uri.parse(source.url)
+            is Source.SandboxFile -> {
+                val file = java.io.File(java.io.File(ctx.filesDir, ai.jarvis.app.automation.actions.PathScope.ROOT_DIR_NAME), source.relative)
+                if (!file.isFile) return ActionResult.error("no such file: ${source.relative}")
+                android.net.Uri.fromFile(file)
+            }
+        }
+        player?.let { runCatching { it.stop(); it.release() } }
+        return try {
+            val mp = android.media.MediaPlayer().apply {
+                setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                setDataSource(ctx, uri)
+                setOnCompletionListener { it.release(); if (player === it) player = null }
+                prepare()
+                start()
+            }
+            player = mp
+            ActionResult.ok(json("playing" to uri.toString(), "duration_ms" to mp.duration))
+        } catch (e: Exception) {
+            ActionResult.error("could not play ${uri}: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+}
+
+/** Tier 2 — the wallpaper, from a file in the sandbox; you would want to know it changed. */
+object SetWallpaper : JarvisAction {
+    override val id = "set_wallpaper"
+    override val tier = ActionTier.NOTIFY
+    override val description = "Set the home (and optionally lock) screen wallpaper from an image under Jarvis's own files."
+    override val paramsSchema = mapOf(
+        "path" to "string: an image under jarvis_files",
+        "which" to "string (optional): home (default) | lock | both"
+    )
+    override val capability = "device"
+
+    /** Which screens, as WallpaperManager flags, or null for a word that is not one. */
+    fun flagsFor(which: String?): Int? = when (which?.trim()?.lowercase().orEmpty().ifEmpty { "home" }) {
+        "home" -> android.app.WallpaperManager.FLAG_SYSTEM
+        "lock" -> android.app.WallpaperManager.FLAG_LOCK
+        "both" -> android.app.WallpaperManager.FLAG_SYSTEM or android.app.WallpaperManager.FLAG_LOCK
+        else -> null
+    }
+
+    override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
+        val flags = flagsFor(params.str("which")) ?: return ActionResult.error("which must be home, lock or both")
+        val relative = when (val r = ai.jarvis.app.automation.actions.PathScope.normalize(params.str("path"))) {
+            is ai.jarvis.app.automation.actions.PathScope.Result.Rejected -> return ActionResult.error(r.reason)
+            is ai.jarvis.app.automation.actions.PathScope.Result.Allowed -> r.relative
+        }
+        val file = java.io.File(java.io.File(ctx.filesDir, ai.jarvis.app.automation.actions.PathScope.ROOT_DIR_NAME), relative)
+        if (!file.isFile) return ActionResult.error("no such image: $relative")
+        val wm = android.app.WallpaperManager.getInstance(ctx) ?: return ActionResult.error("no wallpaper service")
+        return try {
+            file.inputStream().use { wm.setStream(it, null, true, flags) }
+            ActionResult.ok(json("path" to relative, "which" to (params.str("which") ?: "home")))
+        } catch (e: Exception) {
+            ActionResult.error("could not set the wallpaper: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+}
+
+/** Tier 3 — recording is the one thing a microphone must never do quietly. */
+object RecordAudio : JarvisAction {
+    override val id = "record_audio"
+    override val tier = ActionTier.CONFIRM
+    override val description = "Record from the microphone for a few seconds into a file under Jarvis's own files (m4a). Asks first, every time."
+    override val paramsSchema = mapOf(
+        "seconds" to "int 1-300: how long",
+        "path" to "string (optional): the file to write under jarvis_files (default recordings/<time>.m4a)"
+    )
+    override val capability = "audio"
+    override val requiredPermissions = listOf(android.Manifest.permission.RECORD_AUDIO)
+
+    /** The duration a recording may have; anything else is refused before the microphone opens. */
+    fun secondsOf(params: JSONObject): Int? {
+        if (!params.has("seconds")) return null
+        return params.intOr("seconds", -1).takeIf { it in MIN_SECONDS..MAX_SECONDS }
+    }
+
+    override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
+        val seconds = secondsOf(params) ?: return ActionResult.error("seconds must be between $MIN_SECONDS and $MAX_SECONDS")
+        val raw = params.str("path") ?: "recordings/${System.currentTimeMillis()}.m4a"
+        val relative = when (val r = ai.jarvis.app.automation.actions.PathScope.normalize(raw)) {
+            is ai.jarvis.app.automation.actions.PathScope.Result.Rejected -> return ActionResult.error(r.reason)
+            is ai.jarvis.app.automation.actions.PathScope.Result.Allowed -> r.relative
+        }
+        val file = java.io.File(java.io.File(ctx.filesDir, ai.jarvis.app.automation.actions.PathScope.ROOT_DIR_NAME), relative)
+        file.parentFile?.mkdirs()
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) android.media.MediaRecorder(ctx) else @Suppress("DEPRECATION") android.media.MediaRecorder()
+        return try {
+            recorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            kotlinx.coroutines.delay(seconds * 1000L)
+            recorder.stop()
+            ActionResult.ok(json("path" to relative, "seconds" to seconds, "bytes" to file.length()))
+        } catch (e: Exception) {
+            ActionResult.error("recording failed: ${e.message ?: e.javaClass.simpleName}")
+        } finally {
+            runCatching { recorder.release() }
+        }
+    }
+
+    const val MIN_SECONDS = 1
+    const val MAX_SECONDS = 300
+}
+
+/** Tier 2 — Bluetooth on or off: direct where Android still allows it, the system panel where it does not. */
+object SetBluetooth : JarvisAction {
+    override val id = "set_bluetooth"
+    override val tier = ActionTier.NOTIFY
+    override val description = "Turn Bluetooth on or off. On Android 13 and later the system asks you on its own panel."
+    override val paramsSchema = mapOf("on" to "bool: true for on")
+    override val capability = "device"
+    override val requiredPermissions = listOf(android.Manifest.permission.BLUETOOTH_CONNECT)
+
+    /** Whether this Android lets an app flip the radio itself; from 33 it only opens the panel. */
+    fun directOn(sdk: Int): Boolean = sdk <= Build.VERSION_CODES.S_V2
+
+    override suspend fun execute(ctx: Context, params: JSONObject): ActionResult {
+        if (!params.has("on")) return ActionResult.error("on (true/false) is required")
+        val on = params.optBoolean("on")
+        val adapter = ctx.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter
+            ?: return ActionResult.error("this phone has no Bluetooth")
+        if (!directOn(Build.VERSION.SDK_INT)) {
+            val intent = Intent(if (on) android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE else Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            return try {
+                ctx.startActivity(intent)
+                ActionResult.ok(json("on" to on, "via" to "system panel", "note" to "Android 13+ asks you on its own panel"))
+            } catch (e: Exception) {
+                ActionResult.error("could not open the Bluetooth panel: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+        return try {
+            @Suppress("DEPRECATION")
+            val ok = if (on) adapter.enable() else adapter.disable()
+            if (ok) ActionResult.ok(json("on" to on, "via" to "adapter")) else ActionResult.error("the adapter refused")
+        } catch (e: SecurityException) {
+            ActionResult.error("Bluetooth needs the Nearby devices permission; grant it in Settings > Apps > Jarvis > Permissions")
+        }
+    }
+}
+
 /** Every action this file closes, for the registry and the tests. */
 object ParityActions {
     val all: List<JarvisAction> = listOf(
         ShowToast, SetAutoBrightness, SetRotationLock, SetScreenTimeout,
         GetNetworkInfo, SendIntent, LaunchShortcut, MediaControl,
+        MediaNowPlaying, PlayMedia, SetWallpaper, RecordAudio, SetBluetooth,
     )
 
     /** Rows the accessibility agent already closes under other ids. */
