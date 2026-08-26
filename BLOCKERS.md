@@ -84,10 +84,10 @@ The same applies to a real microphone in a real room: the live rig synthesises
 the user's speech and delivers it through the real audio paths, which proves
 the pipeline but not the acoustics of your kitchen.
 
-Nor is there an Android SDK on this host (CLAUDE.md), so M61's gate stops at
-`./gradlew assembleDebug`: the phone's first stage (the activity strip, the
-knowledge graph, chunked speech, eight Tasker rows) is mirrored in Python and
-has JVM tests written, and has not been compiled here. ADT-039 is that build.
+The toolchain M08 installs under `$HOME` (a JDK and the SDK) is on this host,
+which CLAUDE.md's "cannot be built here" predates: `./gradlew assembleDebug`
+and `lintDebug` pass with M61's Kotlin, and its JVM tests pass. What still
+needs a handset is ADT-036…038; ADT-039 is the golden re-record.
 
 ## 4. Accounts and keys for the things that reach the outside world
 

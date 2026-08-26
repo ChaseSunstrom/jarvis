@@ -257,10 +257,11 @@ python3 scripts/check-model-server.py http://127.0.0.1:8080/v1
   integration is switched on and asks consent for every look; until a
   multimodal GGUF is loaded (`house-vision` behind llama-swap) a look says it
   could not, and the MODELS panel says "not served".
-- **The phone's newest screen has not been compiled here.** The activity
-  strip, the knowledge graph and chunked speech on Android are mirrored in
-  Python and have JVM tests, and wait for a machine with the SDK
-  (`docs/ANDROID_DEVICE_TESTS.md` ADT-039).
+- **The phone's newest screen has been built and not yet held.** The activity
+  strip, the knowledge graph and chunked speech on Android compile, lint and
+  pass their JVM tests here; whether they look right over a launcher and
+  sound right through a speaker is a handset's to say
+  (`docs/ANDROID_DEVICE_TESTS.md` ADT-036…038).
 - **GrapheneOS clears the assistant role on every app update.** Re-run
   `scripts/adb-jarvis-role.sh` afterwards. This is OS hardening, not a bug,
   and no app can work around it.

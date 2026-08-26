@@ -561,7 +561,7 @@ person-shaped probe asks; what the suite found, written up.
 | `/styleguide` renders every token group and the four screen states, headless | Automated | `cd jarvis-web && E2E_PORT=8299 npx playwright test e2e/styleguide.spec.ts` (screenshot under `.verify/styleguide.png`) |
 | **The Kotlin builds** | Automated | `./gradlew assembleDebug` — a JDK 17 and the SDK under `$HOME` (`android-app/tools/bootstrap-toolchain.sh`), the wrapper committed, `app-debug.apk` produced. The first time this repository has built its own Android app |
 | The Compose theme (`JarvisTheme.kt`) compiles | Automated | it is compiled by the build above, and `the generated theme` screenshot renders it |
-| **The JVM unit tests** (185 when this row was measured; `ActivityRowsTest`, `KnowledgeGraphTest`, `ParityActionsTest` added by M61 and not yet run on a machine with the SDK) | Automated in CI (`android-apk.yml`); not run on this host | `./gradlew testDebugUnitTest` |
+| **The JVM unit tests** (203 as of M61) | Automated | `./gradlew testDebugUnitTest` — run here with M08's toolchain and in CI (`android-apk.yml`) |
 | **Lint is blocking, and clean** | Automated | `./gradlew lintDebug` with `abortOnError = true`. It found three real crashes-on-Android-10 while it was "reported, not enforced": two `AudioManager.OnModeChangedListener` calls and a `createOnDeviceSpeechRecognizer`, each requiring API 31 with `minSdk = 29` |
 | **Six screens, rendered and compared** | Automated | Robolectric + Roborazzi on the JVM: the orb listening and thinking, the component sheet, the approval banner, the task overlay, the generated theme. `./gradlew verifyRoborazziDebug` fails on a difference; the goldens are PNGs in the repository |
 | No hard-coded colour, size or type value left in the app's Kotlin | Automated | `python3 scripts/verify/token_lint.py --require-clean android-app/app/src/main/kotlin` — 132 hits to zero, which needed two new spacing steps, a `Size` scale and thirteen derived alpha constants in `design/tokens.json` |
@@ -695,13 +695,14 @@ person-shaped probe asks; what the suite found, written up.
 |---|---|---|
 | The phone's activity strip speaks the console's vocabulary: the same events, kinds, cap, sensor domains and states | Automated | `android-app/tools/activity_mirror_test.py` reads `ActivityRows.kt` against `tests/contracts/activity_rows.json` |
 | The device subscribes to every event in that vocabulary and feeds the strip | Automated | the mirror (`ActivityRows.EVENTS.keys`, `onBusEvent`) |
-| The strip's arithmetic: a tool call is one row start to finish, a button pressed twice is two rows, a light is not a reading, a look names its camera, a dozen newest first | Automated (JVM, not run here) | `app/src/test/…/assist/ActivityRowsTest.kt` |
-| The phone builds the same knowledge graph as the console for the same house | Automated | `jarvis-web/src/lib/knowledge/graph.test.ts` (run) and `KnowledgeGraphTest.kt` (JVM, not run here) against `tests/contracts/knowledge_graph.json`; `knowledge_graph_mirror_test.py` pins the constants and the PRNG |
+| The strip's arithmetic: a tool call is one row start to finish, a button pressed twice is two rows, a light is not a reading, a look names its camera, a dozen newest first | Automated | `app/src/test/…/assist/ActivityRowsTest.kt`, run here with M08's toolchain (`./gradlew testDebugUnitTest`) |
+| The phone builds the same knowledge graph as the console for the same house | Automated | `jarvis-web/src/lib/knowledge/graph.test.ts` and `KnowledgeGraphTest.kt` (run here) against `tests/contracts/knowledge_graph.json`; `knowledge_graph_mirror_test.py` pins the constants and the PRNG |
 | A reply plays as sentences then the remainder, never twice; an off-origin chunk is refused | Automated | `android-app/tools/tts_chunk_test.py` reads the client and the conversation |
-| Eight Tasker rows closed, each registered once at its stated tier, each with a unit test of its arithmetic | Automated (JVM, not run here) | `ParityActionsTest.kt`; `action_table_test.py` (run) pins registration, tiers and docs |
+| Fourteen Tasker rows closed, each registered once at its stated tier, each with a unit test of its arithmetic | Automated | `ParityActionsTest.kt` (run here); `action_table_test.py` pins registration, tiers and docs |
 | The phone's reactor sweeps once per tool call, beats while speaking and gathers its iris while looking — the M53 vocabulary, timed by the same tokens | Automated | `android-app/tools/reactor_motion_test.py` reads `ReactorOrb.kt`, `JarvisOrbView.kt`, the conversation and `Reactor.svelte` |
 | Loops in the task engine: `repeat` by count or while a condition holds, bounded by `TaskLimits` | Automated | `android-app/tools/task_repeat_test.py` |
-| The Kotlin compiles, lints and its goldens hold | **Unproven** | no Android SDK on this host (CLAUDE.md); ADT-039 |
+| The Kotlin compiles and lints | Automated | `./gradlew assembleDebug`, `lintDebug` — green in the m08 gate with M61's Kotlin, 26 Aug 12:05 |
+| The goldens hold with the strip and the graph on the voice screen | see M61's gate | `./gradlew verifyRoborazziDebug`; a changed screen is re-recorded (ADT-039) |
 | Early speech is heard, the strip and graph are legible over the launcher, two presses look like two | **Unproven** | ADT-036, ADT-037, ADT-038 |
 
 ### Anything online, locally (M59)

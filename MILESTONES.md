@@ -953,9 +953,10 @@ web and of Tasker. Local only. Each row here is planned in that document.
     triggers as profiles; "on my phone, do X" end to end from the hub. Build, unit, lint and
     goldens only — never a device.
   - Verify: `bash scripts/verify/m61-android-tasker.sh`
-  - 26 Aug, first stage: the strip, the graph and chunked speech on the phone from the
-    shared contracts; eight Tasker rows closed. Not ticked: the gate's gradle steps need
-    an Android SDK this host does not have (ADT-039), and thirteen rows stay gap.
+  - 26 Aug: the strip, the graph, chunked speech and the reactor's moves on the phone from
+    the shared contracts; fourteen Tasker rows closed, six gap for permissions the app does
+    not request or a camera pipeline, one no. The Kotlin compiles, lints and its JVM tests
+    pass here (M08's toolchain under $HOME, which the gate first failed to look for).
 
 ## Final
 

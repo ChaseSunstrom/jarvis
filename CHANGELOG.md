@@ -20,9 +20,9 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   accessibility agent's existing ids (`lock_screen`, `screenshot`). The phone's reactor moves for
   what Jarvis does as the console's does: the blades sweep once per tool call (`motion.dur.sweep`),
   the rim beats while speaking (`motion.reactor.speak`), the iris gathers while a camera is
-  looked at (`reactor_motion_test.py`). Not ticked: this host has no
-  Android SDK, so the Kotlin is mirrored in Python and JVM tests are written but the build, lint
-  and golden screenshots wait for a machine that has one (ADT-036…039). Five more rows followed
+  looked at (`reactor_motion_test.py`). The Kotlin compiles, lints and
+  passes its JVM tests here with M08's toolchain (the gate first failed to look for it); what
+  waits for a handset is the look and the sound (ADT-036…038) and the goldens (ADT-039). Five more rows followed
   (now-playing, play media, wallpaper, record audio, Bluetooth) and the loops row was already
   true; six rows stay gap for permissions the app does not request or a camera pipeline, and
   `ui_key` is a no.

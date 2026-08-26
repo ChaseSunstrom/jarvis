@@ -20,8 +20,8 @@ This document is the spine. Each numbered item is a milestone in
   morning); M56, M61 and M23 are open. M56 is built and on the branch,
   its gate 27/28: the one open check is a live look through a served vision
   model, and the model server serves none. M60 is ticked (gate 13/13, the
-  full core suite green). M61's first stage is committed and cannot be compiled here (no Android
-  SDK). M23 is the final gate and cannot be green on this host for those two
+  full core suite green). M61's phone work compiles, lints and passes its JVM tests here (M08's
+  toolchain under $HOME). M23 is the final gate and cannot be green on this host for those two
   reasons and the round-trip threshold (BLOCKERS §2, §3, §4).
 - Cameras: the `vision` integration speaks the OpenAI wire to the same model
   server as the chat model, go2rtc restreams behind `--profile cameras`,

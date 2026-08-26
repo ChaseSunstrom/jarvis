@@ -407,9 +407,8 @@ answer. The system camera app via `ACTION_IMAGE_CAPTURE` is the zero-
 dependency route for a photo but returns through an Activity result, which
 an action dispatched from the hub does not have.
 
-The decision waits for two things this host cannot supply: a build (the
-dependency changes the APK, and nothing here compiles it — BLOCKERS §3) and
-a handset to point at a barcode. Recommendation when both exist: CameraX
+The decision waits for a handset to point at a barcode (the build itself runs
+here with M08's toolchain). Recommendation when both exist: CameraX
 `ImageCapture` headless for `take_photo` (Tier 3, asks every time, the frame
 goes to `look_at_camera`'s consent and fence), ZXing for `scan_code` (Tier 1,
 the decoded text is untrusted content). No Google dependency.
