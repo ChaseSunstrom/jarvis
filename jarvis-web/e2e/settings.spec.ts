@@ -209,3 +209,18 @@ test('the fold and the plain rows are one truth: a raw save shows on the plain r
 	await expect(page.getByTestId('input-jarvis.time_zone')).toBeDisabled();
 	await expect(page.getByTestId('error')).toHaveCount(0);
 });
+
+// M70: the pace is on Settings › Voice, as a number with the honest sentence —
+// Piper takes it at start, so the row names the real knob (PIPER_LENGTH_SCALE)
+// instead of promising a live change. The operator judges capability from
+// this screen; a pace the house speaks at but the screen cannot name is, to
+// them, a pace that cannot be set.
+test('the voice pace is on Settings › Voice, as a number, saying where the knob is', async ({ page }) => {
+	await page.goto('/settings/voice');
+	const pace = page.getByTestId('plain-input-voice.tts.length_scale');
+	await expect(pace).toBeVisible({ timeout: 10_000 });
+	await expect(pace).toHaveValue('0.9');
+	const row = page.getByTestId('plain-voice.tts.length_scale');
+	await expect(row).toContainText(/pace/i);
+	await expect(row).toContainText(/PIPER_LENGTH_SCALE/);
+});

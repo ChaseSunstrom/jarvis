@@ -707,3 +707,9 @@ is quiet. Done since:
   none, the note when their words ask for one — with the rule unchanged that the model's
   initiative alone never stores a page's claims. Research suite 32 (3 new). Reaches the house
   at the tenth rebuild, with the agents' work.
+- 22:04 — M67's four commits cherry-picked from its agent's worktree (one changelog conflict, both
+  blocks kept): settings-tool suite 29, tier contract and the Android mirrors 6/6; its gate is
+  running. With the registry landed, M70's last piece: Settings › Voice shows the pace as a
+  number applied on restart, the note naming PIPER_LENGTH_SCALE and wyoming-piper — the key had
+  to be `voice.tts.length_scale` (the registry pins key == path). Gate 14/14 on the running
+  house, voice smoke 5/5 with WER 0.0 over 3 spoken samples; M70 ticked. CI on 68f1691 fully green.

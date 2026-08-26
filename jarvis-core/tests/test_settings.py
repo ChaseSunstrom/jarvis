@@ -288,3 +288,23 @@ async def test_a_dropped_overlay_entry_does_not_stop_startup(tmp_path, caplog):
     assert "voice.tts_voice not applied" in caplog.text
 
     await jarvis.async_stop()
+
+
+def test_the_voice_pace_is_a_setting_that_says_where_the_real_knob_is():
+    """M70: the pace the house speaks at is on Settings › Voice as a number,
+    marked restart — Piper takes its length scale at start, from
+    PIPER_LENGTH_SCALE — with the note naming that variable and the container
+    to restart, so the row cannot promise a change the next reply will not
+    make. Bounds keep it a pace a person can follow."""
+    from jarvis.settings import APPLY_RESTART, SETTINGS_BY_KEY, SettingsError
+
+    spec = SETTINGS_BY_KEY["voice.tts.length_scale"]
+    assert spec.path == ("voice", "tts", "length_scale")
+    assert spec.group == "Voice" and spec.type == "number"
+    assert spec.apply == APPLY_RESTART
+    assert "PIPER_LENGTH_SCALE" in spec.note and "wyoming-piper" in spec.note
+    assert spec.validate is not None
+    assert spec.validate("0.9") == 0.9
+    for bad in ("0.2", "3", "fast"):
+        with pytest.raises(SettingsError):
+            spec.validate(bad)

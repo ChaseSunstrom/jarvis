@@ -397,6 +397,22 @@ export function makeWorld() {
 			package: null,
 			choices: ['en_GB-alan-medium', 'en_US-amy-medium', 'en_GB-northern_english_male-medium']
 		},
+		{
+			// The voice's pace (M70): a number Piper takes at START, so the
+			// registry marks it `restart` and the row must say where the real
+			// knob is rather than promise a live change.
+			key: 'voice.tts.length_scale',
+			label: 'Pace (Piper length scale)',
+			group: 'Voice',
+			type: 'number',
+			apply: 'restart',
+			note: 'Piper takes it at start: set PIPER_LENGTH_SCALE in .env to the same number and restart wyoming-piper.',
+			value: 0.9,
+			yaml_value: 0.9,
+			source: 'yaml',
+			unapplied_reason: null,
+			package: null
+		},
 		// The rows the plain sections feature (M54): the wake word on Voice, the
 		// units and language on House — so the IA test can find each of them as
 		// a plain row AND as a raw row behind EVERYTHING.

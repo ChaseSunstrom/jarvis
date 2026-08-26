@@ -89,7 +89,7 @@ Dependencies first, value and risk next. Parallel where trees do not touch.
 | M67 | **Settings under approval** — `list_settings` (Tier 1) and `change_setting` (Tier 3) over the console's settings registry. | `m67-settings-tool.sh` | M54 |
 | M68 | **Search that works** — the configured SearXNG times out on every engine; try it, then the local default; say which engines answered. Done 26 Aug 20:57. | `m68-search.sh` | M31 |
 | M69 | **The house is editable by voice** — `remove_entities` / `remove_device` under approval, sayable. | `m69-editable-house.sh` | M66 |
-| M70 | **A faster voice** — Piper's length scale and Kokoro's speed as `voice: tts: speed:`, the deployed house at 1.1×. | `m70-voice-speed.sh` | M35 |
+| M70 | **A faster voice** — Piper's length scale and Kokoro's speed as `voice: tts: speed:`, the deployed house at 1.1×. Done 26 Aug 22:04. | `m70-voice-speed.sh` | M35 |
 | M71 | **Enrolment, complete** — the audit of voice enrolment end to end, every gap closed. | `m71-enrolment.sh` | M35 |
 | M72 | **A coding job can create a repository** — the `/workspace` crossover mounted, writable, named. Done 26 Aug 20:31. | `m72-workspace.sh` | M19 |
 | M23 | **Final integration** — every box, `make verify-all`, the suite in full mode, docs re-measured. Deps extended to M72. | `m23-final-integration.sh` | — |

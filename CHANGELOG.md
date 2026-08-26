@@ -34,8 +34,10 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   `jarvis-workspace/` crossover the sandbox already shares, mounted on the core and made writable
   for its uid by the config-init one-shot; packaging pins the config, both mounts and the chown.
   Behind it sat a second failure, "git is not installed": the core image had no git. It does now.
-- **M70 (in progress) — a faster voice.** Piper speaks at 1.1× (`PIPER_LENGTH_SCALE=0.9`, one
-  knob in compose and `.env.example`, pinned equal by packaging); the rig still hears it at WER 0.
+- **M70 — a faster voice.** Piper speaks at 1.1× (`PIPER_LENGTH_SCALE=0.9`, one knob in compose
+  and `.env.example`, pinned equal by packaging); the rig still hears it at WER 0. Settings › Voice
+  shows the pace as a number and says where the real knob is — Piper takes it at start, so the row
+  names `PIPER_LENGTH_SCALE` and the container to restart instead of promising a live change.
 - **M65 — something to browse.** Settings › Tools opens on a **Catalogue** — above the folds,
   filtered by the page's one search — instead of hiding BROWSE CATALOG inside the Extensions
   fold, where it opened on nothing. It is not empty any more: one source ships, `bundled`, the

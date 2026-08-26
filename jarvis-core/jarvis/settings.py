@@ -539,6 +539,25 @@ SETTINGS: tuple[SettingSpec, ...] = (
         choices_hook=lambda jarvis: _voice_catalogue(jarvis, "tts_voices"),
     ),
     SettingSpec(
+        key="voice.tts.length_scale",
+        path=("voice", "tts", "length_scale"),
+        label="Pace (Piper length scale)",
+        group="Voice",
+        type="number",
+        # Restart, and not Jarvis's: Piper takes its length scale at START,
+        # from PIPER_LENGTH_SCALE in .env, which docker-compose.yml hands to
+        # the wyoming-piper container. The configured value is read here so
+        # the screen can say what the house speaks at; the note says the one
+        # thing that makes the number true, or the row would promise a change
+        # the next reply does not make (the operator's 26 Aug 2026 ask).
+        apply=APPLY_RESTART,
+        note="A duration multiplier: 1.0 is the voice's own pace, 0.9 a tenth "
+        "quicker. Piper takes it at start — set PIPER_LENGTH_SCALE in .env to "
+        "the same number and restart wyoming-piper; with a Kokoro engine use "
+        "`speed:` instead.",
+        validate=_number(0.5, 1.5),
+    ),
+    SettingSpec(
         key="voice.wake_word",
         path=("voice", "wake_word"),
         label="Wake word",

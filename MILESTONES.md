@@ -1083,7 +1083,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the confirmation sayable (M66); a removed thing leaves the graph, the dashboard and the
     exposure list.
   - Verify: `bash scripts/verify/m69-editable-house.sh`
-- [ ] **M70 — A faster voice** · size S · deps M35 · parallel-ok M66
+- [x] **M70 — A faster voice** · size S · deps M35 · parallel-ok M66
   - Scope: "can you have jarvis speak slightly faster" — Piper's length scale (`PIPER_LENGTH_SCALE`
     in compose, pinned to `.env.example` and `configuration.yaml` as the other voice knobs are)
     and Kokoro's `speed` as one `voice: tts: speed:` knob the Settings › Voice screen shows;
@@ -1098,6 +1098,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     PIPER_LENGTH_SCALE 0.9`, handed to the core by compose and kept as `voice_tts_length_scale`
     (packaging refused both halves until the chain was whole: an env var nothing reads, then a
     key nothing reads). Voice 80, packaging 100. Still open for the Settings › Voice line.
+  - 26 Aug 22:04: ticked. Settings › Voice carries the pace as a number — `voice.tts.length_scale`,
+    applied on restart, its note naming PIPER_LENGTH_SCALE and wyoming-piper — on the console plan,
+    the mock backend and a Playwright check; settings suites 33. Gate 14/14 on the running house:
+    Piper started at 0.9, the voice smoke 5/5 (6/6 turns) with WER 0.0 over 3 spoken samples,
+    median 2.79 s. Kokoro's `speed:` stays the per-request knob it was.
 - [ ] **M71 — Enrolment, complete** · size M · deps M35 · parallel-ok M66
   - Scope: "make sure enrolment is completely implemented and complete" — an audit of voice
     enrolment end to end (the console's EnrolVoice, the phone's flow, the server's speaker

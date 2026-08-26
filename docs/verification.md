@@ -768,16 +768,18 @@ jarvis-core; console: `e2e/approvals.spec.ts`, 3, and `src/lib/tierContract.test
 | The core image has git — the step after the workspace, without which `create_repository` answers "git is not installed" | Automated / Containerised | the packaging test reads the Dockerfile's apt line; the gate runs `git --version` in the running core (2.47.3) |
 | A coding job's `create_repository` lands in `/workspace/<name>` with a `.git` visible on the host side of the crossover | Containerised | the gate replays the operator's request through `POST /api/services/code/create_repository` and checks `jarvis-workspace/m72-probe/.git`; the probe repository stays, since nothing removes one. The live rig has no repository-creating scenario yet |
 
-### A faster voice (M70, in progress)
+### A faster voice (M70)
 
-`bash scripts/verify/m70-voice-speed.sh` (26 Aug 20:31: 6/6). Server: `test_packaging.py`
-(`test_compose_piper_length_scale_matches_the_example_env`).
+`bash scripts/verify/m70-voice-speed.sh` (26 Aug 22:04: 14/14 on the running house). Server: `test_packaging.py`
+(`test_compose_piper_length_scale_matches_the_example_env`), `test_settings.py`
+(`test_the_voice_pace_is_a_setting_that_says_where_the_real_knob_is`); console: `e2e/settings.spec.ts` (the pace row).
 
 | Claim | Status | Evidence |
 |---|---|---|
 | Piper is started at `--length-scale ${PIPER_LENGTH_SCALE:-0.9}` (1.1×), and the example env carries the same number | Automated | the packaging test parses both; the gate inspects the running `wyoming-piper`'s args |
-| The faster voice is still understood: the smoke set's WER stays under the 10 % threshold | Scripted | the gate reads `.verify/live/results.json` — 26 Aug 20:31 smoke set 7/7, WER 0.0 over 4 spoken samples, median 2.40 s |
-| Settings › Voice shows the pace | Unproven | waits for M67's change to the settings registry |
+| The faster voice is still understood: the smoke set's WER stays under the 10 % threshold | Scripted | the gate reads `.verify/live/results.json` — 26 Aug 20:31 smoke set 7/7, WER 0.0 over 4 spoken samples, median 2.40 s; 22:04 5/5, WER 0.0 over 3, median 2.79 s |
+| Settings › Voice shows the pace as a number, applied on restart, with the note naming `PIPER_LENGTH_SCALE` and `wyoming-piper` | Automated | the registry spec `voice.tts.length_scale` (test above), the console plan and mock row (the gate greps both), `e2e/settings.spec.ts` "the voice pace is on Settings › Voice…" |
+| The chain is whole: compose hands the variable to the core, `configuration.yaml` reads it, the package reads the key | Automated | `test_every_documented_env_var_is_actually_read_by_something`, `test_no_shipped_option_is_silently_ignored` — each refused a half-measure on the way |
 
 ### The dashboard, a destination (M62)
 

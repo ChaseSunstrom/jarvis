@@ -89,6 +89,11 @@ export const FEATURED: Readonly<Record<SettingsSectionId, readonly FeaturedSetti
 			why: 'What it sounds like. Only the voices the speech service is serving right now.'
 		},
 		{
+			key: 'voice.tts.length_scale',
+			label: 'Pace',
+			why: 'How fast it speaks: Piper\u2019s length scale, 1.0 being the voice\u2019s own pace and 0.9 a tenth quicker. Piper takes it at start \u2014 put the same number in PIPER_LENGTH_SCALE in .env and restart wyoming-piper.'
+		},
+		{
 			key: 'voice.language',
 			label: 'Speech language',
 			why: 'The language it listens for and speaks. Usually the same as the assistant’s.'
