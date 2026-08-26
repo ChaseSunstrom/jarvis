@@ -104,7 +104,21 @@ the root layout (the native strip already draws them); the readout stays.
 		refit();
 		window.addEventListener('resize', refit);
 		document.fonts?.ready.then(refit);
-		return () => window.removeEventListener('resize', refit);
+		// And anything else that moves a tab — a late font swap that
+		// `fonts.ready` resolved ahead of, a readout that grew, the strip
+		// scrolling on a phone. Measured from the tabs themselves: on a slow
+		// runner the underline sat 11px left of VOICE, placed against a
+		// fallback face the swap then replaced (home.spec, CI, ca6c57c).
+		const observer =
+			typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refit);
+		if (observer && nav) {
+			observer.observe(nav);
+			for (const tab of nav.querySelectorAll('a')) observer.observe(tab);
+		}
+		return () => {
+			window.removeEventListener('resize', refit);
+			observer?.disconnect();
+		};
 	});
 </script>
 
