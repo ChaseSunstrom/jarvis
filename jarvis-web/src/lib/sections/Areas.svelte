@@ -3,8 +3,7 @@
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
-	import Skeleton from '$lib/components/Skeleton.svelte';
-	import { Button, EmptyState, ScreenState } from '$lib/ui';
+	import { Button, EmptyState, Input, Panel, ScreenState, SkeletonRows } from '$lib/ui';
 	import {
 		areaForEntity,
 		areaKey,
@@ -181,139 +180,240 @@
 
 {#if hint}<p class="notice" data-testid="hint">{hint}</p>{/if}
 
-<section class="panel">
-	<div class="panel-head"><span>New area</span></div>
-	<div class="row">
-		<input
-			type="text"
-			placeholder="Living Room"
-			data-testid="new-area-name"
-			bind:value={newAreaName}
-			onkeydown={(e) => e.key === 'Enter' && createArea()}
-		/>
-		<Button variant="primary" testid="create-area"
+<div class="panels">
+	<!-- The one primary action on this screen: a new room. -->
+	<form
+		class="new"
+		onsubmit={(e) => {
+			e.preventDefault();
+			createArea();
+		}}
+	>
+		<div class="grow">
+			<Input bind:value={newAreaName} placeholder="A new area — Living Room, Garage…" testid="new-area-name" />
+		</div>
+		<Button variant="primary" type="submit" testid="create-area"
 			disabled={busy || !newAreaName.trim()}
 			title={busy
 				? 'Waiting for the backend to answer'
 				: !newAreaName.trim()
 					? 'Type a name for the area first'
-					: 'Create this area'}
-			onclick={createArea}>
-			CREATE
+					: 'Create this area'}>
+			Create
 		</Button>
-	</div>
-</section>
+	</form>
 
-{#if loading && !areas.length}
-	<section class="panel" aria-label="Loading areas">
-		<div class="panel-head"><span>Areas</span><span class="muted">…</span></div>
-		<Skeleton rows={4} label="Loading areas" />
-	</section>
-{/if}
-
-{#each areas as area, ai (areaKey(area))}
-	{@const id = areaKey(area)}
-	<section class="panel jv-stagger" style={staggerStyle(ai)} data-testid="area-{id}">
-		<div class="panel-head">
-			<span>{area.name}</span>
-			<span class="muted">{id}</span>
-		</div>
-		<div class="row">
-			<input
-				type="text"
-				value={renaming[id] ?? area.name}
-				aria-label="New name for {area.name}"
-				data-testid="rename-{id}"
-				oninput={(e) => (renaming[id] = (e.currentTarget as HTMLInputElement).value)}
-			/>
-			<Button testid="save-{id}"
-				disabled={busy}
-				aria-label="Rename {area.name}"
-				onclick={() => renameArea(area)}
-			>
-				RENAME
-			</Button>
-			<Button variant="danger" testid="delete-{id}"
-				disabled={busy}
-				aria-label="Delete {area.name}"
-				onclick={() => deleteArea(area)}
-			>
-				DELETE
-			</Button>
-		</div>
-
-		{#each assignments.get(id) ?? [] as entry (entry.entity_id)}
-			<div class="row">
-				<span class="name">
-					<b>{friendlyName(stateMap.get(entry.entity_id), entry)}</b>
-					<span class="eid">{entry.entity_id}</span>
-				</span>
-				<select
-					data-testid="assign-{entry.entity_id}"
-					aria-label="Area for {entry.entity_id}"
-					value={id}
-					onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
-				>
-					<option value="">— unassigned —</option>
-					{#each areas as option (areaKey(option))}
-						<option value={areaKey(option)}>{option.name}</option>
-					{/each}
-				</select>
-			</div>
-		{:else}
-			<p class="muted">No entities in this area.</p>
-		{/each}
-	</section>
-{:else}
-	{#if !loading}
-		<EmptyState
-			testid="empty"
-			title={status === 'open' ? 'No areas yet' : 'No link to the backend'}
-			body={status === 'open'
-				? 'Areas are how voice commands like “turn off the kitchen” resolve. Create one above, then assign entities to it.'
-				: `The websocket relay is ${status}.`}
-		/>
+	{#if loading && !areas.length}
+		<Panel title="Areas" meta="…">
+			{#snippet children()}
+				<div class="pad"><SkeletonRows rows={4} label="Loading areas" /></div>
+			{/snippet}
+		</Panel>
 	{/if}
-{/each}
 
-<!--
-  Everything with no area.
+	{#each areas as area, ai (areaKey(area))}
+		{@const id = areaKey(area)}
+		<div class="jv-stagger" style={staggerStyle(ai)}>
+			<Panel title={area.name} meta={id} testid="area-{id}">
+				{#snippet children()}
+					<div class="line rename">
+						<div class="grow">
+							<Input
+								value={renaming[id] ?? area.name}
+								testid="rename-{id}"
+								oninput={(e) => (renaming[id] = (e.currentTarget as HTMLInputElement).value)}
+							/>
+						</div>
+						<Button testid="save-{id}"
+							disabled={busy}
+							aria-label="Rename {area.name}"
+							onclick={() => renameArea(area)}
+						>
+							Rename
+						</Button>
+						<Button variant="danger" testid="delete-{id}"
+							disabled={busy}
+							aria-label="Delete {area.name}"
+							onclick={() => deleteArea(area)}
+						>
+							Delete
+						</Button>
+					</div>
 
-  The list inside is guarded by `loading`, and that is the whole point of the
-  guard: this section sits OUTSIDE the loading branch above, so before the first
-  registry answer arrived it drew an empty list — and an empty list here reads
-  "Everything has an area", which is a claim about a house the page had not yet
-  been told anything about. It is also the exact opposite of the truth on a
-  fresh install, where nothing has an area at all.
--->
-<section class="panel" data-testid="area-unassigned">
-	<div class="panel-head">
-		<span>Unassigned</span>
-		<span class="muted">{loading ? '…' : (assignments.get(UNASSIGNED) ?? []).length}</span>
-	</div>
-	{#if loading}
-		<Skeleton rows={3} label="Loading unassigned entities" />
+					{#each assignments.get(id) ?? [] as entry (entry.entity_id)}
+						<div class="line">
+							<span class="who">
+								<b>{friendlyName(stateMap.get(entry.entity_id), entry)}</b>
+								<span class="eid">{entry.entity_id}</span>
+							</span>
+							<select
+								class="sel"
+								data-testid="assign-{entry.entity_id}"
+								aria-label="Area for {entry.entity_id}"
+								value={id}
+								onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
+							>
+								<option value="">— unassigned —</option>
+								{#each areas as option (areaKey(option))}
+									<option value={areaKey(option)}>{option.name}</option>
+								{/each}
+							</select>
+						</div>
+					{:else}
+						<p class="none">No entities in this area.</p>
+					{/each}
+				{/snippet}
+			</Panel>
+		</div>
 	{:else}
-		{#each assignments.get(UNASSIGNED) ?? [] as entry (entry.entity_id)}
-			<div class="row">
-				<span class="name">
-					<b>{friendlyName(stateMap.get(entry.entity_id), entry)}</b>
-					<span class="eid">{entry.entity_id}</span>
-				</span>
-				<select
-					data-testid="assign-{entry.entity_id}"
-					aria-label="Area for {entry.entity_id}"
-					value=""
-					onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
-				>
-					<option value="">— unassigned —</option>
-					{#each areas as option (areaKey(option))}
-						<option value={areaKey(option)}>{option.name}</option>
-					{/each}
-				</select>
-			</div>
-		{:else}
-			<p class="muted" data-testid="all-assigned">Everything has an area.</p>
-		{/each}
-	{/if}
-</section>
+		{#if !loading}
+			<EmptyState
+				testid="empty"
+				title={status === 'open' ? 'No areas yet' : 'No link to the backend'}
+				body={status === 'open'
+					? 'Areas are how voice commands like “turn off the kitchen” resolve. Create one above, then assign entities to it.'
+					: `The websocket relay is ${status}.`}
+			/>
+		{/if}
+	{/each}
+
+	<!--
+	  Everything with no area.
+
+	  The list inside is guarded by `loading`, and that is the whole point of the
+	  guard: this section sits OUTSIDE the loading branch above, so before the first
+	  registry answer arrived it drew an empty list — and an empty list here reads
+	  "Everything has an area", which is a claim about a house the page had not yet
+	  been told anything about. It is also the exact opposite of the truth on a
+	  fresh install, where nothing has an area at all.
+	-->
+	<Panel
+		title="Unassigned"
+		meta={loading ? '…' : String((assignments.get(UNASSIGNED) ?? []).length)}
+		testid="area-unassigned"
+	>
+		{#snippet children()}
+			{#if loading}
+				<div class="pad"><SkeletonRows rows={3} label="Loading unassigned entities" /></div>
+			{:else}
+				{#each assignments.get(UNASSIGNED) ?? [] as entry (entry.entity_id)}
+					<div class="line">
+						<span class="who">
+							<b>{friendlyName(stateMap.get(entry.entity_id), entry)}</b>
+							<span class="eid">{entry.entity_id}</span>
+						</span>
+						<select
+							class="sel"
+							data-testid="assign-{entry.entity_id}"
+							aria-label="Area for {entry.entity_id}"
+							value=""
+							onchange={(e) => assign(entry.entity_id, (e.currentTarget as HTMLSelectElement).value)}
+						>
+							<option value="">— unassigned —</option>
+							{#each areas as option (areaKey(option))}
+								<option value={areaKey(option)}>{option.name}</option>
+							{/each}
+						</select>
+					</div>
+				{:else}
+					<p class="none" data-testid="all-assigned">Everything has an area.</p>
+				{/each}
+			{/if}
+		{/snippet}
+	</Panel>
+</div>
+
+<style>
+	.lede {
+		margin: 0 0 var(--jv-space-4);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+	}
+	.notice {
+		margin: 0 0 var(--jv-space-3);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-warn);
+	}
+	.panels {
+		display: grid;
+		gap: var(--jv-space-4);
+	}
+	.panels :global(.body) {
+		padding: 0 var(--jv-space-4);
+	}
+	.new {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+	}
+	.grow {
+		flex: 1 1 14rem;
+		min-width: 0;
+	}
+	.pad {
+		padding: var(--jv-space-3) 0;
+	}
+	.line {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+		padding: var(--jv-space-3) 0;
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.line:last-child {
+		border-bottom: 0;
+	}
+	/* The rename row is the panel's head-of-body: a little more room, and a
+	   name box the width of a name rather than of the screen. */
+	.line.rename {
+		padding-bottom: var(--jv-space-4);
+	}
+	.line.rename .grow {
+		flex: 1 1 14rem;
+		max-width: calc(var(--jv-space-7) * 8);
+	}
+	.who {
+		flex: 1 1 12rem;
+		min-width: 0;
+		display: grid;
+		gap: var(--jv-space-1);
+	}
+	.who b {
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
+	}
+	.eid {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+		overflow-wrap: anywhere;
+	}
+	.sel {
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-1) var(--jv-space-2);
+		max-width: 100%;
+	}
+	.sel:hover {
+		border-color: var(--jv-line);
+	}
+	.none {
+		margin: 0;
+		padding: var(--jv-space-3) 0;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-faint);
+	}
+	@media (max-width: 640px) {
+		.panels :global(.body) {
+			padding: 0 var(--jv-space-3);
+		}
+	}
+</style>

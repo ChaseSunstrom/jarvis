@@ -112,6 +112,14 @@ saying no are not two different-looking controls).
 		opacity: 0.45;
 		cursor: not-allowed;
 	}
+	/* A toggle that is on: lit, not filled. The accent fill is the one primary
+	   control on a screen; a row of nine lit lights must not be nine of them.
+	   This was `.console button.btn.on` in chrome.css, which M50 deleted. */
+	.btn.on {
+		color: var(--jv-accent);
+		border-color: var(--jv-accent);
+		background: var(--jv-wash);
+	}
 	.primary {
 		color: var(--jv-accent-ink);
 		background: var(--jv-accent);

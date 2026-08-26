@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { openConnection, describeError, type Connection } from '$lib/connection';
 	import { serviceFailureText, serviceSuccessText, toasts } from '$lib/toast';
 	import { staggerStyle } from '$lib/motion';
 	import { DiscardGuard, formsDiffer } from '$lib/unsaved';
-	import { Button, EmptyState, ScreenState } from '$lib/ui';
+	import { Button, EmptyState, Input, Panel, Pill, ScreenState, SkeletonRows, Toolbar } from '$lib/ui';
 	import {
 		applyStateChanged,
 		friendlyName,
@@ -320,49 +319,51 @@
 
 {#snippet editorFields()}
 	{#if formError}
-		<p class="err" data-testid="form-error" role="alert">{formError}</p>
+		<p class="problem" data-testid="form-error" role="alert">{formError}</p>
 	{/if}
 
-	<div class="field">
-		<label for="field-alias">Name</label>
-		<input id="field-alias" type="text" data-testid="field-alias" placeholder="Porch light at dusk" bind:value={form.alias} />
+	<div class="fields">
+		<label class="field">
+			<span class="label">Name</span>
+			<input id="field-alias" type="text" class="in" data-testid="field-alias" placeholder="Porch light at dusk" bind:value={form.alias} />
+		</label>
+
+		<label class="field">
+			<span class="label">Description</span>
+			<input id="field-description" type="text" class="in" data-testid="field-description" placeholder="optional" bind:value={form.description} />
+		</label>
+
+		<label class="field">
+			<span class="label">Mode</span>
+			<select id="field-mode" class="in" data-testid="field-mode" bind:value={form.mode}>
+				{#each MODES as mode (mode)}<option value={mode}>{mode}</option>{/each}
+			</select>
+		</label>
 	</div>
 
-	<div class="field">
-		<label for="field-description">Description</label>
-		<input id="field-description" type="text" data-testid="field-description" placeholder="optional" bind:value={form.description} />
-	</div>
-
-	<div class="field">
-		<label for="field-mode">Mode</label>
-		<select id="field-mode" data-testid="field-mode" bind:value={form.mode}>
-			{#each MODES as mode (mode)}<option value={mode}>{mode}</option>{/each}
-		</select>
-	</div>
-
-	<div class="field">
-		<label for="field-trigger">Triggers</label>
-		<textarea id="field-trigger" rows="6" spellcheck="false" data-testid="field-trigger" bind:value={form.trigger}></textarea>
+	<label class="field">
+		<span class="label">Triggers</span>
+		<textarea id="field-trigger" class="in code" rows="6" spellcheck="false" data-testid="field-trigger" bind:value={form.trigger}></textarea>
 		<span class="hint">JSON. What starts it — e.g. <code>{'{"platform": "time", "at": "21:00:00"}'}</code></span>
-	</div>
+	</label>
 
-	<div class="field">
-		<label for="field-condition">Conditions</label>
-		<textarea id="field-condition" rows="3" spellcheck="false" data-testid="field-condition" bind:value={form.condition}></textarea>
+	<label class="field">
+		<span class="label">Conditions</span>
+		<textarea id="field-condition" class="in code" rows="3" spellcheck="false" data-testid="field-condition" bind:value={form.condition}></textarea>
 		<span class="hint">JSON. Optional — leave as <code>[]</code> to always run.</span>
-	</div>
+	</label>
 
-	<div class="field">
-		<label for="field-action">Actions</label>
-		<textarea id="field-action" rows="6" spellcheck="false" data-testid="field-action" bind:value={form.action}></textarea>
+	<label class="field">
+		<span class="label">Actions</span>
+		<textarea id="field-action" class="in code" rows="6" spellcheck="false" data-testid="field-action" bind:value={form.action}></textarea>
 		<span class="hint">JSON. What it does — e.g. <code>{'{"service": "light.turn_on"}'}</code></span>
-	</div>
+	</label>
 
 	<div class="actions">
 		<Button variant="primary" testid="save" disabled={saving} onclick={save}>
-			{saving ? 'SAVING…' : editing === 'new' ? 'CREATE' : 'SAVE'}
+			{saving ? 'Saving…' : editing === 'new' ? 'Create' : 'Save'}
 		</Button>
-		<Button testid="cancel" onclick={closeEditor}>CANCEL</Button>
+		<Button testid="cancel" onclick={closeEditor}>Cancel</Button>
 	</div>
 {/snippet}
 
@@ -378,139 +379,323 @@
 	errorTestid="error"
 />
 
-{#if flash}<p class="notice" data-testid="flash">{flash}</p>{/if}
+{#if flash}<p class="flash" data-testid="flash" role="status">{flash}</p>{/if}
 
-{#if manageable}
-	<div class="toolbar">
-		<Button variant="primary" testid="new" aria-expanded={editing === 'new'} onclick={openNew}>
-			{editing === 'new' ? 'CANCEL' : '+ NEW AUTOMATION'}
-		</Button>
-		<span class="muted">Automations created here are stored separately from your automations.yaml.</span>
-	</div>
-
-	{#if editing === 'new'}
-		<section class="panel">
-			<div class="panel-head"><span>New automation</span></div>
-			<div class="editor" data-testid="editor-new">
-				{@render editorFields()}
+<div class="tools">
+	<Toolbar>
+		{#snippet children()}
+			<label class="jv-sr-only" for="automation-filter">Filter automations</label>
+			<div class="filter">
+				<Input bind:value={filter} placeholder="Filter  ( / )" testid="filter" />
 			</div>
-		</section>
-	{/if}
-{/if}
-
-<section class="panel">
-	<div class="panel-head">
-		<span>Registered</span>
-		<label class="jv-sr-only" for="automation-filter">Filter automations</label>
-		<input
-			id="automation-filter"
-			type="text"
-			placeholder="filter  ( / )"
-			data-testid="filter"
-			data-jv-filter
-			bind:value={filter}
-		/>
-	</div>
-	{#if loading && !states.length}
-		<Skeleton rows={4} label="Loading automations" />
-	{:else}
-		{#each automations as automation, i (automation.entity_id)}
-			{@const on = automation.state === 'on'}
-			{@const row = rowMap.get(automation.entity_id)}
-			<div
-				class="row jv-stagger"
-				style={staggerStyle(i)}
-				data-testid="automation-{automation.entity_id}"
-			>
-				<span class="name">
-					<b>{friendlyName(automation, entryMap.get(automation.entity_id))}</b>
-					<span class="eid">{automation.entity_id}</span>
-				</span>
-				<span class="muted" data-testid="last-{automation.entity_id}">
-					{fmtTime(automation.attributes?.last_triggered)}
-				</span>
-				<span class="pill" class:on data-testid="state-{automation.entity_id}"
-					>{automation.state}</span
-				>
+		{/snippet}
+		{#snippet end()}
+			{#if manageable}
+				<span class="aside">Automations created here are stored separately from your automations.yaml.</span>
+				<!-- The one primary action on this screen — unless the form is
+				     already open, when SAVE inside it takes over and this quietens
+				     to its cancel. -->
 				<Button
-					variant="primary"
-					pressed={on}
-					testid="toggle-{automation.entity_id}"
-					aria-label="{on ? 'Disable' : 'Enable'} {friendlyName(
-						automation,
-						entryMap.get(automation.entity_id)
-					)}"
-					onclick={() =>
-						act(automation.entity_id, on ? 'turn_off' : 'turn_on', on ? 'disabled' : 'enabled')}
+					variant={editing === 'new' ? 'ghost' : 'primary'}
+					testid="new"
+					aria-expanded={editing === 'new'}
+					onclick={openNew}
 				>
-					{on ? 'DISABLE' : 'ENABLE'}
+					{editing === 'new' ? 'Cancel' : '+ New automation'}
 				</Button>
-				<Button testid="trigger-{automation.entity_id}"
-					aria-label="Run {friendlyName(automation, entryMap.get(automation.entity_id))} now"
-					onclick={() => act(automation.entity_id, 'trigger', 'triggered')}
-				>
-					RUN NOW
-				</Button>
-				{#if row?.needs_approval}
-					<!-- Worth knowing before you press RUN NOW, and it explains the
-					     approval prompt when it appears. -->
-					<span
-						class="pill warn"
-						data-testid="gated-{automation.entity_id}"
-						title="Running this needs your approval: {row.reach}"
-					>
-						NEEDS OK
-					</span>
-				{/if}
-				{#if row}
-					{#if row.editable}
-						<Button testid="edit-{automation.entity_id}"
-							aria-expanded={editing === row.id}
-							aria-label="Edit {row.alias}"
-							onclick={() => openEdit(row)}
-						>
-							{editing === row.id ? 'CLOSE' : 'EDIT'}
-						</Button>
-						<Button variant="danger" testid="delete-{automation.entity_id}"
-							disabled={removing === row.id}
-							aria-label="Delete {row.alias}"
-							onclick={() => remove(row)}
-						>
-							{removing === row.id ? 'DELETING…' : confirming === row.id ? 'CONFIRM?' : 'DELETE'}
-						</Button>
-					{:else}
-						<!-- Said on the row, not hidden behind a disabled button: the
-						     question "why can I edit that one and not this one" should
-						     not need a hover to answer. -->
-						<span class="pill" data-testid="yaml-{automation.entity_id}" title={readOnlyNote(row)}>
-							FROM YAML
-						</span>
-					{/if}
-				{/if}
-			</div>
+			{/if}
+		{/snippet}
+	</Toolbar>
+</div>
 
-			{#if row && editing === row.id}
-				<div class="editor" data-testid="editor-{row.id}">
-					<p class="entity-id">{row.entity_id} · {row.id}</p>
+<div class="panels">
+	{#if manageable && editing === 'new'}
+		<Panel title="New automation">
+			{#snippet children()}
+				<div class="editor" data-testid="editor-new">
 					{@render editorFields()}
 				</div>
-			{/if}
-		{:else}
-			{#if status === 'open'}
-				<EmptyState
-					testid="empty"
-					title="No automations"
-					body={filter
-						? `Nothing matches “${filter}”.`
-						: 'This backend has no automations configured. Add one in jarvis-core and it will appear here, with its last trigger time.'}
-				/>
-			{:else}
-				<EmptyState
-					testid="empty"
-					title="No link to the backend"
-					body={`The websocket relay is ${status}.`}
-				/>
-			{/if}
-		{/each}
+			{/snippet}
+		</Panel>
 	{/if}
-</section>
+
+	<Panel title="Registered" meta={loading ? '…' : String(automations.length)}>
+		{#snippet children()}
+			{#if loading && !states.length}
+				<div class="pad"><SkeletonRows rows={4} label="Loading automations" /></div>
+			{:else}
+				{#each automations as automation, i (automation.entity_id)}
+					{@const on = automation.state === 'on'}
+					{@const row = rowMap.get(automation.entity_id)}
+					{@const name = friendlyName(automation, entryMap.get(automation.entity_id))}
+					<div
+						class="line jv-stagger"
+						class:open={row && editing === row.id}
+						style={staggerStyle(i)}
+						data-testid="automation-{automation.entity_id}"
+					>
+						<span class="who">
+							<b>{name}</b>
+							<span class="eid">{automation.entity_id}</span>
+						</span>
+						<span class="last" data-testid="last-{automation.entity_id}" title="Last triggered">
+							{fmtTime(automation.attributes?.last_triggered)}
+						</span>
+						<span class="state" class:on data-testid="state-{automation.entity_id}">{automation.state}</span>
+						{#if row?.needs_approval}
+							<!-- Worth knowing before you press RUN NOW, and it explains the
+							     approval prompt when it appears. -->
+							<Pill tone="warn" testid="gated-{automation.entity_id}">needs ok</Pill>
+						{/if}
+						{#if row && !row.editable}
+							<!-- Said on the row, not hidden behind a disabled button: the
+							     question "why can I edit that one and not this one" should
+							     not need a hover to answer. -->
+							<span class="yaml" data-testid="yaml-{automation.entity_id}" title={readOnlyNote(row)}>from yaml</span>
+						{/if}
+						<span class="acts">
+							<Button
+								pressed={on}
+								testid="toggle-{automation.entity_id}"
+								aria-label="{on ? 'Disable' : 'Enable'} {name}"
+								onclick={() =>
+									act(automation.entity_id, on ? 'turn_off' : 'turn_on', on ? 'disabled' : 'enabled')}
+							>
+								{on ? 'Disable' : 'Enable'}
+							</Button>
+							<Button testid="trigger-{automation.entity_id}"
+								aria-label="Run {name} now"
+								onclick={() => act(automation.entity_id, 'trigger', 'triggered')}
+							>
+								Run now
+							</Button>
+							{#if row?.editable}
+								<Button testid="edit-{automation.entity_id}"
+									aria-expanded={editing === row.id}
+									aria-label="Edit {row.alias}"
+									onclick={() => openEdit(row)}
+								>
+									{editing === row.id ? 'Close' : 'Edit'}
+								</Button>
+								<Button variant="danger" testid="delete-{automation.entity_id}"
+									disabled={removing === row.id}
+									aria-label="Delete {row.alias}"
+									onclick={() => remove(row)}
+								>
+									{removing === row.id ? 'DELETING…' : confirming === row.id ? 'CONFIRM?' : 'DELETE'}
+								</Button>
+							{/if}
+						</span>
+					</div>
+
+					{#if row && editing === row.id}
+						<div class="editor" data-testid="editor-{row.id}">
+							<p class="entity-id">{row.entity_id} · {row.id}</p>
+							{@render editorFields()}
+						</div>
+					{/if}
+				{:else}
+					{#if status === 'open'}
+						<div class="pad">
+							<EmptyState
+								testid="empty"
+								title="No automations"
+								body={filter
+									? `Nothing matches “${filter}”.`
+									: 'This backend has no automations configured. Add one in jarvis-core and it will appear here, with its last trigger time.'}
+							/>
+						</div>
+					{:else}
+						<div class="pad">
+							<EmptyState
+								testid="empty"
+								title="No link to the backend"
+								body={`The websocket relay is ${status}.`}
+							/>
+						</div>
+					{/if}
+				{/each}
+			{/if}
+		{/snippet}
+	</Panel>
+</div>
+
+<style>
+	.lede {
+		margin: 0 0 var(--jv-space-4);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+	}
+	.flash {
+		margin: 0 0 var(--jv-space-3);
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-ok);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+	}
+	.tools {
+		margin-bottom: var(--jv-space-4);
+	}
+	.filter {
+		width: min(100%, calc(var(--jv-space-7) * 6));
+	}
+	.aside {
+		font-size: var(--jv-fs-xs);
+		color: var(--jv-text-faint);
+	}
+	.panels {
+		display: grid;
+		gap: var(--jv-space-4);
+	}
+	.panels :global(.body) {
+		padding: 0 var(--jv-space-4);
+	}
+	.pad {
+		padding: var(--jv-space-3) 0;
+	}
+	.line {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-3);
+		flex-wrap: wrap;
+		padding: var(--jv-space-3) 0;
+		border-bottom: 1px solid var(--jv-line-hair);
+	}
+	.line:last-child,
+	.line.open {
+		border-bottom: 0;
+	}
+	.who {
+		flex: 1 1 12rem;
+		min-width: 0;
+		display: grid;
+		gap: var(--jv-space-1);
+	}
+	.who b {
+		font-weight: var(--jv-weight-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
+	}
+	.eid,
+	.last,
+	.entity-id {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+	}
+	.last {
+		color: var(--jv-text-dim);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.state,
+	.yaml {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
+		color: var(--jv-text-faint);
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-sm);
+		padding: 0 var(--jv-space-2);
+		line-height: 1.7;
+		white-space: nowrap;
+	}
+	.state.on {
+		color: var(--jv-accent);
+		border-color: color-mix(in srgb, var(--jv-accent) 40%, transparent);
+	}
+	.acts {
+		display: flex;
+		align-items: center;
+		gap: var(--jv-space-2);
+		flex-wrap: wrap;
+	}
+	.editor {
+		display: grid;
+		gap: var(--jv-space-4);
+		margin: 0 calc(-1 * var(--jv-space-4)) var(--jv-space-2);
+		padding: var(--jv-space-4);
+		background: var(--jv-surface-sunken);
+		border-top: 1px solid var(--jv-line-hair);
+		border-bottom: 1px solid var(--jv-line-hair);
+		box-shadow: inset var(--jv-rule-live) 0 0 var(--jv-accent);
+		animation: jv-rise var(--jv-dur-base) var(--jv-ease-out) both;
+	}
+	.entity-id {
+		margin: 0;
+	}
+	.fields {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+		gap: var(--jv-space-4);
+	}
+	.field {
+		display: grid;
+		gap: var(--jv-space-1);
+		min-width: 0;
+	}
+	.label {
+		font-weight: var(--jv-weight-label);
+		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-wide);
+		text-transform: uppercase;
+		color: var(--jv-text-dim);
+	}
+	.in {
+		width: 100%;
+		min-width: 0;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-bright);
+		background: var(--jv-field);
+		border: 1px solid var(--jv-line-soft);
+		border-radius: var(--jv-radius-md);
+		padding: var(--jv-space-2) var(--jv-space-3);
+		transition: border-color var(--jv-dur-fast) var(--jv-ease-out);
+	}
+	.in:hover {
+		border-color: var(--jv-line);
+	}
+	/* Structured JSON: a proportional font makes indentation unreadable. */
+	.in.code {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-xs);
+		line-height: 1.6;
+		resize: vertical;
+		white-space: pre;
+		overflow-wrap: normal;
+		overflow-x: auto;
+	}
+	.hint {
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
+	}
+	.hint code {
+		font-family: var(--jv-font-chrome);
+		color: var(--jv-text-dim);
+	}
+	.problem {
+		margin: 0;
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-danger-text);
+	}
+	.actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: var(--jv-space-3);
+	}
+	@media (max-width: 640px) {
+		.panels :global(.body) {
+			padding: 0 var(--jv-space-3);
+		}
+		.editor {
+			margin: 0 calc(-1 * var(--jv-space-3)) var(--jv-space-2);
+			padding: var(--jv-space-3);
+		}
+		.aside {
+			display: none;
+		}
+	}
+</style>

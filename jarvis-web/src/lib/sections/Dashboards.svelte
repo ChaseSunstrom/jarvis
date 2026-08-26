@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Graphs somebody arranged.
+	 * Graphs somebody arranged, on Reactor II's dashboard view.
 	 *
 	 * A dashboard belongs to the token that saved it — there are no user
 	 * accounts here, and a token is one device — so what this page shows is
@@ -35,9 +35,21 @@
 		type Dashboard,
 		type Widget
 	} from '$lib/dashboards/layout';
-	import type { SeriesData } from '$lib/dashboards/series';
+	import { latest, type SeriesData } from '$lib/dashboards/series';
 	import Chart from '$lib/dashboards/Chart.svelte';
-	import { Button, Field, IconButton, Input, Panel, Pill, ScreenState, Select, Toolbar } from '$lib/ui';
+	import { staggerStyle } from '$lib/motion';
+	import {
+		Button,
+		Field,
+		IconButton,
+		Input,
+		Panel,
+		Pill,
+		Reactor,
+		ScreenState,
+		Select,
+		Toolbar
+	} from '$lib/ui';
 
 	let conn = $state<Connection | null>(null);
 	let status = $state<ConnectionStatus>('connecting');
@@ -176,6 +188,16 @@
 	onDestroy(() => conn?.close());
 
 	const seriesFor = (source: string) => sources.find((one) => one.name === source)?.series ?? [];
+
+	/** The hero's instrument reads the widget's latest value against its window's max. */
+	function heroLevel(widget: Widget): number {
+		const series = data[widget.id]?.[0];
+		const value = latest(series);
+		if (value === null || !series) return 0.35;
+		const values = series.points.map((p) => p.value).filter((v): v is number => v !== null);
+		const max = Math.max(...values, value);
+		return max > 0 ? Math.max(0.05, Math.min(1, value / max)) : 0.35;
+	}
 </script>
 
 
@@ -200,94 +222,104 @@
 	emptyTestid="dashboards-empty"
 >
 	{#snippet children()}
-		<Toolbar>
-			{#snippet children()}
-				<Select
-					bind:value={currentId}
-					options={boards.map((board) => ({ value: board.id, label: board.title }))}
-					testid="dashboard-picker"
-					onchange={refresh}
-				/>
-				{#if current?.shipped}<Pill>shipped · read only</Pill>{/if}
-			{/snippet}
-			{#snippet end()}
-				{#each RANGES as range (range)}
-					<Button
-						onclick={() => setRange(range)}
-						testid="range-{range}"
-						variant={current?.range === range ? 'primary' : 'ghost'}>{range}</Button
-					>
-				{/each}
-				<Button onclick={refresh} testid="dashboard-refresh">Refresh</Button>
-				{#if mine}
-					<Button
-						onclick={() => (editing = !editing)}
-						testid="dashboard-edit"
-						variant={editing ? 'primary' : 'ghost'}>{editing ? 'Done' : 'Edit layout'}</Button
-					>
-				{/if}
-			{/snippet}
-		</Toolbar>
+		<div class="head">
+			<Toolbar>
+				{#snippet children()}
+					<Select
+						bind:value={currentId}
+						options={boards.map((board) => ({ value: board.id, label: board.title }))}
+						testid="dashboard-picker"
+						onchange={refresh}
+					/>
+					{#if current?.shipped}<Pill>shipped · read only</Pill>{/if}
+					{#if current}<span class="count">{current.widgets.length} widget{current.widgets.length === 1 ? '' : 's'}</span>{/if}
+				{/snippet}
+				{#snippet end()}
+					<!-- The range, as one segmented control: four words in a hairline box. -->
+					<div class="seg" role="group" aria-label="Range">
+						{#each RANGES as range (range)}
+							<Button onclick={() => setRange(range)} testid="range-{range}" pressed={current?.range === range}>{range}</Button>
+						{/each}
+					</div>
+					<Button onclick={refresh} testid="dashboard-refresh">Refresh</Button>
+					{#if mine}
+						<Button onclick={() => (editing = !editing)} testid="dashboard-edit" pressed={editing}>
+							{editing ? 'Done' : 'Edit layout'}
+						</Button>
+						{#if !editing}
+							<!-- The one filled control on this screen. -->
+							<Button variant="primary" onclick={() => (editing = true)} testid="dashboard-add">+ Widget</Button>
+						{/if}
+					{/if}
+				{/snippet}
+			</Toolbar>
+		</div>
 
 		{#if saying}<p class="said" role="status" data-testid="dashboard-said">{saying}</p>{/if}
 
 		{#if editing && current}
-			<Panel title="Add a widget" meta="{current.widgets.length} on this dashboard">
-				{#snippet children()}
-					<div class="editor">
-						<Field label="Chart">
-							<Select
-								bind:value={newType}
-								testid="new-type"
-								options={CHART_TYPE_NAMES.map((name) => ({
-									value: name,
-									label: `${CHART_TYPES[name].label} — ${CHART_TYPES[name].when}`
-								}))}
-							/>
-						</Field>
-						<Field
-							label="Source"
-							hint={SOURCE_NOTES[newSource] ??
-								sources.find((one) => one.name === newSource)?.description ??
-								''}
-						>
-							<Select
-								bind:value={newSource}
-								testid="new-source"
-								options={sources.map((one) => ({
-									value: one.name,
-									label: one.healthy ? one.name : `${one.name} — ${one.detail}`
-								}))}
-							/>
-						</Field>
-						<Field
-							label="Series"
-							hint={seriesFor(newSource)
-								.slice(0, 4)
-								.map((one) => one.key)
-								.join(', ')}
-						>
-							<Input bind:value={newSeries} placeholder="host.load1, host.load5" mono testid="new-series" />
-						</Field>
-						<Field label="Title">
-							<Input bind:value={newTitle} placeholder="optional" testid="new-title" />
-						</Field>
-						<Button variant="primary" onclick={addNew} testid="new-widget">Add widget</Button>
-					</div>
-				{/snippet}
-			</Panel>
+			<div class="editor-wrap">
+				<Panel title="Add a widget" meta="{current.widgets.length} on this dashboard">
+					{#snippet children()}
+						<div class="editor">
+							<Field label="Chart">
+								<Select
+									bind:value={newType}
+									testid="new-type"
+									options={CHART_TYPE_NAMES.map((name) => ({
+										value: name,
+										label: `${CHART_TYPES[name].label} — ${CHART_TYPES[name].when}`
+									}))}
+								/>
+							</Field>
+							<Field
+								label="Source"
+								hint={SOURCE_NOTES[newSource] ??
+									sources.find((one) => one.name === newSource)?.description ??
+									''}
+							>
+								<Select
+									bind:value={newSource}
+									testid="new-source"
+									options={sources.map((one) => ({
+										value: one.name,
+										label: one.healthy ? one.name : `${one.name} — ${one.detail}`
+									}))}
+								/>
+							</Field>
+							<Field
+								label="Series"
+								hint={seriesFor(newSource)
+									.slice(0, 4)
+									.map((one) => one.key)
+									.join(', ')}
+							>
+								<Input bind:value={newSeries} placeholder="host.load1, host.load5" mono testid="new-series" />
+							</Field>
+							<Field label="Title">
+								<Input bind:value={newTitle} placeholder="optional" testid="new-title" />
+							</Field>
+							<Button variant="primary" onclick={addNew} testid="new-widget">Add widget</Button>
+						</div>
+					{/snippet}
+				</Panel>
+			</div>
 		{/if}
 
 		{#if current}
 			<div class="grid" data-testid="dashboard-grid" style="--columns:{COLUMNS}">
-				{#each sortWidgets(current.widgets) as widget (widget.id)}
+				{#each sortWidgets(current.widgets) as widget, wi (widget.id)}
+					{@const hero = wi === 0}
 					<section
-						class="widget"
-						style="grid-column: span {widget.w}; grid-row: span {widget.h};"
+						class="card jv-stagger"
+						class:hero
+						style="grid-column: span {widget.w}; grid-row: span {widget.h}; {staggerStyle(wi)}"
 						data-testid="widget-{widget.id}"
 						data-type={widget.type}
 						data-w={widget.w}
 						data-x={widget.x}
+						role="group"
+						aria-label={widget.title || widget.series[0]}
 						draggable={editing}
 						ondragstart={() => (dragging = widget.id)}
 						ondragover={(event) => editing && event.preventDefault()}
@@ -295,9 +327,20 @@
 					>
 						<header>
 							<span class="title">{widget.title || widget.series[0]}</span>
-							<span class="src">{widget.source}</span>
+							<span class="src" class:inf={widget.source !== 'internal'}>{widget.source}</span>
 						</header>
-						<Chart type={widget.type} series={data[widget.id] ?? []} />
+						{#if hero && widget.type === 'stat'}
+							<!-- The hero carries the instrument: its level is the widget's
+							     latest value against the window's own high. -->
+							<div class="hero-body">
+								<div class="mini" aria-hidden="true">
+									<Reactor size={150} fluid level={heroLevel(widget)} state="listening" label="" testid="hero-reactor" />
+								</div>
+								<Chart type={widget.type} series={data[widget.id] ?? []} live />
+							</div>
+						{:else}
+							<Chart type={widget.type} series={data[widget.id] ?? []} live={hero} />
+						{/if}
 						{#if editing}
 							<div class="handles">
 								<IconButton
@@ -357,6 +400,7 @@
 								/>
 							</div>
 						{/if}
+						<i class="handle" aria-hidden="true"></i>
 					</section>
 				{/each}
 			</div>
@@ -365,24 +409,69 @@
 </ScreenState>
 
 <style>
+	.lede {
+		margin: 0 0 var(--jv-space-4);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text-dim);
+	}
+	.head {
+		margin-bottom: var(--jv-space-4);
+	}
+	.count {
+		font-family: var(--jv-font-chrome);
+		font-size: var(--jv-fs-2xs);
+		color: var(--jv-text-faint);
+	}
+	/* The range: four buttons in one hairline box, the pressed one lit. */
+	.seg {
+		display: inline-flex;
+		border: 1px solid var(--jv-line-hair);
+		border-radius: var(--jv-radius-md);
+		overflow: hidden;
+	}
+	.seg :global(.btn) {
+		border: 0;
+		border-right: 1px solid var(--jv-line-hair);
+		border-radius: 0;
+	}
+	.seg :global(.btn:last-child) {
+		border-right: 0;
+	}
+	.seg :global(.btn.on) {
+		background: var(--jv-surface-2);
+		color: var(--jv-text-bright);
+	}
+	.editor-wrap {
+		margin-bottom: var(--jv-space-4);
+	}
+	.editor {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+		gap: var(--jv-space-3);
+		align-items: end;
+	}
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(var(--columns), 1fr);
 		grid-auto-rows: minmax(var(--jv-space-7), auto);
-		gap: var(--jv-space-3);
-		margin-top: var(--jv-space-4);
+		gap: var(--jv-space-4);
 	}
-	.widget {
+	.card {
+		position: relative;
 		display: grid;
 		grid-template-rows: auto 1fr auto;
 		gap: var(--jv-space-2);
 		min-width: 0;
-		padding: var(--jv-space-3) var(--jv-space-4);
+		padding: var(--jv-space-4);
 		background: var(--jv-panel);
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-md);
+		overflow: hidden;
 	}
-	.widget[draggable='true'] {
+	.card.hero {
+		border-color: var(--jv-line-soft);
+	}
+	.card[draggable='true'] {
 		cursor: grab;
 	}
 	header {
@@ -392,10 +481,9 @@
 		gap: var(--jv-space-2);
 	}
 	.title {
-		font-family: var(--jv-font-body);
 		font-weight: var(--jv-weight-label);
 		font-size: var(--jv-fs-2xs);
-		letter-spacing: var(--jv-track-chrome);
+		letter-spacing: var(--jv-track-wide);
 		text-transform: uppercase;
 		color: var(--jv-text-dim);
 		overflow: hidden;
@@ -405,22 +493,45 @@
 	.src {
 		font-family: var(--jv-font-chrome);
 		font-size: var(--jv-fs-2xs);
+		letter-spacing: var(--jv-track-tight);
 		color: var(--jv-text-faint);
+		white-space: nowrap;
+	}
+	/* An external source wears a mark, as Reactor II marks Influx. */
+	.src.inf::before {
+		content: '◆ ';
+		color: var(--jv-warn);
+	}
+	.hero-body {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: var(--jv-space-4);
+		align-items: center;
+		min-height: 0;
+	}
+	.mini {
+		width: calc(var(--jv-space-7) * 3.125);
+		max-width: 30vw;
 	}
 	.handles {
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--jv-space-1);
 	}
-	.editor {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-		gap: var(--jv-space-3);
-		align-items: end;
+	/* The resize corner, as Reactor II draws it: two hairlines, bottom right. */
+	.handle {
+		position: absolute;
+		right: var(--jv-space-2);
+		bottom: var(--jv-space-2);
+		width: var(--jv-space-2);
+		height: var(--jv-space-2);
+		border-right: 1px solid var(--jv-line);
+		border-bottom: 1px solid var(--jv-line);
+		pointer-events: none;
 	}
 	.said {
-		margin: var(--jv-space-3) 0 0;
-		font-size: var(--jv-fs-2xs);
+		margin: 0 0 var(--jv-space-3);
+		font-size: var(--jv-fs-xs);
 		color: var(--jv-text-dim);
 	}
 	@media (max-width: 900px) {
@@ -429,8 +540,11 @@
 		.grid {
 			grid-template-columns: 1fr;
 		}
-		.widget {
+		.card {
 			grid-column: 1 / -1 !important;
+		}
+		.mini {
+			width: calc(var(--jv-space-7) * 2.2);
 		}
 	}
 </style>
