@@ -28,7 +28,7 @@ Local Python is 3.11; CI runs 3.12. The web console needs `cd jarvis-web && npm 
 
 - `make test` — the offline gate: ruff + every Python suite + both evals. `make help` lists the rest.
 - `make test-web` — build, `svelte-check`, vitest, smoke, Playwright. It swallows Playwright failures (`|| echo`); CI does not.
-- `make test-android` — runs `android-app/tools/*.py`, the executable spec of the Kotlin. The Kotlin itself needs the Android SDK and cannot be built here.
+- `make test-android` — runs `android-app/tools/*.py`, the executable spec of the Kotlin. The Kotlin itself builds here too: `export JAVA_HOME=$HOME/.local/jdk ANDROID_HOME=$HOME/Android/Sdk PATH=$HOME/.local/jdk/bin:$HOME/.local/gradle/bin:$PATH`, then from `android-app/` `gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon -q` (1–3 min a task, 3 GB heap — one gradle at a time beside a pytest run, and in the background with a log; the M61/M64/M71 gates do this). A changed golden is re-recorded with `:app:recordRoborazziDebug` and committed under `android-app/app/src/test/screenshots/`.
 - One suite, with CI's flags: `cd jarvis-core && python3 -m pytest tests -q --timeout=120 --timeout-method=signal` (two voice tests hang forever on 3.12 without `--timeout`). One test: add `-k name`.
 - `/gate` runs all of the above the way CI does; `/claims` reconciles `docs/verification.md` afterwards; `/pr` opens the pull request.
 - Stack: `make up` / `make down`. Two compose files — `jarvis-core/docker-compose.yml` first, then the root one. Orchestrator + sandbox are behind `--profile agents` on purpose (a command broker must not start by default); SearXNG is `--profile search`, MQTT `--profile mqtt`. This checkout is a dev box: restarting containers is fine.

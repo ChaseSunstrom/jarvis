@@ -1119,12 +1119,20 @@ web and of Tasker. Local only. Each row here is planned in that document.
     the mock backend and a Playwright check; settings suites 33. Gate 14/14 on the running house:
     Piper started at 0.9, the voice smoke 5/5 (6/6 turns) with WER 0.0 over 3 spoken samples,
     median 2.79 s. Kokoro's `speed:` stays the per-request knob it was.
-- [ ] **M71 — Enrolment, complete** · size M · deps M35 · parallel-ok M66
+- [x] **M71 — Enrolment, complete** · size M · deps M35 · parallel-ok M66
   - Scope: "make sure enrolment is completely implemented and complete" — an audit of voice
     enrolment end to end (the console's EnrolVoice, the phone's flow, the server's speaker
     store and verification, re-enrolment, removal, what the rig can prove) with every gap
     closed and the unprovable ones named in `docs/ANDROID_DEVICE_TESTS.md`.
   - Verify: `bash scripts/verify/m71-enrolment.sh`
+  - 26 Aug 22:14: built by an agent in a worktree (killed once at 20:37, respawned on the same
+    worktree), its four commits cherry-picked (1d537e1, 4f82d6c, 50b81f6, 3454f77) and verified on
+    the branch — gate 37/37 (the audit table with no Missing row, the contract's three readers,
+    gradle assemble/unit/lint/Roborazzi on this host), speaker-gate + voice 143, Android mirrors
+    6/6, vitest 769. Enrolment is by name for up to eight people, on the console and the phone;
+    a stranger is refused and drawn as one; no tool, command or service can enrol (DEVIATIONS
+    §22). What only a phone or a person can prove is ADT-021/052/053/054; the live rig's one
+    synthetic voice cannot show separation, and that boundary is written down rather than crossed.
 - [x] **M72 — A coding job can create a repository** · size S · deps M19 · parallel-ok M66
   - Scope: "Could not create the workspace /jarvis/workspaces: Permission denied": in the image
     `~/jarvis/workspaces` is `/jarvis/workspaces`, which nothing may write. The core mounts the
