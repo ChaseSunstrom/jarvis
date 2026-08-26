@@ -49,9 +49,21 @@ word broke", not "the threshold is 0.4 too low".
 
 ### 1. Enrol
 
-On the phone: **Settings → Whose voice → TEACH JARVIS MY VOICE**. The screen
-lists the phrases your server asked for and marks off the ones you have given —
-**tap to start, tap again when you have finished the line**, one line per tap.
+On the phone: **Settings → Whose voice → TEACH JARVIS MY VOICE**. On the
+console: **SETTINGS › Voice → ENROL**. The screen lists the phrases your server
+asked for and marks off the ones you have given — on the phone **tap to start,
+tap again when you have finished the line**, one line per tap; on the console
+RECORD, then STOP.
+
+**A sample is enrolled under a name** (M71). The box above the phrases — "who
+is this?" — is who is reading them; leave it empty and the sample goes to the
+server's default person, `owner`, which is who every enrolment before names
+existed went to. A new name is a new person, up to the server's `max_people`
+(eight; a store with dozens of voiceprints is a store nobody is curating), and
+a name is at most forty printable characters, matched case-insensitively —
+"Ted" and "ted" are one person. Every write carries it as `?label=`. The phrase
+list follows THAT person's count, so two people enrolling on one phone are not
+asked each other's phrases.
 
 Two details that used to be wrong here. It is *not* press-and-hold: holding does
 nothing, and the label says `TAP TO SPEAK`. And the count is not five — it is
@@ -64,8 +76,12 @@ The screen tells you about each sample as you give it: a line that was too short
 or had no measurable pitch says so straight away, which is the whole reason the
 API takes one sample per request. **SAY THAT ONE AGAIN** re-offers the phrase you
 just read — worth knowing that it cannot *remove* the sample already stored,
-because there is no per-sample delete in the API; `DELETE /api/voice/speaker`
-(FORGET MY VOICE) is all-or-nothing.
+because there is no per-sample delete in the API. Deleting is per PERSON:
+`DELETE /api/voice/speaker?label=Ted` forgets Ted and keeps everyone else —
+FORGET on a person's row, on the phone and on the console — and a bare
+`DELETE /api/voice/speaker` forgets everyone, which is what the phone's bottom
+button (FORGET MY VOICE, or **FORGET EVERYONE** once there is more than one)
+and the console's FORGET do.
 
 Say them **the way you would actually say them** — the question as a question,
 the order as an order. This is the single biggest thing between a gate that
@@ -100,8 +116,11 @@ voice:
 verdict, and **lets every turn through**. Leave it there for a few days of
 ordinary use.
 
-Then read the numbers. `TEST MY VOICE` on the phone scores a fresh utterance and
-tells you whether enforcement would have refused it. Get somebody else to try
+Then read the numbers. `TEST MY VOICE` on the phone, or TEST on the console,
+scores a fresh utterance against everyone enrolled and says **who** it was —
+"Recognised as Ted · 2.31 against 8.83" — and whether enforcement would have
+refused it; a refusal says who it was nearest, so a false reject of the owner
+reads as "nearest: owner" rather than as a stranger. Get somebody else to try
 it too — the gap between their score and yours is the thing you are setting a
 threshold in the middle of.
 
@@ -133,10 +152,16 @@ and must not silently disable a gate you meant to turn on either.
 
 **`threshold`** — in units of standard deviations from your enrolled centre,
 averaged over all 46 dimensions, so it keeps its meaning when the room changes.
-Omit it and the profile uses what enrolment worked out from its own leave-one-out
-spread: the **worst** enrolment sample times 1.25. The worst rather than the
-average on purpose — the average tells you how you usually sound, and a gate is
-not troubled by the usual case.
+Omit it and each profile uses what enrolment worked out from its own
+leave-one-out spread: the **worst** enrolment sample times 1.25. The worst
+rather than the average on purpose — the average tells you how you usually
+sound, and a gate is not troubled by the usual case. Name one and it applies to
+every enrolled person, and it is held on the gate rather than written into the
+profiles: enrolment recomputes each profile's own suggestion after every
+sample, and a configured number that lived in the profile was overwritten by
+the next phrase until the next restart put it back. The status payload says
+which is live (`configured_threshold`), and the screens say "set in
+configuration.yaml; enrolment suggests …".
 
 **`on_reject`** — `speak` is the default and the choice is not obvious. An
 assistant that silently ignores you is indistinguishable from one that did not
@@ -186,13 +211,60 @@ audio there to check. See [`../DEVIATIONS.md`](../DEVIATIONS.md) §10.
 token, which is a stronger credential than a voice. This gate is about who is
 talking in a room where the microphone is open to whoever is standing there.
 
+## Who is speaking
+
+With more than one person enrolled the question stops being "is this the
+owner" and becomes "who is this". A turn's audio is compared with everyone,
+and the best verdict wins — an accepted one over a refusal, and among those the
+lowest score — so two people who sound alike are each credited to whoever they
+fit better, never to whoever enrolled first. The verdict carries two names and
+they are never the same field: `label` is who it was, set only when the gate
+accepted the voice; `nearest` is the closest enrolled person, set on a refusal
+too, so a consumer reading `label: owner` as "the owner spoke" is never handed
+the nearest miss under that key.
+
+**The agent is told.** A recognised turn reaches the conversation agent with
+`speaker=<label>`, and the system prompt ends with one line: *The person
+speaking was recognised by voice as Ted.* Only ever a name the gate accepted:
+a turn it could not judge — typed text, `mode: off`, a half-second "stop" —
+gets no line rather than "unknown", because "unverified" and "stranger" are
+different claims and a prompt that called the owner with a cold "unrecognised"
+would have the model treating them as an intruder. It is context, not
+authority: the tier system still asks a human before anything irreversible,
+and the line unlocks nothing. It goes after the clock so the cached prompt
+prefix survives a change of speaker.
+
+**The house sees it.** `speaker-end` reaches the client that ran the turn, as
+before. The pipeline also fires `jarvis_speaker_verdict` on the bus for every
+other surface — the console's activity strip and the phone's draw a `speaker`
+row from it: the name when accepted; "unverified" for audio too short or too
+quiet to judge, which is never painted as a stranger; "not recognised ·
+refused · nearest owner", failed only when the gate actually refused the turn.
+The fields are `tests/contracts/speaker_verdict.json`, which the server's
+tests, the console's and the phone's mirror all read. No event ever carries
+audio, a vector or the transcript.
+
+**Adaptation learns the right person.** With `adapt: true`, a confident turn
+teaches only the profile that accepted it; the other people's profiles are not
+moved by a voice that was not theirs.
+
 ## What is stored, and where
 
-The **voiceprint** is `<config>/.storage/voice_profile.json`, chmod 600 like
-every other store: a handful of 46-float vectors and a threshold. It is
-biometric data about one person and it never leaves the box — no endpoint
-returns the vectors, only counts, scores and timestamps. `DELETE
-/api/voice/speaker`, or **FORGET MY VOICE** on the phone, overwrites it.
+The **voiceprints** are `<config>/.storage/voice_profile.json`, chmod 600
+like every other store: for each person, a handful of 46-float vectors, a
+threshold and a name (`people: [...]`, store version 2; a version-1 file — one
+profile at the top level, from before names — loads as one person called
+`owner`, so an upgrade keeps whoever was enrolled). It is biometric data and
+it never leaves the box — no endpoint returns the vectors, only counts, scores
+and timestamps, per person. `DELETE /api/voice/speaker?label=Ted` removes one
+person's; a bare DELETE, or **FORGET EVERYONE** on the phone, overwrites it.
+
+**Enrolment is a durable write about a person**, and it is reachable only over
+REST with a credential a person holds — the phone's bearer token, or the
+console password. There is no tool for the model and no socket command, so no
+turn, and in particular no turn that has read untrusted content, can enrol
+anybody; `test_no_tool_and_no_websocket_command_can_enrol` pins it and
+`security.md` says why that is the tier.
 
 The **audio** is not stored at all. A turn's PCM is held in memory only while a
 gate is active, capped at 20 seconds, dropped the moment the verdict lands, and
@@ -201,12 +273,16 @@ of one HTTP request. There is no debug flag that writes a recording to disk.
 
 ## The API
 
+Every route takes an optional `label` in the query string — the person's
+name. Without one, `enrol` adds to `owner`, `verify` compares with everyone
+and says who, and `DELETE` forgets everyone.
+
 | | |
 |---|---|
-| `GET /api/voice/speaker` | mode, sample count, your own scores, the suggested threshold, the phrases |
-| `POST /api/voice/speaker/enrol` | one sample — WAV, or raw 16 kHz mono PCM |
-| `POST /api/voice/speaker/verify` | score a sample without enrolling it, and say whether it would be refused |
-| `DELETE /api/voice/speaker` | forget the voiceprint |
+| `GET /api/voice/speaker[?label=]` | mode, the phrases, `people` (one summary each), `configured_threshold`, and at the top level one person's counts, scores and suggested threshold — the named one, else the first — so a client from before names keeps working; `enrolled` is whether anybody is, `person_enrolled` whether that person is |
+| `POST /api/voice/speaker/enrol[?label=]` | one sample — WAV, or raw 16 kHz mono PCM — for that person; 400 for a name that cannot be one, 409 when the house holds `max_people` already ("forget somebody first" — never a quiet eviction) |
+| `POST /api/voice/speaker/verify[?label=]` | score a sample without enrolling it: `verdict.label` says who, `verdict.nearest` who it was nearest, `would_block` what enforcement would do; with `label`, against that person only (404 if they are not enrolled) |
+| `DELETE /api/voice/speaker[?label=]` | forget one person (404 if unknown), or everyone |
 
 Enrolment takes one sample per request because the useful feedback is per
 sample: "that one was too quiet, say it again" between phrases, rather than one
@@ -250,5 +326,9 @@ It settles that the code separates signals differing in exactly the cues it says
 it uses, and that it holds one speaker together across different words, lengths
 and levels. **It cannot settle accuracy on real human speech**, and no test
 claims to; that row is Unproven in [`verification.md`](verification.md) and only
-your own voice can close it. Everything is seeded — a flaky biometric test
-teaches you to re-run it.
+your own voice can close it. `tests/test_speaker_gate.py` settles the household
+on the same cast — the owner and the soprano enrolled under two names, the
+baritone as the stranger: each credited to their own person, the stranger to
+nobody and nearest the owner, the agent told, the bus fired, the store
+round-tripped, one person forgotten while the other stays. Everything is
+seeded — a flaky biometric test teaches you to re-run it.

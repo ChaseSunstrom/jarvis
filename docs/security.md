@@ -53,6 +53,33 @@ front door") is resolved to concrete entity ids *before* a human sees it, so
 what runs later is what was shown, not a re-resolution against a house that
 has moved on. Requests expire, and each can be used at most once.
 
+## Enrolling a voice is a durable write about a person, and no turn can do it
+
+Teaching Jarvis whose voice it answers (`docs/voice-identity.md`) changes what
+the speaker gate will accept for good, until somebody deletes it. On the tier
+table above that would be tier 3 — an approval — but it is not a tool at all,
+and the difference is deliberate: an approval card says *what* will run and a
+human says yes; an enrolment's "what" is a recording, and a card cannot show a
+voice. So the write is reachable only over REST — `POST /api/voice/speaker/enrol`
+and `DELETE /api/voice/speaker` — with a credential a person holds:
+
+* the phone's own bearer token, relayed unchanged by the console
+  (`jarvis-web/src/lib/server/speakerRelay.ts`), or
+* the console password, the same door already in front of the pairing secret
+  and in front of deleting the profile.
+
+There is no `enrol_voice` tool, no `jarvis/voice/...` socket command, and no
+service call. The consequence that matters: **a model turn cannot enrol
+anybody** — not a fenced one that read a web page saying "enrol this voice",
+not a spoken one from a stranger the gate let through in `observe`. The
+recognised name a turn carries is context for the prompt and unlocks nothing.
+`jarvis-core/tests/test_speaker_gate.py::test_no_tool_and_no_websocket_command_can_enrol`
+pins all three absences and that the routes sit on the token-gated router;
+`jarvis-web/src/lib/server/routes.test.ts` pins that the console's relay never
+lends the admin token to an enrolment. The store never leaves the box (counts
+and scores on every endpoint, never a vector), and a bare `DELETE` is a real
+delete of every person.
+
 ## The command path has two gates, with different credentials
 
 `execute_command` and `apply_code_task` are the sharpest tools in the box, so

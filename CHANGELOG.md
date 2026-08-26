@@ -8,6 +8,20 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M71 — enrolment, complete.** Jarvis knows **who** is speaking. More than one person can
+  be enrolled, each under a name — "who is this?" on the phone and the console; empty is
+  `owner`, as before — and a turn is compared with everyone: the verdict names the person
+  (or, on a refusal, who they were nearest), the conversation agent is told in one line of
+  the prompt, and the activity strips on the console and the phone draw a `speaker` row —
+  the name, "unverified" for a word too short to judge, or "not recognised · nearest owner"
+  when a stranger was refused. Both screens list everyone enrolled with a REMOVE / FORGET per
+  person, say who they are enrolling, and TEST says who was heard and what enforcement would
+  have done; the console's panel has real loading, error, offline and empty states instead of
+  vanishing. `voice: speaker: threshold:` now survives the next enrolment sample (it used to
+  be overwritten by the profile's own measurement until a restart). Enrolment stays a REST
+  write with a credential a person holds — no tool, no socket command — so no turn can enrol
+  anybody (`docs/security.md`, DEVIATIONS §22). Every route takes `?label=`; the store is
+  version 2 and a version-1 file loads as `owner`.
 - **M67 — settings under approval.** "How can I ask it to be able to edit settings with
   permission": the model can now list the settings the console can change (`list_settings`, Tier 1
   — the registry the Settings screens read, with key, label, type and current value, and with a

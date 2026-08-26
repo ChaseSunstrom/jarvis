@@ -481,6 +481,22 @@ source called `bundled` in `configuration.yaml` replaces it, and
 `enabled: false` on that line turns it off. What was given up is the letter of
 "nothing by default"; what was kept is the reason for it.
 
+## 22. Enrolment has no tool and no socket command (M71)
+
+The obvious shape for "teach Jarvis a voice" is a Tier-3 tool with an approval
+card, like every other durable write. It is not one, and will not become one.
+An approval pins the arguments a human is shown; an enrolment's argument is a
+recording, and a card cannot show a voice — a human tapping APPROVE would be
+approving a sample they have not heard, on the word of the turn that asked.
+So enrolment is a REST write with a credential a person holds (the phone's
+token, the console password), the model has no way to reach it, and the name
+the gate attaches to a recognised turn is context in the prompt, never
+authority. `docs/security.md` has the rule, `test_speaker_gate.py` pins the
+three absences (tool, command, service).
+
+The cost: a spoken "Jarvis, learn my voice" cannot start enrolment. The
+screens are one tap away and say so.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

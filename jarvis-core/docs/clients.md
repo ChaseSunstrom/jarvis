@@ -208,6 +208,22 @@ The same operations exist over REST (`GET /api/states`,
 `POST /api/services/{domain}/{service}`, `POST /api/config/area_registry/create`
 and friends) for scripts that do not want a socket.
 
+### Voice identity (REST only)
+
+Whose voice Jarvis answers is REST only, on purpose: an enrolment is a durable
+write about a person, and it is reachable with a credential a person holds —
+this bearer token, or the console password behind the console's relay — and
+never from a socket command or a model tool (`docs/security.md`). Every route
+takes an optional `label`, the person's name; `docs/voice-identity.md` has the
+detail.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/voice/speaker[?label=]` | mode, the enrolment phrases, `people` (one summary each — counts, scores, threshold, never a vector), `configured_threshold`, and one person's summary at the top level (the named one, else the first) |
+| `POST /api/voice/speaker/enrol[?label=&rate=&width=]` | one sample, WAV or raw PCM, for that person; answers the running summary plus `accepted` and a `sample` block (`speech_ms`, `has_pitch`, `vector: null`); 400 for a sample or a name that cannot be used, 409 when `max_people` is reached, 413 for an oversized body |
+| `POST /api/voice/speaker/verify[?label=]` | score without enrolling: `verdict` (`accepted`, `label`, `nearest`, `score`, `threshold`, `reason`), `would_block`, `mode`; with `label`, against that person only |
+| `DELETE /api/voice/speaker[?label=]` | forget one person (404 if unknown), or everyone |
+
 ## Voice runs
 
 ```
@@ -229,6 +245,14 @@ server  ... stt-start, stt-vad-start, stt-vad-end, stt-end, intent-start,
 Two details clients get wrong: the binary prefix byte is the
 `stt_binary_handler_id` from `run-start` (not a constant), and pipeline events
 arrive under the **run's** message id, so a client must route by id.
+
+With a speaker gate configured, `speaker-end` arrives between `stt-end` and
+`intent-start` carrying `speaker_output` — the verdict (`accepted`, `label`,
+`nearest`, `score`, `threshold`, `reason`, `mode`, `enforced`); a refused turn
+then ends with `error` code `speaker-not-recognised`, which is not an stt
+code. The same verdict goes on the bus as `jarvis_speaker_verdict` for
+surfaces that did not run the turn (`tests/contracts/speaker_verdict.json`),
+which is what the activity strips draw a stranger from.
 
 `tts-chunk` (M60) carries a finished sentence synthesised while the model was
 still writing: `{"index": 0, "text": "…", "tts_output": {"url": …}}` — play

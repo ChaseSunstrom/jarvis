@@ -64,10 +64,15 @@ knowable in advance and guessing it locks you out rather than a stranger.
 voice:
   speaker:
     mode: observe        # off (default) | observe | enforce
+    # threshold: 8.8     # optional; applies to every enrolled person, and
+                         # wins over each profile's own measurement
 ```
 
-The whole thing, including what it is and is not worth, is in
-[`../../docs/voice-identity.md`](../../docs/voice-identity.md).
+More than one person can be enrolled, each under a name (`?label=` on the
+API; the "who is this?" box on the phone and the console), and a turn is
+compared with everyone: the verdict says who, the agent is told, and the
+activity strips draw a stranger. The whole thing, including what it is and is
+not worth, is in [`../../docs/voice-identity.md`](../../docs/voice-identity.md).
 
 ## Pipelines
 
