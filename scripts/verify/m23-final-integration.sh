@@ -4,17 +4,37 @@
 source "$(dirname "$0")/lib.sh"
 verify_begin "M23" "final integration"
 
-check_sh "every milestone M00–M22 is ticked in MILESTONES.md" '
-    rc=0
-    for n in $(seq -w 0 22); do
-        grep -qE "^- \[x\] \*\*M$n" MILESTONES.md || { echo "M$n is not ticked"; rc=1; }
-    done
-    exit $rc'
+# Every milestone, not the first twenty-three: the ledger grew to fifty-two
+# while this read `seq 0 22`, and a final-integration check that passes with
+# a milestone unticked is a check that has stopped describing its milestone.
+# M23 itself is exempt — it is ticked in the same commit this goes green in.
+check "every other milestone in MILESTONES.md is ticked" python3 -c '
+import re
+from pathlib import Path
+text = Path("MILESTONES.md").read_text(encoding="utf-8")
+open_ = [m for m in re.findall(r"^- \[ \] \*\*(M\d{2})", text, re.M) if m != "M23"]
+assert not open_, f"unticked: {open_}"
+done = re.findall(r"^- \[x\] \*\*(M\d{2})", text, re.M)
+print(f"{len(done)} ticked, none open but M23")
+'
+check "the live suite has run in FULL mode, and the report says so" python3 -c '
+from pathlib import Path
+report = Path("docs/LIVE_TEST_REPORT.md")
+assert report.is_file(), "no docs/LIVE_TEST_REPORT.md"
+text = report.read_text(encoding="utf-8")
+assert "--full" in text, "the report was written from an --implemented-only run, not a full one"
+print("full-mode report present")
+'
 check_not "BLOCKERS.md has no open entries" grep -nE '^## M[0-9]{2}' BLOCKERS.md
-check_sh "CHANGELOG.md names every milestone" '
-    rc=0
-    for n in $(seq -w 0 23); do grep -q "M$n" CHANGELOG.md || { echo "M$n missing from CHANGELOG.md"; rc=1; }; done
-    exit $rc'
+check "CHANGELOG.md names every milestone" python3 -c '
+import re
+from pathlib import Path
+ids = sorted(set(re.findall(r"^- \[[ x]\] \*\*(M\d{2})", Path("MILESTONES.md").read_text(encoding="utf-8"), re.M)))
+log = Path("CHANGELOG.md").read_text(encoding="utf-8")
+missing = [i for i in ids if i not in log]
+assert not missing, f"missing from CHANGELOG.md: {missing}"
+print(f"all {len(ids)} milestones named")
+'
 check "README documents make verify-all" grep -q 'make verify-all' README.md
 check "docs/verification.md names the harness" grep -q 'make verify-all' docs/verification.md
 for word in styleguide dashboards Robolectric jarvis-desktop-app; do
