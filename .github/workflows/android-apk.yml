@@ -79,9 +79,10 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          # The repo ships gradle-wrapper.properties but not the wrapper JAR
-          # (a binary we deliberately don't commit), so the action provides
-          # Gradle and we invoke it directly instead of ./gradlew.
+          # The wrapper JAR has been committed since 137ed51 (M08 runs
+          # ./gradlew here), but CI still takes Gradle from the action and
+          # calls it directly: the version is pinned in one visible place, and
+          # a wrapper download is one more network step to fail.
           gradle-version: "8.10"
 
       - name: Assemble
@@ -99,8 +100,41 @@ jobs:
       # the pure-logic classes they cover (URL/endpoint resolution, release
       # picking, policy tiering) are exactly the ones where a silent regression
       # is expensive and a device is not needed to catch it.
+      # app/build.gradle.kts runs Robolectric OFFLINE (`robolectric.offline`,
+      # jars from ~/.cache/robolectric) so a unit test never depends on Maven
+      # Central answering. On a runner that cache is empty, and the only thing
+      # that filled it was the goldens step — AFTER the unit tests had already
+      # needed it, so every Robolectric-backed test failed to resolve its
+      # android-all jar while the same tests passed on any machine that had
+      # run the goldens once. Fetch first; cache it, because it is ~300 MB.
+      - name: Robolectric runtime cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/robolectric
+          key: robolectric-${{ hashFiles('android-app/tools/bootstrap-toolchain.sh') }}
+
+      - name: Robolectric runtime (offline jars)
+        run: |
+          set -eu
+          # JAVA_HOME_DIR/ANDROID_HOME point the script at what the actions
+          # above installed, so it fetches only the jars it finds missing.
+          JAVA_HOME_DIR="$JAVA_HOME" bash tools/bootstrap-toolchain.sh
+
       - name: Unit tests (src/test)
         run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
+      # The report is the only way to read WHICH test failed without a token
+      # for the log endpoint; the step summary below is not enough for that.
+      - name: Upload unit-test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-test-reports
+          path: |
+            android-app/app/build/reports/tests/testDebugUnitTest
+            android-app/app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 7
 
       # Wrong Build.VERSION.SDK_INT guards are invisible to the compiler and
       # only bite on a real device (minSdk is 29). Lint is the only thing that
@@ -118,11 +152,7 @@ jobs:
       # test; a difference fails the job and the PNGs are uploaded so the
       # difference can be looked at rather than guessed at.
       - name: Screenshot goldens (Robolectric + Roborazzi)
-        run: |
-          # working-directory is android-app (the job's default), so the path
-          # is relative to it — `android-app/tools/...` from here does not exist.
-          bash tools/bootstrap-toolchain.sh
-          gradle :app:verifyRoborazziDebug --no-daemon
+        run: gradle :app:verifyRoborazziDebug --no-daemon
 
       - name: Upload screenshot diffs
         if: failure()
