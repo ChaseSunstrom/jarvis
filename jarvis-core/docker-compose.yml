@@ -286,6 +286,7 @@ services:
       --data-dir /data
       --download-dir /data
       --vad-filter
+      --compute-type int8
     volumes:
       - ./wyoming/whisper:/data
     environment:

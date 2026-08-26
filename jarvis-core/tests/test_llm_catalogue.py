@@ -302,7 +302,21 @@ async def test_a_chosen_fast_model_is_resolved_through_the_gateway(jarvis) -> No
     payload = await common.async_llm_models_payload(jarvis)
     assert payload["roles"]["fast"]["source"] == "setting"
     assert payload["roles"]["fast"]["model"] == "qwen3.6-35b"
-    assert "chosen as the fast model" in by_id(payload)["qwen3.6-35b"]["note"]
+    # Chosen means used (M60): spoken turns go to it, and the row says so
+    # rather than calling it idle.
+    row = by_id(payload)["qwen3.6-35b"]
+    assert "fast path" in row["in_use_for"]
+    assert "idle" not in (row["note"] or "")
+
+
+async def test_the_gateways_own_fast_alias_is_idle_until_chosen(jarvis) -> None:
+    jarvis.config["llm"].pop("fast_model", None)
+    payload = await common.async_llm_models_payload(jarvis)
+    if payload["roles"]["fast"]["source"] != "gateway":
+        return  # this stack offers no fast alias; nothing to be idle
+    row = by_id(payload)[payload["roles"]["fast"]["model"]]
+    assert "fast path" not in row["in_use_for"]
+    assert "idle" in (row["note"] or "")
 
 
 async def test_a_configured_model_the_server_does_not_list_is_shown_as_missing(jarvis) -> None:

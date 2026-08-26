@@ -378,6 +378,21 @@ proxy refuses (it binds anything that can reach the endpoint, not just a
 well-behaved client). A test reads both files and fails if their idea of
 "cloud" diverges.
 
+## Whisper on this CPU: int8 (M60)
+
+**Kept, resized.** The wait on a voice turn is not the model — the operator
+measured the chat model at ≈75 tok/s — it is recognising the audio, prefilling
+the prompt and starting synthesis (BLOCKERS §2). Recognition is faster-whisper
+on 4 vCPUs with no GPU, and its compute type was the image's default (float32
+on CPU). `--compute-type int8` is CTranslate2's quantised CPU path: the same
+model, roughly half the memory and 1.5–2× the speed on x86 with no measurable
+WER change on `base.en` — the trade every faster-whisper CPU deployment makes.
+Set in `jarvis-core/docker-compose.yml`; the model stays `WHISPER_MODEL`.
+The prompt side is M60's: the prefix is kept on the server between turns
+(`cache_prompt`), ordered stable-first so the cache hits, measured against
+`PROMPT_TOKEN_BUDGET`; and the first sentence is synthesised while the model
+writes the rest. Re-measured by the live rig, never by editing a threshold.
+
 ## How a decision here gets overturned
 
     python3 scripts/verify/toolbelt_baseline.py --out .verify/toolbelt/before.json

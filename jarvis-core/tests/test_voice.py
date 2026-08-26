@@ -1590,3 +1590,61 @@ async def test_synthesize_hangs_up_politely(server):
     await client.synthesize("the kettle is on")
     await asyncio.sleep(0.05)
     assert server.hangups == ["eof"]
+
+
+# --- early speech (M60) --------------------------------------------------------
+
+
+async def test_the_first_sentence_is_spoken_before_the_reply_is_finished(tmp_path):
+    """A finished sentence is synthesised while the model writes the next.
+
+    The wait a person notices runs from the end of their sentence to the start
+    of Jarvis's; synthesising after the model has finished puts the whole
+    generation in front of the first word. With early speech the first
+    sentence is a `tts-chunk` before `intent-end`, and the whole reply still
+    arrives as `tts-end` for a client that plays only that.
+    """
+    jarvis = Jarvis(tmp_path)
+    stt, tts = FakeStt(), FakeTts()
+    converse = make_converse("The kitchen light is on. Good night, Sir.")
+    run = PipelineRun(
+        jarvis,
+        pipeline=Pipeline(id="jarvis", name="Jarvis", tts_voice="en_GB-alan-medium"),
+        stt=stt,
+        tts=tts,
+        converse=converse,
+        binary_handler_id=7,
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(30), sine_pcm(30), silence_pcm(1000)), event_cb)
+
+    types = [event_type for event_type, _ in events]
+    assert "tts-chunk" in types and "tts-end" in types
+    assert types.index("tts-chunk") < types.index("intent-end"), "the first sentence waited for the whole reply"
+    chunk = [data for kind, data in events if kind == "tts-chunk"][0]
+    assert chunk["index"] == 0 and chunk["text"] == "The kitchen light is on."
+    assert chunk["tts_output"]["url"].startswith("/api/tts_proxy/")
+    assert tts.calls[0][0] == "The kitchen light is on.", tts.calls
+    assert tts.calls[1][0] == "The kitchen light is on. Good night, Sir."
+    assert run.spoken_chunks == [chunk["tts_output"]["url"]]
+    # `tts-end` still carries the whole reply, and beside it the part the
+    # chunks did not cover, for a client that played them.
+    end = [data for kind, data in events if kind == "tts-end"][0]["tts_output"]
+    assert end["url"] == run.tts_url and end["chunks"] == 1
+    assert end["remainder_url"] and end["remainder_url"] != end["url"]
+    assert tts.calls[2][0] == "Good night, Sir."
+
+
+async def test_early_speech_can_be_switched_off(tmp_path):
+    jarvis = Jarvis(tmp_path)
+    run = PipelineRun(
+        jarvis,
+        pipeline=Pipeline(id="jarvis", name="Jarvis"),
+        stt=FakeStt(),
+        tts=FakeTts(),
+        converse=make_converse("The kitchen light is on. Good night, Sir."),
+        early_speech=False,
+    )
+    events, event_cb = collector()
+    await run.execute(await queue_of(sine_pcm(30), silence_pcm(1000)), event_cb)
+    assert "tts-chunk" not in [event_type for event_type, _ in events]

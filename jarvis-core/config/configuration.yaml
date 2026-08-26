@@ -127,7 +127,13 @@ sun:
 # Voice — the three Wyoming containers.
 # ---------------------------------------------------------------------------
 # Ports match docker-compose.yml. Host networking means 127.0.0.1 reaches them.
+# Speed (M60). The first finished sentence is synthesised and sent (`tts-chunk`)
+# while the model writes the rest, so the wait a person hears ends at the first
+# sentence rather than the last; the console plays the chunks and then the
+# remainder. Off for an install whose only client cannot play chunks.
+
 voice:
+  early_speech: true
   language: en
   stt:
     host: 127.0.0.1
@@ -156,7 +162,13 @@ voice:
 # ---------------------------------------------------------------------------
 # LLM — the local model that runs the conversation.
 # ---------------------------------------------------------------------------
+# Small-model reliability (M60). A model that writes "I'll call get_state(...)"
+# instead of calling it is nudged; with this on, the retry is answered under a
+# JSON schema naming exactly the tools offered, so the server can only produce
+# a call. Costs nothing on a model that calls tools properly.
+
 llm:
+  constrained_tool_calls: true
   # Where the model is. `LLM_URL` in .env is the one to set: a base URL ending
   # in /v1 for anything OpenAI-compatible — llama-swap, llama.cpp's server,
   # vLLM, LM Studio, LiteLLM — or an Ollama base URL for Ollama's own wire.

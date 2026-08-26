@@ -70,6 +70,11 @@ EVENT_STT_END = "stt-end"
 EVENT_INTENT_START = "intent-start"
 EVENT_INTENT_PROGRESS = "intent-progress"
 EVENT_INTENT_END = "intent-end"
+#: A sentence of the reply, synthesised while the model is still writing the
+#: rest (M60). Carries `index`, `text` and `tts_output` like `tts-end`; a client
+#: that plays chunks skips the whole-reply audio `tts-end` still delivers, and
+#: one that does not (the phone, today) plays that as it always did.
+EVENT_TTS_CHUNK = "tts-chunk"
 #: What the turn is doing between `intent-start` and `intent-end`, for a
 #: surface that shows the working rather than only the answer.
 #:
@@ -299,6 +304,7 @@ class PipelineRun:
         tts_voice: str | None = None,
         wake_word: str | None = None,
         binary_handler_id: int | None = None,
+        early_speech: bool = True,
         timeout: float = DEFAULT_TIMEOUT,
         run_id: str | None = None,
         sample_rate: int = DEFAULT_RATE,
@@ -390,6 +396,13 @@ class PipelineRun:
         #: emit at the same time.
         self._drain_lock = asyncio.Lock()
         self._audio_ms = 0.0
+        #: Early speech (M60): how much of the reply has been synthesised
+        #: sentence by sentence, the chunks' urls, and whether a tool has run
+        #: this turn (which switches it off — see `_speak_early`).
+        self.early_speech = early_speech
+        self._spoken_upto = 0
+        self.spoken_chunks: list[str] = []
+        self._tools_ran = False
         #: The turn's audio, kept only while a gate is active and only up to
         #: :data:`MAX_VERIFY_BYTES`. Nothing is written to disk and it is
         #: dropped the moment the verdict is in — a voice assistant that
@@ -792,6 +805,7 @@ class PipelineRun:
                     EVENT_INTENT_PROGRESS,
                     {"chat_log_delta": {"role": "assistant", "content": delta}},
                 )
+                await self._speak_early(reply)
         except PipelineError:
             raise
         except Exception as err:
@@ -830,6 +844,49 @@ class PipelineRun:
         )
         return reply
 
+    async def _speak_early(self, reply_so_far: str) -> None:
+        """Synthesise each finished sentence while the model writes the next (M60).
+
+        The wait a person notices on a voice turn is from the end of their
+        sentence to the start of Jarvis's. Synthesising the whole reply after
+        the model has finished puts the model's entire generation in front of
+        the first word; this puts only the first sentence there. Each chunk is
+        stored like the whole reply and announced as `tts-chunk`.
+
+        Only while no tool has run this turn: text before a tool call is the
+        model guessing at what the tool will find, and `_authoritative_answer`
+        drops it — speaking it would say something the reply then contradicts.
+        Off when the run has no synthesiser, and off by `early_speech: false`.
+        """
+        if not self.early_speech or self.tts is None or self._tools_ran:
+            return
+        pending = reply_so_far[self._spoken_upto :]
+        # A sentence is finished when its end mark is followed by more text;
+        # the last one is left for `tts-end`, which speaks what remains.
+        for match in re.finditer(r"(.+?[.!?])(?=\s+\S)", pending, re.S):
+            sentence = speakable(match.group(1).strip())
+            self._spoken_upto += match.end()
+            if not sentence:
+                continue
+            try:
+                pcm, rate, width, channels = await self._synthesize(sentence)
+            except Exception:  # noqa: BLE001 - early speech is a shortcut, never a failure
+                _LOGGER.debug("Pipeline %s: early speech failed; the reply is spoken whole", self.run_id)
+                self.early_speech = False
+                return
+            token, url = store_tts_audio(
+                self.jarvis, wav_bytes(pcm, rate, width, channels), TTS_MIME_TYPE, cache=self._tts_cache
+            )
+            self.spoken_chunks.append(url)
+            await self._emit(
+                EVENT_TTS_CHUNK,
+                {
+                    "index": len(self.spoken_chunks) - 1,
+                    "text": sentence,
+                    "tts_output": {"url": url, "mime_type": TTS_MIME_TYPE},
+                },
+            )
+
     async def _run_tts(self, text: str) -> str:
         if self.tts is None:
             raise PipelineError("tts-provider-missing", "no text-to-speech service configured")
@@ -863,11 +920,30 @@ class PipelineRun:
         self.tts_token, self.tts_url = store_tts_audio(
             self.jarvis, audio, TTS_MIME_TYPE, cache=self._tts_cache
         )
-        await self._emit(
-            EVENT_TTS_END,
-            {"tts_output": {"url": self.tts_url, "mime_type": TTS_MIME_TYPE}},
-        )
+        output: dict[str, Any] = {"url": self.tts_url, "mime_type": TTS_MIME_TYPE}
+        if self.spoken_chunks:
+            # What the chunks did not cover — the last sentence — as its own
+            # clip, so a client that played them plays only this; the whole
+            # reply above stays for a client that plays only `tts-end`. Two
+            # syntheses of the early sentences until every client chunks.
+            output["chunks"] = len(self.spoken_chunks)
+            output["remainder_url"] = await self._remainder_clip(text)
+        await self._emit(EVENT_TTS_END, {"tts_output": output})
         return self.tts_url
+
+    async def _remainder_clip(self, spoken_text: str) -> str | None:
+        """The part of the reply after the last early sentence, stored, or None."""
+        tail = speakable(self.response_text[self._spoken_upto :]) if self.response_text else ""
+        if not tail:
+            return None
+        try:
+            pcm, rate, width, channels = await self._synthesize(tail)
+        except Exception:  # noqa: BLE001 - the whole reply is already there
+            return None
+        _token, url = store_tts_audio(
+            self.jarvis, wav_bytes(pcm, rate, width, channels), TTS_MIME_TYPE, cache=self._tts_cache
+        )
+        return url
 
     async def _synthesize(self, text: str) -> tuple[bytes, int, int, int]:
         try:
@@ -1090,6 +1166,8 @@ class PipelineRun:
         pending: str = ""
         while self._turn_events:
             name, data = self._turn_events.popleft()
+            if name == EVENT_INTENT_TOOL_START:
+                self._tools_ran = True
             if name == EVENT_INTENT_THINKING:
                 pending += str(data.get("delta") or "")
                 if len(pending) < MAX_THINKING_FRAME_CHARS:

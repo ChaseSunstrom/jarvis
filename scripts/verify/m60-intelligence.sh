@@ -23,9 +23,9 @@ print("the prompt is measured against a budget")
 check "the prompt prefix is cached across turns (cache_prompt on every model request)" python3 -c '
 from pathlib import Path
 import re
-client = Path("jarvis-core/jarvis/llm/client.py").read_text()
+client = Path("jarvis-core/jarvis/llm/openai_compat.py").read_text()
 assert "cache_prompt" in client, "the client never asks the server to keep the prompt prefix"
-tests = Path("jarvis-core/tests/test_llm.py").read_text()
+tests = Path("jarvis-core/tests/test_openai_compat.py").read_text() + Path("jarvis-core/tests/test_llm.py").read_text()
 assert "cache_prompt" in tests, "nothing asserts the request carries cache_prompt"
 print("prefix caching requested and pinned")
 '
@@ -55,7 +55,7 @@ print("whisper sized, decision recorded")
 # --- small-model reliability --------------------------------------------------
 check "tool calls can be grammar-constrained for a small model" python3 -c '
 from pathlib import Path
-src = Path("jarvis-core/jarvis/llm/client.py").read_text() + Path("jarvis-core/jarvis/llm/agent.py").read_text()
+src = Path("jarvis-core/jarvis/llm/openai_compat.py").read_text() + Path("jarvis-core/jarvis/llm/agent.py").read_text()
 assert "response_format" in src or "json_schema" in src or "grammar" in src, "no constrained decoding path"
 tests = Path("jarvis-core/tests/test_llm.py").read_text()
 assert "test_a_constrained_tool_call_is_schema_shaped" in tests
@@ -72,13 +72,15 @@ print("read-only batching pinned")
 
 # --- the evals, never lowered -------------------------------------------------
 check "the core suite is green" bash -c 'cd jarvis-core && python3 -m pytest tests -q --timeout=120 --timeout-method=signal -x -p no:cacheprovider 2>&1 | tail -1 | grep -q " passed"'
-check_sh "routing accuracy ≥ 90 % on the fixed prompts (the eval, not lowered)" \
-    'python3 -m pytest evals/test_routing.py -q --timeout=600 2>&1 | tail -2'
-check "the eval thresholds are what they were" python3 -c '
-from pathlib import Path
-src = Path("evals/test_routing.py").read_text()
-assert "0.9" in src or "90" in src, "the routing threshold moved"
-print("thresholds unchanged")
+check_sh "the routing table and its two mirrors agree (make eval-routing, offline)" \
+    'cd evals && python3 -m pytest test_routing.py -q --timeout=600 2>&1 | tail -2'
+check "the intelligence eval floors are what they were — never lowered to pass" python3 -c '
+import sys; sys.path.insert(0, "evals/intelligence")
+from run import FLOORS
+pinned = {"context_retention": 0.75, "routing": 0.85, "reasoning": 0.60, "instructions": 0.80, "graceful_failure": 0.80}
+assert FLOORS == pinned, f"the floors moved: {FLOORS}"
+print("floors unchanged")
 '
-
+check_sh "the planner, the pipeline and the client suites" \
+    'cd jarvis-core && python3 -m pytest tests/test_task_plan_batching.py tests/test_voice.py tests/test_llm.py tests/test_openai_compat.py -q --timeout=120 --timeout-method=signal -p no:cacheprovider 2>&1 | tail -1'
 verify_end

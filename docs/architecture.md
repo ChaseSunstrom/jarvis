@@ -60,7 +60,7 @@ implements identically (see `jarvis-web/src/lib/pipeline.ts` and
 * audio framing: each binary frame = 1 byte (handler id) + Int16LE PCM;
   a lone handler-id byte signals end-of-audio;
 * render `stt-end` (final transcript), stream `intent-progress`
-  `chat_log_delta.content`, on `tts-end` fetch `tts_output.url` and play;
+  `chat_log_delta.content`, on `tts-chunk` play each sentence as it comes, on `tts-end` fetch `tts_output.remainder_url` (or `url`, if no chunk was played) and play;
 * keep `conversation_id` from `intent-end` for multi-turn continuity.
 
 ## Tiers of parallelism

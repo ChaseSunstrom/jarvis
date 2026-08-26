@@ -699,6 +699,8 @@ person-shaped probe asks; what the suite found, written up.
 | The phone builds the same knowledge graph as the console for the same house | Automated | `jarvis-web/src/lib/knowledge/graph.test.ts` (run) and `KnowledgeGraphTest.kt` (JVM, not run here) against `tests/contracts/knowledge_graph.json`; `knowledge_graph_mirror_test.py` pins the constants and the PRNG |
 | A reply plays as sentences then the remainder, never twice; an off-origin chunk is refused | Automated | `android-app/tools/tts_chunk_test.py` reads the client and the conversation |
 | Eight Tasker rows closed, each registered once at its stated tier, each with a unit test of its arithmetic | Automated (JVM, not run here) | `ParityActionsTest.kt`; `action_table_test.py` (run) pins registration, tiers and docs |
+| The phone's reactor sweeps once per tool call, beats while speaking and gathers its iris while looking — the M53 vocabulary, timed by the same tokens | Automated | `android-app/tools/reactor_motion_test.py` reads `ReactorOrb.kt`, `JarvisOrbView.kt`, the conversation and `Reactor.svelte` |
+| Loops in the task engine: `repeat` by count or while a condition holds, bounded by `TaskLimits` | Automated | `android-app/tools/task_repeat_test.py` |
 | The Kotlin compiles, lints and its goldens hold | **Unproven** | no Android SDK on this host (CLAUDE.md); ADT-039 |
 | Early speech is heard, the strip and graph are legible over the launcher, two presses look like two | **Unproven** | ADT-036, ADT-037, ADT-038 |
 
@@ -716,6 +718,22 @@ person-shaped probe asks; what the suite found, written up.
 | Asked to watch a page, the running Jarvis watches it; the page changes; the moment lands; asked what is watched, it says so | Containerised | the gate, 26 Aug ~09:55 on the harness ground: LIVE 8/8, `watch-page-change` 3/3 turns — "Watch the page at …/live/notice.html and tell me when it changes" → `watch_page` → "I'm now watching that page every 30 seconds and will let you know the moment it changes."; the rig rewrote the page; a `watch` moment landed inside 90 s; "What is being watched right now?" → `list_watches` → "One page is being watched: the live notice page at …, checked every 30 seconds — it has been checked twice and changed once, currently showing a pool notice (open 06:00–22:00 daily, with lane swimming on Tuesdays)." |
 | `watch:` is switched on in the deployed config and every key is read | Automated | `test_packaging.py`; the gate |
 | Price and stock parsing (changedetection.io) | **Not built** | `docs/research/local-intelligence.md` §3 — adopt when that is the question |
+
+### Intelligence and speed (M60)
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Every model request asks the server to keep the prompt prefix (`cache_prompt`, top-level and in `extra_body`) | Automated | `jarvis-core/tests/test_openai_compat.py::test_every_chat_request_asks_the_server_to_keep_the_prompt_prefix` |
+| The system prompt is stable-first and the clock is last, so two turns share the whole prefix | Automated | `tests/test_llm.py::test_the_prompt_prefix_is_stable_across_turns` |
+| A full house's system prompt fits `PROMPT_TOKEN_BUDGET` (6,000 estimated tokens) | Automated | `tests/test_llm.py::test_the_system_prompt_fits_its_token_budget` |
+| The first sentence is spoken (`tts-chunk`) before the reply is finished; `tts-end` carries the whole and the remainder | Automated | `tests/test_voice.py::test_the_first_sentence_is_spoken_before_the_reply_is_finished`; `jarvis-web/src/lib/pipeline.test.ts` plays chunks then the remainder |
+| Early speech is off while a tool runs in the turn, and off by `voice: early_speech: false` | Automated | `test_voice.py` (the switch); the tool guard is `_speak_early`'s `_tools_ran`, set from `intent-tool-start` |
+| After a narrated-not-made call the retry is answered under a schema naming exactly the tools offered, and the JSON answer is executed | Automated | `tests/test_llm.py::test_a_constrained_tool_call_is_schema_shaped` |
+| The planner batches consecutive read-only steps into one round and verifies each on its own | Automated | `tests/test_task_plan_batching.py` |
+| `llm.fast_model`, when set, names the model for a spoken turn; text turns keep the chat model; the catalogue counts it as the fast path and stops calling it idle | Automated | `tests/test_llm.py::test_a_turn_can_name_its_model_and_the_voice_path_names_the_fast_one`; `tests/test_llm_catalogue.py` |
+| Whisper runs `int8` on this CPU, decision written down | Automated | the gate: `--compute-type int8` in `jarvis-core/docker-compose.yml`; `docs/TOOLING_DECISIONS.md` |
+| The routing table and its mirrors agree; the intelligence eval floors are what they were | Automated | the gate: `evals/test_routing.py`; `FLOORS` pinned in `scripts/verify/m60-intelligence.sh` |
+| The live round trip, re-measured after the change | Manual | `bash scripts/verify/live_interaction.sh --full` against the rebuilt stack — recorded under "Known failures" below when run |
 
 ### Simpler menus everywhere (M55)
 

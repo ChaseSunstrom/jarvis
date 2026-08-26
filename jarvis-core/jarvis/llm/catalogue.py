@@ -829,6 +829,10 @@ async def async_describe(
             _use(_resolve(code_value, aliases) if code_value else chat_id, JOB_CODING, "named by `code: model:`, which no server lists")
         if vision:
             _use(vision_value, JOB_VISION, "named by `vision: model:`, which no server lists")
+        if fast_source == "setting":
+            # M60 routes a spoken turn to `llm.fast_model` when it is set; the
+            # gateway's own fast alias, unchosen, is still idle and says so.
+            _use(fast_id, JOB_FAST_PATH, "named by `llm.fast_model`, which no server lists")
 
         # --- roles --------------------------------------------------------------
         for info in models.values():
@@ -844,10 +848,10 @@ async def async_describe(
             elif info.kind and info.kind != "tei" and not info.missing:
                 info.role = ROLE_CHAT
         if fast_id and fast_id in models and JOB_FAST_PATH not in models[fast_id].in_use_for:
-            # Nothing routes to the fast slot yet (M60 does). Saying "used for
-            # the fast path" would be the settings page's old lie again.
+            # A fast alias the gateway offers but nobody chose: idle, and said
+            # so. (A chosen one is on the voice path — M60 — and lands above.)
             models[fast_id].note = models[fast_id].note or (
-                f"configured as fast ({GATEWAY_FAST_ALIAS}); idle — nothing is routed to it yet"
+                f"configured as fast ({GATEWAY_FAST_ALIAS}); idle — choose it as the fast model to route spoken turns to it"
                 if fast_source == "gateway"
                 else "chosen as the fast model; idle — nothing is routed to it yet"
             )

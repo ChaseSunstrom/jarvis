@@ -423,6 +423,17 @@ A cover keeps STOP beside OPEN-or-CLOSE for the same reason — a door halfway
 is a real state. Everything else on the four destinations is one control and
 a disclosure.
 
+## 18. Early sentences are synthesised twice until the phone plays chunks (M60)
+
+`tts-chunk` sends each finished sentence while the model writes the next;
+`tts-end` still sends the whole reply, because the phone plays only that
+today. The early sentences are therefore synthesised twice — once as chunks,
+once inside the whole — and the whole delays `run-end` by its own synthesis.
+Piper on `base` voices runs many times faster than real time, so the cost is
+tens of milliseconds a sentence, and it buys the console its first word at
+the first sentence rather than the last. M61 teaches the phone to play chunks
+and the remainder, after which the whole-reply clip goes.
+
 ## Licensing notes
 
 * Piper was archived Oct 2025 → OHF-Voice/piper1-gpl (GPL-3.0; MIT→GPL).

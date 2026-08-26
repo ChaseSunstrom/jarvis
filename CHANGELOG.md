@@ -48,8 +48,11 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   (decision in `docs/TOOLING_DECISIONS.md`). For a small model: after it narrates a tool call
   instead of making one, the corrective retry is answered under a JSON schema naming exactly the
   tools offered (`llm: constrained_tool_calls`), so the reply can only be a call. The task
-  planner marks steps that only look (`reads_only`) and acts on a run of them in one round. The
-  eval floors are pinned in the gate and were not moved.
+  planner marks steps that only look (`reads_only`) and acts on a run of them in one round.
+  `llm.fast_model`, when set, is the model for spoken turns (the console's text turns keep the
+  chat model; empty means the chat model, which is what an operator whose big model is fast
+  enough wants) and the MODELS panel says so instead of calling it idle. The eval floors are
+  pinned in the gate and were not moved.
 - **M55 — simpler menus everywhere.** HOUSE, WORK, KNOWLEDGE and the tools page held to a menu
   inventory in `docs/UI_MIGRATION.md` §4 that `e2e/menus.spec.ts` reads and enforces against the
   mock: one primary control per screen at rest, no two visible controls outside rows with the same

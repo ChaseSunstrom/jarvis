@@ -377,10 +377,27 @@ is quiet. Done since:
   dashboard editor, areas' rename/delete one click in, entity rows offering the
   one move they can make. First spec run passed against a stale build — the
   gate now builds first. Gate running; tick and commit next.
+- 09:25 — M55 committed (`c33cc13`), gate 21/21. M60 built: cache_prompt on
+  every request, the prompt stable-first with a budget, early speech
+  (tts-chunk + remainder) with the console playing it, whisper int8, the
+  constrained corrective retry, read-only step batching; floors pinned.
+  Gate running; then the stack is rebuilt and the live suite re-measured.
 - 09:58 — M59 built and gated 17/17 with the live run green: a watch on a
   fixture page the rig rewrote landed as a moment inside 90 s, and "what is
   being watched" answered with the change. Committed next; M60's gate is
   running its full core suite (2,756 tests — slow, not stuck).
-- 10:15 — M61, first stage: ActivityRows/ActivityStrip, KnowledgeGraph(View), chunked
+- 09:52 — M61, first stage: ActivityRows/ActivityStrip, KnowledgeGraph(View), chunked
   speech on the phone, eight Tasker rows closed, JVM tests and Python mirrors; the
   gate's gradle steps cannot run here (no SDK). M60's gate is still in the core suite.
+- 09:58 — M61 follow-ups: the phone's reactor moves for what Jarvis does
+  (`d470031`), the loops row closed — the engine had them (`34c5c6d`). The
+  ledger carried (`e4ba97e`). Waiting on M60's core suite and the full live
+  re-measure against the rebuilt stack.
+- 10:20 — M60 gains the last item on its plan: `llm.fast_model`, when set, is the
+  model for spoken turns (text keeps the chat model); the catalogue counts it.
+  Five more Tasker rows closed on the phone (`16f0e24`), ui_key marked no with
+  the reason; six rows stay gap. M23's status written in MILESTONES: not green
+  on this host, for three reasons that are not the repository's. Both long
+  runs (M60's core suite, the full live re-measure) still in flight.
+- 10:21 — M60's gate 13/13, the full core suite green (2,756 tests). Ticked and
+  committed; the live re-measure is still running and lands as its own record.

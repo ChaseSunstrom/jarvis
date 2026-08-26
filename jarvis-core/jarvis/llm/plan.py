@@ -97,6 +97,11 @@ class PlanStep:
 
     title: str
     status: str = "queued"
+    #: The planner said this step only looks — reads a state, searches, lists
+    #: — and changes nothing. Consecutive read-only steps are acted on in one
+    #: round (M60): three lookups are one question to the model, not three
+    #: turns each paying to prefill the prompt.
+    read_only: bool = False
     #: What the acting turn produced.
     outcome: str = ""
     #: The verifier's reason, when it said no.
@@ -108,6 +113,7 @@ class PlanStep:
             "status": self.status,
             "outcome": self.outcome,
             "reason": self.reason,
+            "read_only": self.read_only,
         }
 
 
@@ -177,8 +183,10 @@ def plan_prompt(request: str, tools: list[str] | None = None) -> str:
         f"- At most {MAX_STEPS} steps. Fewer is better.\n"
         "- Each step is one thing you can do and then check.\n"
         "- No step may be 'ask the user' — you cannot, mid-plan.\n"
-        "- If this is really one action, answer with one step.\n\n"
-        'Answer with JSON only: {"steps": ["...", "..."]}'
+        "- If this is really one action, answer with one step.\n"
+        "- Mark a step reads_only when it only looks — reads a state, searches, "
+        "lists — and changes nothing.\n\n"
+        'Answer with JSON only: {"steps": [{"title": "...", "reads_only": true}, ...]}'
     )
 
 
@@ -248,17 +256,20 @@ def parse_plan(raw: str, request: str = "") -> Plan:
     """
     payload = _json_object(raw)
     steps = payload.get("steps")
-    titles: list[str] = []
+    parsed: list[PlanStep] = []
     if isinstance(steps, list):
         for entry in steps:
-            title = str(entry).strip() if not isinstance(entry, dict) else str(
-                entry.get("title") or entry.get("step") or ""
-            ).strip()
+            read_only = False
+            if isinstance(entry, dict):
+                title = str(entry.get("title") or entry.get("step") or "").strip()
+                read_only = bool(entry.get("reads_only") or entry.get("read_only"))
+            else:
+                title = str(entry).strip()
             if title:
-                titles.append(title[:200])
-    if not titles and request:
-        titles = [request[:200]]
-    return Plan(request=request, steps=[PlanStep(title=title) for title in titles[:MAX_STEPS]])
+                parsed.append(PlanStep(title=title[:200], read_only=read_only))
+    if not parsed and request:
+        parsed = [PlanStep(title=request[:200])]
+    return Plan(request=request, steps=parsed[:MAX_STEPS])
 
 
 def parse_verdict(raw: str) -> Verdict:
@@ -278,6 +289,16 @@ def parse_verdict(raw: str) -> Verdict:
     return Verdict(done=done, reason=str(payload.get("reason") or "")[:200] if not done else "")
 
 
+def _read_only_run(steps: list[PlanStep], start: int) -> list[PlanStep]:
+    """The consecutive read-only steps from `start`, or [] when it is not one."""
+    out: list[PlanStep] = []
+    for step in steps[start:]:
+        if not step.read_only:
+            break
+        out.append(step)
+    return out
+
+
 async def run_plan(
     plan: Plan,
     *,
@@ -285,21 +306,57 @@ async def run_plan(
     verify: Callable[[PlanStep, str], Awaitable[Verdict]],
     replan: Callable[[Plan, PlanStep], Awaitable[list[str]]] | None = None,
     on_step: Callable[[int, PlanStep], Awaitable[None]] | None = None,
+    act_many: Callable[[list[PlanStep]], Awaitable[list[str]]] | None = None,
 ) -> Plan:
     """Act on each step, verify it, and replan when a verification fails.
 
     Pure control flow: the three callbacks do the model calls, which is what
     makes this testable without one.
+
+    `act_many`, when given, takes a run of consecutive read-only steps in one
+    call and returns one outcome per step (M60). Each step is still verified
+    on its own: batching is about not paying for three prefills to do three
+    lookups, not about checking less. A step that changes something is never
+    batched — an action's outcome is what the next step's plan depends on.
     """
     index = 0
     while index < len(plan.steps):
         step = plan.steps[index]
-        step.status = "running"
-        if on_step is not None:
-            await on_step(index, step)
+        batch = _read_only_run(plan.steps, index) if act_many is not None else []
+        if len(batch) > 1:
+            for member in batch:
+                member.status = "running"
+            if on_step is not None:
+                await on_step(index, step)
+            outcomes = list(await act_many(batch))
+            for member, outcome in zip(batch, outcomes + [""] * (len(batch) - len(outcomes))):
+                member.outcome = outcome or "(the step produced no answer)"
+            failed = False
+            for offset, member in enumerate(batch):
+                verdict = await verify(member, member.outcome)
+                member.status = "done" if verdict.done else "error"
+                member.reason = verdict.reason
+                if on_step is not None:
+                    await on_step(index + offset, member)
+                if not verdict.done:
+                    # The batch's remaining members are settled as done or not
+                    # by their own verdicts; the plan continues from the first
+                    # failure exactly as it would have unbatched.
+                    index = index + offset
+                    step = member
+                    failed = True
+                    break
+            if not failed:
+                index += len(batch)
+                continue
+            verdict = Verdict(done=False, reason=step.reason)
+        else:
+            step.status = "running"
+            if on_step is not None:
+                await on_step(index, step)
 
-        step.outcome = await act(step)
-        verdict = await verify(step, step.outcome)
+            step.outcome = await act(step)
+            verdict = await verify(step, step.outcome)
         step.status = "done" if verdict.done else "error"
         step.reason = verdict.reason
         if on_step is not None:

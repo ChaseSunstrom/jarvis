@@ -220,12 +220,18 @@ server  ... stt-start, stt-vad-start, stt-vad-end, stt-end, intent-start,
             intent-tool-start / intent-tool-end / intent-tool-narrated /
             intent-thinking (as they happen), intent-progress (deltas),
             intent-end,
-            tts-start, tts-end, run-end
+            [tts-chunk…], tts-start, tts-end, run-end
 ```
 
 Two details clients get wrong: the binary prefix byte is the
 `stt_binary_handler_id` from `run-start` (not a constant), and pipeline events
 arrive under the **run's** message id, so a client must route by id.
+
+`tts-chunk` (M60) carries a finished sentence synthesised while the model was
+still writing: `{"index": 0, "text": "…", "tts_output": {"url": …}}` — play
+them in order as they arrive; then on `tts-end` play `tts_output.remainder_url`
+(the last sentence) rather than `url`, which is the whole reply for a client
+that ignores chunks. `tts_output.chunks` says how many were sent.
 
 `tts-end` carries `{"tts_output": {"url": "/api/tts_proxy/<token>.wav",
 "mime_type": "audio/wav"}}`. That path is open — the token in it is the secret —

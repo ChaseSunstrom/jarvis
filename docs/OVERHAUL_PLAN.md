@@ -16,27 +16,38 @@ This document is the spine. Each numbered item is a milestone in
 
 ## What is true now
 
-- 54 milestones ticked as of 07:35 on the 26th (M27, M50–M54 this morning);
-  M23 is the final gate. The full-mode live run: 47 of 53 variants, 72 of 77
-  turns, WER 5.7 %, median round trip 6.7 s; the two thresholds missed are
-  written down in `docs/verification.md`.
-- Cameras: a `vision` integration exists (consent, audit, fenced
-  descriptions, still/mjpeg/rtsp/mqtt cameras) but speaks only Ollama's API
-  and is not enabled in the deployed config. Sensors: `sensors` and `mqtt`
-  integrations exist; nothing ingests Home Assistant MQTT discovery. Sky:
-  `sun` only. Web: search, fetch, browse, deep research, a browser service.
-- The phone has a Tasker-shaped automation layer already — accessibility UI
-  automation, a notification listener, triggers (time, location, app,
-  notification, system events), a task engine with variables and conditions,
-  a policy engine with tiers and an audit log — reached from the hub as
-  `control_device`. It is not yet the equal of Tasker in breadth, and the
-  phone's screens are not yet the console's.
-- The console: five tabs, Reactor II throughout. As of M52 the voice tab
-  shows the graph and the activity strip beside the instrument, and as of
-  M53 the instrument moves for what Jarvis does (`docs/design/MOTION.md`). Settings is a generic rows renderer
-  with the model chosen from the server's *aliases* (`house`), which is not
-  what the operator means by "the model" — until M54: five sections, plain
-  rows, and a MODELS panel that lists what the servers actually serve.
+- 58 milestones ticked as of 10:40 on the 26th (M27, M50–M55, M57–M59 this
+  morning); M56, M60, M61 and M23 are open. M56 is built and on the branch,
+  its gate 27/28: the one open check is a live look through a served vision
+  model, and the model server serves none. M60 is built; its gate runs the
+  full core suite (2,756 tests) and the live round trip is re-measured after
+  it. M61's first stage is committed and cannot be compiled here (no Android
+  SDK). M23 is the final gate and cannot be green on this host for those two
+  reasons and the round-trip threshold (BLOCKERS §2, §3, §4).
+- Cameras: the `vision` integration speaks the OpenAI wire to the same model
+  server as the chat model, go2rtc restreams behind `--profile cameras`,
+  Frigate's events become moments, and it is switched on with no cameras.
+  Sensors: HA MQTT discovery in full (event, device_tracker, the birth on
+  the prefix, allow/deny ids, canonical units), Tasmota and Shelly
+  translated, four sensor tools. Sky: ISS passes, what is overhead, the
+  moon, the planets, from cached elements. Web: search, fetch, crawl, browse,
+  deep research, and now time — `watch_page`, `watch_feed`, `watch_for`,
+  `read_page`, `feed_latest`.
+- The phone has a Tasker-shaped automation layer — accessibility UI
+  automation, a notification listener, triggers, a task engine, a policy
+  engine with tiers and an audit — reached from the hub as `control_device`;
+  as of M61's first stage its voice screens draw the activity strip and the
+  knowledge graph from the console's contracts and play a reply as the
+  console does. Eight Tasker rows were closed; thirteen stay gap for
+  permissions the app does not request or a handset to prove.
+- The console: five tabs, Reactor II throughout; the voice tab shows the
+  graph and the activity strip (M52), the instrument moves for what Jarvis
+  does (M53), SETTINGS is five sections with the real models (M54), and
+  HOUSE, WORK, KNOWLEDGE and the tools page hold to a menu inventory a test
+  reads (M55).
+- Speed: the prompt prefix is kept on the server and ordered stable-first,
+  the first sentence is spoken before the reply is finished, whisper runs
+  int8; a small model's narrated tool call is retried under a schema.
 
 ## The milestones, in order
 

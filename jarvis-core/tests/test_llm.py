@@ -2045,3 +2045,121 @@ async def test_a_forgotten_fact_leaves_the_transcript(tmp_path):
     assert all(c == FORGOTTEN_PLACEHOLDER for c in archived), archived
     assert "flowerpot" not in " ".join(m["content"] for m in conv.messages())
     await shutdown(jarvis)
+
+
+# ===========================================================================
+# the prompt, measured (M60)
+# ===========================================================================
+async def test_the_system_prompt_fits_its_token_budget(tmp_path):
+    """A full house's system prompt stays under PROMPT_TOKEN_BUDGET.
+
+    Every turn prefills it; every token of it is a token less of conversation.
+    The estimate is four characters a token — coarse, and the budget has the
+    slack for that. What the test guards is the trend: a house summary or a
+    skill index that quietly becomes a manual.
+    """
+    from jarvis.llm.agent import PROMPT_TOKEN_BUDGET
+
+    jarvis, _ = await build_house(tmp_path)
+    agent = make_agent(jarvis, FakeOllama())
+    tokens = agent.prompt_tokens("what is on in the kitchen?")
+    assert 0 < tokens <= PROMPT_TOKEN_BUDGET, f"{tokens} estimated tokens against {PROMPT_TOKEN_BUDGET}"
+    await shutdown(jarvis)
+
+
+async def test_the_prompt_prefix_is_stable_across_turns(tmp_path, monkeypatch):
+    """The stable part comes first and is identical turn to turn; the clock is last.
+
+    The model server keeps the KV cache of the longest prefix it has already
+    seen. Two turns a minute apart, about different things, must share the
+    whole prefix — persona, rules, toolbox, rooms, skills — and differ only
+    after it. With the clock third, as it was, the cache bought nothing.
+    """
+    jarvis, _ = await build_house(tmp_path)
+    agent = make_agent(jarvis, FakeOllama())
+    clocks = iter(["Now: Monday 1 January 2029, 10:00.", "Now: Monday 1 January 2029, 10:01."])
+    monkeypatch.setattr(agent, "clock_line", lambda: next(clocks))
+    first = agent.system_prompt("what is on in the kitchen?")
+    second = agent.system_prompt("remind me to call the dentist")
+    prefix = "\n\n".join(part for part in agent.prompt_prefix() if part)
+    assert first.startswith(prefix) and second.startswith(prefix), "the stable part is not first"
+    assert first != second, "the clock did not move"
+    assert first.rstrip().endswith("10:00.") and second.rstrip().endswith("10:01."), "the clock is not last"
+    await shutdown(jarvis)
+
+
+async def test_a_constrained_tool_call_is_schema_shaped(tmp_path):
+    """After a narrated-not-made call, the retry is answered under a schema (M60).
+
+    Round one: the model writes "I'll call get_state(...)" and calls nothing —
+    the small-model failure `narrated_tool_call` catches. The nudge used to be
+    words; now the retry also carries `format`, a JSON schema naming exactly
+    the tools offered, so the server can only produce a call. The JSON the
+    model then writes is recovered and executed like a structured call.
+    """
+    from jarvis.llm.toolcalls import toolcall_schema
+
+    jarvis, house = await build_house(tmp_path)
+    entity_id = next(iter(house))
+    fake = FakeOllama(
+        say(f"I'll call get_state(entity_id='{entity_id}') now."),
+        say(json.dumps({"name": "get_state", "arguments": {"entity_id": entity_id}})),
+        say("It is on, Sir."),
+    )
+    agent = make_agent(jarvis, fake)
+    deltas = await collect(agent, f"is {entity_id} on?")
+    assert "It is on, Sir." in "".join(deltas)
+    assert len(fake.requests) == 3, [r.get("format") for r in fake.requests]
+    assert "format" not in fake.requests[0] or fake.requests[0]["format"] in (None, ""), "the first round is free-form"
+    schema = fake.requests[1]["format"]
+    assert isinstance(schema, dict), "the retry is not constrained"
+    names = {b["properties"]["name"]["const"] for b in schema.get("oneOf", [schema])}
+    assert "get_state" in names and names <= {t["function"]["name"] for t in fake.requests[1]["tools"]}
+    assert toolcall_schema(fake.requests[1]["tools"]) == schema
+    # The JSON answer was a call: the third request carries its result.
+    assert any(m.get("role") == "tool" for m in fake.requests[2]["messages"]), "the constrained answer was not executed"
+    await shutdown(jarvis)
+
+
+async def test_the_constrained_retry_can_be_switched_off(tmp_path):
+    jarvis, house = await build_house(tmp_path)
+    entity_id = next(iter(house))
+    fake = FakeOllama(say(f"I'll call get_state(entity_id='{entity_id}') now."), say("It is on, Sir."))
+    agent = make_agent(jarvis, fake, constrained_retry=False)
+    await collect(agent, f"is {entity_id} on?")
+    assert len(fake.requests) == 2 and not fake.requests[1].get("format")
+    await shutdown(jarvis)
+
+
+async def test_a_turn_can_name_its_model_and_the_voice_path_names_the_fast_one(tmp_path):
+    """`converse(model=…)` sends that model for the turn and nothing else changes (M60).
+
+    `llm.fast_model` was "held on the agent and read by nothing". The voice
+    integration now passes it for a spoken turn when it is set; the console's
+    text turns keep the chat model. Empty means the chat model, which is what
+    an operator whose big model is fast enough (this one) wants.
+    """
+    from jarvis.integrations.voice import resolve_conversation_agent
+
+    jarvis, _ = await build_house(tmp_path)
+    fake = FakeOllama(say("Yes, Sir."), say("Quite, Sir."), say("Indeed, Sir."))
+    agent = make_agent(jarvis, fake)
+    await collect(agent, "hello")
+    assert fake.requests[0]["model"] == MODEL
+    deltas = [d async for d in agent.converse("hello again", model="tiny-fast")]
+    assert "Quite, Sir." in "".join(deltas)
+    assert fake.requests[1]["model"] == "tiny-fast"
+
+    # The voice path: the resolver hands out a converse that names the fast model when one is set.
+    jarvis.data["llm"] = agent
+    agent.fast_model = "tiny-fast"
+    converse = resolve_conversation_agent(jarvis)
+    out = converse("and once more", None)
+    if hasattr(out, "__aiter__"):
+        out = "".join([str(d) async for d in out])
+    else:
+        out = await out
+    assert "Indeed, Sir." in str(out)
+    assert fake.requests[2]["model"] == "tiny-fast"
+    agent.fast_model = ""
+    await shutdown(jarvis)

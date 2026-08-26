@@ -279,7 +279,39 @@ async def test_ollama_options_are_translated_not_forwarded_verbatim():
     assert seen["temperature"] == 0.6
     assert seen["max_tokens"] == 256
     assert "num_ctx" not in seen and "num_ctx" not in seen.get("extra_body", {})
-    assert seen["extra_body"] == {"mirostat": 1}
+    assert seen["extra_body"]["mirostat"] == 1
+    # `cache_prompt` rides in `extra_body` too (M60); it is the client's, not
+    # the config's, so it is not a forwarded option.
+    assert set(seen["extra_body"]) == {"mirostat", "cache_prompt"}
+
+
+async def test_every_chat_request_asks_the_server_to_keep_the_prompt_prefix():
+    """`cache_prompt` on every request, top-level and in `extra_body` (M60).
+
+    Top-level is llama.cpp's own field; the `extra_body` copy is what LiteLLM
+    forwards to the backend. Without it the server re-reads the whole system
+    prompt before every first token, which on a 256k window is the largest
+    part of the wait on a voice turn.
+    """
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, content=_sse(_delta(content="ok")))
+
+    stream = _client(handler).chat(messages=[{"role": "user", "content": "x"}])
+    async for _ in stream:
+        pass
+    assert seen["cache_prompt"] is True
+    assert seen["extra_body"]["cache_prompt"] is True
+    # A config's own passthrough options still arrive beside it.
+    seen.clear()
+    stream = _client(handler).chat(
+        messages=[{"role": "user", "content": "x"}], options={"repetition_penalty": 1.1}
+    )
+    async for _ in stream:
+        pass
+    assert seen["extra_body"] == {"repetition_penalty": 1.1, "cache_prompt": True}
 
 
 async def test_a_json_schema_asks_for_guided_decoding():

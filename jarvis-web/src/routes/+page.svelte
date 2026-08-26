@@ -188,6 +188,9 @@
 	// nothing has gone wrong, including when nothing has been tried.
 	let micReady = $state(false);
 	const player = new Player();
+	/** Early sentences (M60): how many played this turn, and the queue that keeps them in order. */
+	let chunksPlayed = 0;
+	let chunkQueue: Promise<void> = Promise.resolve();
 	// Re-made once /api/config answers, so an install can tune the end-of-speech
 	// pause without a rebuild. Constructed with the default up front because the
 	// microphone may open before that request lands.
@@ -344,15 +347,46 @@
 					},
 					onEvent: (ev: PipelineEvent) => {
 						stamp(ev.type);
+						if (ev.type === 'intent-start') {
+							chunksPlayed = 0;
+							chunkQueue = Promise.resolve();
+						}
 						if (ev.type === 'tts-start') {
 							lat.tts = performance.now() - tAudioEnd;
 							latText = fmtLat();
 						}
 					},
-					onTtsUrl: async (url) => {
+					onTtsChunk: (url) => {
+						// A sentence spoken while the model writes the next (M60): the
+						// first one is the moment the wait ends, so the latency stamp is
+						// taken here when it arrives before tts-start.
+						if (chunksPlayed === 0 && !lat.tts) {
+							lat.tts = performance.now() - tAudioEnd;
+							latText = fmtLat();
+						}
+						chunksPlayed += 1;
+						turnState = 'speaking';
+						statusMsg = 'speaking';
+						chunkQueue = chunkQueue.then(async () => {
+							try {
+								await player.play(`/api/tts?path=${encodeURIComponent(url)}`);
+							} catch (e) {
+								console.warn('tts chunk playback failed', e);
+							}
+						});
+					},
+					onTtsUrl: async (url, remainderUrl) => {
 						console.log('[jarvis] latencies', { ...lat });
 						try {
-							await player.play(`/api/tts?path=${encodeURIComponent(url)}`);
+							if (chunksPlayed > 0) {
+								// The sentences were played as they came; the whole-reply
+								// clip is for a client that did not. What the chunks left
+								// out — the last sentence — comes as `remainder_url`.
+								await chunkQueue;
+								if (remainderUrl) await player.play(`/api/tts?path=${encodeURIComponent(remainderUrl)}`);
+							} else {
+								await player.play(`/api/tts?path=${encodeURIComponent(url)}`);
+							}
 						} catch (e) {
 							console.warn('tts playback failed', e);
 						}

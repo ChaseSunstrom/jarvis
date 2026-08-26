@@ -41,6 +41,7 @@ from . import plan as plan_module
 from .history import ConversationArchive
 from .memory import ConversationStore
 from .ollama import DEFAULT_MODEL, ChatResult, OllamaClient, OllamaError
+from .toolcalls import toolcall_schema
 from .tools import (
     EVENT_TOOL_FINISHED,
     EVENT_TOOL_STARTED,
@@ -56,6 +57,14 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..core import Jarvis
 
 _LOGGER = logging.getLogger(__name__)
+
+#: The system prompt's ceiling, in estimated tokens (M60). Every turn pays
+#: to prefill it once (then the server's prefix cache pays for the stable
+#: part), and every token of it is a token less of conversation. A house
+#: with sixty entities, a dozen skills and a page of notes sits near 3,000;
+#: the budget leaves room for a big house and none for a prompt that has
+#: become a manual. `tests/test_llm.py` measures a full house against it.
+PROMPT_TOKEN_BUDGET = 6000
 
 DEFAULT_MAX_TOOL_ROUNDS = 5
 DEFAULT_SUMMARY_LIMIT = 120
@@ -493,6 +502,7 @@ class ConversationAgent:
         persona: str | None = None,
         persona_file: str | Path | None = None,
         max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        constrained_retry: bool = True,
         memory: ConversationStore | None = None,
         options: dict[str, Any] | None = None,
         language: str = "en",
@@ -512,6 +522,10 @@ class ConversationAgent:
         #: note says exactly that rather than claiming an effect it has not got.
         self.fast_model: str = ""
         self.max_tool_rounds = max(1, int(max_tool_rounds or DEFAULT_MAX_TOOL_ROUNDS))
+        #: Whether the retry after a narrated-not-made call is grammar
+        #: constrained (M60). On by default: it costs nothing on a model that
+        #: calls tools properly, because that model never reaches the retry.
+        self.constrained_retry = bool(constrained_retry)
         self.memory = memory or ConversationStore()
         #: The durable half of the memory. `self.memory` is what the model is
         #: told and is deliberately forgetful; this is what a person can scroll
@@ -707,6 +721,21 @@ class ConversationAgent:
         preview, the tests — working unchanged, and costs them only the
         retrieval they were not asking for.
         """
+        return "\n\n".join(
+            part for part in self.prompt_prefix() + self.prompt_suffix(query, semantic) if part
+        )
+
+    def prompt_prefix(self) -> list[str]:
+        """The parts of the system prompt that do not change from turn to turn.
+
+        Order is the point (M60). The model server keeps the KV cache of the
+        longest prefix it has already seen, so everything that is the same on
+        every turn — the persona, the tool rules, the toolbox, the rooms, the
+        skill index — comes first and is prefilled once; the clock, the house
+        summary and the notes picked for *this* question come after it. With
+        the clock third, as it was, the prefix was different every minute and
+        the cache bought nothing.
+        """
         areas = ", ".join(a.name for a in self.jarvis.areas.areas.values())
         parts = [self.persona().strip(), TOOL_RULES.strip()]
         toolbox = self.toolbox_rule()
@@ -714,11 +743,24 @@ class ConversationAgent:
             parts.append(toolbox)
         if areas:
             parts.append(f"Areas in this home: {areas}.")
-        parts.append(self.clock_line())
-        parts.append(self.house_summary())
         parts.append(self.skill_index())
-        parts.append(self.remembered_notes(query, semantic))
-        return "\n\n".join(part for part in parts if part)
+        return parts
+
+    def prompt_suffix(self, query: str = "", semantic: dict[str, float] | None = None) -> list[str]:
+        """The parts that vary with the turn: the house now, the notes for it, the clock."""
+        return [self.house_summary(), self.remembered_notes(query, semantic), self.clock_line()]
+
+    def prompt_tokens(self, query: str = "") -> int:
+        """An estimate of the system prompt's size in tokens.
+
+        Four characters a token is the rule of thumb for English on the
+        tokenisers this house runs (Qwen, Llama); it is an estimate, and the
+        budget it is measured against has the slack for that. The point is not
+        the exact count but the trend: a prompt that grows past
+        :data:`PROMPT_TOKEN_BUDGET` is one the house summary has outgrown, or
+        a skill index that has become a manual.
+        """
+        return len(self.system_prompt(query)) // 4
 
     def clock_line(self) -> str:
         """What day and time it is, in the house's own timezone.
@@ -931,6 +973,26 @@ class ConversationAgent:
                 registry.output(task_id, outcome[:2000], stream="note")
             return outcome or "(the step produced no answer)"
 
+        async def act_many(steps: list["plan_module.PlanStep"]) -> list[str]:
+            """Several read-only steps as one turn (M60): one prefill, one answer."""
+            if registry is not None and task_id:
+                registry.raise_if_cancelled(task_id)
+            asked = "\n".join(f"{n}. {s.title}" for n, s in enumerate(steps, 1))
+            prompt = (
+                "Do all of these — they only read, nothing changes — and answer "
+                "each under its number:\n" + asked
+            )
+            chunks: list[str] = []
+            async for delta in self.converse(
+                prompt, conversation_id=f"plan-{task_id or id(made)}"
+            ):
+                chunks.append(str(delta))
+            outcome = "".join(chunks).strip()
+            if registry is not None and task_id and outcome:
+                registry.output(task_id, outcome[:2000], stream="note")
+            # One answer for the batch; each step is verified against it.
+            return [outcome or "(the step produced no answer)"] * len(steps)
+
         async def verify(step: "plan_module.PlanStep", outcome: str) -> "plan_module.Verdict":
             verdict = await self.verify_step(step, outcome)
             if registry is not None and task_id and not verdict.done:
@@ -958,7 +1020,8 @@ class ConversationAgent:
             )
 
         done = await plan_module.run_plan(
-            made, act=act, verify=verify, replan=replan, on_step=on_step
+            made, act=act, verify=verify, replan=replan, on_step=on_step,
+            act_many=act_many,
         )
         finished = [step for step in done.steps if step.status == "done"]
         summary = "\n".join(
@@ -974,8 +1037,14 @@ class ConversationAgent:
         text: str,
         conversation_id: str | None = None,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
+        *,
+        model: str | None = None,
     ) -> AsyncIterator[str]:
         """Run one turn, yielding text deltas as the model produces them.
+
+        ``model`` names the model for THIS turn — the voice path passes
+        ``fast_model`` when one is set (M60); None is the chat model. Nothing
+        else about the turn changes: same tools, same persona, same history.
 
         ``on_event`` is this turn's side channel: tool calls as they start and
         finish, and reasoning as it is produced. Everything it reports is also
@@ -1049,7 +1118,7 @@ class ConversationAgent:
                 # waiting on async-generator finalisation.
                 async with aclosing(
                     self._run_rounds(
-                        messages, schema, context, result, emit, _on_thinking
+                        messages, schema, context, result, emit, _on_thinking, model=model
                     )
                 ) as rounds:
                     async for delta in rounds:
@@ -1233,12 +1302,17 @@ class ConversationAgent:
         result: ConversationResult,
         emit: Callable[[str, dict[str, Any]], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
+        *,
+        model: str | None = None,
     ) -> AsyncIterator[str]:
         emit = emit or self._turn_emitter(None)
         #: One corrective round per turn, no more. A model that narrates the
         #: same call twice is not going to be argued into it, and a loop here
         #: would cost the user a minute to arrive at the same answer.
         nudged = False
+        #: Set by the nudge below: the next round answers under a tool-call
+        #: schema, so a model that narrated a call cannot narrate it twice.
+        constrain_next = False
         for round_index in range(self.max_tool_rounds):
             result.rounds = round_index + 1
             # Withdrawn once used. "Once per turn" is in the tool's description,
@@ -1248,7 +1322,18 @@ class ConversationAgent:
                 if result.escalated
                 else schema
             )
-            chat = _Round(self, messages, offered or None, context, result, emit, on_thinking)
+            chat = _Round(
+                self,
+                messages,
+                offered or None,
+                context,
+                result,
+                emit,
+                on_thinking,
+                format=toolcall_schema(offered) if constrain_next and offered else None,
+                model=model,
+            )
+            constrain_next = False
             said: list[str] = []
             async with aclosing(chat.stream()) as deltas:
                 async for delta in deltas:
@@ -1322,13 +1407,17 @@ class ConversationAgent:
                                 ),
                             }
                         )
+                        # Words did not work; a grammar will. The retry is
+                        # answered under `toolcall_schema(offered)` when the
+                        # install allows it — the reply can only be a call.
+                        constrain_next = self.constrained_retry
                         continue
                 return
 
         # Rounds exhausted and the model still wants tools: take them away and
         # make it answer with what it already has.
         result.rounds += 1
-        final = _Round(self, messages, None, context, result, emit, on_thinking)
+        final = _Round(self, messages, None, context, result, emit, on_thinking, model=model)
         async with aclosing(final.stream()) as deltas:
             async for delta in deltas:
                 yield delta
@@ -1524,6 +1613,8 @@ class _Round:
         result: ConversationResult,
         emit: Callable[[str, dict[str, Any]], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
+        format: dict[str, Any] | None = None,
+        model: str | None = None,
     ) -> None:
         self._agent = agent
         self._messages = messages
@@ -1532,6 +1623,12 @@ class _Round:
         self._result = result
         self._emit = emit or agent._turn_emitter(None)
         self._on_thinking = on_thinking
+        #: A response schema for this round, or None. Set only on the corrective
+        #: retry after a narrated-not-made call (M60): the model must answer
+        #: with a call, so the server is asked to make anything else impossible.
+        self._format = format
+        #: The model for this turn, or None for the agent's (M60: the voice path's fast model).
+        self._model = model
         self.pending_tool_calls = False
 
     def __aiter__(self) -> AsyncIterator[str]:
@@ -1574,7 +1671,7 @@ class _Round:
             # below parses.
             calls = TagStripper("<tool_call>", "</tool_call>")
             stream = agent.client.chat(
-                model=agent.model,
+                model=self._model or agent.model,
                 messages=self._messages,
                 tools=self._schema,
                 stream=True,
@@ -1590,6 +1687,7 @@ class _Round:
                 # install that has not set `llm: think:` gets. A turn the model
                 # asked to think about overrides it for its remaining rounds.
                 think=True if self._result.escalated else agent.think,
+                format=self._format,
             )
             # Set rather than passed: `chat()` is the client's public contract
             # and both implementations share it, so a new keyword there would

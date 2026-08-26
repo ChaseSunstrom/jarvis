@@ -491,6 +491,7 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
         persona=options.get("persona"),
         persona_file=options.get("persona_file"),
         max_tool_rounds=max_tool_rounds,
+        constrained_retry=bool(options.get("constrained_tool_calls", True)),
         memory=memory,
         options=_as_dict(options.get("options")),
         language=str(options.get("language") or "en"),

@@ -425,7 +425,16 @@ class OpenAICompatClient:
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
+        # Keep the prompt prefix on the server between turns (M60). The system
+        # message is a few thousand tokens and identical from one turn to the
+        # next up to the house summary; without this llama.cpp re-reads all of
+        # it before the first token, and on a 256k window that prefill is the
+        # largest part of the wait on a voice turn. Top-level is llama.cpp's own
+        # field; the copy in `extra_body` is what a gateway (LiteLLM) forwards.
+        # A server that knows neither ignores both.
+        payload["cache_prompt"] = True
         payload.update(_translate_options(options))
+        payload.setdefault("extra_body", {}).setdefault("cache_prompt", True)
         if format is not None:
             # Merged, not `update`d. Both translators can produce `extra_body`,
             # and a plain update let the format's copy replace the options' one

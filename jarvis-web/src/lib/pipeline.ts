@@ -76,7 +76,9 @@ export interface PipelineCallbacks {
 	 */
 	onToolNarrated?: (tool: string) => void;
 	/** TTS media path from tts-end (data.tts_output.url). */
-	onTtsUrl?: (url: string) => void;
+	onTtsUrl?: (url: string, remainderUrl?: string | null, chunks?: number) => void;
+	/** A sentence of the reply, synthesised early (M60): play it now, in order; `tts-end` still follows with the whole reply. */
+	onTtsChunk?: (url: string, index: number, text: string) => void;
 	/** Pipeline error event (data.code, data.message). */
 	onError?: (code: string, message: string) => void;
 	/** run-start received: binary handler id is known, audio may be streamed. */
@@ -352,9 +354,19 @@ export class PipelineClient {
 				this.cb.onResponse?.(speech);
 				break;
 			}
+			case 'tts-chunk': {
+				const url = ev.data?.tts_output?.url;
+				if (typeof url === 'string') {
+					this.cb.onTtsChunk?.(url, Number(ev.data?.index ?? 0), String(ev.data?.text ?? ''));
+					this.setState('speaking');
+				}
+				break;
+			}
 			case 'tts-end': {
 				const url = ev.data?.tts_output?.url;
-				if (typeof url === 'string') this.cb.onTtsUrl?.(url);
+				const remainder = ev.data?.tts_output?.remainder_url;
+				const chunks = Number(ev.data?.tts_output?.chunks ?? 0);
+				if (typeof url === 'string') this.cb.onTtsUrl?.(url, typeof remainder === 'string' ? remainder : null, chunks);
 				this.setState('speaking');
 				break;
 			}

@@ -939,7 +939,7 @@ web and of Tasker. Local only. Each row here is planned in that document.
     when…" as scheduled research that lands as a moment — self-hosted throughout. Research:
     `docs/research/local-intelligence.md`.
   - Verify: `bash scripts/verify/m59-online.sh`
-- [ ] **M60 — Intelligence** · size L · deps M26, M33 · parallel-ok M59
+- [x] **M60 — Intelligence** · size L · deps M26, M33 · parallel-ok M59
   - Scope: a fast local model on the voice path through llama-swap and the large one for
     research; grammar-constrained tool calls for small models; the task planner batching
     read-only steps; the evals re-measured and never lowered. Research:
@@ -960,6 +960,13 @@ web and of Tasker. Local only. Each row here is planned in that document.
 ## Final
 
 - [ ] **M23 — Final integration** · size M · deps M00–M61
+  - 26 Aug: cannot be green on this host, and is not ticked. Three of its inputs are
+    outside the repository's reach: M56's live look needs a vision model the model server
+    serves (BLOCKERS §4), M61's gradle steps need an Android SDK (BLOCKERS §3), and the
+    median round-trip threshold is hardware (BLOCKERS §2) — the full-mode live run is
+    re-measured after M60 and its numbers recorded in `docs/verification.md`, never
+    lowered. `make verify-all` is red by those gates; every gate run today (M27, M50–M55,
+    M57–M60) is green, and the older ones were not re-run in this pass.
   - Scope: `make verify-all` green; **the stack comes up healthy and the whole suite runs
     against it** (M28/M29); **`bash scripts/verify/live_interaction.sh` in full mode exits 0** — every scenario, including the ones that were gated, inside the thresholds
     (intent ≥ 95 %, WER ≤ 10 %, routing ≥ 90 %, median round trip ≤ 2 s, zero critical issues) —

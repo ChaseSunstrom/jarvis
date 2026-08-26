@@ -1997,7 +1997,10 @@ index 1234567..89abcde 100644
 			await sleep(10);
 			event(r.id, 'tts-start', { engine: 'tts.piper' });
 			await sleep(20);
-			event(r.id, 'tts-end', { tts_output: { url: TTS_PATH, mime_type: 'audio/wav' } });
+			// The first sentence arrives as a chunk while the rest is written (M60); the whole
+			// reply follows with no remainder, because the mock's one clip is the whole.
+			event(r.id, 'tts-chunk', { index: 0, text: 'Very good, Sir.', tts_output: { url: TTS_PATH, mime_type: 'audio/wav' } });
+			event(r.id, 'tts-end', { tts_output: { url: TTS_PATH, mime_type: 'audio/wav', chunks: 1, remainder_url: null } });
 			await sleep(10);
 			event(r.id, 'run-end', {});
 			run = null;
@@ -2013,7 +2016,10 @@ index 1234567..89abcde 100644
 				await sleep(10);
 				event(r.id, 'tts-start', { engine: 'tts.piper' });
 				await sleep(20);
-				event(r.id, 'tts-end', { tts_output: { url: TTS_PATH, mime_type: 'audio/wav' } });
+				// The first sentence arrives as a chunk while the rest is written (M60); the whole
+			// reply follows with no remainder, because the mock's one clip is the whole.
+			event(r.id, 'tts-chunk', { index: 0, text: 'Very good, Sir.', tts_output: { url: TTS_PATH, mime_type: 'audio/wav' } });
+			event(r.id, 'tts-end', { tts_output: { url: TTS_PATH, mime_type: 'audio/wav', chunks: 1, remainder_url: null } });
 			}
 			await sleep(10);
 			event(r.id, 'run-end', {});

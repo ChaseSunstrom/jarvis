@@ -120,7 +120,7 @@ after it means "that is all the audio".
 
 Events, in order: `run-start`, `wake_word-start`, `wake_word-end`, `stt-start`,
 `stt-vad-start`, `stt-vad-end`, `stt-end`, `intent-start`, `intent-progress`
-(one per streamed token delta), `intent-end`, `tts-start`, `tts-end`,
+(one per streamed token delta), `intent-end`, `tts-chunk` (a sentence synthesised while the model writes the next — M60; zero or more, each with its own `tts_output.url`), `tts-start`, `tts-end` (the whole reply; when chunks were sent, also `chunks` and `remainder_url`, the part they did not cover),
 `run-end`. Failures emit `error` with a `code` and `message`, then `run-end`.
 
 `start_stage` and `end_stage` let a client use part of the pipeline: a phone

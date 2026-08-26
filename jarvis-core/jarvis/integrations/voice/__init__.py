@@ -118,6 +118,10 @@ class VoiceData:
     language: str = DEFAULT_LANGUAGE
     tts_voice: str | None = None
     wake_word: str | None = DEFAULT_WAKE_WORD
+    #: Speak each finished sentence while the model writes the next (M60).
+    #: `voice: early_speech: false` turns it off for a client that cannot
+    #: play chunks and must not hear the reply twice.
+    early_speech: bool = True
 
     #: What the running services say they can do, from their own `describe`.
     #:
@@ -156,6 +160,7 @@ class VoiceData:
             conversation_id=conversation_id,
             language=resolved.language or self.language,
             tts_voice=resolved.tts_voice or self.tts_voice,
+            early_speech=self.early_speech,
             wake_word=resolved.wake_word or self.wake_word,
             **kwargs,
         )
@@ -250,6 +255,30 @@ def async_create_run(
     return data.async_create_run(pipeline, **kwargs)
 
 
+def _on_the_fast_model(agent: Any, converse: Any) -> Any:
+    """The agent's converse, naming `fast_model` for a spoken turn when one is set (M60).
+
+    Read at call time, not wrapped once: the setting is live. An agent whose
+    converse does not take `model` (a stand-in in a test) is used as it is.
+    """
+    import inspect
+
+    try:
+        takes_model = "model" in inspect.signature(converse).parameters
+    except (TypeError, ValueError):
+        takes_model = False
+    if not takes_model:
+        return converse
+
+    def spoken(text: str, conversation_id: str | None = None, *args: Any, **kwargs: Any) -> Any:
+        fast = str(getattr(agent, "fast_model", "") or "").strip()
+        if fast:
+            kwargs.setdefault("model", fast)
+        return converse(text, conversation_id, *args, **kwargs)
+
+    return spoken
+
+
 def resolve_conversation_agent(jarvis: "Jarvis") -> Any:
     """Find something that can hold a conversation, else a polite stand-in.
 
@@ -263,7 +292,7 @@ def resolve_conversation_agent(jarvis: "Jarvis") -> Any:
     for attr in ("async_converse", "converse", "async_process", "process"):
         method = getattr(llm, attr, None)
         if callable(method):
-            return method
+            return _on_the_fast_model(llm, method) if attr == "converse" else method
 
     if jarvis.services.has_service("conversation", "process"):
 
@@ -634,6 +663,7 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
         config=config,
         language=language,
         tts_voice=tts_voice,
+        early_speech=bool(config.get("early_speech", True)),
         wake_word=wake_word,
     )
     jarvis.data[DATA_VOICE] = data

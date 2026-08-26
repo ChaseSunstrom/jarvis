@@ -250,3 +250,34 @@ def strip_tool_call_markup(text: str) -> str:
     if not text:
         return ""
     return _MARKUP_RE.sub("", text).strip()
+
+
+def toolcall_schema(offered: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """A JSON schema for exactly one call to one of the tools offered (M60).
+
+    Used for the corrective retry after a model has *described* a call
+    instead of making one — the failure `narrated_tool_call` catches, and the
+    one a small model makes most. Handed to the server as `response_format`
+    (llama.cpp turns it into a grammar; vLLM into guided decoding), it makes
+    the reply a call by construction: a name from the list, arguments shaped
+    by that tool's own parameters. It is not used on ordinary rounds, where
+    the model must be free to answer in words.
+    """
+    branches: list[dict[str, Any]] = []
+    for tool in offered:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        spec = function if isinstance(function, dict) else tool
+        name = str(spec.get("name") or "")
+        if not name:
+            continue
+        params = spec.get("parameters")
+        if not isinstance(params, dict) or params.get("type") != "object":
+            params = {"type": "object"}
+        branches.append({
+            "type": "object",
+            "properties": {"name": {"const": name}, "arguments": params},
+            "required": ["name", "arguments"],
+        })
+    if not branches:
+        return {"type": "object", "properties": {"name": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["name", "arguments"]}
+    return {"oneOf": branches} if len(branches) > 1 else branches[0]
