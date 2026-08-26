@@ -20,6 +20,7 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   four skills that are already in the package (`diary`, `homelab-status`, `note-taking`,
   `research-report`), read from this machine as `file://` and never from a URL, so nobody's
   server is trusted by default and M47's refusal stands (`DEVIATIONS.md` §21). Each entry says
+  Behind it sat a second failure, "git is not installed": the core image had no git. It does now.
   what it asks for and whether it is INSTALLED — the shipped ones are, on a fresh box — and an
   INSTALL goes through the same plan-then-approve dialog as before, with the ref, the hash, every
   file and every program named. A source that cannot be read shows its reason instead of

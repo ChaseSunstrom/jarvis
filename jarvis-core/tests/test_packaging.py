@@ -1648,6 +1648,20 @@ def test_compose_piper_length_scale_matches_the_example_env() -> None:
     assert 0.5 <= float(loaded) <= 1.5, loaded
 
 
+def test_the_image_installs_git_for_coding_jobs():
+    """A coding job's first step after the workspace is `git init`, and the
+    code integration answers "git is not installed" when the image has none —
+    which is what the operator's create_repository hit on 26 Aug 2026 once the
+    workspace itself was writable. The Dockerfile's apt line must name git;
+    that it tolerates an apt outage with a WARN is deliberate and unchanged."""
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    apt_lines = [line for line in dockerfile.splitlines() if "--no-install-recommends" in line]
+    assert apt_lines, "no apt install line in the Dockerfile"
+    assert any(" git" in line.split("#")[0] for line in apt_lines), (
+        "the image does not install git; coding jobs cannot create or clone a repository"
+    )
+
+
 def test_the_coding_workspace_is_the_mounted_crossover() -> None:
     """A coding job can make a repository where the config says.
 

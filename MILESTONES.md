@@ -1103,6 +1103,12 @@ web and of Tasker. Local only. Each row here is planned in that document.
     m30, m45, m58; m25/m26 re-measured after the next rebuild); the rest are M56 (no served
     vision model), M61 (six gap rows, being closed), this gate, and the smoke slice in
     m07/m08/m14/m21/m22 — the rig's stack-logs-clean check on an MQTT startup ERROR, fixed
+  - 26 Aug 21:06: a second blocker sat behind the first — with the workspace writable,
+    `create_repository` over the REST API answered "git is not installed": the core image had no
+    git. It is in the image's apt line now (pinned by packaging), and on the ninth rebuild the gate
+    is 10/10: git 2.47.3 on the core's PATH, and the operator's own request replayed through
+    `POST /api/services/code/create_repository` lands `/workspace/m72-probe` with a `.git` on the
+    host side of the crossover. The probe repository stays (nothing removes one).
     in 483d5e5. The table is in `docs/OVERNIGHT_LOG.md` (15:14).
   - 26 Aug: cannot be green on this host, and is not ticked. Three of its inputs are
     outside the repository's reach: M56's live look needs a vision model the model server

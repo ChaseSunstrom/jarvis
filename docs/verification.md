@@ -717,15 +717,17 @@ person-shaped probe asks; what the suite found, written up.
 
 ### A writable coding workspace (M72)
 
-`bash scripts/verify/m72-workspace.sh` (26 Aug 20:31: 7/7 on the rebuilt stack). Server: `test_packaging.py`
-(`test_the_coding_workspace_is_the_mounted_crossover`), `test_code_workspace.py`, `test_code_repos.py`.
+`bash scripts/verify/m72-workspace.sh` (26 Aug 21:06: 10/10 on the ninth rebuild). Server: `test_packaging.py`
+(`test_the_coding_workspace_is_the_mounted_crossover`, `test_the_image_installs_git_for_coding_jobs`),
+`test_code_workspace.py`, `test_code_repos.py`.
 
 | Claim | Status | Evidence |
 |---|---|---|
 | The deployed config names `/workspace`, not `~/jarvis/workspaces` (which is `/jarvis/workspaces` in the image and unwritable) | Automated | the packaging test reads `configuration.yaml`; the gate loads it through `load_config` |
 | The core and the config-init one-shot both mount `../jarvis-workspace` at `/workspace`, and the one-shot chowns it for uid 10003 | Automated | the packaging test reads both services' volumes and the chown line |
 | Inside the running core, uid 10003 can create and remove a folder under `/workspace` | Containerised | the gate's `docker compose exec` probe |
-| A coding job's `create_repository` lands in `/workspace/<name>` | Manual | the operator's own "simple-react-app" request, re-issued on the rebuilt stack; the live rig has no repository-creating scenario yet |
+| The core image has git — the step after the workspace, without which `create_repository` answers "git is not installed" | Automated / Containerised | the packaging test reads the Dockerfile's apt line; the gate runs `git --version` in the running core (2.47.3) |
+| A coding job's `create_repository` lands in `/workspace/<name>` with a `.git` visible on the host side of the crossover | Containerised | the gate replays the operator's request through `POST /api/services/code/create_repository` and checks `jarvis-workspace/m72-probe/.git`; the probe repository stays, since nothing removes one. The live rig has no repository-creating scenario yet |
 
 ### A faster voice (M70, in progress)
 
