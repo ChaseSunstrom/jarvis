@@ -68,3 +68,6 @@ jarvis-core/wyoming/
 
 # Subagent worktrees the harness creates beside the checkout; never part of it.
 .claude/worktrees/
+
+# The trace integration writes one JSONL per day here at runtime — data, not config.
+jarvis-core/config/traces/

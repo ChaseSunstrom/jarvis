@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVITY_CAP, activityFrom, applyActivity, lookingCaption } from './activity.svelte';
 import type { BusEvent } from './jarvisClient';
+import { readFileSync } from 'node:fs';
+import { ACTIVITY_EVENTS } from './activity.svelte';
 
 const at = () => 1_000;
 const ev = (event_type: string, data: Record<string, unknown>): BusEvent =>
@@ -68,5 +70,17 @@ describe('activityFrom', () => {
 		expect(rows).toHaveLength(ACTIVITY_CAP);
 		expect(rows[0].title).toBe('tool_14');
 		expect(rows[ACTIVITY_CAP - 1].title).toBe('tool_3');
+	});
+});
+
+describe('the contract the phone mirrors', () => {
+	const contract = JSON.parse(readFileSync(new URL('../../../tests/contracts/activity_rows.json', import.meta.url), 'utf8'));
+	it('names the same events, kinds and cap as the store', () => {
+		expect([...ACTIVITY_EVENTS].sort()).toEqual(Object.keys(contract.events).sort());
+		expect(contract.cap).toBe(ACTIVITY_CAP);
+		for (const [event, kind] of Object.entries(contract.events)) {
+			const row = activityFrom(ev(event, { entity_id: 'sensor.x', new_state: { state: '1' }, task: { id: 't' }, notification: { id: 'n' } }), at);
+			expect(row?.kind, event).toBe(kind);
+		}
 	});
 });
