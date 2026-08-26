@@ -1902,7 +1902,11 @@ _CUE_WINDOW = 60
 #: An imperative that wants a tool, and a reply that says it happened.
 _ACTION_REQUEST = re.compile(
     r"\b(turn|switch|set|lock|unlock|open|close|dim|brighten|start|stop|play|pause|"
-    r"mute|unmute|arm|disarm|run|trigger|enable|disable|cancel)\b",
+    r"mute|unmute|arm|disarm|run|trigger|enable|disable|cancel|"
+    # "now do the same in the bedroom": an action by reference to the last
+    # one. Without this the guard let "the bedroom light is now on" through
+    # with nothing called, twice, on resilience-core-restart (26 Aug).
+    r"do the same|the same (?:for|with|to))\b",
     re.IGNORECASE,
 )
 _ACTION_CLAIMED = re.compile(

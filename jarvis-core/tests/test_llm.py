@@ -2226,6 +2226,19 @@ async def test_a_spoken_turn_does_not_reason_unless_the_house_says_so(tmp_path):
     await shutdown(jarvis)
 
 
+def test_an_action_by_reference_to_the_last_one_is_an_action_request():
+    """"Now do the same in the bedroom" names no verb the guard knew, so a
+    reply that claimed the bedroom light was on, with nothing called, passed
+    the guard — twice, after a core restart on the live rig."""
+    from jarvis.llm.agent import claimed_action
+
+    assert claimed_action("Now do the same in the bedroom, please", "The bedroom light is now on, Sir.")
+    assert claimed_action("And the same for the kitchen", "Done — the kitchen lights are off.")
+    # A report is not a claim, and a refusal is the honest alternative.
+    assert not claimed_action("Is it the same in the bedroom?", "The bedroom light is on.")
+    assert not claimed_action("Now do the same in the bedroom", "I can't — that light is not one I control.")
+
+
 async def test_a_reply_that_claims_an_action_it_never_called_is_sent_back_to_call_it(tmp_path):
     """"Done, Sir — the bed light is off" with nothing called is a lie; it is caught (M60).
 
