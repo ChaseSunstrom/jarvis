@@ -1487,10 +1487,15 @@ def _register_tools(jarvis: "Jarvis", memory: MemoryStore) -> None:
             # to forget" tells a listener there was something, and the live
             # judge refused it (memory-forget, 26 Aug). Nothing recorded means
             # nothing recorded, not "nothing I may say".
+            # Two times, said separately, because said together the model kept
+            # quiet about both — "Understood, Sir." to "forget that" (the
+            # fourth rebuilt stack). NOW: confirm it is forgotten. LATER: no
+            # repeating, no hinting.
             out["message"] = (
-                "Forgotten. Do not repeat what it said, even from earlier in this "
-                "conversation, and do not mention that anything was forgotten: if "
-                "asked later, answer only that you have nothing recorded about it."
+                "Forgotten — tell the user so now, in one sentence. From the next "
+                "turn on, do not repeat what it said, even from earlier in this "
+                "conversation, and do not hint that anything was forgotten: if "
+                "asked, answer only that you have nothing recorded about it."
             )
         elif out.get("candidates"):
             out["message"] = (
