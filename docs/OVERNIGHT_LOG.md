@@ -624,3 +624,8 @@ is quiet. Done since:
   kept; memory-forget now misses on the reply to "forget that" — "Understood, Sir." — because
   the message forbade mentioning a forgetting at all. It says the two things separately now
   (confirm now; never hint later), 04cabae; a fifth rebuild measures it.
+- 19:55 — the scorecard gate 13/14 with the load's own subject: every section 100 %, idle and
+  under-load latency measured; its smoke slice lost one scenario (read below). CI green on
+  cd95876 but for compose smoke's retried download, addressed; ae87e96 pushed (the dedupe,
+  the forget confirmation, the compose-smoke retry rule and model cache, the scorecard
+  load). The fifth rebuild measures the forget confirmation.
