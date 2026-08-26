@@ -1042,17 +1042,27 @@ async def llm_models(request: Request) -> dict[str, Any]:
 
 
 @api_router.post("/config/settings/set")
-async def settings_set(request: Request) -> dict[str, Any]:
+async def settings_set(
+    request: Request, token: TokenInfo = Depends(require_token)
+) -> dict[str, Any]:
     try:
-        return await common.async_set_setting(get_jarvis(request), await json_body(request))
+        # The token is the audit line's "who"; the write path is the same one
+        # the websocket and the model's `change_setting` use.
+        return await common.async_set_setting(
+            get_jarvis(request), await json_body(request), context=_context(token)
+        )
     except ApiError as err:
         raise _api_error(err) from err
 
 
 @api_router.post("/config/settings/reset")
-async def settings_reset(request: Request) -> dict[str, Any]:
+async def settings_reset(
+    request: Request, token: TokenInfo = Depends(require_token)
+) -> dict[str, Any]:
     try:
-        return await common.async_reset_setting(get_jarvis(request), await json_body(request))
+        return await common.async_reset_setting(
+            get_jarvis(request), await json_body(request), context=_context(token)
+        )
     except ApiError as err:
         raise _api_error(err) from err
 

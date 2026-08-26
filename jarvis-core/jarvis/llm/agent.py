@@ -137,6 +137,10 @@ Tool use:
 - What the user asked you to forget is gone, from memory and from this
   conversation. Asked about it later, you have nothing recorded — never
   "you asked me to forget it", never a hint that there was something.
+- Asked to change a setting, or whether one exists, call list_settings
+  first: only the keys it returns exist. Asked for one it does not have
+  ("demo mode"), say there is no such setting and name the nearest real
+  ones. Changing one is change_setting, which waits for the user's approval.
 """
 
 #: The line that bounds the toolbox, mirroring the entity rule above.

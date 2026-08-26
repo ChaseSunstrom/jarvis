@@ -436,6 +436,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Units",
         group="House",
         type="choice",
+        note="Metric or imperial: how temperatures and distances are shown and spoken.",
         validate=_one_of("metric", "imperial"),
         choices_hook=lambda jarvis: ["metric", "imperial"],
     ),
@@ -445,6 +446,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Currency",
         group="House",
         type="choice",
+        note="ISO 4217 code (GBP, EUR, USD) for anything priced.",
         validate=_text(3, 3),
         choices_hook=lambda jarvis: list(_CURRENCIES),
     ),
@@ -454,6 +456,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Country",
         group="House",
         type="choice",
+        note="ISO 3166 code (GB, US, DE): holiday calendars and regional defaults.",
         validate=_text(2, 2),
         choices_hook=lambda jarvis: list(_COUNTRIES),
     ),
@@ -463,6 +466,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Language",
         group="House",
         type="choice",
+        note="The language the assistant replies in, as a two-letter code.",
         validate=_text(2, 10),
         choices_hook=lambda jarvis: list(_LANGUAGES),
     ),
@@ -504,6 +508,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Log level",
         group="House",
         type="choice",
+        note="How much Jarvis writes to its log: debug for everything, error for only what broke.",
         validate=_one_of("debug", "info", "warning", "error"),
         apply_hook=_apply_log_level,
         choices_hook=lambda jarvis: ["debug", "info", "warning", "error"],
@@ -515,6 +520,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         label="Speech language",
         group="Voice",
         type="choice",
+        note="The language speech is recognised and spoken in, as a two-letter code.",
         validate=_text(2, 10),
         apply_hook=_apply_voice_attr("language"),
         choices_hook=lambda jarvis: list(_LANGUAGES),
@@ -560,6 +566,86 @@ def spec_for(key: str) -> SettingSpec:
     if spec is None:
         raise SettingsError(f"{key!r} is not an editable setting.")
     return spec
+
+
+def _words(text: str) -> str:
+    """Lower-cased, with the separators a person or a model might use folded
+    to spaces, so `voice.tts_voice`, "TTS voice" and "tts-voice" compare equal."""
+    return " ".join(text.replace(".", " ").replace("_", " ").replace("-", " ").lower().split())
+
+
+def matching_settings(name: Any) -> list[SettingSpec]:
+    """Every spec `name` could mean, in registry order.
+
+    The exact key alone when it is one. Otherwise the specs whose label or
+    last path segment is the name — "temperature" is `llm.options.temperature`,
+    "wake word" is `voice.wake_word` — because that is how a person asks for a
+    setting and a model repeats it. Never a prefix or substring match: "mod"
+    is not a setting, and a match that loose would let a model change a
+    setting nobody named.
+
+    Still membership in `SETTINGS`, never a path the caller composed: a name
+    that matches nothing is not an editable setting, whatever the config file
+    contains under it.
+    """
+    text = str(name if name is not None else "").strip()
+    if not text:
+        return []
+    spec = SETTINGS_BY_KEY.get(text)
+    if spec is not None:
+        return [spec]
+    wanted = _words(text)
+    if not wanted:
+        return []
+    return [
+        candidate
+        for candidate in SETTINGS
+        if wanted in (_words(candidate.label), _words(candidate.path[-1]), _words(candidate.key))
+    ]
+
+
+def resolve_setting(name: Any) -> SettingSpec | None:
+    """The ONE spec `name` means, or None.
+
+    None for nothing and None for more than one: "model" names three settings
+    (`llm.model`, `llm.fast_model`, `vision.model`), and picking one of them
+    silently would change a setting nobody asked about. A caller that wants
+    to say which ones asks `matching_settings`.
+    """
+    matches = matching_settings(name)
+    return matches[0] if len(matches) == 1 else None
+
+
+def nearest_settings(name: Any, limit: int = 5) -> list[str]:
+    """The keys closest to `name`, best first, for a refusal to name.
+
+    "There is no setting called demo mode" is a dead end; "…the nearest are
+    llm.model, voice.wake_word" is something the next sentence can use. Scored
+    on words shared with the key, the label and the note, then on string
+    similarity to the key and the label, so "think" finds a note that mentions
+    thinking before a key that happens to share three letters. Deterministic —
+    ties fall back to registry order — because the sentence is repeated to a
+    person and must not change between two calls.
+    """
+    import difflib
+
+    wanted = _words(str(name if name is not None else ""))
+    if not wanted:
+        return [spec.key for spec in SETTINGS[:limit]]
+    wanted_words = set(wanted.split())
+    scored: list[tuple[float, int, str]] = []
+    for index, spec in enumerate(SETTINGS):
+        haystack = f"{_words(spec.key)} {_words(spec.label)} {_words(spec.note)}"
+        shared = len(wanted_words & set(haystack.split()))
+        similarity = max(
+            difflib.SequenceMatcher(None, wanted, _words(spec.key)).ratio(),
+            difflib.SequenceMatcher(None, wanted, _words(spec.label)).ratio(),
+        )
+        # A shared word outweighs any amount of letter overlap: "wake word"
+        # must find `voice.wake_word` before anything that merely looks alike.
+        scored.append((shared * 10 + similarity, -index, spec.key))
+    scored.sort(reverse=True)
+    return [key for _score, _order, key in scored[: max(1, limit)]]
 
 
 # --- the overlay ------------------------------------------------------------

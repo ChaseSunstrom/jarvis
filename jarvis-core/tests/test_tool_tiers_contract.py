@@ -18,7 +18,13 @@ from pathlib import Path
 import pytest
 
 from jarvis.const import GATED_DOMAINS, GATED_SERVICES
-from jarvis.llm.tools import TIER_APPROVAL, TIER_BACKGROUND, TIER_DIRECT
+from jarvis.llm.tools import (
+    TIER_APPROVAL,
+    TIER_BACKGROUND,
+    TIER_DIRECT,
+    PendingRequest,
+    Tool,
+)
 
 CONTRACT = json.loads(
     (Path(__file__).resolve().parents[2] / "tests/contracts/tool_tiers.json").read_text()
@@ -85,3 +91,19 @@ def test_every_tier_three_example_has_a_service_twin_or_is_not_a_service():
 def test_mcp_defaults_to_the_tier_the_contract_states():
     config = (Path(__file__).resolve().parents[1] / "config/configuration.yaml").read_text()
     assert f"default_tier: {CONTRACT['default_for_mcp']['value']}" in config
+
+
+def test_a_held_request_carries_its_sentence_on_the_field_the_contract_names():
+    """M67: the console reads `summary` off the request; this is the server's
+    half of the same rule. A request with no summariser carries the field
+    empty rather than missing, so a surface can tell "none" from "an older
+    core" without a version check."""
+    rule = CONTRACT["rules"]["held_summary"]
+    assert "PINNED" in rule["means"]
+    request = PendingRequest(
+        id="x", tool="lock_control", arguments={}, tier=TIER_APPROVAL,
+        created=0.0, expires_at=1.0, context=None,
+    )
+    assert request.as_dict()[rule["field"]] == ""
+    # And the hook a tool composes it with is declared on the Tool, per tool.
+    assert Tool.__dataclass_fields__["summarise"].default is None

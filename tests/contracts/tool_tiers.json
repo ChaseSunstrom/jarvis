@@ -38,7 +38,12 @@
     "a_server_may_only_raise": "A tier arriving from outside (a server telling a device what a call is worth) may RAISE the local tier, never lower it. Pinned by android-app/tools/policy_truth_table_test.py and jarvis-desktop/tests/test_policy.py.",
     "gated_domains": "Some domains are tier 3 whatever the tool says, because the domain is the risk: `lock`, `notify`. See jarvis/const.py GATED_DOMAINS.",
     "gated_services": "Every tier-3 tool has a service twin in GATED_SERVICES, so an automation cannot call at tier 1 what a model must ask for.",
-    "untrusted_raises": "After an untrusted result (a web page, screen text, a file), the rest of the turn is raised: a tier-1 call becomes an ask. Content that arrived from outside must not be able to spend the trust of the turn it arrived in."
+    "untrusted_raises": "After an untrusted result (a web page, screen text, a file), the rest of the turn is raised: a tier-1 call becomes an ask. Content that arrived from outside must not be able to spend the trust of the turn it arrived in.",
+    "held_summary": {
+      "field": "summary",
+      "means": "A held request may carry one sentence, composed by jarvis-core from the PINNED arguments at the moment the request is raised (`Tool.summarise`) — \"Change Wake word (voice.wake_word) from hey_jarvis to ok_nabu\". A surface shows it in place of the tool's name and the raw arguments, and falls back to name-and-arguments when it is empty, which it is for every tool that has none. Never composed on a surface, never from the model's words: the sentence describes what will run. Read by jarvis-core/tests/test_tool_tiers_contract.py and jarvis-web's src/lib/tierContract.test.ts; the phone shows name-and-arguments (it has no field for the sentence yet).",
+      "$comment": "M67: a person approving `key: llm.options.temperature · value: 0.2` did not know what it was before, and \"from what\" is the whole decision."
+    }
   },
   "default_for_mcp": {
     "value": 2,

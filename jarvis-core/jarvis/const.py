@@ -45,6 +45,15 @@ EVENT_VOICE_PIPELINE = "voice_pipeline_event"
 #: The one pipeline event `platform: wake_word` cares about.
 VOICE_WAKE_END = "wake_word-end"
 
+#: An editable setting changed — from the console, the REST API or the model's
+#: `change_setting` tool, which are one write path (`api/common.py`
+#: `async_set_setting`). Fired from that one place so a surface that shows
+#: settings can refresh without polling, and so an automation can notice a
+#: change it did not make. Carries `key`, `previous`, `value`, `applied`,
+#: `restart_required` and `origin` (who wrote it: `api`, `llm`), never a
+#: secret — the allowlist in `settings.py` holds none.
+EVENT_SETTING_CHANGED = "jarvis_setting_changed"
+
 MATCH_ALL = "*"
 
 # --- common states ---------------------------------------------------------

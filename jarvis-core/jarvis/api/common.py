@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..bus import Context
-from ..const import EVENT_STATE_CHANGED, VERSION
+from ..const import EVENT_SETTING_CHANGED, EVENT_STATE_CHANGED, VERSION
 from ..services import ServiceNotFound
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -1007,13 +1007,28 @@ def _apply_now(jarvis: "Jarvis", key: str, value: Any) -> bool:
         return False
 
 
-def _setting_result(jarvis: "Jarvis", key: str, value: Any, applied: bool) -> dict[str, Any]:
+#: Every change to a setting, whoever made it. Its own logger, like
+#: `jarvis.vision.audit`, so an operator can route "what changed the wake word
+#: at 03:00" to a file without turning the rest of the API up to INFO. One
+#: line per write, from the ONE write path — a second line from the tool
+#: would be a second place to forget.
+_SETTINGS_AUDIT = logging.getLogger("jarvis.settings.audit")
+
+
+def _setting_result(
+    jarvis: "Jarvis", key: str, value: Any, applied: bool, previous: Any = None
+) -> dict[str, Any]:
     from ..settings import APPLY_LIVE, SETTINGS_BY_KEY
 
     spec = SETTINGS_BY_KEY[key]
     return {
         "key": key,
+        "label": spec.label,
         "value": value,
+        # What it was before this write, so a reply can say "from X to Y"
+        # rather than only "now Y" — a person who did not ask for a change
+        # needs the old value to know what to put back.
+        "previous": previous,
         "applied": applied,
         "apply": spec.apply,
         # The honest answer to "do I need to restart", which is the question
@@ -1024,7 +1039,80 @@ def _setting_result(jarvis: "Jarvis", key: str, value: Any, applied: bool) -> di
     }
 
 
-async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+def current_setting_value(jarvis: "Jarvis", key: str) -> Any:
+    """What `key` is right now: the overlay's value, else the merged config's.
+
+    The same answer `settings_payload` puts in the row's `value`, read from the
+    same two places, so a "from" in an audit line and a value on the console
+    cannot disagree.
+    """
+    from ..settings import SETTINGS_BY_KEY
+
+    spec = SETTINGS_BY_KEY[key]
+    if key in jarvis.settings.values:
+        return jarvis.settings.values[key]
+    return _dig_config(jarvis.config or jarvis.raw_config or {}, spec.path)
+
+
+def _record_setting_change(
+    jarvis: "Jarvis",
+    key: str,
+    previous: Any,
+    value: Any,
+    result: dict[str, Any],
+    context: Any,
+    action: str,
+) -> None:
+    """The audit line and the bus event, once, for every path that writes.
+
+    `origin` is the context's — `api` for the console and REST, `llm` for the
+    model's `change_setting` — so the line says WHO as well as what. A change
+    the model made under approval and a change a person made on the console
+    look identical in the store; this is the only place they are told apart.
+    """
+    # `api` for the console and REST (`api_context`), `llm` for the model's
+    # tool; a caller with no context at all is written down as such rather
+    # than credited to somebody.
+    origin = getattr(context, "origin", None) or "unknown"
+    user = getattr(context, "user_id", None)
+    _SETTINGS_AUDIT.info(
+        "%s %s: %r -> %r (by %s%s; %s)",
+        action,
+        key,
+        previous,
+        value,
+        origin,
+        f" {user}" if user else "",
+        "applied live" if result["applied"] else "takes effect after a restart",
+    )
+    jarvis.bus.fire(
+        EVENT_SETTING_CHANGED,
+        {
+            "key": key,
+            "label": result["label"],
+            "previous": previous,
+            "value": value,
+            "applied": result["applied"],
+            "restart_required": result["restart_required"],
+            "origin": origin,
+            "action": action,
+        },
+        context if isinstance(context, Context) else None,
+    )
+
+
+async def async_set_setting(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Any = None
+) -> dict[str, Any]:
+    """Change one editable setting. THE write path.
+
+    The console's `config/settings/set`, `POST /api/config/settings/set` and
+    the model's `change_setting` tool all end here, and nothing else writes
+    the overlay: the allowlist check, the validator, the re-merge, the live
+    apply, the audit line and `jarvis_setting_changed` are one sequence, so a
+    door that skipped one of them cannot be added without bypassing this
+    function by name. `test_settings_tool.py` holds the tool to it.
+    """
     from ..settings import SETTINGS_BY_KEY, SettingsError
 
     key = str(payload.get("key") or "").strip()
@@ -1037,6 +1125,7 @@ async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     # differently: one is a typo in the request, the other is a field to fix.
     if key not in SETTINGS_BY_KEY:
         raise ApiError("not_found", f"{key} is not an editable setting", 404)
+    previous = current_setting_value(jarvis, key)
     try:
         value = await jarvis.settings.async_set(key, payload["value"])
     except SettingsError as err:
@@ -1045,10 +1134,14 @@ async def async_set_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[s
     # Re-merge so `jarvis.config` — which everything reads — matches the store
     # immediately, rather than only after the next restart.
     await jarvis.async_install_config(jarvis.raw_config, jarvis.package_provenance)
-    return _setting_result(jarvis, key, value, _apply_now(jarvis, key, value))
+    result = _setting_result(jarvis, key, value, _apply_now(jarvis, key, value), previous)
+    _record_setting_change(jarvis, key, previous, value, result, context, "set")
+    return result
 
 
-async def async_reset_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict[str, Any]:
+async def async_reset_setting(
+    jarvis: "Jarvis", payload: dict[str, Any], context: Any = None
+) -> dict[str, Any]:
     """Drop an override so the file's value shows through again."""
     from ..settings import SETTINGS_BY_KEY
 
@@ -1059,13 +1152,18 @@ async def async_reset_setting(jarvis: "Jarvis", payload: dict[str, Any]) -> dict
     if spec is None:
         raise ApiError("not_found", f"{key} is not an editable setting", 404)
 
+    previous = current_setting_value(jarvis, key)
     await jarvis.settings.async_reset(key)
     merged = await jarvis.async_install_config(jarvis.raw_config, jarvis.package_provenance)
     # Whatever the file (or a default) says now, pushed live the same way a set
     # would be — otherwise a reset appears to work and changes nothing.
     reverted = _dig_config(merged, spec.path)
     applied = _apply_now(jarvis, key, reverted) if reverted is not None else False
-    return _setting_result(jarvis, key, reverted, applied)
+    result = _setting_result(jarvis, key, reverted, applied, previous)
+    # A reset is a change too — the wake word going back to the file's value
+    # at 03:00 is exactly the line somebody will want to find.
+    _record_setting_change(jarvis, key, previous, reverted, result, context, "reset")
+    return result
 
 
 def _dig_config(config: dict[str, Any], path: tuple[str, ...]) -> Any:

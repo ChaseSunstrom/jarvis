@@ -1064,10 +1064,12 @@ class WebSocketHandler:
         return common.settings_payload(self.jarvis)
 
     async def _cmd_settings_set(self, msg: dict[str, Any]) -> Any:
-        return await common.async_set_setting(self.jarvis, msg)
+        # The context is who: the audit line says `api <token id>` for this
+        # socket and `llm` for the model's tool, on the same write path.
+        return await common.async_set_setting(self.jarvis, msg, context=self._context())
 
     async def _cmd_settings_reset(self, msg: dict[str, Any]) -> Any:
-        return await common.async_reset_setting(self.jarvis, msg)
+        return await common.async_reset_setting(self.jarvis, msg, context=self._context())
 
     # the models the servers actually serve
     async def _cmd_llm_models(self, msg: dict[str, Any]) -> Any:

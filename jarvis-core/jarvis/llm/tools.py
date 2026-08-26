@@ -723,6 +723,9 @@ READ_ONLY_TOOLS = frozenset({
     "sensor_readings", "sensor_compare", "sensor_history", "sensor_summary",
     "next_pass", "overhead_now", "moon_phase", "planets_tonight",
     "read_page", "feed_latest", "list_watches",
+    # the settings registry, read (M67). `change_setting` is Tier 3 and is
+    # deliberately not here: a page must not be able to change the wake word.
+    "list_settings",
 })
 
 
@@ -785,6 +788,16 @@ class Tool:
     #: writable key here, per tool, is what keeps that impossible — a tool that
     #: does not opt in cannot be answered, only approved or denied.
     answerable: str | None = None
+    #: One sentence for the consent surface, composed from the PINNED
+    #: arguments when the request is raised: "Change Temperature from 0.7 to
+    #: 0.2". The banner used to render every held action as `key: value`
+    #: pairs, which is readable for `entity_id: lock.front_door` and not for
+    #: a setting — a person approving `key: llm.options.temperature · value:
+    #: 0.2` does not know what it was before, and "from what" is the whole
+    #: decision. Composed here and never on the surface, so the sentence is
+    #: made from what will run rather than from what the model said; and
+    #: never by the model, whose words a hostile page can choose.
+    summarise: Callable[[dict[str, Any]], str] | None = None
 
     def schema(self) -> dict[str, Any]:
         """Ollama / OpenAI function-calling schema for this tool."""
@@ -834,6 +847,12 @@ class PendingRequest:
     #: words. Carried to every consent surface so a human can see it.
     tainted: bool = False
 
+    #: The sentence a surface shows in place of the tool's name, from
+    #: `Tool.summarise` over the pinned arguments. Empty for a tool that has
+    #: none, and the surface then falls back to the name and the arguments —
+    #: which is what every request looked like before M67.
+    summary: str = ""
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.id,
@@ -845,6 +864,7 @@ class PendingRequest:
             "answerable": self.answerable,
             "choices": list(self.choices),
             "tainted": self.tainted,
+            "summary": self.summary,
         }
 
 
@@ -876,6 +896,29 @@ def _short(value: Any) -> Any:
         return value
     text = str(value)
     return text[:MAX_EVENT_VALUE_CHARS]
+
+
+#: A summary is shown on a consent surface at the width of one line; the
+#: phone's card wraps at about this many characters and a longer sentence is
+#: one the person stops reading.
+MAX_SUMMARY_CHARS = 200
+
+
+def _summary_of(tool: Tool, pinned: dict[str, Any]) -> str:
+    """The held request's sentence, or "" when the tool has none or it failed.
+
+    Bounded and stringified for the same reason `_choice_list` is: the pinned
+    arguments can contain a value the model chose the size of, and this goes
+    verbatim onto a screen.
+    """
+    if tool.summarise is None:
+        return ""
+    try:
+        text = str(tool.summarise(pinned) or "").strip()
+    except Exception:  # pragma: no cover - a bad sentence must not hold or free anything
+        _LOGGER.exception("Could not summarise %s for approval", tool.name)
+        return ""
+    return " ".join(text.split())[:MAX_SUMMARY_CHARS]
 
 
 def _choice_list(arguments: dict[str, Any]) -> tuple[str, ...]:
@@ -972,6 +1015,7 @@ class ToolRegistry:
         answerable: str | None = None,
         read_only: bool = False,
         escalates_itself: bool = False,
+        summarise: Callable[[dict[str, Any]], str] | None = None,
         replaces: str | None = None,
     ) -> Tool:
         """Add a tool. A re-registration may not quietly WEAKEN the one there.
@@ -1026,6 +1070,7 @@ class ToolRegistry:
                 pin=pin,
                 read_only=read_only,
                 escalates_itself=escalates_itself,
+                summarise=summarise,
             )
         existing = self._tools.get(tool.name)
         if existing is not None and replaces != tool.name:
@@ -1089,7 +1134,15 @@ class ToolRegistry:
             }
 
         if self.requires_approval(tool, arguments, context):
-            return self._request_approval(tool, arguments, context)
+            try:
+                return self._request_approval(tool, arguments, context)
+            except ToolError as exc:
+                # The pin found nothing to pin — a setting that does not exist,
+                # a value its validator refuses. Not held: an approval a human
+                # cannot grant is a card they can only deny, and the model
+                # learns nothing from a denial. The refusal names what is
+                # wrong instead, which the next round can act on.
+                return {"status": "error", "error": str(exc)}
         return await self._execute(tool, arguments, context)
 
     async def _execute(self, tool: Tool, args: dict[str, Any], context: Any) -> Any:
@@ -1194,6 +1247,10 @@ class ToolRegistry:
             return pinned
         try:
             overrides = tool.pin(args)
+        except ToolError:
+            # Deliberate: the pin is saying there is nothing here to approve.
+            # `call()` turns it into the tool's error rather than a card.
+            raise
         except Exception:  # a broken pin must not turn into an unpinned approval
             _LOGGER.exception("Target pin for %s failed; approving by name", tool.name)
             return pinned
@@ -1207,10 +1264,11 @@ class ToolRegistry:
 
     def _request_approval(self, tool: Tool, args: dict[str, Any], context: Any) -> dict[str, Any]:
         now = time.time()
+        pinned = self._pinned_arguments(tool, args)
         request = PendingRequest(
             id=uuid.uuid4().hex[:12],
             tool=tool.name,
-            arguments=self._pinned_arguments(tool, args),
+            arguments=pinned,
             tier=tool.tier,
             created=now,
             expires_at=now + self.approval_ttl,
@@ -1222,6 +1280,11 @@ class ToolRegistry:
             # nothing.
             choices=_choice_list(args) if tool.answerable else (),
             tainted=self._is_tainted(context),
+            # Over the PINNED arguments, so the sentence describes what will
+            # run. A summariser that throws leaves the sentence empty and the
+            # surface on the name-and-arguments rendering, never an unheld
+            # action.
+            summary=_summary_of(tool, pinned),
         )
         self._pending[request.id] = request
         payload = request.as_dict()
@@ -1233,6 +1296,10 @@ class ToolRegistry:
             "request_id": request.id,
             "tool": tool.name,
             "arguments": copy.deepcopy(request.arguments),
+            # The same sentence the card shows, so the model's "waiting on
+            # your approval" can say what for — and a `jarvis/tools/call`
+            # from the console sees what the banner will.
+            "summary": request.summary,
             "expires_at": request.expires_at,
             "message": (
                 "This action needs the user's explicit approval and has NOT run. "
@@ -2918,6 +2985,273 @@ def register_builtin_tools(
         # cannot. Nothing about the arguments can make writing a new capability
         # into something that happens without a human.
         tier=TIER_APPROVAL,
+    )
+
+    # --- settings (M67) -----------------------------------------------------
+    #
+    # "How can I ask it to be able to edit settings with permission." The
+    # console's settings registry (`jarvis/settings.py` SETTINGS, read through
+    # `api/common.py settings_payload`), offered to the model: one tool that
+    # reads it and one that writes through the console's own write path.
+    #
+    # Asked to enable "demo mode", the model asked what that meant — which was
+    # right, there is no such setting — but it could not have said what the
+    # settings ARE. Now it can, and a request for something adjacent gets the
+    # real name back rather than a guess or an invention.
+    #
+    # What this tool may and may not do is decided by the allowlist, not
+    # here. `SETTINGS` is a hardcoded tuple of the knobs a person changes on
+    # the console — a model, a temperature, a wake word — and the keys the
+    # safety model reads (`llm.expose`, the gated domains, CORS, the
+    # sandbox's `network_mode`) are not in it and cannot be added from a
+    # tool. So the worst a `change_setting` can do is what the console's
+    # settings page can do, under the same validation, and only after a human
+    # has read "Change Wake word from hey_jarvis to alexa" and said yes.
+    #
+    # Held, not refused, on a tainted turn. `remember` refuses after untrusted
+    # content because a human cannot audit a memory write in the two seconds
+    # an approval gets. A setting change is the opposite case: one key, one
+    # value, the old value beside the new one, pinned — exactly the sentence a
+    # person can judge. The attack to reason about is a page saying "turn
+    # local-only off": there is no such key in the allowlist, the pin refuses
+    # a key that is not there before anything is held, and a key that IS there
+    # arrives on the card marked `tainted` for the human to weigh. Refusing
+    # would also break the legitimate case, a turn that read a page and was
+    # then asked, by the user, to change the temperature.
+
+    #: Choices shown per setting in a filtered listing. The timezone list has
+    #: six hundred entries and a tool result has four thousand characters; a
+    #: model that needs the rest already knows what to ask for.
+    max_choices_shown = 12
+
+    def _settings_rows() -> list[dict[str, Any]]:
+        from ..api.common import settings_payload
+
+        return settings_payload(jarvis)["settings"]
+
+    def _compact(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "key": row["key"],
+            "label": row["label"],
+            "type": row["type"],
+            "value": row.get("value"),
+        }
+
+    def _detailed(row: dict[str, Any]) -> dict[str, Any]:
+        out = {
+            **_compact(row),
+            "group": row.get("group"),
+            "does": row.get("note") or row["label"],
+            "takes_effect": row.get("apply"),
+        }
+        choices = row.get("choices")
+        if isinstance(choices, list) and choices:
+            out["choices"] = list(choices[:max_choices_shown])
+            if len(choices) > max_choices_shown:
+                out["more_choices"] = len(choices) - max_choices_shown
+        return out
+
+    def _row_matches(row: dict[str, Any], words: list[str]) -> bool:
+        haystack = " ".join(
+            str(row.get(field) or "") for field in ("key", "label", "group", "note")
+        ).lower().replace("_", " ").replace(".", " ")
+        return all(word in haystack for word in words)
+
+    async def _list_settings(args: dict[str, Any], context: Any) -> Any:
+        from ..settings import nearest_settings
+
+        query = str(args.get("query") or "").strip()
+        rows = _settings_rows()
+        if not query:
+            # Compact: every key, label, type and value, and nothing else.
+            # The whole registry has to fit a tool result with room for the
+            # model's answer, and the notes and choice lists are what make it
+            # not fit — a model that wants one setting's meaning asks for it.
+            return {
+                "status": "ok",
+                "count": len(rows),
+                "settings": [_compact(row) for row in rows],
+                "note": (
+                    "Only these settings exist. Call again with `query` for one "
+                    "setting's meaning and allowed values."
+                ),
+            }
+        words = query.lower().replace("_", " ").replace(".", " ").split()
+        matched = [row for row in rows if _row_matches(row, words)]
+        if not matched:
+            nearest = nearest_settings(query)
+            return {
+                "status": "ok",
+                "count": 0,
+                "settings": [],
+                "nearest": nearest,
+                "note": (
+                    f"No setting matches {query!r}; the nearest are "
+                    f"{', '.join(nearest)}. Say so, and offer the real name."
+                ),
+            }
+        return {
+            "status": "ok",
+            "count": len(matched),
+            "settings": [_detailed(row) for row in matched],
+        }
+
+    registry.register(
+        name="list_settings",
+        description=(
+            "The settings a person can change on the console, with each one's "
+            "key, label, type, current value and — with a `query` — what it "
+            "does and the values it accepts. Call this before saying a "
+            "setting does or does not exist; only the keys it returns exist."
+        ),
+        parameters=schema_object(
+            {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "A word to filter by, matched against the key, the "
+                        "label and the description: 'voice', 'model', "
+                        "'temperature'. Omit for the whole list, compact."
+                    ),
+                },
+            }
+        ),
+        handler=_list_settings,
+        tier=TIER_DIRECT,
+        read_only=True,
+    )
+
+    def _resolve_setting_key(asked: Any) -> tuple[Any, str]:
+        """The spec for what the model called the setting, or why not.
+
+        The sentence is the model's next move: an unknown name gets the
+        nearest real keys, an ambiguous one ("model") gets the settings it
+        could mean, and both end with the instruction that fixes it.
+        """
+        from ..settings import matching_settings, nearest_settings
+
+        name = str(asked or "").strip()
+        matches = matching_settings(name)
+        if len(matches) == 1:
+            return matches[0], ""
+        if matches:
+            names = ", ".join(spec.key for spec in matches)
+            return None, (
+                f"{name!r} could be any of {names}. Say which, by its exact key."
+            )
+        nearest = nearest_settings(name)
+        return None, (
+            f"no setting called {name!r}; the nearest are {', '.join(nearest)}. "
+            "Call list_settings to see them, and use the exact key."
+        )
+
+    def _pin_setting(args: dict[str, Any]) -> dict[str, Any]:
+        """Freeze the key, the coerced value and the value it replaces.
+
+        Refuses — `ToolError`, which `call()` returns as the tool's error
+        instead of holding a card — when the key names no setting or the
+        value is one its validator would refuse: a human asked to approve
+        "Change Temperature from 0.7 to 9" is being asked to approve a
+        failure, and the model would learn the refusal only after a denial.
+        """
+        from ..api.common import current_setting_value
+        from ..settings import SettingsError
+
+        spec, complaint = _resolve_setting_key(args.get("key"))
+        if spec is None:
+            raise ToolError(complaint)
+        raw = args.get("value")
+        try:
+            value = spec.validate(raw) if spec.validate else raw
+        except SettingsError as err:
+            raise ToolError(f"{spec.label} ({spec.key}) cannot be {raw!r}: {err}") from err
+        return {
+            "key": spec.key,
+            "value": value,
+            # Read now, so the card says "from" what it really is at the
+            # moment of asking; the handler reads it again when it runs.
+            "previous": current_setting_value(jarvis, spec.key),
+            "label": spec.label,
+        }
+
+    def _shown(value: Any) -> str:
+        """A value as a person reads it: `on`/`off` for a boolean, bare text otherwise."""
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        if value is None or value == "":
+            return "empty"
+        return str(value)
+
+    def _summarise_setting(pinned: dict[str, Any]) -> str:
+        return (
+            f"Change {pinned.get('label') or pinned.get('key')} "
+            f"({pinned.get('key')}) from {_shown(pinned.get('previous'))} "
+            f"to {_shown(pinned.get('value'))}"
+        )
+
+    async def _change_setting(args: dict[str, Any], context: Any) -> Any:
+        from ..api.common import ApiError, async_set_setting
+
+        # The pin has already resolved the key for a held call; resolving
+        # again here is for a caller that reached the handler another way,
+        # and it is the same resolver, so the two cannot disagree.
+        spec, complaint = _resolve_setting_key(args.get("key"))
+        if spec is None:
+            return {"status": "error", "error": complaint}
+        if "value" not in args:
+            return {"status": "error", "error": "change_setting needs a value"}
+        try:
+            # THE write path — the console's `config/settings/set` is this
+            # same function: allowlist, validator, re-merge, live apply, the
+            # audit line and `jarvis_setting_changed`, in that order.
+            result = await async_set_setting(
+                jarvis, {"key": spec.key, "value": args["value"]}, context=context
+            )
+        except ApiError as exc:
+            return {"status": "error", "error": exc.message, "key": spec.key}
+        previous, value = result["previous"], result["value"]
+        sentence = (
+            f"Changed {spec.label} ({spec.key}) from {_shown(previous)} to {_shown(value)}."
+        )
+        if result["restart_required"]:
+            sentence += " It takes effect after a restart."
+        return {
+            "status": "ok",
+            "key": spec.key,
+            "label": spec.label,
+            "previous": previous,
+            "value": value,
+            "applied": result["applied"],
+            "restart_required": result["restart_required"],
+            "summary": sentence,
+        }
+
+    registry.register(
+        name="change_setting",
+        description=(
+            "Change one console setting. Needs the user's approval: the key, "
+            "the new value and the value it replaces are shown to them first. "
+            "Use the exact key from list_settings; a key that is not a setting "
+            "is refused with the nearest real ones."
+        ),
+        parameters=schema_object(
+            {
+                "key": {
+                    "type": "string",
+                    "description": "The setting's key, as list_settings gives it: 'llm.model'.",
+                },
+                "value": {
+                    # No `type`: a number, a boolean or a string depending on the
+                    # setting, and the setting's own validator decides.
+                    "description": "The new value.",
+                },
+            },
+            required=["key", "value"],
+        ),
+        handler=_change_setting,
+        tier=TIER_APPROVAL,
+        pin=_pin_setting,
+        summarise=_summarise_setting,
     )
 
 
