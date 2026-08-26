@@ -27,9 +27,11 @@ import org.json.JSONObject
  * what a parameter means, what is refused — is a pure function beside it,
  * so `ParityActionsTest` proves it on the JVM without a device.
  *
- * Not here, on purpose: the rows that need a permission this app does not
- * yet request (camera, SMS, call log, NFC) or a listener it does not run
- * (now-playing). They stay marked gap until a handset can prove them.
+ * The rows that needed more than a system service — a camera pipeline
+ * (`CameraActions.kt`), the SMS and call-log providers and hanging up
+ * (`TelephonyLogActions.kt`), NFC reader mode (`NfcActions.kt`) — live in
+ * their own files and are listed in [ParityActions.all] with these, so the
+ * registry and the tests see one table.
  */
 
 /** Tier 1 — a line of text on the screen for a moment; nothing changes. */
@@ -514,6 +516,7 @@ object ParityActions {
         ShowToast, SetAutoBrightness, SetRotationLock, SetScreenTimeout,
         GetNetworkInfo, SendIntent, LaunchShortcut, MediaControl,
         MediaNowPlaying, PlayMedia, SetWallpaper, RecordAudio, SetBluetooth,
+        TakePhoto, ScanCode, ReadSms, ReadCallLog, EndCall, NfcRead, NfcWrite,
     )
 
     /** Rows the accessibility agent already closes under other ids. */

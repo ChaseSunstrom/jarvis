@@ -39,10 +39,11 @@ This document is the spine. Each numbered item is a milestone in
   engine with tiers and an audit — reached from the hub as `control_device`;
   as of M61's first stage its voice screens draw the activity strip and the
   knowledge graph from the console's contracts and play a reply as the
-  console does. Fourteen Tasker rows were closed (loops were already there);
-  six stay gap — SMS, the call log, ending a call, NFC, and a camera
-  pipeline for photos and barcodes, which is a dependency decision
-  (`docs/TOOLING_DECISIONS.md`) — and `ui_key` is a no: an accessibility
+  console does. Twenty Tasker rows are closed (loops were already there):
+  the last six — SMS, the call log, ending a call, NFC, and a photo and a
+  barcode — landed with three new Tier-3 grants, a headless Camera2 still and
+  a hand-off to the scanner app for the barcode (no decoder is bundled;
+  `docs/TOOLING_DECISIONS.md` says why). `ui_key` is a no: an accessibility
   service cannot inject keys.
 - The console: five tabs, Reactor II throughout; the voice tab shows the
   graph and the activity strip (M52), the instrument moves for what Jarvis

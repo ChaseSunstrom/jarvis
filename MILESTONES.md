@@ -959,6 +959,11 @@ web and of Tasker. Local only. Each row here is planned in that document.
     tests and holds its goldens here (M08's toolchain under $HOME, which the gate first
     failed to look for): gate 18/19, the one open check being the six gap rows, which
     stay gap until the app asks for those permissions — a product decision, not a build.
+  - 26 Aug, later: the six closed — a headless Camera2 photo, a scan through the
+    scanner app (no decoder is in the build cache; the row says so), the inbox and the
+    call log with three new Tier-3 grants, hanging up, NFC read and write through reader
+    mode on a one-frame Activity — twenty rows done, none gap, `ui_key` the one no.
+    `CameraPhoneNfcActionsTest` proves the arithmetic; ADT-040…046 is what a phone must.
 
 - [x] **M62 — The dashboard, a destination** · size S · deps M48, M55 · parallel-ok M61
   - Scope: the dashboard leaves HOUSE's section strip and becomes the first console tab —

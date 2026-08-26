@@ -87,7 +87,9 @@ the pipeline but not the acoustics of your kitchen.
 The toolchain M08 installs under `$HOME` (a JDK and the SDK) is on this host,
 which CLAUDE.md's "cannot be built here" predates: `./gradlew assembleDebug`
 and `lintDebug` pass with M61's Kotlin, and its JVM tests pass. What still
-needs a handset is ADT-036…038; ADT-039 is the golden re-record.
+needs a handset is ADT-036…038 and, for the last six Tasker rows (a photo, a
+scan, the inbox, the call log, a hang-up, a tag), ADT-040…046; ADT-039 is the
+golden re-record.
 
 ## 4. Accounts and keys for the things that reach the outside world
 

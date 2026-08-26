@@ -85,8 +85,8 @@ possible for a third-party app on modern Android (with the reason).
 
 | Tasker | Jarvis action | tier | permission | test | status |
 |---|---|---|---|---|---|
-| Take photo | `take_photo` | approve | CAMERA | unit | gap |
-| Scan barcode/QR | `scan_code` | direct | CAMERA | unit | gap |
+| Take photo | `take_photo` | approve | CAMERA | unit (`CameraPhoneNfcActionsTest`, M61) | done |
+| Scan barcode/QR | `scan_code` — through the scanner app that answers the ZXing SCAN intent (Binary Eye, QR Scanner); Jarvis bundles no decoder, and answers unsupported, naming an app, when none is installed | direct (untrusted output) | CAMERA (the scanner app's, not Jarvis's) | unit (`CameraPhoneNfcActionsTest`, M61) | done |
 | Play file / music | `play_media` | direct | — | unit (`ParityActionsTest`, M61) | done |
 
 ## Net
@@ -107,10 +107,10 @@ possible for a third-party app on modern Android (with the reason).
 | Dial | `dial` | direct | — | unit | done |
 | Place call | `place_call` | approve | CALL_PHONE | unit | done |
 | Send SMS | `send_sms` | approve | SEND_SMS | unit | done |
-| Read SMS | `read_sms` | approve (untrusted output) | READ_SMS | unit | gap |
+| Read SMS | `read_sms` | approve (untrusted output) | READ_SMS | unit (`CameraPhoneNfcActionsTest`, M61) | done |
 | Read contacts | `read_contacts` | confirm (untrusted output) | READ_CONTACTS | unit | done |
-| Call log | `read_call_log` | approve | READ_CALL_LOG | unit | gap |
-| End call | `end_call` | confirm | ANSWER_PHONE_CALLS | unit | gap |
+| Call log | `read_call_log` | approve (untrusted output) | READ_CALL_LOG | unit (`CameraPhoneNfcActionsTest`, M61) | done |
+| End call | `end_call` | approve — hanging up is done to a person, so it confirms every time, like `dial` | ANSWER_PHONE_CALLS | unit (`CameraPhoneNfcActionsTest`, M61) | done |
 
 ## Settings and system
 
@@ -123,7 +123,7 @@ possible for a third-party app on modern Android (with the reason).
 | Reboot / power off | — | — | — | — | no (root only) |
 | Clipboard get / set | `read_clipboard` / `write_clipboard` | direct / confirm | — (foreground for read on 10+) | unit | done |
 | Share | `share_text` | direct | — | unit | done |
-| NFC tag read / write | `nfc_read` / `nfc_write` | confirm | NFC | unit | gap |
+| NFC tag read / write | `nfc_read` / `nfc_write` — reader mode on a one-frame Activity, one tag or a bounded wait | confirm (read: untrusted output) | NFC (normal) | unit (`CameraPhoneNfcActionsTest`, M61) | done |
 
 ## Files
 
@@ -152,22 +152,46 @@ possible for a third-party app on modern Android (with the reason).
 | Ask the user mid-task | `tasks/AskJarvis.kt`, `CompanionAskActivity` | unit | done |
 | Policy: tiers, kill switch, audit | `policy/*`, `audit/*` | unit | done |
 
-Rows marked **gap** are M61's work list, in this order: media control and
-now-playing (the most-asked), screenshot and lock screen (accessibility, no
-new permission), send_intent and launch_shortcut, take_photo and scan_code,
-network info, Bluetooth, read_sms and call log, NFC, the display settings,
-show_toast, ui_key, loops. Each lands with its tier in the local table, its
-permission asked through the PermissionGateway, a unit test, and a row here
-flipped to **done**.
+M61's work list — media control and now-playing (the most-asked), screenshot
+and lock screen (accessibility, no new permission), send_intent and
+launch_shortcut, take_photo and scan_code, network info, Bluetooth, read_sms
+and call log, NFC, the display settings, show_toast, loops — is done, in that
+order. Each landed with its tier in the local table, its permission asked
+through the PermissionGateway, a unit test, and its row here flipped to
+**done**. No row is **gap**. `ui_key` is the one **no**: an accessibility
+service cannot inject key events; Tasker does it with root or ADB, and Jarvis
+does not.
 
-## What is still a gap, and why
+## What the last six cost, and what only a handset can prove
 
-The rows above still marked **gap** need a permission this app does not yet
-request (SMS, call log, NFC, `ANSWER_PHONE_CALLS`), a camera pipeline it does
-not have (`take_photo`, `scan_code` — CameraX and a barcode decoder are a
-dependency decision, `docs/TOOLING_DECISIONS.md`), or a real handset to prove.
-`ui_key` is marked **no**: an accessibility service cannot inject key events;
-Tasker does it with root or ADB, and Jarvis does not. Each is one action in `ParityActions.kt` and one
-row here; none should be written on a host that cannot compile it (this one —
-CLAUDE.md — has no Android SDK), and M61 stays open until they are and
-`docs/ANDROID_DEVICE_TESTS.md` ADT-039 has run.
+The six that waited for a permission or a camera closed with three new
+permissions — `READ_SMS`, `READ_CALL_LOG`, `ANSWER_PHONE_CALLS`, each Tier 3
+and each asked for at the moment its action runs, after the consent prompt —
+the normal `NFC` permission, two more one-frame Activities, and no new
+dependency:
+
+- `take_photo` is a headless Camera2 still (`CameraActions.kt`): open the
+  lens, let the exposure settle on a few small frames, one JPEG under
+  `jarvis_files`, close — each step on its own clock. No CameraX, no preview;
+  `docs/TOOLING_DECISIONS.md` records why.
+- `scan_code` bundles no decoder. ZXing is not in this host's build cache and
+  a QR decoder written on a machine with no camera would be the one part of
+  the feature nobody could test, so the action hands off to the scanner app
+  the settings screen already uses (Binary Eye, QR Scanner — anything that
+  answers `com.google.zxing.client.android.SCAN`) through `ScanCodeActivity`
+  and reports `unsupported`, naming an app to install, when there is none.
+  The camera permission is the scanner's, not Jarvis's.
+- `nfc_read` / `nfc_write` arm NFC reader mode on `NfcTagActivity` and wait a
+  bounded time for one tag; the NDEF text and URI encodings are written out
+  and unit-tested (`NdefCodec`), not left to the platform.
+- `read_sms` and `read_call_log` are provider queries with a bounded
+  `limit`; every result — like a scanned code and a tag's records — is marked
+  untrusted, because it is somebody else's words.
+- The three actions that end in an Activity run through
+  `ui/ForegroundResultBridge`: a start the platform refuses (the phone in a
+  pocket, the command from the hub) is an error in four seconds naming the
+  cause, never a hang and never a stale notification.
+
+A JVM proves the arithmetic (`CameraPhoneNfcActionsTest`); only a phone can
+prove a photo is upright, a scanner answers, a tag round-trips or a call
+ends — `docs/ANDROID_DEVICE_TESTS.md` ADT-040…046.

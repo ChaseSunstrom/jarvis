@@ -48,6 +48,14 @@ REQUIRED_TIER = {
     "run_shell": "CONFIRM",
     "delete_file": "CONFIRM",
     "kill_app": "CONFIRM",
+    # The last Tasker rows (M61). A camera must never fire quietly, the inbox
+    # and the call log are other people's words, and hanging up is done to a
+    # person — each is pinned here because none lives in CommsActions.kt, so
+    # the file-name check below would not see one of them slipping to Tier 2.
+    "take_photo": "CONFIRM",
+    "read_sms": "CONFIRM",
+    "read_call_log": "CONFIRM",
+    "end_call": "CONFIRM",
     # Tier 2 — "changes device state but is recoverable"
     "set_alarm": "NOTIFY",
     "set_timer": "NOTIFY",
@@ -55,6 +63,9 @@ REQUIRED_TIER = {
     "write_file": "NOTIFY",
     "read_clipboard": "NOTIFY",
     "write_clipboard": "NOTIFY",
+    # A tag is held to the phone by hand, but what is written replaces what
+    # the tag held: asked about at least once.
+    "nfc_write": "NOTIFY",
     "set_ringer_mode": "NOTIFY",
     "toggle_dnd": "NOTIFY",
     "take_screenshot": "NOTIFY",
@@ -216,6 +227,9 @@ def test_the_known_content_sources_are_all_flagged():
         "http_request", "read_file", "read_clipboard", "read_contacts",
         "read_calendar", "run_shell", "list_installed_apps",
         "ui_read_screen", "ui_wait_for", "take_screenshot",
+        # M61: a message body, a cached caller name, a barcode's text and a
+        # tag's records are all written by somebody other than the user.
+        "read_sms", "read_call_log", "scan_code", "nfc_read",
     }
     missing = sorted(e for e in expected if not ACTIONS.get(e, {}).get("untrusted_output"))
     assert not missing, f"untrustedOutput is not set on: {missing}"

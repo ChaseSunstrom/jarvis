@@ -29,8 +29,13 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
   passes its JVM tests here with M08's toolchain (the gate first failed to look for it); what
   waits for a handset is the look and the sound (ADT-036…038) and the goldens (ADT-039). Five more rows followed
   (now-playing, play media, wallpaper, record audio, Bluetooth) and the loops row was already
-  true; six rows stay gap for permissions the app does not request or a camera pipeline, and
-  `ui_key` is a no.
+  true. The last six followed: `take_photo` as a headless Camera2 still, `scan_code` through
+  the scanner app that answers the ZXing intent (no decoder is in the build cache, and the
+  parity row says so), `read_sms` and `read_call_log` behind three new Tier-3 grants
+  (`READ_SMS`, `READ_CALL_LOG`, `ANSWER_PHONE_CALLS`), `end_call`, and `nfc_read` /
+  `nfc_write` through reader mode on a one-frame Activity — every third-party result marked
+  untrusted, the NDEF bytes unit-tested. Twenty rows done, none gap; `ui_key` is the one no.
+  What a phone must still prove is ADT-040…046.
 - **M59 — anything online, locally.** A `watch` integration gives the web time: `watch_page` keeps
   a snapshot and says when a page changes, with what changed; `watch_feed` follows an RSS 2.0 or
   Atom feed (parsed with the standard library) and says what is new; `watch_for` ("tell me when

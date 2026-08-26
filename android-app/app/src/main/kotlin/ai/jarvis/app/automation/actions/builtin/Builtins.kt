@@ -68,6 +68,15 @@ object Builtins {
         add(SetWallpaper)
         add(RecordAudio)
         add(SetBluetooth)
+        // The last six rows (CameraActions.kt, TelephonyLogActions.kt,
+        // NfcActions.kt): a permission the app now asks for, or a camera.
+        add(TakePhoto)
+        add(ScanCode)
+        add(ReadSms)
+        add(ReadCallLog)
+        add(EndCall)
+        add(NfcRead)
+        add(NfcWrite)
 
         // Comms
         add(SendSms)

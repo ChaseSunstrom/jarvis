@@ -396,28 +396,35 @@ The prompt side is M60's: the prefix is kept on the server between turns
 `PROMPT_TOKEN_BUDGET`; and the first sentence is synthesised while the model
 writes the rest. Re-measured by the live rig, never by editing a threshold.
 
-## A camera pipeline on the phone: CameraX and a barcode decoder (M61, open)
+## A camera pipeline on the phone: Camera2 headless, and no barcode decoder (M61)
 
-**Not adopted, and the reason is written down.** Two Tasker rows are left
-open on the phone that need more than an action object: `take_photo` and
-`scan_code`. The permission is already requested (`CAMERA`), but a photo
-that Jarvis can hand to the vision integration needs a capture pipeline —
-CameraX (Apache-2.0, ~1 MB, a lifecycle-bound preview or a headless
-`ImageCapture` bound to a `ProcessLifecycleOwner`) — and a barcode needs a
-decoder: ML Kit's barcode scanning is Google-bundled (not on GrapheneOS
-without Play services), ZXing (Apache-2.0, pure Java, ~500 kB) is the local
-answer. The system camera app via `ACTION_IMAGE_CAPTURE` is the zero-
-dependency route for a photo but returns through an Activity result, which
-an action dispatched from the hub does not have.
+**Decided, with no dependency.** The two Tasker rows that needed more than an
+action object are closed on the platform APIs alone.
 
-**Decision, provisional:** CameraX headless for `take_photo` and ZXing for
-`scan_code`, not adopted until a handset has been pointed at a barcode (the
-build itself runs here with M08's toolchain). **Rejected:** ML Kit (Google-
-bundled, absent on GrapheneOS), the system camera intent (an Activity result
-an action from the hub does not have). Recommendation when both exist: CameraX
-`ImageCapture` headless for `take_photo` (Tier 3, asks every time, the frame
-goes to `look_at_camera`'s consent and fence), ZXing for `scan_code` (Tier 1,
-the decoded text is untrusted content). No Google dependency.
+`take_photo` is a headless Camera2 still (`CameraActions.kt`): open the chosen
+lens, let the 3A settle on a few small YUV frames, capture one JPEG under
+`jarvis_files`, close — each step on its own clock, so a camera that never
+answers is a sentence in seconds. CameraX (Apache-2.0, ~1 MB) would have bought
+a lifecycle-bound `ImageCapture` and a `ProcessLifecycleOwner` to bind it to,
+for the same still; the platform does it in one file, and the arithmetic that
+chooses the lens, the size, the orientation and the moment to capture is
+unit-tested where CameraX's would be opaque. Tier 3, asks every time.
+**Rejected:** CameraX (a dependency for one still), the system camera intent
+(an Activity result and a preview nobody asked for).
+
+`scan_code` bundles no decoder. ZXing (Apache-2.0, pure Java, ~500 kB) was the
+provisional answer; it is not in this host's Gradle cache and a build here
+cannot fetch it, and a QR decoder written from scratch on a machine with no
+camera would be the one part of the feature nobody could test. So the action
+hands off to the scanner app the settings screen already uses for the pairing
+token (Binary Eye, QR Scanner — anything answering
+`com.google.zxing.client.android.SCAN`) through a one-frame Activity
+(`ScanCodeActivity`, `ui/ForegroundResultBridge`), and reports `unsupported`
+naming an app to install when there is none. The decoded text is untrusted.
+**Rejected:** ML Kit (Google-bundled, absent on GrapheneOS), a hand-rolled
+decoder (untestable here). **Revisit** once a handset can be pointed at a
+barcode: ZXing core, vendored, would remove the scanner-app requirement — the
+action's shape (`ScanCode.resultOf`) does not change.
 
 ## How a decision here gets overturned
 

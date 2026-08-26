@@ -353,8 +353,9 @@ registry.producesUntrustedOutput("http_request")   // true
 
 and the same flag appears in the manifest as `untrusted_output`. It is true for
 `http_request`, `read_file`, `read_clipboard`, `read_contacts`, `read_calendar`,
-`run_shell`, `list_installed_apps`, `ui_read_screen`, `ui_wait_for` and
-`take_screenshot`; an id the registry has never heard of answers `true`.
+`run_shell`, `list_installed_apps`, `ui_read_screen`, `ui_wait_for`,
+`take_screenshot`, and since M61 `read_sms`, `read_call_log`, `scan_code` and
+`nfc_read`; an id the registry has never heard of answers `true`.
 
 **The task runner must taint a `store_as` variable when the action that filled
 it has this flag**, so a later step interpolating that variable dispatches
@@ -514,3 +515,19 @@ touch is free of Android imports.
 | `set_wallpaper` | 2 | `path` (under jarvis_files), `which` home/lock/both | SET_WALLPAPER (normal) | — |
 | `record_audio` | 3 | `seconds` 1–300, `path` | RECORD_AUDIO | asks every time; writes m4a under jarvis_files |
 | `set_bluetooth` | 2 | `on` | BLUETOOTH_CONNECT | direct on Android ≤ 12L; the system's own panel on 13+ |
+| `take_photo` | 3 | `facing` back/front, `path` (under jarvis_files), `max_edge` 320–4096 | CAMERA | a headless Camera2 still (`CameraActions.kt`): the exposure settles on a few small frames, one JPEG, no preview, no CameraX. Asks every time. `read_file` with `base64` reads it back |
+| `scan_code` | 1 | `format` any/qr/product/1d, `timeout_s` 5–120 | — (the scanner app's camera) | Jarvis bundles no decoder: the scanner app that answers `com.google.zxing.client.android.SCAN` (Binary Eye, QR Scanner) is opened through a one-frame Activity and its answer returned. No such app ⇒ `unsupported`, naming one to install. The text is marked `untrusted` |
+| `read_sms` | 3 | `limit` 1–50, `box` inbox/sent/all, `from`, `since` | READ_SMS | newest first; a message body is anyone's words, so the result is marked `untrusted` and asked about every time |
+| `read_call_log` | 3 | `limit` 1–50, `type` all/incoming/outgoing/missed/rejected/blocked/voicemail, `since` | READ_CALL_LOG | newest first; the cached name is whatever the contact or carrier supplied — marked `untrusted` |
+| `end_call` | 3 | — | ANSWER_PHONE_CALLS | `TelecomManager.endCall`; hanging up is done to a person, so it confirms like `dial`. "there is no call to end" when there is none |
+| `nfc_read` | 2 | `timeout_s` 5–120 | NFC (normal) | reader mode on a one-frame Activity (`NfcTagActivity`), one tag or the clock; id, technologies, NDEF text and URI records — marked `untrusted` |
+| `nfc_write` | 2 | `text` or `uri`, `timeout_s` 5–120 | NFC (normal) | one NDEF record, replacing the tag's content; formats a blank tag; refuses a read-only or too-small one by name |
+
+`scan_code`, `nfc_read` and `nfc_write` end in an Activity rather than a
+system service, and every command arrives in a Service — so each runs through
+`ui/ForegroundResultBridge`, the `PermissionBridge` shape a third time: a
+one-frame Activity is started, the action suspends until it reports, and a
+start the platform drops (Android refuses background activity starts, and
+refuses them silently) is an error in four seconds naming the cause rather
+than a hang. There is deliberately no notification fallback: "scan this now"
+tapped an hour later would open a camera nobody is pointing at anything.

@@ -30,12 +30,15 @@ import org.junit.Test
 class ParityActionsTest {
 
     @Test
-    fun `the eight rows M61 closed are these, in the table's order`() {
+    fun `the twenty rows M61 closed are these, in the table's order`() {
         assertEquals(
             listOf(
                 "show_toast", "set_auto_brightness", "set_rotation_lock", "set_screen_timeout",
                 "get_network_info", "send_intent", "launch_shortcut", "media_control",
                 "media_now_playing", "play_media", "set_wallpaper", "record_audio", "set_bluetooth",
+                // The last six rows: a camera, the two providers, hanging up, NFC
+                // (CameraPhoneNfcActionsTest has their arithmetic).
+                "take_photo", "scan_code", "read_sms", "read_call_log", "end_call", "nfc_read", "nfc_write",
             ),
             ParityActions.all.map { it.id },
         )

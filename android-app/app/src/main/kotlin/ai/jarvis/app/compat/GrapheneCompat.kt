@@ -540,9 +540,10 @@ object GrapheneCompat {
         Requirement(
             id = ID_PEOPLE,
             label = "Contacts, messages & calls",
-            why = "Texting or calling somebody by name. Without contacts, \"text " +
-                "Sam\" cannot become a number; without SMS and phone, the send " +
-                "and the call fail after you have already approved them.",
+            why = "Texting or calling somebody by name, reading your messages and " +
+                "the call log, hanging up. Without contacts, \"text Sam\" cannot " +
+                "become a number; without SMS and phone, the send, the read and " +
+                "the call fail after you have already approved them.",
             satisfied = status.people,
             essential = false,
             settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
