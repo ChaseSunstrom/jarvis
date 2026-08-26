@@ -517,8 +517,10 @@ class AiomqttClient(MqttClientBase):
         short_sessions = 0
         while not self._closing:
             started = _now()
+            connected_here = False
             try:
                 async with self._build_client() as client:
+                    connected_here = True
                     self._client = client
                     self.connected = True
                     for topic in list(self._broker_subs):
@@ -538,7 +540,7 @@ class AiomqttClient(MqttClientBase):
                         )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as err:
                 if self._closing:
                     return
                 lived = _now() - started
@@ -551,8 +553,16 @@ class AiomqttClient(MqttClientBase):
                     # counted as a first failure and printed twenty frames.
                     failures, short_sessions, delay = 0, 0, 1.0
                 failures += 1
-                short_sessions = short_sessions + 1 if lived < SHORT_SESSION else 0
-                if failures == 1:
+                # Only a session that CONNECTED and then died young is evidence
+                # of a collision. A refusal is a short session too — it lasts
+                # a millisecond — and three of them in a row is what a broker
+                # still booting looks like from a core that started first:
+                # the live rig read that as "another Jarvis is evicting this
+                # one" (an ERROR, with a traceback) on every stack start.
+                short_sessions = (
+                    short_sessions + 1 if connected_here and lived < SHORT_SESSION else 0
+                )
+                if failures == 1 and connected_here:
                     # The first one gets the traceback. The hundredth does not:
                     # a broker that goes away for an hour produced a
                     # twenty-frame trace every second, which is how a log stops
@@ -560,6 +570,12 @@ class AiomqttClient(MqttClientBase):
                     _LOGGER.warning(
                         "MQTT connection lost (%s:%s); retrying in %.0fs",
                         self.broker, self.port, delay, exc_info=True,
+                    )
+                elif failures == 1:
+                    # Never connected: the reason is the one line, not a stack.
+                    _LOGGER.warning(
+                        "MQTT broker not reachable (%s:%s): %s; retrying in %.0fs",
+                        self.broker, self.port, err, delay,
                     )
                 else:
                     _LOGGER.warning(

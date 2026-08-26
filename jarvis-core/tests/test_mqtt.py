@@ -1445,3 +1445,54 @@ async def test_repeated_short_sessions_say_the_thing_the_tracebacks_never_do(cap
     assert text.count("Traceback (most recent call last)") == 1, text
     # And it did back off rather than spinning.
     assert sleeps and sleeps[0] == 1.0
+
+
+async def test_a_broker_still_booting_is_not_called_a_collision(caplog):
+    """Three refusals in a row are a broker that is not up yet, not two Jarvises.
+
+    A refusal is a short session too — it lasts a millisecond — and the
+    collision heuristic counted it. On every `docker compose up` the core, which
+    starts first, was refused by mosquitto three times and logged an ERROR with
+    a traceback saying another Jarvis was evicting it; the live rig's
+    stack-logs-clean check failed on it each time.
+    """
+    import logging
+
+    from jarvis.integrations.mqtt import client as client_module
+
+    class _Refused:
+        async def __aenter__(self):
+            raise ConnectionRefusedError("[Errno 111] Connection refused")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    mqtt = client_module.AiomqttClient(broker="127.0.0.1", port=1883, client_id="jarvis")
+    cycles = 0
+
+    def _build():
+        nonlocal cycles
+        cycles += 1
+        if cycles > client_module.COLLISION_SESSIONS + 1:
+            mqtt._closing = True
+        return _Refused()
+
+    mqtt._build_client = _build  # type: ignore[method-assign]
+
+    async def _no_sleep(seconds):
+        return None
+
+    caplog.set_level(logging.WARNING)
+    original = client_module.asyncio.sleep
+    client_module.asyncio.sleep = _no_sleep  # type: ignore[assignment]
+    try:
+        await mqtt._runner()
+    finally:
+        client_module.asyncio.sleep = original  # type: ignore[assignment]
+
+    text = caplog.text
+    assert "in use by another Jarvis" not in text, text
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], text
+    assert "Traceback" not in text, "a refusal is one line, not a stack"
+    assert "not reachable" in text and "Connection refused" in text, text
+    assert text.count("not reachable") == 1, "the reason is said once; the retries say the count"
