@@ -502,6 +502,23 @@ notes:
 notifications:
   max_entries: 200        # oldest READ entries go first; unread ones are kept
 
+# Any sensor, the HTTP door (M57): POST /api/sensor/<id> with a value and the
+# sensor exists — an ESP32 with nothing but a URL. Never loaded before this
+# block: the integration shipped in M08 and the deployed file had no key for
+# it, so the door was painted on. MQTT discovery does not need this block.
+sensors:
+  allow_auto_register: true
+  expire_after: 0
+  sensors: []
+
+# The sky (M58): the next ISS pass for the house, what is overhead now, the
+# moon's phase, the planets tonight — computed here with skyfield. Orbital
+# elements come from CelesTrak as OMM CSV, cached under sky/tle and refreshed
+# when older than a day; the 17 MB ephemeris is downloaded once into sky/.
+# After that it answers offline for as long as the elements are worth
+# anything (about two weeks), and every answer says how old they are. The
+# location is `jarvis:` above. Switched on here, not only in the harness's
+# generated config, for the reason the notes and notifications blocks give.
 # Vision through cameras (M56). Looks go to a vision model on the same model
 # server as the chat model, on the OpenAI wire (a GGUF VLM llama-swap serves —
 # `house-vision` is the alias to give it; until one is loaded the MODELS panel
@@ -1248,6 +1265,17 @@ orchestrator:
 mqtt:
   broker: 127.0.0.1
   port: 1883
+  # Any sensor (M57). Readings arrive in one unit per device class (a US
+  # weather station's °F and inHg become °C and hPa at the door); the
+  # discovery birth is also published on homeassistant/status, which is
+  # what Zigbee2MQTT, Z-Wave JS UI, ESPHome and Theengs listen for; and the
+  # allow/deny lists are glob patterns on a discovered unique_id or device
+  # identifier — an RTL-SDR hears the whole street's tyre sensors, and a
+  # house should not. Empty allow = everything; deny wins.
+  canonical_units: true
+  discovery_birth: true
+  discovery_allow_ids: []
+  discovery_deny_ids: []
   # Anonymous by default. With a broker that requires credentials:
   #   username: jarvis
   #   password: !secret mqtt_password

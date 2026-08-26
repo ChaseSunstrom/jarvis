@@ -2264,6 +2264,15 @@ index 1234567..89abcde 100644
 					broadcast('state_changed', { entity_id: entityId, old_state: prior, new_state: updated });
 					break;
 				}
+				case 'jarvis/test/button_press': {
+					// A button pressed, as the MQTT `event` entity fires it (M57): the
+					// strip draws one row per press, so two presses are two rows.
+					const entityId = String(msg.entity_id || 'event.hall_remote_action');
+					const eventType = String(msg.event_type || 'on');
+					ok(msg.id, { entity_id: entityId, event_type: eventType });
+					broadcast('jarvis_mqtt_event', { entity_id: entityId, event_type: eventType, attributes: {}, at: Date.now() / 1000 });
+					break;
+				}
 				case 'jarvis/test/camera_look': {
 					// A look at a camera, as the vision integration fires it: started,
 					// then finished (or denied) — the record's fields, no frame.

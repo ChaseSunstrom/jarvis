@@ -8,6 +8,21 @@ not diff: what a user or operator can now do, or can no longer be bitten by.
 ## Unreleased
 
 ### Changed
+- **M57 — any sensor.** MQTT discovery now takes every component Home Assistant has: a button
+  press or a doorbell arriving as `event` is an entity and a bus event (`jarvis_mqtt_event`) on
+  every press, a phone or a tag is a `device_tracker`. The birth is also said on
+  `<discovery_prefix>/status`, where Zigbee2MQTT, Z-Wave JS UI, ESPHome and Theengs listen, so
+  the house is re-announced after a restart. `discovery_allow_ids` / `discovery_deny_ids` are
+  glob patterns on a discovered id — an RTL-SDR hears the whole street's tyre sensors; deny wins.
+  Readings arrive in one unit per device class (`canonical_units`: °F → °C, inHg → hPa, Wh →
+  kWh at ingest). Tasmota's own discovery and Shelly Gen2's status are translated into the same
+  entities — relays with their command topics, ENERGY and power blocks as sensors with classes
+  and units — since neither speaks the HA format. Four read-only tools let the model answer a
+  question about a reading instead of guessing: `sensor_readings`, `sensor_compare`,
+  `sensor_history`, `sensor_summary`, each with a spoken line. Fixtures from six real devices
+  drive the tests; four malicious templates render nothing. Switched on in the deployed config.
+  The rig can be the device (`do: mqtt_publish:`) and `sensors-discovered` announces a garage
+  thermometer, asks, and retracts it.
 - **M56 — cameras and local vision.** The `vision` integration speaks the OpenAI wire: a look is
   one `/v1/chat/completions` call with the frame as a base64 `image_url` part, to the same model
   server as the chat model (a GGUF vision model behind llama-swap and the gateway; `house-vision`

@@ -1,0 +1,22 @@
+{
+  "source": "ESPHome 2026.8 over MQTT — BME280 on a d1_mini, `discovery: true`",
+  "topic": "homeassistant/sensor/study-node/temperature/config",
+  "payload": {
+    "dev_cla": "temperature",
+    "unit_of_meas": "°F",
+    "stat_cla": "measurement",
+    "name": "Study Temperature",
+    "stat_t": "study-node/sensor/study_temperature/state",
+    "avty_t": "study-node/status",
+    "uniq_id": "ESPsensorstudy_temperature",
+    "dev": {
+      "ids": "84cca8b2c1d0",
+      "name": "study-node",
+      "sw": "esphome v2026.8.1",
+      "mdl": "d1_mini",
+      "mf": "espressif"
+    }
+  },
+  "state_topic": "study-node/sensor/study_temperature/state",
+  "state": "68.9"
+}

@@ -1,4 +1,4 @@
-"""MQTT integration: broker connection, YAML entities, HA-style discovery.
+"""MQTT integration: broker connection, YAML entities, HA-style discovery, and two translators.
 
     mqtt:
       broker: 127.0.0.1
@@ -22,6 +22,14 @@
           unit_of_measurement: "C"
           device_class: temperature
 
+Tasmota does not publish HA-format discovery any more (it was removed in
+2023); its own ``tasmota/discovery/<mac>/config`` and Shelly Gen2's
+``<id>/status/switch:<n>`` are translated by :mod:`.translators` into the same
+entities. ``canonical_units`` (default on) converts a reading to one unit per
+device class at ingest; ``discovery_allow_ids`` / ``discovery_deny_ids`` are
+glob patterns on a discovered id; ``discovery_birth`` says "online" on
+``<prefix>/status`` so the bridges re-announce.
+
 The live client is stored at ``jarvis.data["mqtt"]``; integration bookkeeping
 (platforms, discovery) lives at ``jarvis.data["mqtt_data"]``.
 
@@ -34,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -210,6 +219,71 @@ async def _async_setup_yaml_entities(
     return created
 
 
+async def _start_translators(
+    client: MqttClientBase, discovery: MqttDiscovery, config: dict[str, Any]
+) -> None:
+    """Tasmota's own discovery and Shelly Gen2's status, as discovered entities.
+
+    Neither speaks the Home Assistant protocol (Tasmota removed it in 2023;
+    Shelly never had it), so their messages are translated into the same
+    (component, id, config) triples the discovery layer already turns into
+    entities — allowlist, units and device grouping included. Off with
+    `mqtt: translators: false`.
+    """
+    if not config.get("translators", True):
+        return
+    from . import translators
+
+    tasmota_configs: dict[str, Any] = {}
+
+    async def _apply(triples: list[tuple[str, str, dict[str, Any]]]) -> None:
+        for component, discovery_id, cfg in triples:
+            try:
+                await discovery._async_apply(discovery_id, component, cfg)
+            except Exception:  # noqa: BLE001 - one bad device must not stop the rest
+                _LOGGER.exception("mqtt: could not apply translated config %s", discovery_id)
+
+    async def _tasmota_config(message: MqttMessage) -> None:
+        parts = message.topic.split("/")
+        mac = parts[2] if len(parts) >= 4 else ""
+        payload = translators._json(message.payload)
+        if not isinstance(payload, dict):
+            return
+        tasmota_configs[mac] = payload
+        await _apply(translators.tasmota_configs(mac, payload))
+
+    async def _tasmota_sensors(message: MqttMessage) -> None:
+        parts = message.topic.split("/")
+        mac = parts[2] if len(parts) >= 4 else ""
+        cfg = tasmota_configs.get(mac)
+        if cfg is None:
+            return  # the config announces the topic; without it the sensors have no home
+        await _apply(translators.tasmota_sensor_configs(mac, cfg, translators._json(message.payload)))
+
+    async def _shelly_status(message: MqttMessage) -> None:
+        parts = message.topic.split("/")
+        if len(parts) != 3 or parts[1] != "status" or not parts[0].lower().startswith("shelly"):
+            return
+        if not re.fullmatch(r"(switch|light|cover):\d+", parts[2]):
+            return
+        await _apply(translators.shelly_configs(parts[0], parts[2], message.payload))
+
+    await client.async_subscribe("tasmota/discovery/+/config", _tasmota_config)
+    await client.async_subscribe("tasmota/discovery/+/sensors", _tasmota_sensors)
+    # `+` only stands for a whole level in MQTT — `switch:+` is not a
+    # wildcard, and a broker rejects it — so the filter subscribes one level
+    # wider and the handler keeps only `<shelly-id>/status/<kind>:<n>`.
+    await client.async_subscribe("+/status/#", _shelly_status)
+
+
+def _as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(v) for v in value]
+
+
 def _birth_message(config: dict[str, Any]) -> dict[str, Any] | None:
     message = config.get("birth_message")
     if isinstance(message, dict) and message.get("topic"):
@@ -332,17 +406,35 @@ async def async_setup(jarvis: "Jarvis", config: Any) -> bool:
 
     data.yaml_entities = await _async_setup_yaml_entities(config, client, platforms)
 
+    # One unit per device class at ingest (°F → °C, Wh → kWh). A module
+    # switch rather than per-entity config: the entity classes are built
+    # from discovery payloads that never mention it.
+    from . import entity as _entity
+
+    _entity.CANONICAL_UNITS = bool(config.get("canonical_units", True))
+
     if config.get("discovery", True):
         prefix = str(config.get("discovery_prefix") or DEFAULT_DISCOVERY_PREFIX)
-        discovery = MqttDiscovery(jarvis, client, platforms, prefix)
+        discovery = MqttDiscovery(
+            jarvis, client, platforms, prefix,
+            allow_ids=tuple(_as_list(config.get("discovery_allow_ids"))),
+            deny_ids=tuple(_as_list(config.get("discovery_deny_ids"))),
+        )
         data.discovery = discovery
         await discovery.async_start()
+        await _start_translators(client, discovery, config)
 
     birth = _birth_message(config)
     if birth:
         await client.async_publish(
             birth["topic"], birth["payload"], birth["retain"], birth["qos"]
         )
+    # The birth Zigbee2MQTT, Z-Wave JS UI, ESPHome and Theengs listen for is
+    # `<discovery_prefix>/status` — they re-announce every entity when it
+    # says "online", which is how a house comes back after a restart. Our own
+    # topic above is for our own dashboards; this one is for theirs.
+    if data.discovery is not None and config.get("discovery_birth", True):
+        await client.async_publish(f"{data.discovery.prefix}/status", DEFAULT_BIRTH_PAYLOAD, False, 0)
 
     async def _shutdown() -> None:
         will = config.get("will_message") or (

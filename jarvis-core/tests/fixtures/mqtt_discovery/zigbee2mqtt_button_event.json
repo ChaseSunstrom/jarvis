@@ -1,0 +1,31 @@
+{
+  "source": "Zigbee2MQTT 2.x — IKEA Rodret remote, button presses published as `event`",
+  "topic": "homeassistant/event/0x84fd27fffe1a2b3c/action/config",
+  "payload": {
+    "name": "Action",
+    "uniq_id": "0x84fd27fffe1a2b3c_action_zigbee2mqtt",
+    "stat_t": "zigbee2mqtt/Hall remote",
+    "val_tpl": "{{ {'event_type': value_json.action} | to_json if value_json.action else None }}",
+    "evt_typ": [
+      "on",
+      "off",
+      "brightness_move_up",
+      "brightness_move_down",
+      "brightness_stop"
+    ],
+    "dev": {
+      "ids": [
+        "zigbee2mqtt_0x84fd27fffe1a2b3c"
+      ],
+      "name": "Hall remote",
+      "mf": "IKEA",
+      "mdl": "RODRET"
+    }
+  },
+  "state_topic": "zigbee2mqtt/Hall remote",
+  "state": {
+    "action": "on",
+    "battery": 100,
+    "linkquality": 90
+  }
+}

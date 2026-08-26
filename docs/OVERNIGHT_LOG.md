@@ -363,3 +363,11 @@ is quiet. Done since:
   fixture camera, `vision:` switched on in the deployed config with no
   cameras yet. Both vision suites green (116). Gate running; the live check
   needs a vision model on the model server, which serves none today.
+- 09:55 — M56 committed (`7a8ec3f`), not ticked: gate 27/28, the open check is
+  the live look through a served VLM (`VISION_MODEL`); the server serves none.
+  M57 built: event/device_tracker components, the birth on the discovery
+  prefix, allow/deny ids, canonical units, Tasmota and Shelly translated,
+  four sensor tools, six device fixtures, the strip draws a button press.
+  Gate 19/19; live against the stack 9/9 — the history question reached for
+  `sensor_history` and answered "11.0 °C, Sir — it has since crept back up
+  to 12.5." Ticked and committed next.

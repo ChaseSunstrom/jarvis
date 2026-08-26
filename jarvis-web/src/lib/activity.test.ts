@@ -55,6 +55,15 @@ describe('activityFrom', () => {
 		expect(denied).toMatchObject({ state: 'failed', detail: 'consent: never' });
 	});
 
+	it('a button press is a row every time, and a press entity is a sensor row', () => {
+		let rows = applyActivity([], ev('jarvis_mqtt_event', { entity_id: 'event.hall_remote_action', event_type: 'on', at: 1 }), at);
+		rows = applyActivity(rows, ev('jarvis_mqtt_event', { entity_id: 'event.hall_remote_action', event_type: 'on', at: 2 }), at);
+		expect(rows).toHaveLength(2);
+		expect(rows[0]).toMatchObject({ kind: 'sensor', title: 'hall remote action', detail: 'pressed · on', state: 'done' });
+		const tracker = activityFrom(ev('state_changed', { entity_id: 'device_tracker.phone', new_state: { state: 'home', attributes: { friendly_name: 'Phone' } } }), at);
+		expect(tracker).toMatchObject({ kind: 'sensor', title: 'Phone' });
+	});
+
 	it('memory, moments and approvals are rows; unrelated events are not', () => {
 		expect(activityFrom(ev('memory_changed', { action: 'forgotten', entry: { id: 'm1', text: 'The shed key is under the flowerpot.' } }), at)).toMatchObject({ kind: 'memory', title: 'forgotten' });
 		expect(activityFrom(ev('jarvis_notification', { notification: { id: 'n1', title: 'Check the oven', kind: 'reminder' } }), at)).toMatchObject({ kind: 'moment', title: 'Check the oven', detail: 'reminder' });

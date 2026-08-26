@@ -706,6 +706,22 @@ person-shaped probe asks; what the suite found, written up.
 | Jarvis describes the kitchen camera on the fixture ground | Live | `VISION_MODEL=<served vlm> python3 -m testing.live.runner --full --only vision-look-fixture` — needs a vision model on the model server (none is loaded today) |
 | A real camera in this house | **Manual** | none configured; `vision: cameras:` in configuration.yaml names them |
 
+### Any sensor (M57)
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `event` and `device_tracker` discovery components become entities; a button press is a bus event every time | Automated | `jarvis-core/tests/test_mqtt_sensors.py` (a Zigbee2MQTT button pressed twice → two `jarvis_mqtt_event`s) |
+| The discovery birth is published on `<prefix>/status`; `discovery_birth: false` keeps quiet | Automated | `test_mqtt_sensors.py` |
+| `discovery_allow_ids` / `discovery_deny_ids` keep a neighbour's rtl_433 TPMS out; deny wins | Automated | `test_mqtt_sensors.py` against `tests/fixtures/mqtt_discovery/rtl433_bresser.json` |
+| Readings are one unit per device class at ingest (°F → °C, Wh → kWh); `canonical_units: false` passes them through | Automated | `test_mqtt_sensors.py` (ESPHome °F fixture, Shelly Wh) |
+| Tasmota's own discovery and Shelly Gen2 status become switches with command topics and sensors with classes and units | Automated | `test_mqtt_sensors.py` end to end through the fake client: `cmnd/<t>/POWER` gets `OFF`, `<id>/command/switch:0` gets `off` |
+| A malicious value template renders nothing | Automated | `test_mqtt_sensors.py` (four templates through the sandbox and one through a discovered sensor) |
+| The model has `sensor_readings`, `sensor_compare`, `sensor_history`, `sensor_summary`, read-only, tier direct | Automated | `test_mqtt_sensors.py` |
+| The six fixtures name their source | Automated | the gate counts them; each carries a `source` line (Zigbee2MQTT 2.13, ESPHome 2026.8, rtl_433 25.12, Tasmota 14, Shelly 1.4) |
+| The rig can be the device: `do: mqtt_publish:` to the stack's broker | Automated | `testing/live/tests/test_rig.py`; `sensors-discovered` parses and publishes |
+| A device announced over discovery is answered about a moment later, with its reading and unit; the lowest over the last hour reaches for `sensor_history` | Containerised | `LIVE_CAPABILITY=sensors bash scripts/verify/live_interaction.sh --full` against the running stack, 26 Aug 09:52: LIVE 9/9, `sensors-discovered` 2/2 spoken turns — "What's the temperature in the garage?" → "12.5 °C, Sir — cool enough to keep the tools honest." (no tool: the reading was in the house state, routed `answer`, not scored); "What's the lowest the garage has been in the last hour?" → `sensor_history` → "11.0 °C, Sir — it has since crept back up to 12.5." routed `sensors`. The device retracted afterwards with an empty retained config |
+| The keys are switched on in the deployed config and every one is read by code | Automated | `test_packaging.py::test_no_shipped_option_is_silently_ignored`; the gate |
+
 ### The sky (M58)
 
 `bash scripts/verify/m58-sky.sh`. Green on unit tests alone, by design: everything below

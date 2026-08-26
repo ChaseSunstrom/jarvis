@@ -316,10 +316,33 @@ mqtt:
   will_topic: jarvis/status
 ```
 
-`discovery: true` is the important line. Zigbee2MQTT, Tasmota, ESPHome, Shelly
-and Zwave-JS-UI all publish Home Assistant-format discovery messages under
-`homeassistant/#`, and Jarvis parses that format — so those devices appear on
-their own, with names, device grouping and areas intact.
+`discovery: true` is the important line. Zigbee2MQTT, ESPHome, Z-Wave JS UI,
+rtl_433 and Theengs publish Home Assistant-format discovery messages under
+`homeassistant/#`, and Jarvis parses that format — single configs and device
+bundles, every component Home Assistant has including `event` (a button press,
+a doorbell — also fired on the bus as `jarvis_mqtt_event`) and
+`device_tracker` — so those devices appear on their own, with names, device
+grouping and areas intact. Two devices speak their own dialect and are
+translated into the same entities: Tasmota (its own
+`tasmota/discovery/<mac>/{config,sensors}` — Tasmota dropped the HA format in
+2023) and Shelly Gen2 (`<id>/status/switch:<n>`, no discovery at all).
+`translators: false` switches that off.
+
+Four more keys, all optional (M57):
+
+```yaml
+mqtt:
+  canonical_units: true          # °F → °C, inHg → hPa, Wh → kWh at ingest; one unit per device class
+  discovery_birth: true          # also say "online" on <discovery_prefix>/status, so the bridges re-announce
+  discovery_allow_ids: []        # glob patterns on unique_id / device identifiers; empty = everything
+  discovery_deny_ids: ["Schrader-*", "*TPMS*"]   # deny wins — an RTL-SDR hears the whole street
+```
+
+The sensors integration (`sensors:`) gives the model four read-only tools over
+whatever these produce: `sensor_readings` (filter by area, device class or a
+word), `sensor_compare` (coldest / warmest / most power across rooms),
+`sensor_history` (min / max / mean over `24h`, `7d`, `30m` — needs `history:`)
+and `sensor_summary`.
 
 Devices that do not self-announce get declared by hand. Every component block
 takes a list:

@@ -42,7 +42,7 @@ export interface ActivityRow {
 export const ACTIVITY_CAP = 12;
 
 /** Domains whose state changes are readings worth a row, not chatter. */
-const SENSOR_DOMAINS = new Set(['sensor', 'binary_sensor', 'climate', 'weather', 'number']);
+const SENSOR_DOMAINS = new Set(['sensor', 'binary_sensor', 'climate', 'weather', 'number', 'event', 'device_tracker']);
 
 function friendly(state: Record<string, unknown> | undefined, entityId: string): string {
 	const attrs = (state?.attributes ?? {}) as Record<string, unknown>;
@@ -126,6 +126,21 @@ export function activityFrom(event: BusEvent, now: () => number = Date.now): Act
 				kind: 'sensor',
 				title: friendly(next, entityId),
 				detail: reading(next),
+				state: 'done',
+				at
+			};
+		}
+		case 'jarvis_mqtt_event': {
+			// A button press (M57): the same button pressed twice is two rows,
+			// which is why the id carries the time — a state row would collapse
+			// them into one and the second press would look like nothing.
+			const entityId = String(data.entity_id ?? '');
+			const pressed = String(data.event_type ?? '');
+			return {
+				id: `press:${entityId}:${String(data.at ?? at)}`,
+				kind: 'sensor',
+				title: entityId.split('.').slice(1).join('.').replace(/_/g, ' ') || entityId,
+				detail: pressed ? `pressed · ${pressed}` : 'pressed',
 				state: 'done',
 				at
 			};
@@ -219,6 +234,7 @@ export const ACTIVITY_EVENTS = [
 	'jarvis_task_added',
 	'jarvis_task_updated',
 	'state_changed',
+	'jarvis_mqtt_event',
 	'vision_look_started',
 	'vision_look_finished',
 	'vision_look_denied',

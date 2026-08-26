@@ -17,6 +17,7 @@
     "jarvis_task_added": "task",
     "jarvis_task_updated": "task",
     "state_changed": "sensor",
+    "jarvis_mqtt_event": "sensor",
     "vision_look_started": "camera",
     "vision_look_finished": "camera",
     "vision_look_denied": "camera",
@@ -30,7 +31,9 @@
     "binary_sensor",
     "climate",
     "weather",
-    "number"
+    "number",
+    "event",
+    "device_tracker"
   ],
   "states": [
     "live",

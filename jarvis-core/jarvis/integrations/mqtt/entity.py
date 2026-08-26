@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -518,6 +519,43 @@ class MqttEntity(Entity):
         self._bump_expiry()
 
 
+#: One unit per device class at ingest (M57). rtl_433 emits SI, Ecowitt and
+#: most US-made stations emit imperial, and a house that keeps both cannot
+#: answer "the coldest room". Switched off with `mqtt: canonical_units: false`.
+CANONICAL_UNITS = True
+
+_CANONICAL: dict[str, dict[str, tuple[str, Any]]] = {
+    "temperature": {"°F": ("°C", lambda v: (v - 32.0) * 5.0 / 9.0), "F": ("°C", lambda v: (v - 32.0) * 5.0 / 9.0), "K": ("°C", lambda v: v - 273.15)},
+    "pressure": {"inHg": ("hPa", lambda v: v * 33.8639), "psi": ("hPa", lambda v: v * 68.9476), "mbar": ("hPa", lambda v: v), "kPa": ("hPa", lambda v: v * 10.0)},
+    "speed": {"mph": ("km/h", lambda v: v * 1.609344), "m/s": ("km/h", lambda v: v * 3.6), "kn": ("km/h", lambda v: v * 1.852)},
+    "wind_speed": {"mph": ("km/h", lambda v: v * 1.609344), "m/s": ("km/h", lambda v: v * 3.6), "kn": ("km/h", lambda v: v * 1.852)},
+    "precipitation": {"in": ("mm", lambda v: v * 25.4)},
+    "precipitation_intensity": {"in/h": ("mm/h", lambda v: v * 25.4)},
+    "distance": {"mi": ("km", lambda v: v * 1.609344), "ft": ("m", lambda v: v * 0.3048), "in": ("cm", lambda v: v * 2.54)},
+    "energy": {"Wh": ("kWh", lambda v: v / 1000.0)},
+}
+
+
+def canonicalise(value: Any, unit: str | None, device_class: str | None) -> tuple[Any, str | None]:
+    """The reading in the house's unit for its device class, or as it came.
+
+    Only numbers with a known unit for a known class are touched; a string
+    state, an unknown unit or an unknown class pass through unchanged, and so
+    does everything when `CANONICAL_UNITS` is off.
+    """
+    if not CANONICAL_UNITS or not unit or not device_class:
+        return value, unit
+    table = _CANONICAL.get(str(device_class))
+    if not table or str(unit) not in table:
+        return value, unit
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value, unit
+    target, convert = table[str(unit)]
+    return round(convert(number), 2), target
+
+
 # --- sensor -----------------------------------------------------------------
 class MqttSensor(MqttEntity):
     mqtt_domain = "sensor"
@@ -531,10 +569,118 @@ class MqttSensor(MqttEntity):
         )
         if value is None:
             return
+        value, unit = canonicalise(
+            value, self._config.get("unit_of_measurement"), self._config.get("device_class")
+        )
+        if unit != self._config.get("unit_of_measurement"):
+            self._attr_unit_of_measurement = unit
         self._attr_state = value
         self._mark_received()
         self.async_write_state()
 
+
+
+
+# --- event and device_tracker (M57) -----------------------------------------
+class MqttEvent(MqttEntity):
+    """A button press, a doorbell, a scene controller: something that happened.
+
+    Zigbee2MQTT 2.x publishes these as `event`. The state is the last event
+    type with when it happened; every message is also a bus event
+    (`jarvis_mqtt_event`) so an automation or the activity strip can act on
+    the press itself, not on a state that looks the same twice in a row.
+    """
+
+    mqtt_domain = "event"
+
+    async def _async_subscribe_topics(self) -> None:
+        await self._subscribe(self._config.get("state_topic"), self._handle_state)
+
+    def _handle_state(self, message: MqttMessage) -> None:
+        value = render_value_template(
+            self._config.get("value_template"), message.payload, default=None
+        )
+        payload: Any = value
+        if value is None:
+            try:
+                payload = json.loads(message.payload)
+            except (TypeError, ValueError):
+                payload = message.payload
+        event_type = ""
+        attributes: dict[str, Any] = {}
+        if isinstance(payload, dict):
+            event_type = str(payload.get("event_type") or payload.get("action") or payload.get("event") or "")
+            attributes = {k: v for k, v in payload.items() if k != "event_type"}
+        elif payload is not None:
+            event_type = str(payload)
+        if not event_type:
+            return
+        types = [str(t) for t in (self._config.get("event_types") or [])]
+        if types and event_type not in types:
+            _LOGGER.debug("%s: event type %r is not one it declares", self.entity_id, event_type)
+        now = time.time()
+        self._attr_state = event_type
+        self._attr_extra_attributes["event_type"] = event_type
+        self._attr_extra_attributes["event_types"] = types
+        self._attr_extra_attributes["last_event_at"] = now
+        for key, val in attributes.items():
+            self._attr_extra_attributes[key] = val
+        self._mark_received()
+        self.async_write_state()
+        jarvis = getattr(self, "jarvis", None)
+        if jarvis is not None and hasattr(jarvis, "bus"):
+            jarvis.bus.fire(
+                "jarvis_mqtt_event",
+                {"entity_id": self.entity_id, "event_type": event_type, "attributes": attributes, "at": now},
+            )
+
+
+class MqttDeviceTracker(MqttEntity):
+    """A phone, a car, a tag: home or not, from a topic that says so.
+
+    ESPresense, OwnTracks-over-MQTT and Zigbee2MQTT's presence devices all
+    publish this shape. The state is `home` / `not_home` (or a zone name the
+    payload gives); coordinates, if present, ride as attributes.
+    """
+
+    mqtt_domain = "device_tracker"
+
+    async def _async_subscribe_topics(self) -> None:
+        await self._subscribe(self._config.get("state_topic"), self._handle_state)
+        attrs = self._config.get("json_attributes_topic")
+        if attrs and attrs != self._config.get("state_topic"):
+            await self._subscribe(attrs, self._handle_location)
+
+    def _handle_location(self, message: MqttMessage) -> None:
+        try:
+            payload = json.loads(message.payload)
+        except (TypeError, ValueError):
+            return
+        if isinstance(payload, dict):
+            for key in ("latitude", "longitude", "gps_accuracy", "battery_level", "source_type"):
+                if key in payload:
+                    self._attr_extra_attributes[key] = payload[key]
+            self.async_write_state()
+
+    def _handle_state(self, message: MqttMessage) -> None:
+        value = render_value_template(
+            self._config.get("value_template"), message.payload, default=None
+        )
+        if value is None:
+            return
+        value = str(value)
+        home = str(self._conf("payload_home", "home"))
+        away = str(self._conf("payload_not_home", "not_home"))
+        if value == home:
+            self._attr_state = "home"
+        elif value == away:
+            self._attr_state = "not_home"
+        elif value.strip():
+            self._attr_state = value.strip()  # a zone name, as HA allows
+        else:
+            return
+        self._mark_received()
+        self.async_write_state()
 
 class MqttBinarySensor(MqttEntity):
     mqtt_domain = "binary_sensor"
@@ -1250,6 +1396,8 @@ ENTITY_CLASSES: dict[str, type[MqttEntity]] = {
     "button": MqttButton,
     "climate": MqttClimate,
     "cover": MqttCover,
+    "device_tracker": MqttDeviceTracker,
+    "event": MqttEvent,
     "fan": MqttFan,
     "light": MqttLight,
     "lock": MqttLock,

@@ -361,6 +361,10 @@ class Runner:
                     # the next scenario needs speech to work.
                     killed.append(turn.kill)
                     ground.stack.stop(turn.kill)  # type: ignore[union-attr]
+                if turn.do.get("mqtt_publish"):
+                    # A sensor announcing itself and reporting, the way a
+                    # Zigbee bridge or an rtl_433 does: the rig is the device.
+                    await self._mqtt_publish(turn.do["mqtt_publish"])
                 if turn.do.get("extension"):
                     # An operator flipping a switch while a conversation is
                     # already in progress, which is when they actually do it.
@@ -631,6 +635,32 @@ class Runner:
             timeout=timeout or TURN_TIMEOUT,
             probes=_ui_probes(turn.expect),
         )
+
+    async def _mqtt_publish(self, messages: Any) -> None:
+        """Publish each `{topic, payload, retain?}` to the house's broker.
+
+        The broker is the stack's mosquitto (LIVE_MQTT_HOST/PORT, default
+        127.0.0.1:1883, LIVE_MQTT_USERNAME/PASSWORD when it wants them). A dict
+        payload is sent as JSON, which is what every discovery config is.
+        """
+        import aiomqtt
+
+        host = os.environ.get("LIVE_MQTT_HOST", "127.0.0.1")
+        port = int(os.environ.get("LIVE_MQTT_PORT", "1883"))
+        username = os.environ.get("LIVE_MQTT_USERNAME") or None
+        password = os.environ.get("LIVE_MQTT_PASSWORD") or None
+        rows = messages if isinstance(messages, list) else [messages]
+        async with aiomqtt.Client(host, port, username=username, password=password) as client:
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("topic"):
+                    raise LiveError(f"mqtt_publish needs {{topic, payload}} rows, not {row!r}")
+                payload = row.get("payload", "")
+                if isinstance(payload, (dict, list)):
+                    payload = json.dumps(payload)
+                await client.publish(
+                    str(row["topic"]), str(payload), retain=bool(row.get("retain", False)), qos=1
+                )
+                await asyncio.sleep(0.2)
 
     # --- the assertions ----------------------------------------------------
     async def _check(

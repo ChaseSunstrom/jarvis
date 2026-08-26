@@ -1,0 +1,114 @@
+{
+  "source": "Tasmota 14 — Athom plug with energy monitoring, native discovery (SetOption19 0)",
+  "config_topic": "tasmota/discovery/E8DB84AABBCC/config",
+  "config": {
+    "ip": "192.168.1.60",
+    "dn": "Fridge plug",
+    "fn": [
+      "Fridge",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "hn": "tasmota-AABBCC",
+    "mac": "E8DB84AABBCC",
+    "md": "Athom Plug V2",
+    "ty": 0,
+    "if": 0,
+    "ofln": "Offline",
+    "onln": "Online",
+    "state": [
+      "OFF",
+      "ON",
+      "TOGGLE",
+      "HOLD"
+    ],
+    "sw": "14.2.0",
+    "t": "tasmota_AABBCC",
+    "ft": "%prefix%/%topic%/",
+    "tp": [
+      "cmnd",
+      "stat",
+      "tele"
+    ],
+    "rl": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "swc": [
+      -1
+    ],
+    "swn": [
+      null
+    ],
+    "btn": [
+      0
+    ],
+    "so": {
+      "4": 0,
+      "11": 0,
+      "13": 0,
+      "17": 0,
+      "20": 0,
+      "30": 0,
+      "68": 0,
+      "73": 0,
+      "82": 0,
+      "114": 0,
+      "117": 0
+    },
+    "lk": 0,
+    "lt_st": 0,
+    "bat": 0,
+    "dslp": 0,
+    "sho": [],
+    "sht": [],
+    "ver": 1
+  },
+  "sensors_topic": "tasmota/discovery/E8DB84AABBCC/sensors",
+  "sensors": {
+    "sn": {
+      "Time": "2026-08-26T08:12:00",
+      "ENERGY": {
+        "TotalStartTime": "2026-01-01T00:00:00",
+        "Total": 128.4,
+        "Yesterday": 1.1,
+        "Today": 0.3,
+        "Power": 87,
+        "ApparentPower": 95,
+        "ReactivePower": 38,
+        "Factor": 0.92,
+        "Voltage": 236,
+        "Current": 0.402
+      }
+    },
+    "ver": 1
+  },
+  "state_topic": "stat/tasmota_AABBCC/POWER",
+  "state": "ON",
+  "tele_topic": "tele/tasmota_AABBCC/SENSOR",
+  "tele": {
+    "Time": "2026-08-26T08:13:00",
+    "ENERGY": {
+      "Total": 128.5,
+      "Yesterday": 1.1,
+      "Today": 0.4,
+      "Power": 91,
+      "ApparentPower": 98,
+      "ReactivePower": 36,
+      "Factor": 0.93,
+      "Voltage": 235,
+      "Current": 0.417
+    }
+  }
+}

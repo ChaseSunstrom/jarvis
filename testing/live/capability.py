@@ -52,10 +52,22 @@ TOOL_CAPABILITY = {
     # The sky (M58): four read-only questions answered from cached orbital
     # elements and an ephemeris. One capability, because a turn that asked
     # "what's up tonight" and got the moon AND the planets did one thing.
+    # Cameras (M56): a look is vision, whichever camera and whichever wire.
+    "look_at_camera": "vision",
+    "describe_camera_change": "vision",
+    "list_cameras": "vision",
     "next_pass": "sky",
     "overhead_now": "sky",
     "moon_phase": "sky",
     "planets_tonight": "sky",
+    # Any sensor (M57): a reading looked up, compared, summarised or read
+    # over a window. A reading the model answered from the house state in
+    # its context is "answer" — correct, and not this capability, which is
+    # about the tools a snapshot cannot stand in for (history, comparison).
+    "sensor_readings": "sensors",
+    "sensor_compare": "sensors",
+    "sensor_history": "sensors",
+    "sensor_summary": "sensors",
 }
 
 
@@ -89,7 +101,7 @@ def capability_of(task_kinds: list[str], calls: list[str], tools: list[str],
         chosen.add("memory")
     if any(call.startswith("notes.") for call in calls):
         chosen.add("notes")
-    for capability in ("subagents", "coding", "research", "memory", "notes", "sky"):
+    for capability in ("subagents", "coding", "research", "memory", "notes", "sky", "vision", "sensors"):
         if capability in chosen:
             return capability
     if task_kinds or "run_background_task" in tools:
