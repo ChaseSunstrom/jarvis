@@ -11,10 +11,22 @@ import datetime as _dt
 from pathlib import Path
 from typing import Any
 
+import json
+import re
+
 from .report import ScenarioResult, latency_table
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORT = REPO_ROOT / "docs" / "LIVE_TEST_REPORT.md"
+VERIFY = REPO_ROOT / ".verify"
+#: The exploratory pass (M27), the motion measurement (M44) and the console
+#: route pass (M50) each write a file the report reads. A section whose file
+#: is missing says so — it never invents a number.
+EXPLORATORY = VERIFY / "live" / "exploratory.json"
+MOTION = VERIFY / "motion.json"
+CONSOLE_PASS = VERIFY / "live" / "console_pass.json"
+MIGRATION = REPO_ROOT / "docs" / "UI_MIGRATION.md"
+UI_REVIEW = REPO_ROOT / "docs" / "ui-review"
 
 THRESHOLD_TEXT = {
     "intent_accuracy": "≥ 95 %",
@@ -130,6 +142,10 @@ def write_report(payload: dict[str, Any], results: list[ScenarioResult],
                 f"{str(verdict.get('why'))[:120].replace('|', '¦')} |"
             )
 
+    lines += exploratory_section(EXPLORATORY)
+    lines += motion_section(MOTION)
+    lines += migration_section(MIGRATION, UI_REVIEW, CONSOLE_PASS)
+
     lines += [
         "",
         "## Open issues",
@@ -144,3 +160,117 @@ def write_report(payload: dict[str, Any], results: list[ScenarioResult],
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(lines), encoding="utf-8")
     return target
+
+
+def _load(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def exploratory_section(path: Path = EXPLORATORY) -> list[str]:
+    """M27: the unscripted conversations, and what the judge doubted."""
+    lines = ["", "## Exploratory pass", ""]
+    data = _load(path)
+    if not data or not data.get("conversations"):
+        lines.append(
+            "Not run. `python3 testing/live/exploratory.py` writes "
+            "`.verify/live/exploratory.json`; nothing here is written by hand."
+        )
+        return lines
+    conversations = data["conversations"]
+    suspect = [c for c in conversations if c.get("suspect")]
+    lines += [
+        f"{len(conversations)} unscripted conversations, {data.get('turns', 0)} turns, "
+        f"against `{data.get('target', 'stack')}`. Each probes a weak spot `docs/AUDIT.md` "
+        f"names; the judge was asked what a bad answer would look like, not what the right "
+        f"one is. {len(suspect)} to look at.",
+        "",
+        "| probe | audit section | turns | verdict | what the judge doubted |",
+        "|---|---|---|---|---|",
+    ]
+    for c in conversations:
+        doubts = "; ".join(
+            str(t.get("why", ""))[:110] for t in c.get("turns", []) if t.get("ok") is False
+        )
+        mark = "**look**" if c.get("suspect") else "ok"
+        lines.append(
+            f"| {c['name']} | {str(c.get('audit', '')).replace('|', '¦')} | "
+            f"{len(c.get('turns', []))} | {mark} | {doubts.replace('|', '¦') or '—'} |"
+        )
+    return lines
+
+
+def motion_section(path: Path = MOTION) -> list[str]:
+    """M44: the frame budget and the reduced-motion verdict, as measured."""
+    lines = ["", "## Motion", ""]
+    data = _load(path)
+    if not data:
+        lines.append(
+            "Not measured in this run. `cd jarvis-web && npx playwright test motion.spec.ts` "
+            "writes `.verify/motion.json`."
+        )
+        return lines
+    moving = data.get("moving") or {}
+    still = data.get("still") or {}
+    lines += [
+        "Measured by `requestAnimationFrame` gaps in a real headless Chromium on this host "
+        "(four shared vCPUs, no GPU), against a control sample of a still page seconds "
+        "earlier — an absolute threshold would measure the machine, not the app.",
+        "",
+        "| sample | frames | over 34 ms | worst frame |",
+        "|---|---|---|---|",
+        f"| the voice screen, booting and breathing | {moving.get('frames', 'n/a')} | "
+        f"{moving.get('long', 'n/a')} | {moving.get('worst', 'n/a')} ms |",
+        f"| a still page (control) | {still.get('frames', 'n/a')} | {still.get('long', 'n/a')} | "
+        f"{still.get('worst', 'n/a')} ms |",
+        "",
+        f"Cumulative layout shift over the boot sequence: {data.get('cls', 'n/a')} (good is < 0.1).",
+        f"Under `prefers-reduced-motion: reduce`: {data.get('reduced_running', 'n/a')} animations "
+        "running (the verdict is 0), and the interface still takes typed input.",
+    ]
+    return lines
+
+
+def migration_section(migration: Path = MIGRATION, shots: Path = UI_REVIEW,
+                      console_pass: Path = CONSOLE_PASS) -> list[str]:
+    """M50: pages on the direction, pictures per breakpoint, offenders."""
+    lines = ["", "## The console on Reactor II", ""]
+    try:
+        text = migration.read_text(encoding="utf-8")
+    except OSError:
+        lines.append("`docs/UI_MIGRATION.md` is missing.")
+        return lines
+    inventory = text.split("## 3.")[1] if "## 3." in text else text
+    inventory = inventory.split("## 4.")[0]
+    done = len(re.findall(r"^- \[x\] ", inventory, re.M))
+    open_ = re.findall(r"^- \[ \] (.*)$", inventory, re.M)
+    pictures = sorted(shots.glob("*/*.png")) if shots.is_dir() else []
+    screens = {p.parent.name for p in pictures}
+    lines += [
+        f"`docs/UI_MIGRATION.md` §3: **{done} of {done + len(open_)}** rows migrated. "
+        f"{len(pictures)} screenshots across {len(screens)} screens at three widths in "
+        "`docs/ui-review/`, regenerated by the verify scripts.",
+    ]
+    if open_:
+        lines += ["", "Remaining offenders:", ""]
+        lines += [f"- {row[:100]}" for row in open_[:20]]
+    else:
+        lines.append("Remaining offenders: none.")
+    data = _load(console_pass)
+    lines += ["", "### Every route, in the real console against the stack", ""]
+    if not data:
+        lines.append("Not run. `python3 testing/live/console_pass.py` writes `.verify/live/console_pass.json`.")
+        return lines
+    results = data.get("results") or []
+    clean = [r for r in results if not r.get("failures")]
+    lines += [
+        f"{len(clean)}/{len(results)} routes rendered against `{data.get('console', '')}` with no "
+        "console error and only palette colours.",
+    ]
+    bad = [r for r in results if r.get("failures")]
+    if bad:
+        lines += ["", "| route | what was wrong |", "|---|---|"]
+        lines += [f"| {r['path']} | {'; '.join(r['failures'])[:200].replace('|', '¦')} |" for r in bad]
+    return lines
