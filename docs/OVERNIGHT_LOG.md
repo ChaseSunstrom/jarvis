@@ -635,3 +635,8 @@ is quiet. Done since:
   Being made structural: a successful forget scrubs the forgotten text from the thread, so
   "nothing recorded" is the only thing left to say. house-light-on green both variants,
   median 1.25 s.
+- 20:10 — the hint was the transcript scrub's own placeholder, "(something the user later
+  asked Jarvis to forget)", read back verbatim; it says "(nothing recorded)" now and the
+  rules say the same in words (7a16547). A sixth rebuild measures it behind the clean M26
+  run. The scorecard gate's fourth run: 13/14, the scorecard itself passing with the load
+  measured; the fifth run keeps its smoke slice's detail.
