@@ -1338,6 +1338,22 @@ class WebSocketHandler:
         )
         return HANDLED
 
+    async def _cmd_pipeline_stop(self, msg: dict[str, Any]) -> Any:
+        """Stop a run on this connection, at the server (M96).
+
+        Barge-in was a client dropping its socket: the model kept generating
+        and the synthesiser kept writing into a closed socket, and the trace
+        could not say "interrupted". This cancels the run's task; the pipeline
+        ends with `run-end {interrupted: true}` and cancels its own children.
+        `run_id` is the id the run was started with.
+        """
+        run_id = msg.get("run_id")
+        task = self._runs.get(run_id)
+        if task is None or task.done():
+            raise ApiError("not_found", f"no run {run_id!r} is in progress on this connection", status=404)
+        task.cancel()
+        return {"stopped": True, "run_id": run_id}
+
     async def _drive_run(
         self,
         msg_id: Any,
@@ -1512,6 +1528,7 @@ WebSocketHandler._HANDLERS = {
     "config/automation/delete": WebSocketHandler._cmd_automation_delete,
     "assist_pipeline/pipeline/list": WebSocketHandler._cmd_pipeline_list,
     "assist_pipeline/run": WebSocketHandler._cmd_pipeline_run,
+    "assist_pipeline/stop": WebSocketHandler._cmd_pipeline_stop,
     # the device channel (phone, desktop agent, satellites)
     TYPE_REGISTER: WebSocketHandler._cmd_device_register,
 }

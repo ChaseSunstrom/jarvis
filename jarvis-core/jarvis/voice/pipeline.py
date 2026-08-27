@@ -363,6 +363,8 @@ class PipelineRun:
         #: an automation can say "the wake word, but only in the workshop" —
         #: without it every hook on a house-wide event fires for every room.
         self.device_id = str(device_id or "")
+        #: Set when the run was stopped from outside rather than finishing (M96).
+        self.interrupted = False
 
         self.pipeline_id = getattr(pipeline, "id", None) or "jarvis"
         self.language = language or getattr(pipeline, "language", None) or "en"
@@ -461,6 +463,9 @@ class PipelineRun:
             await self._fail(PipelineError("timeout", f"pipeline timed out after {self.timeout}s"))
         except asyncio.CancelledError:
             await self._fail(PipelineError("cancelled", "pipeline run was cancelled"))
+            # Stopped from outside (M96: assist_pipeline/stop, a barge-in, a
+            # socket gone): the end event says so, and the trace reads it.
+            self.interrupted = True
             raise
         except Exception as err:  # pragma: no cover - genuinely unexpected
             _LOGGER.exception("Unexpected error in pipeline run %s", self.run_id)
@@ -471,7 +476,7 @@ class PipelineRun:
             # thread holding a copy of somebody's audio after the turn it
             # belonged to has ended is the one thing this feature must not do.
             self._discard_verification()
-            await self._emit(EVENT_RUN_END, {})
+            await self._emit(EVENT_RUN_END, {"interrupted": True} if self.interrupted else {})
         return self
 
     def _discard_verification(self) -> None:

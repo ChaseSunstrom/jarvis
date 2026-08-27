@@ -914,3 +914,6 @@ is quiet. Done since:
   (spoken when present, a card when not; `notifications: speak_completions: false` turns it off); two
   read-only tools from the record — `recent_moments` (the inbox) and `explain_last_turn` (the previous
   turn's tools and memory from the archive, never reconstructed); two scenarios; notifications 18, agent +2.
+- 05:16 — M96 built: `assist_pipeline/stop` cancels a run at the server; the run ends `run-end
+  {interrupted: true}`; the console's barge-in sends it; the mock answers it; test_api +1 (a run stopped
+  mid-answer, a run not in progress is not_found). Gate 2/3, the live check waits.

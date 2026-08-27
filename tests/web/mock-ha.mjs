@@ -4927,6 +4927,18 @@ index 1234567..89abcde 100644
 					});
 					break;
 				}
+				case 'assist_pipeline/stop': {
+					// M96: the server stops the run; the client hears run-end with
+					// interrupted and the trace says so.
+					if (!run || run.id !== msg.run_id || run.done) {
+						fail(msg.id, 'not_found', `no run ${msg.run_id} is in progress on this connection`);
+						break;
+					}
+					run.done = true;
+					event(run.id, 'run-end', { interrupted: true });
+					ok(msg.id, { stopped: true, run_id: run.id });
+					break;
+				}
 				case 'jarvis/conversation/list':
 					socket.send(
 						JSON.stringify({

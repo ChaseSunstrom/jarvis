@@ -2086,3 +2086,56 @@ async def test_a_client_watching_the_bus_sees_a_task_move(jarvis, auth):
     assert task["id"] == live.id
     assert task["status"] == "done"
     assert task["fraction"] == 1.0
+
+
+# --- M96: stop means stop --------------------------------------------------------
+def test_a_run_can_be_stopped_at_the_server_and_says_it_was_interrupted(client, jarvis, token):
+    """Barge-in was a client dropping its socket while the model kept
+    generating. `assist_pipeline/stop` cancels the run's task; the run ends
+    with `run-end {interrupted: true}`; a run that is not in progress is
+    `not_found`."""
+    import asyncio as _asyncio
+
+    class SlowVoice(FakeVoice):
+        def async_create_run(self, pipeline=None, **kwargs):
+            async def slow(text, conversation_id=None, **_kw):
+                yield "Let me think about that"
+                await _asyncio.sleep(30)
+                yield " for a long time, Sir."
+
+            return PipelineRun(self.jarvis, stt=None, tts=None, converse=slow, **kwargs)
+
+    jarvis.data["voice"] = SlowVoice(jarvis)
+
+    with client.websocket_connect("/api/websocket") as ws:
+        handshake(ws, token)
+        ws.send_json({"id": 1, "type": "assist_pipeline/run", "start_stage": "intent", "end_stage": "intent",
+                      "input": {"text": "tell me a long story"}})
+        assert ws.receive_json()["type"] == "result"
+        first = ws.receive_json()
+        assert first["event"]["type"] == "run-start"
+        # Let the first delta come, so the run is genuinely mid-answer.
+        event = ws.receive_json()
+        while event.get("type") == "event" and event["event"]["type"] not in ("intent-progress", "intent-start"):
+            event = ws.receive_json()
+        ws.send_json({"id": 2, "type": "assist_pipeline/stop", "run_id": 1})
+        seen = []
+        stopped = None
+        while True:
+            msg = ws.receive_json()
+            if msg.get("id") == 2 and msg.get("type") == "result":
+                stopped = msg
+                if any(e["event"]["type"] == "run-end" for e in seen):
+                    break
+                continue
+            if msg.get("type") == "event":
+                seen.append(msg)
+                if msg["event"]["type"] == "run-end" and stopped is not None:
+                    break
+        assert stopped["success"] is True and stopped["result"] == {"stopped": True, "run_id": 1}
+        end = [e for e in seen if e["event"]["type"] == "run-end"][-1]
+        assert end["event"]["data"] == {"interrupted": True}, end
+        # Nothing to stop now.
+        ws.send_json({"id": 3, "type": "assist_pipeline/stop", "run_id": 1})
+        answer = ws.receive_json()
+        assert answer["success"] is False and answer["error"]["code"] == "not_found"

@@ -246,6 +246,20 @@ export class PipelineClient {
 	}
 
 	/**
+	 * Stop the run in progress AT THE SERVER (M96). Barge-in used to be this
+	 * client dropping playback while the model kept generating and the
+	 * synthesiser kept writing; the server now cancels the run, ends it with
+	 * `run-end {interrupted: true}`, and the trace says so. Returns false when
+	 * nothing is running.
+	 */
+	stopRun(): boolean {
+		if (this.runId === null) return false;
+		const id = this.nextId++;
+		this.send(JSON.stringify({ id, type: 'assist_pipeline/stop', run_id: this.runId }));
+		return true;
+	}
+
+	/**
 	 * Start a run from TYPED text: the same pipeline, entered one stage later.
 	 *
 	 * `start_stage: 'intent'` is how the backend is told there is no audio to

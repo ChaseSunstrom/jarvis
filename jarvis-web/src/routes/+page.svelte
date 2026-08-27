@@ -466,6 +466,8 @@
 				if (!muted && !chatMode && turnState === 'speaking' && bargeVad.feed(r) === 'speech-start') {
 					console.log('[jarvis] barge-in');
 					player.stopAll();
+					// And at the server (M96): the run that is still speaking is stopped there too.
+					client?.stopRun();
 					void startInteraction();
 				}
 			}
