@@ -1062,6 +1062,7 @@ class Runner:
                 kind=str(want_approval.get("kind") or ""),
                 tool=str(want_approval.get("tool") or ""),
                 timeout=float(want_approval.get("within") or 300.0),
+                contains=str(want_approval.get("contains") or ""),
             )
             if held is None:
                 fail(

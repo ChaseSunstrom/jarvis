@@ -14,6 +14,7 @@ after it finished rather than raced while it runs.
 from __future__ import annotations
 
 import asyncio
+import json
 import contextlib
 import time
 from dataclasses import dataclass, field
@@ -188,15 +189,26 @@ class Observer:
         return len(self.approvals)
 
     async def wait_for_approval(
-        self, mark: int = 0, kind: str = "", tool: str = "", timeout: float = 240.0
+        self, mark: int = 0, kind: str = "", tool: str = "", timeout: float = 240.0, contains: str = ""
     ) -> dict[str, Any] | None:
-        """The next held action after `mark`, or None if nobody asked."""
+        """The next held action after `mark`, or None if nobody asked.
+
+        `contains` is matched against the request's arguments and summary as
+        text: on the nineteenth house (27 Aug 2026) `notice-garage-door`'s
+        first turn passed on a held `narrate_offer` that was the front door
+        lock's, raised a scenario earlier, while the garage offer was never
+        raised at all — the miss surfaced a turn late, on the yes.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             for row in self.approvals[mark:]:
                 if kind and row.get("kind") != kind:
                     continue
                 if tool and tool not in row.get("tool", ""):
+                    continue
+                if contains and contains.lower() not in json.dumps(
+                    {"arguments": row.get("arguments"), "summary": row.get("summary")}
+                ).lower():
                     continue
                 return row
             await asyncio.sleep(0.5)

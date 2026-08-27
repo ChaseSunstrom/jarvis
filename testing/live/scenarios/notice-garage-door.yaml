@@ -20,7 +20,7 @@ turns:
       states:
         cover.garage_door: open
     expect:
-      approval: {tool: narrate_offer, decision: hold, within: 90}
+      approval: {tool: narrate_offer, decision: hold, contains: garage, within: 90}
       notification: {kind: notice, title_contains: "garage", within: 90}
   - say: "Yes, close it."
     expect:
