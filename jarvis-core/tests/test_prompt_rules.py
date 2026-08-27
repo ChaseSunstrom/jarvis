@@ -115,8 +115,9 @@ def test_one_job_is_a_background_task_alone_never_delegated_as_well():
     persona, where PARALLEL WORK lives) says one job is the task alone."""
     from jarvis.llm.agent import DEFAULT_PERSONA
 
-    assert "is run_background_task alone" in DEFAULT_PERSONA
-    assert "never both for the same request" in DEFAULT_PERSONA
+    flat = " ".join(DEFAULT_PERSONA.split())
+    assert "is run_background_task alone" in flat
+    assert "never both for the same request" in flat
 
 
 def test_a_relative_reminder_is_minutes_the_house_turns_into_a_time():
