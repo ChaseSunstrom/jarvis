@@ -874,3 +874,7 @@ is quiet. Done since:
   it — with a core restart — at the end of every live run, so a `narrate:` block added during verify-all
   vanished; the restore now leaves the operator's own files alone (rig tests 49). The narrate block is
   back: doors, locks, smoke/gas, devices going unavailable — the first half of M86.
+- 04:31 — M86 built: a narrate rule may carry an offer — the lock unlocked, the garage left open —
+  asked as a question with Yes and No through companion.ask (the M66 table judges the yes), the offered
+  service run only on the yes; the house's lock and garage rules carry theirs and do not wait for
+  morning; narrate suite 15 (+4); gate offline 3/5, the two live checks wait for the rebuild.

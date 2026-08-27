@@ -1566,6 +1566,16 @@ narrate:
       on_state: "on"
     - domains: [lock]
       on_state: unlocked
+      # Asked, not done: "the back door has been unlocked since 23:10, Sir —
+      # shall I lock it?" with Yes and No, on whichever device you are at; a
+      # yes locks it, anything else leaves it. At night is when it matters.
+      offer: {service: lock.lock, question: "Shall I lock it?"}
+      quiet_hours: false
+    - domains: [cover]
+      device_class: [garage_door, garage, gate]
+      on_state: open
+      offer: {service: cover.close_cover, question: "Shall I close it?"}
+      quiet_hours: false
     - device_class: [smoke, gas, carbon_monoxide]
       on_state: "on"
       importance: critical
