@@ -173,7 +173,7 @@
 		   screen — the instrument (360 px), the exchange and the bottom dock leave
 		   the tasks about 220 px at 1440×900. The list scrolls inside what is left. */
 		max-height: min(22vh, calc(var(--jv-space-7) * 4.3333));
-		background: var(--jv-surface-sunken);
+		background: var(--jv-panel);
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-md);
 		margin-bottom: var(--jv-space-4);
