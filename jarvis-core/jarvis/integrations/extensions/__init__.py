@@ -17,9 +17,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .catalog import BUNDLED_SOURCE, Catalog, CatalogError, Source, bundled_source
+from ...const import EVENT_JARVIS_STOP
+from .catalog import BUNDLED_SOURCE, Catalog, CatalogError, Source, bundled_source, resolve_ref
+from .registries import RegistryError, fetch_remote, read_remote, reader_for
 from .install import InstallError
-from .manifest import KINDS, PERMISSIONS, Manifest, ManifestError, schema
+from .manifest import KIND_MCP, KINDS, PERMISSIONS, Manifest, ManifestError, schema
 from .registry import ExtensionRegistry, get_registry
 from .scaffold import SKILL_TEMPLATE, ScaffoldError, scaffold_skill
 from .state import ExtensionState, apply_decisions
@@ -128,6 +130,115 @@ def _register_services(
         store = jarvis.data.get("extension_catalog")
         return store if isinstance(store, Catalog) else Catalog()
 
+    # --- the registries (M108) ---------------------------------------------
+    # One http client for every remote source, made on first use and closed
+    # with the house; and a five-minute memory of each (source, query) so a
+    # console that re-renders the Tools page does not spend GitHub's sixty
+    # unauthenticated requests an hour on the same listing.
+    remote: dict[str, Any] = {"client": None, "cache": {}}
+    REMOTE_TTL_S = 300.0
+
+    def _client() -> Any:
+        import httpx
+
+        if remote["client"] is None:
+            # No redirects: a registry that answered "see elsewhere" would be
+            # a way off the allowlist, one hop at a time.
+            remote["client"] = httpx.AsyncClient(follow_redirects=False)
+        return remote["client"]
+
+    async def _close_client(_event: Any = None) -> None:
+        client = remote.pop("client", None)
+        remote["client"] = None
+        if client is not None:
+            await client.aclose()
+
+    jarvis.bus.listen_once(EVENT_JARVIS_STOP, _close_client)
+
+    async def _read_remote(
+        catalog: Catalog, query: str, kind: str, *, only: str = ""
+    ) -> tuple[list[Any], list[dict[str, str]], int]:
+        """Every remote source's entries, the failures per source, the skipped count."""
+        import time
+
+        rows: list[Any] = []
+        errors: list[dict[str, str]] = []
+        skipped = 0
+        for source in catalog.sources.values():
+            if not source.enabled or (kind and source.kind != kind):
+                continue
+            if only and source.name != only:
+                continue
+            try:
+                if not reader_for(source):
+                    continue
+            except RegistryError as err:
+                errors.append({"source": source.name, "error": str(err)})
+                continue
+            key = (source.name, str(query or "").strip().lower())
+            hit = remote["cache"].get(key)
+            if hit and time.monotonic() - hit[0] < REMOTE_TTL_S:
+                rows.extend(hit[1])
+                skipped += hit[2]
+                continue
+            try:
+                entries, missed = await read_remote(_client(), source, query)
+            except CatalogError as err:
+                _LOGGER.warning("registry %s unreadable: %s", source.name, err)
+                errors.append({"source": source.name, "error": str(err)})
+                continue
+            remote["cache"][key] = (time.monotonic(), entries, missed)
+            rows.extend(entries)
+            skipped += missed
+        return rows, errors, skipped
+
+    async def _find_entry(catalog: Catalog, source_name: str, entry_id: str, refs: list[str]) -> Any:
+        """One entry, wherever its source is. Fetches the listing, never the thing."""
+        from .install import prepare
+
+        source = catalog.source_for(source_name)
+        if not reader_for(source):
+            return prepare(catalog, source_name, entry_id, refs)
+        entries, errors, _ = await _read_remote(catalog, "", source.kind, only=source.name)
+        for entry in entries:
+            if entry.id == entry_id and entry.source == source.name:
+                entry.ref = resolve_ref(entry, refs or [entry.ref])
+                return entry
+        if errors:
+            raise CatalogError("; ".join(f"{e['source']}: {e['error']}" for e in errors))
+        raise CatalogError(f"{source_name} does not offer {entry_id!r}")
+
+    async def _fetch(entry: Any) -> dict[str, bytes]:
+        from .install import fetch_local
+
+        if entry.url.startswith("file://"):
+            return fetch_local(entry)
+        return await fetch_remote(_client(), entry)
+
+    def _mcp_plan(entry: Any) -> dict[str, Any]:
+        """What installing an MCP server would do: one `mcp:` entry, no files."""
+        from ..mcp import get_manager
+
+        manager = get_manager(jarvis)
+        tier = manager.default_tier if manager is not None else 2
+        return {
+            "id": entry.id,
+            "kind": entry.kind,
+            "ref": entry.ref,
+            "sha256": "",
+            "files": [],
+            "bytes": 0,
+            "source": entry.source,
+            "url": entry.url,
+            "permissions": [],
+            "hooks": [],
+            "tier": tier,
+            "note": (
+                f"adds {entry.id} as an http MCP server at tier {tier}: every tool it "
+                "offers is held for a person until approved, and nothing is downloaded"
+            ),
+        }
+
     async def service_sources(call: Any) -> Any:
         catalog = _catalog()
         return {
@@ -153,9 +264,12 @@ def _register_services(
                 "errors": [],
                 "error": "no catalog source is configured",
             }
-        entries, errors = catalog.read(
-            str(data.get("query") or ""), str(data.get("kind") or "")
-        )
+        query = str(data.get("query") or "")
+        kind = str(data.get("kind") or "")
+        entries, errors = catalog.read(query, kind)
+        remote_entries, remote_errors, skipped = await _read_remote(catalog, query, kind)
+        entries = sorted(entries + remote_entries, key=lambda e: (e.source, e.id))
+        errors = errors + remote_errors
         rows = []
         for entry in entries:
             row = entry.as_dict()
@@ -167,7 +281,16 @@ def _register_services(
             # button called INSTALL means.
             row["installed"] = registry.get(f"{entry.kind}:{entry.id}") is not None
             rows.append(row)
-        out: dict[str, Any] = {"entries": rows, "sources": live, "errors": errors}
+        out: dict[str, Any] = {
+            "entries": rows,
+            "sources": live,
+            "errors": errors,
+            # Servers a registry lists that this house cannot install (a
+            # package this machine would start, an `sse` remote, plain http):
+            # said as a number so "the registry has more than this" is a
+            # sentence the console can draw rather than a question.
+            "skipped": skipped,
+        }
         if not rows and errors:
             # Nothing to show AND a reason: the console draws the reason, not
             # "nothing matched", which is what an empty list would have said.
@@ -176,18 +299,21 @@ def _register_services(
 
     async def service_plan(call: Any) -> Any:
         """What would happen, and what it would cost. Fetches; installs nothing."""
-        from .install import fetch_local, plan as build_plan, prepare
+        from .install import plan as build_plan
 
         data = call.data or {}
         try:
-            entry = prepare(
+            entry = await _find_entry(
                 _catalog(),
                 str(data.get("source") or ""),
                 str(data.get("id") or ""),
                 [str(r) for r in (data.get("refs") or [])],
             )
-            files = fetch_local(entry)
-            proposal = build_plan(entry, files, expected_sha=str(data.get("sha256") or ""))
+            if entry.kind == KIND_MCP:
+                proposal = _mcp_plan(entry)
+            else:
+                files = await _fetch(entry)
+                proposal = build_plan(entry, files, expected_sha=str(data.get("sha256") or ""))
         except (CatalogError, InstallError) as err:
             return {"error": str(err)}
         proposal["description"] = entry.description
@@ -195,7 +321,7 @@ def _register_services(
 
     async def service_install(call: Any) -> Any:
         """Write what was approved. Refuses anything that was not."""
-        from .install import apply as apply_install, fetch_local, prepare
+        from .install import apply as apply_install, install_mcp
 
         data = call.data or {}
         approved = data.get("approved")
@@ -207,9 +333,13 @@ def _register_services(
                 )
             }
         try:
-            entry = prepare(_catalog(), str(data.get("source") or ""), str(data.get("id") or ""))
+            entry = await _find_entry(
+                _catalog(), str(data.get("source") or ""), str(data.get("id") or ""), []
+            )
             entry.ref = str(approved.get("ref") or entry.ref)
-            files = fetch_local(entry)
+            if entry.kind == KIND_MCP:
+                return await install_mcp(jarvis, entry, approved)
+            files = await _fetch(entry)
             result = apply_install(jarvis, entry, files, approved)
         except (CatalogError, InstallError) as err:
             return {"error": str(err)}
