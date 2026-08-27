@@ -1,0 +1,19 @@
+name: stop-means-stop
+capability: conversation
+gated-on: M96
+intent: >
+  "Jarvis, stop" has to stop the model, not only the speaker: barge-in used
+  to be a client dropping its socket while the run went on to the end and the
+  trace said nothing. The rig asks for a long answer and sends the stop a
+  second and a half in; the run must end, and its run-end must say it was
+  interrupted rather than finished.
+variants: [text]
+turns:
+  - say: >
+      Tell me, in as many words as you can manage and without stopping,
+      everything you know about this house — every room, every device, every
+      sensor, one after another.
+    stop_after: 1.5
+    expect:
+      interrupted: true
+      within_seconds: 40

@@ -999,3 +999,6 @@ is quiet. Done since:
   1 failed — the store race, fixed.
 - 09:37 — M86 ticked (plan pass 6/6 on the house). m85's live run hit the two-digit milestone regex (fixed since) — re-run pending; m87's card is not made when extraction already learned the day (the scenario's premise).
 - 09:39 — M89 ticked (plan pass 6/6). The sixteenth rebuild is queued behind the fifteenth's report run (core, orchestrator, console), then the gates the tree changed since 08:38, then its own report run.
+- 09:49 — plan pass done 09:47 (m86, m89, m94, m96, m97 green; m84/m85/m87/m88 fixed since and queued for the sixteenth;
+  m92 3/4, m93 6/7, m95 4/5 read below). M94 and M96 ticked. The rig gained `stop_after:`/`interrupted`, `do: states`,
+  `setup: device:` — scenarios stop-means-stop, in-here-by-voice, notice-garage-door, and m86/m94/m96 have live slices.

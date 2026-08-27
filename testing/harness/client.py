@@ -203,6 +203,11 @@ class PipelineRun:
         return dict(event.get("data") or {}) if event else {}
 
     @property
+    def interrupted(self) -> bool:
+        """What ``run-end`` said (M96): the run was stopped at the server."""
+        return bool(self.data("run-end").get("interrupted"))
+
+    @property
     def binary_handler_id(self) -> int | None:
         runner = self.data("run-start").get("runner_data") or {}
         value = runner.get("stt_binary_handler_id")
@@ -615,8 +620,14 @@ class JarvisClient:
         wake_filler: bool = True,
         keep_streaming: bool = False,
         wake_audio: bytes | None = None,
+        stop_after: float | None = None,
     ) -> PipelineRun:
         """Run one pipeline end to end and collect every event it emitted.
+
+        ``stop_after`` (M96) sends ``assist_pipeline/stop`` for this run that
+        many seconds after it was accepted — the rig saying "Jarvis, stop"
+        mid-answer — and the run is followed to its ``run-end`` as usual, which
+        then says ``interrupted``.
 
         Audio is streamed on the binary channel the run itself names in
         ``run-start`` — the same framing the phone and the satellites use — and
@@ -655,8 +666,17 @@ class JarvisClient:
         #: Set when the server has finished listening. `keep_streaming` uses it
         #: to stop feeding the silence that keeps a real microphone alive.
         listening_over = asyncio.Event()
+        stopper: asyncio.Task | None = None
+
+        async def _stop_later() -> None:
+            await asyncio.sleep(float(stop_after or 0.0))
+            with contextlib.suppress(Exception):
+                await self.command("assist_pipeline/stop", run_id=msg_id)
+
         try:
             await self.send_raw(payload)
+            if stop_after is not None:
+                stopper = asyncio.create_task(_stop_later())
             try:
                 frame = await asyncio.wait_for(future, self.timeout)
             except (asyncio.TimeoutError, TimeoutError) as err:
@@ -727,6 +747,10 @@ class JarvisClient:
                     feeder.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await feeder
+            if stopper is not None and not stopper.done():
+                stopper.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await stopper
             self._streams.pop(msg_id, None)
             self._pending.pop(msg_id, None)
         return run

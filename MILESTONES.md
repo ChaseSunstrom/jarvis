@@ -1396,12 +1396,18 @@ web and of Tasker. Local only. Each row here is planned in that document.
     become part of `--full` for every scenario that has a console counterpart; the thread
     survives a core restart (ISSUES).
   - Verify: `bash scripts/verify/m93-pick-up-where-you-left-off.sh`
-- [ ] **M94 — In here** · size S · deps M71, M83 · parallel-ok M93, M95
+- [x] **M94 — In here** · size S · deps M71, M83 · parallel-ok M93, M95
   - Scope: the device and area a request came from reach the model (`converse` takes them; one
     line after the speaker line), so "turn off the lights in here", "show the camera on this
     screen" and "remind me here in ten minutes" resolve to that room and device; `tell_user`,
     `show` and `schedule_task` default to it. Scenario `room-aware` on the rig's device.
   - Verify: `bash scripts/verify/m94-in-here.sh`
+  - 27 Aug 09:49: ticked — the plan pass's gate 6/6 on the rebuilt house: a registered device asked which
+    device it is on and was told its own name; the device line follows the speaker line; `device_of` reaches
+    the tools. The rig can now BE a device in a room (`setup: device:` registers on its own socket and files
+    the tablet in the kitchen through the registry entry M99 keeps) — scenario `in-here-by-voice`, run by
+    the gate's new live slice from the sixteenth rebuild on.
+
 - [ ] **M95 — Jarvis reads its own record** · size S · deps M17, M44 · parallel-ok M94, M96
   - Scope: `recent_moments` (the inbox: what Jarvis told you while you were out) and
     `explain_last_turn` (the tools and remembered notes the previous turn actually used, from the
@@ -1409,12 +1415,18 @@ web and of Tasker. Local only. Each row here is planned in that document.
     work *speaks* through `companion.notify` when the request said "tell me when it is done".
     Scenario `explain-yourself`.
   - Verify: `bash scripts/verify/m95-reads-its-own-record.sh`
-- [ ] **M96 — Stop means stop** · size S · deps M24, M44 · parallel-ok M95, M97
+- [x] **M96 — Stop means stop** · size S · deps M24, M44 · parallel-ok M95, M97
   - Scope: an `assist_pipeline/stop` command ends the model round and the speech at the server
     (barge-in today only drops the client's socket); the run ends `interrupted` and the trace
     says so; the console and the phone send it on tap and on "Jarvis, stop". Scenario
     `voice-barge-in`.
   - Verify: `bash scripts/verify/m96-stop-means-stop.sh`
+  - 27 Aug 09:49: ticked — the plan pass's gate 4/4 on the rebuilt house: `assist_pipeline/stop` exists on
+    the websocket, the console and the mock; the API suite's two cases; on the house a run stopped one second
+    in ended with run-end `interrupted: true`. The rig can now stop a run itself (`stop_after:` on a turn,
+    an `interrupted` expectation) — scenario `stop-means-stop`, run by the gate's new live slice from the
+    sixteenth rebuild on.
+
 - [x] **M97 — Timers, routines read back, what's new** · size M · deps M25, M83 · parallel-ok M96
   - Scope: "set a ten-minute timer for the pasta", "how long is left?", "snooze" — a timer entity,
     chimed on the device that asked, on the surface as a `readings` panel; a routine authored by

@@ -7,6 +7,23 @@ intent: >
   27 Aug 2026). explain_last_turn reads the previous turn from the archive:
   the tools it called and the memory it used, server-authored, never guessed.
 variants: [text]
+setup:
+  # The garage temperature is the rig's own sensor, announced here over MQTT
+  # as a bridge would — sensors-discovered used to be the only scenario that
+  # made it, and this one passed or failed on whether that had run first.
+  mqtt_publish:
+    - topic: homeassistant/sensor/jarvis_test_garage_temp/config
+      retain: true
+      payload:
+        name: Garage Temperature
+        unique_id: jarvis_test_garage_temp
+        state_topic: jarvis-test/garage/temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+    - topic: jarvis-test/garage/temperature
+      retain: true
+      payload: "12.5"
 turns:
   - say: "What's the temperature in the garage?"
     expect:

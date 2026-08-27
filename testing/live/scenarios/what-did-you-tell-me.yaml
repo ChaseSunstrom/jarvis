@@ -7,9 +7,11 @@ intent: >
   fires first so there is something on the record.
 variants: [text]
 turns:
+  # A reminder is a schedule entry until it fires; only then is it a task
+  # (the runner's own rule). Asserted as the entry now, and heard after.
   - say: "Remind me in one minute that the audit ran."
     expect:
-      task: {kind: notify, within: 30}
+      schedule: {title_contains: "audit", within: 30}
       reply_means: "confirms a reminder in about a minute"
   - say: "What have you told me in the last few minutes?"
     wait: 75

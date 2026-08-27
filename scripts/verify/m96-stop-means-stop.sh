@@ -59,4 +59,6 @@ async def main():
 asyncio.run(main())
 '
 
+check_sh "on the house: a stop a second and a half in ends the run interrupted" \
+    'LIVE_ONLY=stop-means-stop timeout 900 bash scripts/verify/live_interaction.sh --full 2>&1 | grep -v onnxruntime | tail -4'
 verify_end

@@ -54,4 +54,6 @@ async def main():
 asyncio.run(main())
 '
 
+check_sh "on the house: the rig as a tablet in the kitchen, and 'in here' means the kitchen" \
+    'LIVE_ONLY=in-here-by-voice timeout 900 bash scripts/verify/live_interaction.sh --full 2>&1 | grep -v onnxruntime | tail -4'
 verify_end

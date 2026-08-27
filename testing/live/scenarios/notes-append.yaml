@@ -10,8 +10,10 @@ turns:
     expect:
       note: {body_contains: "boiler"}
       capability: notes
-  - say: "Add to my boiler note that the pressure was one point four bar."
+  # Digits, not words: the model writes "1.4 bar" whatever was said, and the
+  # note is asserted on what it wrote.
+  - say: "Add to my boiler note that the pressure was 1.4 bar."
     expect:
       capability: notes
-      note: {body_contains: "one point four"}
+      note: {body_contains: "1.4"}
       reply_means: "confirms it added the pressure to the boiler note"

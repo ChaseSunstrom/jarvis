@@ -1,0 +1,24 @@
+name: in-here-by-voice
+capability: house
+gated-on: M94
+intent: >
+  "Turn off the lights in here" from the kitchen means the kitchen. The
+  pipeline always knew which socket a request came from; the model never did
+  (M94), and a companion device had no room to be in (M99). The rig registers
+  itself as a tablet on the socket its turns go through, puts that tablet in
+  the kitchen through the registry, and says "in here".
+variants: [text]
+setup:
+  device: {name: Rig tablet, area: kitchen}
+  states:
+    light.kitchen_lights: "on"
+    light.bed_light: "on"
+turns:
+  - say: "What is the name of the device I am speaking to you from? Answer with its name only."
+    expect:
+      reply_contains: "Rig tablet"
+  - say: "Turn off the lights in here."
+    expect:
+      service: {domain: light, service: turn_off, entity_id: light.kitchen_lights}
+      state: {light.kitchen_lights: "off", light.bed_light: "on"}
+      reply_means: "says the kitchen lights are off (it may name the room); it does not touch another room"

@@ -98,4 +98,6 @@ finally:
         httpx.post(f"{base}/api/services/lock/lock", headers=H, json={"entity_id": lock}, timeout=20)
 '
 
+check_sh "on the house: the garage door opens, Jarvis notices with an offer, and a yes closes it" \
+    'LIVE_ONLY=notice-garage-door timeout 900 bash scripts/verify/live_interaction.sh --full 2>&1 | grep -v onnxruntime | tail -4'
 verify_end

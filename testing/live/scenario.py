@@ -64,6 +64,7 @@ EXPECT_KEYS = {
                          # after the answer; only the voice-ui/text-ui variants look
     "file",              # {path, exists: bool} — containment checks
     "error",             # the turn failed, visibly: {contains?, code?}
+    "interrupted",       # true: the run was stopped at the server and run-end said so (M96)
     "within_seconds",    # the whole turn must finish inside this
     "capability",        # which capability the router should have chosen
     "extension",         # {key, enabled?, granted?, tool_offered?, tool_withheld?,
@@ -125,6 +126,9 @@ class Turn:
     #: stack ground that is `docker restart jarvis-core`; on the harness it is
     #: the process. Both answer the same question: what survived?
     restart: bool = False
+    #: Seconds after the run is accepted at which the rig says "stop" — an
+    #: `assist_pipeline/stop` for that run (M96). 0 means never.
+    stop_after: float = 0.0
     #: The night happens before this turn: `memory.reflect` is called on the
     #: house (M87), the way `restart` is a real restart. What survived, what was
     #: learned — both are questions about the house, not the scenario.
@@ -215,7 +219,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
     do = raw.get("do") or {}
     if not isinstance(do, dict):
         raise ValueError(f"{name}: turn {index}'s do is not a mapping")
-    unknown_do = set(do) - {"extension", "mqtt_publish", "fixture_write"}
+    unknown_do = set(do) - {"extension", "mqtt_publish", "fixture_write", "states"}
     if unknown_do:
         raise ValueError(
             f"{name}: turn {index} asks to do {', '.join(sorted(unknown_do))}, "
@@ -229,6 +233,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         sound=sound,
         observe=observe,
         restart=bool(raw.get("restart")),
+        stop_after=float(raw.get("stop_after") or 0.0),
         reflect=bool(raw.get("reflect")),
         new_conversation=bool(raw.get("new_conversation")),
         kill=str(raw.get("kill") or ""),

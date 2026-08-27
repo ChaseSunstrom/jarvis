@@ -387,6 +387,11 @@ class Runner:
                     # A page the fixture web serves, rewritten: the rig is the
                     # website, so a watch has something real to notice (M59).
                     self._fixture_write(turn.do["fixture_write"], ground)
+                if turn.do.get("states"):
+                    # The house changing under Jarvis mid-scenario — a door
+                    # opened, a lock undone — so a notice (M86) has something
+                    # to notice AFTER the turn's clock started.
+                    await self._put_states(self.link.client, turn.do["states"])
                 turn = self._expanded(turn, ground)
                 if turn.do.get("extension"):
                     # An operator flipping a switch while a conversation is
@@ -630,6 +635,12 @@ class Runner:
             except Exception as err:  # noqa: BLE001 - a missing capability is a failure
                 raise LiveError(f"setup could not clear {what}: {err}") from err
 
+        # A sensor of the scenario's own, announced over MQTT the way a bridge
+        # does: the discovered garage temperature that three scenarios assumed
+        # existed only while sensors-discovered was running, which made them
+        # pass or fail on the order of the run.
+        if scenario.setup.get("mqtt_publish"):
+            await self._mqtt_publish(scenario.setup["mqtt_publish"])
         # Settings the scenario needs (M100): written through the same command
         # the console uses, and restored with the rest of the config dir.
         for key, value in (scenario.setup.get("settings") or {}).items():
@@ -644,7 +655,17 @@ class Runner:
         enrol = scenario.setup.get("enrol")
         if enrol:
             await self._enrol_own_voice(str(enrol.get("label") or "Rig"))
-        for entity_id, state in (scenario.setup.get("states") or {}).items():
+        # The rig as a device in a room (M94): registered on the socket the
+        # turns go through, so the pipeline's device facts name it, and filed
+        # in a room through the registry entry jarvis-core keeps for it (M99).
+        device = scenario.setup.get("device")
+        if device:
+            await self._be_a_device(client, str(device.get("name") or "Rig tablet"), str(device.get("area") or ""))
+        await self._put_states(client, scenario.setup.get("states") or {})
+
+    async def _put_states(self, client, states: Any) -> None:
+        """Put entities where a scenario wants them: at setup, or mid-turn (`do: states`)."""
+        for entity_id, state in dict(states or {}).items():
             domain = str(entity_id).split(".", 1)[0]
             wanted = str(state).lower()
             # A lock is locked or unlocked, not on or off (M66's scenarios):
@@ -661,6 +682,27 @@ class Runner:
                 await client.call_service(domain, service, target={"entity_id": entity_id})
             except Exception as err:  # noqa: BLE001 - a bad fixture must say so
                 raise LiveError(f"setup could not put {entity_id} to {state}: {err}") from err
+
+    async def _be_a_device(self, client, name: str, area: str) -> None:
+        device_id = "rig-" + "".join(ch if ch.isalnum() else "-" for ch in name.lower())
+        try:
+            await client.command(
+                "jarvis/device/register",
+                device={"id": device_id, "name": name, "platform": "rig", "capabilities": ["ask"], "app_version": "rig"},
+            )
+        except Exception as err:  # noqa: BLE001 - a house that refuses the device fails the premise
+            raise LiveError(f"setup could not register the rig as {name!r}: {err}") from err
+        if not area:
+            return
+        rows = await client.command("config/companion/list")
+        mine = next((r for r in (rows or []) if r.get("device_id") == device_id), None)
+        if not mine or not mine.get("registry_id"):
+            raise LiveError(f"setup: {name!r} has no registry entry to put in a room: {mine!r}")
+        areas = await client.command("config/area_registry/list")
+        found = next((a for a in (areas or []) if a.get("id") == area or str(a.get("name", "")).lower() == area.lower()), None)
+        if not found:
+            raise LiveError(f"setup: no area {area!r} on this house")
+        await client.command("config/device_registry/update", device_id=mine["registry_id"], area_id=found["id"])
 
     async def _enrol_own_voice(self, label: str) -> None:
         import httpx
@@ -731,6 +773,7 @@ class Runner:
             wake_phrase=wake_phrase,
             timeout=timeout or TURN_TIMEOUT,
             probes=_ui_probes(turn.expect),
+            stop_after=turn.stop_after or None,
         )
 
     # --- the fixture web, rewritten for a scenario (M59) -----------------------
@@ -944,6 +987,13 @@ class Runner:
 
         # --- did it fail, and did it say so
         #
+        # Stopped at the server (M96): run-end says so, or the stop was a
+        # client dropping its socket and the model talking on.
+        if "interrupted" in expect:
+            end = next((e for e in (spoken.events or []) if e.get("type") == "run-end"), None)
+            got = bool(((end or {}).get("data") or {}).get("interrupted"))
+            if got != bool(expect.get("interrupted")):
+                fail(f"run-end said interrupted={got}, expected {bool(expect.get('interrupted'))}")
         # A turn that must fail is as much a promise as one that must work:
         # `resilience-stt-down` is about the difference between "I can't hear
         # you at the moment" and a HUD that listens forever.

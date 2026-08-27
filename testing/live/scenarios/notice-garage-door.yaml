@@ -1,0 +1,25 @@
+name: notice-garage-door
+capability: interactions
+gated-on: M86
+intent: >
+  Jarvis notices. The garage door opens while nobody asked anything; the
+  narrate rule for it (shipped in configuration.yaml, no quiet hours) leaves a
+  notice with an offer — "Shall I close it?" — and the next spoken yes is the
+  answer. The rig opens the door mid-scenario, so the notice is one raised
+  after the turn's clock started, then says yes and expects the door closed.
+variants: [text]
+setup:
+  states:
+    cover.garage_door: closed
+turns:
+  - observe: true
+    wait: 8
+    do:
+      states:
+        cover.garage_door: open
+    expect:
+      notification: {kind: notice, title_contains: "garage", within: 90}
+  - say: "Yes, close it."
+    expect:
+      state: {cover.garage_door: "closed"}
+      reply_means: "says the garage door is closing or closed"
