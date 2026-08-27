@@ -39,8 +39,9 @@ const hook = (page: Page, payload: Record<string, unknown>) =>
 test('every note and every remembered fact is a point, and a link is an edge', async ({ page }) => {
 	await gotoKnowledge(page);
 	const graph = page.getByTestId('graph');
-	// The mock ships three notes and two memory entries.
-	await expect(graph).toHaveAttribute('data-nodes', '5');
+	// The mock ships four notes (the research report since M106) and two memory entries.
+	await expect(graph).toHaveAttribute('data-nodes', '6');
+	await expect(page.getByTestId('graph-node-note:cheap-rate-report')).toBeVisible();
 	await expect(page.getByTestId('graph-node-note:boiler-serviced')).toBeVisible();
 	await expect(page.getByTestId('graph-node-note:heating')).toBeVisible();
 	await expect(page.getByTestId('graph-node-note:research-heat-pumps')).toBeVisible();

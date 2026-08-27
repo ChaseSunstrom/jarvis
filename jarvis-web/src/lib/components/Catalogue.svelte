@@ -94,6 +94,8 @@ point is that nothing has to be opened to see it.
 	let proposal = $state<InstallPlan | null>(null);
 	/** Servers a registry lists that this house cannot install (M108). */
 	let skipped = $state(0);
+	/** How many the catalogue offers with no query, for "N of M match". */
+	let total = $state(0);
 
 	// The registries search on their side (the MCP registry lists thousands;
 	// a page of a hundred is what comes back), so a changed query is a new
@@ -125,6 +127,9 @@ point is that nothing has to be opened to see it.
 				skipped?: number;
 			}>({ type: 'jarvis/extensions/browse', query: query.trim() });
 			entries = answer.entries ?? [];
+			// The server filters by the query (the registries search on their
+			// side), so "N of M match" needs the whole from an unfiltered read.
+			if (!query.trim()) total = entries.length;
 			sources = answer.sources ?? [];
 			sourceErrors = answer.errors ?? [];
 			skipped = answer.skipped ?? 0;
@@ -174,7 +179,7 @@ point is that nothing has to be opened to see it.
 	const installedCount = $derived(entries.filter((entry) => entry.installed).length);
 	const meta = $derived(
 		query.trim()
-			? `${shown.length} of ${entries.length} match`
+			? `${shown.length} of ${Math.max(total, entries.length)} match`
 			: entries.length
 				? `${entries.length} available · ${installedCount} installed`
 				: sources.length

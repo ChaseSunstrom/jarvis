@@ -57,7 +57,8 @@ test('the graph is on the voice tab, with every note and remembered fact', async
 	await page.reload();
 	await expect(page.getByTestId('voice-screen')).toBeVisible();
 	const graph = page.getByTestId('voice-graph');
-	await expect(graph).toHaveAttribute('data-nodes', '5');
+	// Four notes (the research report since M106) and two remembered facts.
+	await expect(graph).toHaveAttribute('data-nodes', '6');
 });
 
 test('a tool call shows as it runs, then stamps its result', async ({ page }) => {

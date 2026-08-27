@@ -91,7 +91,7 @@ test("the page's one search filters the catalogue as it filters the folds", asyn
 	await search.fill('bin');
 	await expect(page.getByTestId('catalog-bin-day')).toBeVisible();
 	await expect(page.getByTestId('catalog-diary')).toHaveCount(0);
-	await expect(page.getByTestId('catalogue-meta')).toHaveText('1 of 6 match');
+	await expect(page.getByTestId('catalogue-meta')).toHaveText('1 of 10 match');
 
 	// A permission is a word too: "network" finds the skill that asks for it.
 	await search.fill('network');
@@ -126,7 +126,7 @@ test('installing is a second decision, with the hash and every program named, an
 	await expect(page.getByTestId('catalog-installed-friendly-helper')).toHaveText('INSTALLED');
 	await expect(page.getByTestId('catalog-install-friendly-helper')).toHaveCount(0);
 	await expect(page.getByTestId('ext-skill:friendly-helper')).toBeVisible();
-	await expect(page.getByTestId('catalogue-meta')).toHaveText('6 available · 5 installed');
+	await expect(page.getByTestId('catalogue-meta')).toHaveText('10 available · 5 installed');
 });
 
 test('a benign entry installs with no program to warn about', async ({ page }) => {

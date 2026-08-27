@@ -12,6 +12,7 @@
   "applies on restart", and RESTART JARVIS is beside the list.
 -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { describeError } from '$lib/connection';
 	import { SectionLink } from '$lib/sectionLink.svelte';
 	import { toasts } from '$lib/toast';
@@ -44,6 +45,13 @@
 
 	const link = new SectionLink(async (conn) => {
 		await load(conn);
+	});
+
+	// The link opens with the section and closes with it — the one line the
+	// first cut lacked, so CI's four environment cases waited on a skeleton.
+	onMount(() => {
+		void link.connect();
+		return () => link.dispose();
 	});
 
 	async function load(conn = link.conn): Promise<void> {
