@@ -85,7 +85,7 @@ MAX_BODY = 1000
 #: noticed while nobody was asking.
 # `reflection` (M87): what Jarvis learned overnight. `notice` (M86): a change it
 # noticed. `capability` (M97): a tool it made itself, a skill or server it gained.
-KINDS = ("task", "reminder", "briefing", "approval", "note", "camera", "reflection", "notice", "capability")
+KINDS = ("task", "reminder", "briefing", "approval", "note", "camera", "reflection", "notice", "capability", "review")
 
 
 def _clip(value: Any, limit: int) -> str:

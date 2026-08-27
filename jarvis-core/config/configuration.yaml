@@ -1596,6 +1596,14 @@ surface: {}
 # /pause/resume/cancel/snooze for automations. No options.
 timer: {}
 
+# The night's other reading (M102): what went WRONG today — tools that errored,
+# things Jarvis said were done with no tool called, runs you stopped, a model
+# server that could not be reached — asked about once, left as a note ("What
+# went wrong on <day>") and a card, and answered by "what did you get wrong
+# today?". `at` in the house's zone; leave it out for on-demand only.
+review:
+  at: "03:45"
+
 # n8n (M77): the house's workflows through n8n's own API. Empty url means
 # off — the tools then say so. Make the key under Settings → n8n API on the
 # n8n server; the assistant endpoint is the operator's (a Chat Trigger's

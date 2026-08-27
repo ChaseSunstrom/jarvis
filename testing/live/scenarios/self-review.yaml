@@ -1,0 +1,25 @@
+name: self-review
+capability: memory
+gated-on: M102
+intent: >
+  Jarvis learns from its own mistakes. A run the person stops is a mistake on
+  the record (M96 puts it there); the review reads the day, asks once, and
+  leaves a note and a card; "what did you get wrong today?" is answered from
+  that record — the stopped run named — and not from a guess.
+variants: [text]
+turns:
+  - say: >
+      Tell me, in as many words as you can manage and without stopping,
+      everything you know about this house — every room, every device, every
+      sensor, one after another.
+    stop_after: 1.5
+    expect:
+      interrupted: true
+      within_seconds: 40
+  - say: "What did you get wrong today?"
+    review: true
+    expect:
+      notification: {kind: review, title_contains: "went wrong", within: 30}
+      reply_means: >
+        says that a run (an answer) was stopped or cut off by the user, from
+        its record — it may add a lesson — and does not invent other failures

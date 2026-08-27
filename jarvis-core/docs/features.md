@@ -10,6 +10,7 @@ action back, it can explain itself, and it remembers what you told it.
 | [`briefing`](#briefing) | The summary Jarvis volunteers, morning and night |
 | [`undo`](#undo) | "Undo that" — and a clear refusal when that is not safe |
 | [`timer`](#timer) | A kitchen timer as an entity: counts down, answers "how long is left?", chimes where it was asked for |
+| [`review`](#review) | What went wrong today, read once a night, with the lessons — and "what did you get wrong?" answered from the record |
 | [`trace`](#trace) | Why an automation did what it did, or did nothing |
 | [`memory`](#memory) | Durable notes, on disk, that you can read and delete |
 
@@ -112,6 +113,22 @@ plus the sections keyed by name, or `{"empty": true}` with an instruction to
 say so in one sentence rather than padding.
 
 ---
+
+## review
+
+The nightly reflection learns facts about the person; this learns from the
+day's failures. Tools that errored, things Jarvis said were done with no tool
+called (the guard's catches are on the trace now), runs stopped mid-answer, a
+model server that could not be reached: read once a night, asked about once,
+left as a note and a card. "What did you get wrong today?" is answered from
+the record by `what_went_wrong`.
+
+```yaml
+review:
+  at: "03:45"
+```
+
+A lesson is a sentence for the person to read; no rule changes by itself.
 
 ## timer
 

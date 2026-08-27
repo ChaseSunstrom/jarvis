@@ -476,6 +476,17 @@ class PipelineRun:
             # thread holding a copy of somebody's audio after the turn it
             # belonged to has ended is the one thing this feature must not do.
             self._discard_verification()
+            if self.interrupted:
+                # On the record too (M102): the trace and the nightly review.
+                try:
+                    self.jarvis.bus.fire(
+                        "jarvis_run_stopped",
+                        {"run_id": self.run_id, "conversation_id": self.conversation_id,
+                         "seconds": round(time.monotonic() - self._started_at, 3) if getattr(self, "_started_at", None) else 0.0,
+                         "ok": False, "error": "stopped by the person", "name": "stop"},
+                    )
+                except Exception:  # pragma: no cover
+                    _LOGGER.debug("Could not record the stop", exc_info=True)
             await self._emit(EVENT_RUN_END, {"interrupted": True} if self.interrupted else {})
         return self
 

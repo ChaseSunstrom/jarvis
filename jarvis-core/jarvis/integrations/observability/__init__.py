@@ -80,6 +80,10 @@ POINT_EVENTS = {
     "jarvis_model_call": "model",
     "jarvis_task_child_added": "subagent",
     "jarvis_tool_called": "tool-inline",
+    # The agent's claimed-action guard and a run stopped at the server (M102):
+    # in the trace, so "why did you say that?" and the nightly review read them.
+    "jarvis_turn_guarded": "guard",
+    "jarvis_run_stopped": "stop",
 }
 
 #: Fired by the agent after each exchange with the model. Carries what the

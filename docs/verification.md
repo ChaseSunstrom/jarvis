@@ -2121,6 +2121,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M99 — The console keeps up | **Ticked** (9/9 on the rebuilt house: retry, live Areas/schedule/settings, a room for a companion listed with its registry entry, the unshown fields) | `m99-the-console-keeps-up.sh`; `console-keeps-up.spec.ts` 6/6 + the touched specs 41/41; `test_api_companion.py` (+1) |
 | M100 — Jarvis knows who it is talking to | Planned | `m100-knows-who.sh` |
 | M101 — One shape for every payload | Planned | `m101-one-shape.sh` |
+| M102 — Jarvis learns from its own mistakes | Planned | `m102-learns-from-mistakes.sh` |
 
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.

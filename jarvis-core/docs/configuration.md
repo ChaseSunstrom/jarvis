@@ -137,6 +137,22 @@ trigger:
 
 For an offset, use a template condition on `next_setting`.
 
+## `review:`
+
+```yaml
+review:
+  at: "03:45"                   # the nightly hour, in the house's zone; leave out for on demand only
+```
+
+Jarvis learns from its own mistakes. The day's record — traces whose tools
+errored, turns the claimed-action guard caught saying something was done, runs
+stopped with `assist_pipeline/stop`, a model server that could not be reached
+— is read once a night (and on `review.run`), the model is asked once for at
+most three things to do differently, and a note ("What went wrong on <day>")
+and a `review` card are left. The `what_went_wrong` tool answers "what did you
+get wrong today?" from that record, never from a guess. A lesson changes no
+rule by itself: it is a sentence for the person.
+
 ## `timer:`
 
 ```yaml

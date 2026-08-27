@@ -1002,3 +1002,4 @@ is quiet. Done since:
 - 09:49 — plan pass done 09:47 (m86, m89, m94, m96, m97 green; m84/m85/m87/m88 fixed since and queued for the sixteenth;
   m92 3/4, m93 6/7, m95 4/5 read below). M94 and M96 ticked. The rig gained `stop_after:`/`interrupted`, `do: states`,
   `setup: device:` — scenarios stop-means-stop, in-here-by-voice, notice-garage-door, and m86/m94/m96 have live slices.
+- 09:57 — M102 built (Jarvis learns from its own mistakes): the review integration, the guard and the stop on the trace, the self-review scenario; live half after the rebuild.

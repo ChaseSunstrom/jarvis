@@ -1569,6 +1569,25 @@ web and of Tasker. Local only. Each row here is planned in that document.
     files / 244, vitest 43 / 710). Found on the way: `Store.save` shared one temp file across writers, and a
     task cancelled mid-write (a timer snoozed as it finished) broke the next save — the CI red on 6c816c8;
     a temp file per write now (8b53d39). Gate: the live half runs after the rebuild.
+- [ ] **M102 — Jarvis learns from its own mistakes** · size M · deps M87, M95, M96 · parallel-ok M100
+  - Scope: the nightly reflection learns facts about the person; nothing learns from the day's FAILURES.
+    A review, once a night beside the reflection and on demand (`review.run`, `review: true` in the rig),
+    reads the day's record — traces whose tools errored, turns the claimed-action guard caught, runs that
+    were stopped, asks nobody answered, a model server that could not be reached — asks once for the
+    three things it should do differently, and leaves a note ("What went wrong on <day>") and a card
+    the person can read; "what did you get wrong today?" answers from that record (`what_went_wrong`),
+    never from a guess. The guard's catches become a trace span so the review can count them. A
+    Settings row for the hour; off by leaving it unset. Scenario `self-review`: a request the house
+    cannot fulfil, a review, and the answer names it.
+  - Verify: `bash scripts/verify/m102-learns-from-mistakes.sh`
+  - 27 Aug 09:53: planned.
+  - 27 Aug 09:57: built, not ticked — `integrations/review`: the day log (guard catches and stopped runs
+    as bus events, persisted), the traces' errored spans (a model server that could not be reached counted
+    apart), one ask a night at `review: at:` and on `review.run`, the note and the `review` card, the
+    `what_went_wrong` tool that answers from the record; the agent fires `jarvis_turn_guarded` when its
+    guard catches a claim and the pipeline `jarvis_run_stopped` when a run is stopped — both spans in the
+    trace. Suite `test_review.py` 6; the rig's `review: true` turn; scenario `self-review` (a stop the rig
+    sends, then "what did you get wrong today?"). The live half waits for a house built from this tree.
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

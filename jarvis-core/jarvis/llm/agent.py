@@ -1832,6 +1832,16 @@ class ConversationAgent:
                             "The model said it had done %r without calling any tool; asking it to call or say so",
                             request_text[:80],
                         )
+                        # On the record (M102): a span in the trace, a row in
+                        # the nightly review. `ok: False` so the trace counts it.
+                        try:
+                            self.jarvis.bus.fire(
+                                "jarvis_turn_guarded",
+                                {"request": request_text[:200], "said": "".join(said)[:200], "ok": False,
+                                 "error": "claimed an action with no tool called", "name": "claimed-action"},
+                            )
+                        except Exception:  # pragma: no cover - the record is never load-bearing
+                            _LOGGER.debug("Could not record the guard", exc_info=True)
                         result.preamble += "".join(said)
                         messages.append(self._assistant_message_text("".join(said)))
                         messages.append(

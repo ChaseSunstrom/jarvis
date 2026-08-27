@@ -133,6 +133,8 @@ class Turn:
     #: house (M87), the way `restart` is a real restart. What survived, what was
     #: learned — both are questions about the house, not the scenario.
     reflect: bool = False
+    #: The rig calls `review.run` before this turn (M102), as `reflect` calls memory.reflect.
+    review: bool = False
     #: Stop a container before this turn and bring it back at the end of the
     #: scenario. Stack ground only — there is nothing to kill on a harness.
     kill: str = ""
@@ -235,6 +237,7 @@ def _turn(raw: Any, index: int, name: str) -> Turn:
         restart=bool(raw.get("restart")),
         stop_after=float(raw.get("stop_after") or 0.0),
         reflect=bool(raw.get("reflect")),
+        review=bool(raw.get("review")),
         new_conversation=bool(raw.get("new_conversation")),
         kill=str(raw.get("kill") or ""),
         do=do,

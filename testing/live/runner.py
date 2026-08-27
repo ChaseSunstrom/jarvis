@@ -408,6 +408,13 @@ class Runner:
                         if ground.name == "stack"
                         else None
                     )
+                if turn.review:
+                    # The night, brought forward (M102): the review of the day
+                    # so far, before the person asks what went wrong.
+                    try:
+                        await observer.client.call_service("review", "run")
+                    except Exception as err:  # noqa: BLE001
+                        raise LiveError(f"review.run failed: {err}") from err
                 if turn.reflect:
                     # The night, on demand (M87): the house reads its day and
                     # keeps what it learned before the next thing is said.
