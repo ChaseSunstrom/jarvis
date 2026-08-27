@@ -1796,6 +1796,16 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - Verify: `bash scripts/verify/m111-tasks-are-a-brief.sh`
   - 27 Aug 15:30: planned and built (`TaskDock.svelte`); the spec runs when the box is quiet — the nineteenth's
     report and the twentieth's rebuild own it until then.
+- [ ] **M112 — Notes on the voice screen are a brief** · size S · deps M83, M106 · parallel-ok M111
+  - Scope: the operator's report of 27 Aug 15:50 — "all of the notes popups are still taking up a ton of space on the
+    voice screen". A note the house put up was a 4×3 panel (a third of the page tall at 1440 wide) and a page 4×4,
+    placed slot by slot over the instrument. A note or a page is now one row — its title and first line — stacked
+    down a side column (right first, then left, one under the last, checked against real rectangles); ⤢ in the head
+    opens it to four rows and the whole note as written (M106), ⤡ folds it, both through the same move the house
+    persists; `resize` by voice ("bigger") does the same. The mock sizes notes as the server does.
+  - Verify: `bash scripts/verify/m112-notes-are-a-brief.sh`
+  - 27 Aug 15:58: planned and built (`surface/__init__.py`, `SurfacePanel.svelte`, `e2e/notes-brief.spec.ts`); the
+    gate runs on the twentieth.
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds
     were the gates' own drift, fixed while it ran and green on re-run (m02, m18, m19, m28,

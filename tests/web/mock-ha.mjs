@@ -1320,7 +1320,7 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 				world.surface.push({
 					id: `panel-${world.surface.length + 1}`, kind: 'note', task: '', note: `task:${task.id}`,
 					title: `Finished: ${task.title}`, entity: '', camera: '', area: '', url: '', text: String(task.result), limit: 6,
-					x: world.surface.length % 2 ? 8 : 0, y: Math.floor(world.surface.length / 2) * 4, w: 4, h: 3,
+					x: world.surface.length % 2 ? 8 : 0, y: Math.floor(world.surface.length / 2) * 4, w: 4, h: 1,
 					placed_at: Date.now() / 1000
 				});
 				changed = true;
@@ -4201,7 +4201,8 @@ index 1234567..89abcde 100644
 						entity: msg.entity || '', camera: msg.camera || '', area: msg.area || '', note: msg.note || '',
 						url: msg.url || '', text: msg.text || '', limit: 6,
 						x: msg.x ?? (world.surface.length % 2 ? 8 : 0), y: msg.y ?? Math.floor(world.surface.length / 2) * 4,
-						w: msg.w || 4, h: msg.h || (msg.kind === 'camera' ? 3 : 2), placed_at: Date.now() / 1000
+						// As jarvis-core sizes them since M112: a note or a page is a one-row brief.
+						w: msg.w || 4, h: msg.h || (msg.kind === 'camera' ? 3 : msg.kind === 'note' || msg.kind === 'page' ? 1 : 2), placed_at: Date.now() / 1000
 					};
 					world.surface.push(panel);
 					broadcast('jarvis_surface_changed', { panels: world.surface.map((p) => ({ ...p })), max: 8 });

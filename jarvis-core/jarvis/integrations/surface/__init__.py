@@ -51,7 +51,12 @@ FOLLOWED_KINDS = frozenset({"background"})
 
 SLOTS = ((0, 0), (8, 0), (0, 4), (8, 4), (0, 8), (8, 8), (4, 8), (4, 0))
 DEFAULT_SIZE = {"entity": (4, 2), "camera": (4, 3), "readings": (4, 3), "sky": (4, 2),
-                "moments": (4, 3), "note": (4, 3), "page": (4, 4), "chart": (4, 3),
+                # A note or a page is a one-row BRIEF (M112): its title and
+                # first line, at a side. The operator's report of 27 Aug 2026
+                # ("all of the notes popups are still taking up a ton of space")
+                # was 4×3 notes, each a third of the page. ⤢ on the console
+                # opens one to four rows; `resize` ("bigger") does the same by voice.
+                "moments": (4, 3), "note": (4, 1), "page": (4, 1), "chart": (4, 3),
     "task": (4, 4),
 }
 MAX_TEXT_CHARS = 4000
@@ -142,6 +147,18 @@ class Surface:
         await self.jarvis.bus.async_fire(EVENT_SURFACE_CHANGED, self.as_payload())
 
     def _free_slot(self, w: int, h: int) -> tuple[int, int]:
+        if h <= 1:
+            # A brief stacks DOWN a side column — the right first, then the
+            # left — one row under the last thing there, so three notes are
+            # three lines at the edge and not three slots spread over the
+            # instrument. Checked against real rectangles, not slot corners:
+            # a 4×3 camera at (8, 0) covers (8, 1) and (8, 2) too.
+            for x in (COLUMNS - w, 0):
+                y = 0
+                while y < 12:
+                    if not any(self._overlaps(p, x, y, w, h) for p in self.panels):
+                        return x, y
+                    y += 1
         taken = {(p["x"], p["y"]) for p in self.panels}
         for x, y in SLOTS:
             if (x, y) not in taken:
@@ -149,6 +166,15 @@ class Surface:
         # Every slot taken: below the lowest panel, so nothing is covered.
         bottom = max((p["y"] + p["h"] for p in self.panels), default=0)
         return 0, bottom
+
+    @staticmethod
+    def _overlaps(panel: dict[str, Any], x: int, y: int, w: int, h: int) -> bool:
+        return not (
+            panel["x"] + panel["w"] <= x
+            or x + w <= panel["x"]
+            or panel["y"] + panel["h"] <= y
+            or y + h <= panel["y"]
+        )
 
     def find(self, ref: Any) -> dict[str, Any] | None:
         """A panel by id, or by the words of its title / target."""

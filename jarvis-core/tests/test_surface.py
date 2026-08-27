@@ -178,3 +178,35 @@ async def test_a_job_without_steps_or_of_another_kind_is_not_followed(tmp_path):
     await jarvis.async_block_till_done()
     assert surface.as_payload()["panels"] == []
     await jarvis.async_stop()
+
+
+async def test_a_note_is_a_one_row_brief_at_the_side_and_notes_stack_down(tmp_path):
+    """M112. The operator's report of 27 Aug 2026: note panels a third of the
+    page tall, spread slot by slot over the instrument. A note or a page is
+    4×1 now, in the right-hand column, each under the last; a panel already
+    there is walked past by its real height, not its slot corner."""
+    from jarvis.integrations.surface import DEFAULT_SIZE
+
+    assert DEFAULT_SIZE["note"] == (4, 1) and DEFAULT_SIZE["page"] == (4, 1)
+    jarvis, _registry, surface = await booted(tmp_path)
+    try:
+        alone = await surface.async_place({"kind": "note", "note": "sensor audit", "text": "# Sensor audit\n\nAll fine."})
+        assert (alone["panel"]["x"], alone["panel"]["y"], alone["panel"]["w"], alone["panel"]["h"]) == (COLUMNS - 4, 0, 4, 1)
+        await surface.async_clear() if hasattr(surface, "async_clear") else None
+        surface.panels.clear()
+        camera = await surface.async_place({"kind": "camera", "camera": "front door"})
+        sky = await surface.async_place({"kind": "sky"})
+        assert (camera["panel"]["x"], camera["panel"]["y"]) == (0, 0)
+        assert (sky["panel"]["x"], sky["panel"]["y"], sky["panel"]["h"]) == (COLUMNS - 4, 0, 2)
+        first = await surface.async_place({"kind": "note", "note": "first", "text": "one"})
+        second = await surface.async_place({"kind": "note", "note": "second", "text": "two"})
+        page = await surface.async_place({"kind": "page", "url": "https://example.com", "text": "three"})
+        assert (first["panel"]["x"], first["panel"]["y"]) == (COLUMNS - 4, 2), "under the sky, by its real height"
+        assert (second["panel"]["x"], second["panel"]["y"]) == (COLUMNS - 4, 3)
+        assert (page["panel"]["x"], page["panel"]["y"]) == (COLUMNS - 4, 4)
+        assert all(p["h"] == 1 for p in (first["panel"], second["panel"], page["panel"]))
+        # Opened from the console: the same move a drag makes, persisted.
+        grown = await surface.async_move(first["panel"]["id"], h=4)
+        assert grown["status"] == "ok" and surface.find(first["panel"]["id"])["h"] == 4
+    finally:
+        await jarvis.async_stop()

@@ -74,6 +74,29 @@
 	const top = $derived((dragging ? dragging.y : panel.y) * row);
 	const pxWidth = $derived((resizing ? resizing.w : panel.w) * column);
 	const pxHeight = $derived((resizing ? resizing.h : panel.h) * row);
+	/**
+	 * A note or a page one row tall is a BRIEF (M112): its title and first
+	 * line, and nothing that scrolls. The operator's report of 27 Aug 2026 —
+	 * "all of the notes popups are still taking up a ton of space on the
+	 * voice screen" — was 4×3 note panels, each a third of the page tall.
+	 * The head's ⤢ opens one to four rows (the whole note, as written); ⤡
+	 * folds it back. Both go through `onmove`, so the size is the house's,
+	 * like a drag.
+	 */
+	const OPEN_ROWS = 4;
+	const textual = $derived(panel.kind === 'note' || panel.kind === 'page');
+	const brief = $derived(textual && (resizing ? resizing.h : panel.h) <= 1);
+	function toggleOpen(): void {
+		onmove(panel.id, { x: panel.x, y: panel.y, w: panel.w, h: brief ? OPEN_ROWS : 1 });
+	}
+	/** The first line that says something: not a heading mark, not a blank. */
+	const firstLine = $derived.by(() => {
+		const lines = String(panel.text || '')
+			.split('\n')
+			.map((line) => line.replace(/^#+\s*|^[-*>]\s+|^\d+\.\s+/, '').trim())
+			.filter(Boolean);
+		return lines[0] ?? '';
+	});
 
 	function startDrag(event: PointerEvent) {
 		if ((event.target as HTMLElement).closest('button, input, a, [data-no-drag]')) return;
@@ -131,6 +154,17 @@
 	<header class="head">
 		<span class="title" data-testid="surface-title-{panel.id}">{panel.title || panel.kind}</span>
 		<span class="kind">{panel.kind}</span>
+		{#if textual}
+			<button
+				class="grow"
+				type="button"
+				data-testid="surface-open-{panel.id}"
+				title={brief ? 'Open the whole note' : 'Fold it to one line'}
+				aria-label={brief ? `Open ${panel.title || panel.kind}` : `Fold ${panel.title || panel.kind}`}
+				aria-expanded={!brief}
+				onclick={toggleOpen}>{brief ? '⤢' : '⤡'}</button
+			>
+		{/if}
 		<button
 			class="close"
 			type="button"
@@ -164,12 +198,18 @@
 					<p class="muted">Waiting for the job…</p>
 				{/if}
 			</div>
-		{:else if panel.kind === 'note' || panel.kind === 'page'}
-			<div class="text" data-testid="surface-text-{panel.id}">
-				{#if panel.url}<span class="src">{panel.url}</span>{/if}
-				<!-- A note on the screen reads as it was written (M106). -->
-				{#if panel.text}<Markdown text={panel.text} />{:else}<p>Nothing to show yet.</p>{/if}
-			</div>
+		{:else if textual}
+			{#if brief}
+				<p class="brief" data-testid="surface-brief-{panel.id}" title={firstLine}>
+					{firstLine || panel.url || 'Nothing to show yet.'}
+				</p>
+			{:else}
+				<div class="text" data-testid="surface-text-{panel.id}">
+					{#if panel.url}<span class="src">{panel.url}</span>{/if}
+					<!-- A note on the screen reads as it was written (M106). -->
+					{#if panel.text}<Markdown text={panel.text} />{:else}<p>Nothing to show yet.</p>{/if}
+				</div>
+			{/if}
 		{/if}
 	</div>
 	<span
@@ -240,6 +280,28 @@
 	}
 	.kind {
 		color: var(--jv-text-faint);
+	}
+	.grow {
+		background: none;
+		border: 0;
+		color: var(--jv-text-dim);
+		font-size: var(--jv-fs-sm);
+		line-height: 1;
+		cursor: pointer;
+		padding: 0 var(--jv-space-1);
+	}
+	.grow:hover {
+		color: var(--jv-text-bright);
+	}
+	.brief {
+		margin: 0;
+		font-family: var(--jv-font-body);
+		font-size: var(--jv-fs-sm);
+		color: var(--jv-text);
+		overflow: hidden;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
 	}
 	.close {
 		background: none;
