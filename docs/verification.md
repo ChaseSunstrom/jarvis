@@ -2093,6 +2093,31 @@ because somebody believes it.
 Whenever the answer to "does this work?" changes, this file changes with it.
 Two rules keep it worth reading:
 
+### The audit's plan (M84–M98), as built on 27 Aug
+
+Every row's gate has an offline half that is green on the branch and a live half that runs
+against the rebuilt house (the fifteenth rebuild, queued behind `make verify-all`); a row is
+**Built** until its live half has passed there, and the tick in `MILESTONES.md` follows the
+gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
+
+| Milestone | Level | Evidence |
+|---|---|---|
+| M84 — Jarvis volunteers a briefing | **Built** (gate 6/8 offline) | `scripts/verify/m84-briefing.sh`; `test_features.py -k briefing` (20); scenario `briefing-on-demand` |
+| M85 — Work survives a restart | **Built** (4/5) | `m85-work-survives-a-restart.sh`; `test_taskengine.py` (+1); scenario `task-survives-a-restart` (a real restart between turns) |
+| M86 — Jarvis notices | **Built** (3/5) | `m86-jarvis-notices.sh`; `test_sensors.py -k "narrat or offer"` (15); the live half flips the demo lock and reads `recent_events` |
+| M87 — Overnight reflection | **Built** (4/6) | `m87-overnight-reflection.sh`; `test_memory_reflection.py` (6); scenario `memory-reflection` with `reflect: true` |
+| M88 — A plan on the screen | **Built** (6/7) | `m88-a-plan-on-the-screen.sh`; `test_surface.py` (7); `surface.spec.ts` 4/4 |
+| M89 — Stack hygiene | **Built** (3/5) | `m89-stack-hygiene.sh`; `test_packaging.py` (+3); the two stack checks wait for the recreate |
+| M90 — The claims register, re-measured | **Automated** (6/6, ticked) | `m90-claims-register.sh` reruns every count and fails on drift |
+| M91 — A gate cannot pass on a skip | Planned | waits for a box with no gate running (`lib.sh`) |
+| M92 — The house by voice, beyond lights | **Built** (3/4) | `m92-the-house-by-voice.sh`; ten scenarios; rig tests 49 |
+| M93 — Pick up where you left off | **Built** (5/6) | `m93-pick-up-where-you-left-off.sh`; `conversation-link.spec.ts` 2/2; `interactions-thread-continuity` gains `text-ui` |
+| M94 — In here | **Built** (6/6 — the live check passed on the fourteenth build too, so it does not yet discriminate; re-run after the rebuild) | `m94-in-here.sh`; `test_llm.py`, `test_voice.py`, `test_device_control.py` (+1 each) |
+| M95 — Jarvis reads its own record | **Built** (4/5) | `m95-reads-its-own-record.sh`; `test_notifications.py` (+3), `test_llm.py` (+2); scenarios `explain-yourself`, `what-did-you-tell-me` |
+| M96 — Stop means stop | **Built** (3/4) | `m96-stop-means-stop.sh`; `test_api.py` (+1) |
+| M97 — Routines read back, what's new | **Built** (6/7; timers as entities not yet) | `m97-timers-routines-whats-new.sh`; `test_automation_api.py` (+2), `test_create_tool_handler.py` (+1), `test_notifications.py` (+1) |
+| M98 — The phone keeps up | Planned | waits for gradle to be free (verify-all runs its own) |
+
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.
 2. **Re-measure the counts** rather than editing them by hand. Every number in
