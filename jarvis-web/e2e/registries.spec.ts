@@ -24,7 +24,8 @@ test('the registries are sources: a skill from Anthropic and a server from the M
 });
 
 test('searching narrows to the registry entry named', async ({ page }) => {
-	const box = page.getByTestId('catalogue-search').or(page.getByPlaceholder(/search|filter/i)).first();
+	// The page's one search box, as catalogue.spec.ts finds it.
+	const box = page.locator('main [data-jv-filter]');
 	await box.fill('weather');
 	await expect(page.getByTestId('catalog-io.github.example-weather')).toBeVisible();
 	await expect(page.getByTestId('catalog-canvas-design')).toHaveCount(0);

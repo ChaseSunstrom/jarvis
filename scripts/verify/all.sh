@@ -24,7 +24,10 @@ LOGDIR="$ROOT/.verify"
 mkdir -p "$LOGDIR"
 TIMEOUT="${VERIFY_TIMEOUT:-2400}"
 
-mapfile -t scripts < <(ls scripts/verify/m[0-9][0-9]-*.sh 2>/dev/null | sort)
+# Two- AND three-digit milestones: the first glob alone skipped every gate
+# from M100 on, so verify-all reported "all green" over a list that ended at
+# M99 (27 Aug 2026). `sort -V` keeps M9 before M10 before M100.
+mapfile -t scripts < <(ls scripts/verify/m[0-9][0-9]-*.sh scripts/verify/m[0-9][0-9][0-9]-*.sh 2>/dev/null | sort -V)
 # The live interaction suite runs once, at the end, over every scenario that is
 # not gated on an unfinished milestone. The milestone scripts each run their own
 # slice of it; this is the whole-system pass, and it is what `make verify-all`

@@ -67,7 +67,8 @@ test('the catalogue is the first thing on the tools page, with no fold to open',
 	// And the fixture's, with one INSTALL each and what it asks for on the row.
 	await expect(page.getByTestId('catalog-install-bin-day')).toBeVisible();
 	await expect(page.getByTestId('catalog-perms-friendly-helper')).toContainText('run_process');
-	await expect(page.getByTestId('catalogue-meta')).toHaveText('6 available · 4 installed');
+	// 6 shipped/fixture entries + the four the registries list in the mock since M108.
+	await expect(page.getByTestId('catalogue-meta')).toHaveText('10 available · 4 installed');
 
 	// Above every fold — not inside one, and not below the first.
 	const catalogue = await page.getByTestId('catalogue-section').boundingBox();
