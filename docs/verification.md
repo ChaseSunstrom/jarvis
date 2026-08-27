@@ -2124,6 +2124,7 @@ gate, never the other way round. `docs/OVERNIGHT_LOG.md` carries the times.
 | M101 — One shape for every payload | Planned | `m101-one-shape.sh` |
 | M102 — Jarvis learns from its own mistakes | Planned | `m102-learns-from-mistakes.sh` |
 | M103 — The phone shows what the house puts up | Planned | `m103-the-phone-shows-it.sh` |
+| M104 — Jarvis proposes a routine | Planned | `m104-proposes-a-routine.sh` |
 
 1. **Never promote a row without a command that demonstrates it.** "Probably
    fine" is Unproven.

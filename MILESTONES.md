@@ -1609,6 +1609,20 @@ web and of Tasker. Local only. Each row here is planned in that document.
     KINDS, the frames to the server's names, the subscribe-before-list order and the two views; two new
     goldens (`voice-surface`, `voice-task-dock`); gradle assembleDebug + testDebugUnitTest green. The gate's
     live half (a phone-shaped socket sees the panel go up) runs on the house.
+- [ ] **M104 — Jarvis proposes a routine** · size M · deps M86, M97, M87 · parallel-ok M103
+  - Scope: the house does the same things at the same times and nobody writes the routine. A miner over
+    the recorder's history (`routines: days:` back, 14 by default) finds an entity put in the same state at
+    the same time of day (a quarter-hour slot) on at least `min_days` distinct days with at most one day
+    that contradicts it — and not by an automation — and proposes it: a `proposal` card ("You turn the
+    kitchen lights off at about 22:30 most nights — shall I make that a routine?") whose spoken yes
+    creates the automation through the same door the console and `create_automation` use, named so the
+    routine reads back (M97). Once a morning at `routines: at:`, and on demand (`routines.propose`,
+    the `proposed_routines` tool for "is there a routine you'd suggest?"). A proposal declined is not
+    made again for that entity and slot for thirty days. Unit tests mine synthetic days; the live half
+    runs the miner on the house's own history and reports the candidates it found (possibly none), and
+    a seeded draft accepted over the websocket becomes an automation the house lists.
+  - Verify: `bash scripts/verify/m104-proposes-a-routine.sh`
+  - 27 Aug 10:07: planned.
 ## Final
   - 26 Aug 23:50, built, not ticked: the surface (one per house, a file, an event), three Tier-1
     tools, five websocket commands, the console's panels over the page around the instrument —

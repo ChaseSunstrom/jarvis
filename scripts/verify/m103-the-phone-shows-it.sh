@@ -35,28 +35,39 @@ def token():
             return line.split("=", 1)[1].strip().strip(chr(34))
     return ""
 url = os.environ.get("JARVIS_URL", "http://127.0.0.1:8080").replace("http", "ws", 1) + "/api/websocket"
+async def result(ws, n):
+    # The reply with THIS id: a subscribed socket also receives events, and a
+    # house with scenarios running on it changes its surface between two frames.
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        m = json.loads(await asyncio.wait_for(ws.recv(), 30))
+        if m.get("id") == n and m.get("type") == "result":
+            return m
+    raise AssertionError("no result for %d" % n)
 async def main():
     async with websockets.connect(url, max_size=None) as phone, websockets.connect(url, max_size=None) as other:
         for ws in (phone, other):
             await ws.recv(); await ws.send(json.dumps({"type": "auth", "access_token": token()}))
             assert json.loads(await ws.recv())["type"] == "auth_ok"
         await phone.send(json.dumps({"id": 1, "type": "jarvis/device/register", "device": {"id": "m103-phone", "name": "M103 phone", "platform": "android", "capabilities": ["device"], "app_version": "1.0.0", "actions": []}}))
-        assert json.loads(await phone.recv()).get("success")
+        assert (await result(phone, 1)).get("success")
         await phone.send(json.dumps({"id": 2, "type": "subscribe_events", "event_type": "jarvis_surface_changed"}))
-        assert json.loads(await phone.recv()).get("success")
+        assert (await result(phone, 2)).get("success")
         await phone.send(json.dumps({"id": 3, "type": "jarvis/surface/list"}))
-        listing = json.loads(await phone.recv()); assert listing.get("success"), listing
+        listing = await result(phone, 3); assert listing.get("success"), listing
         await other.send(json.dumps({"id": 1, "type": "jarvis/surface/place", "panel": {"kind": "entity", "entity": "light.bed_light", "title": "M103 probe"}}))
-        shown = json.loads(await other.recv()); assert shown.get("success"), shown
+        shown = await result(other, 1); assert shown.get("success"), shown
         panel_id = shown["result"]["panel"]["id"]
         deadline = time.time() + 15; got = None
         while time.time() < deadline:
             m = json.loads(await asyncio.wait_for(phone.recv(), 15))
-            if m.get("type") == "event" and m["event"]["event_type"] == "jarvis_surface_changed":
-                got = m["event"]["data"]; break
-        assert got and any(p.get("id") == panel_id for p in got.get("panels", [])), got
+            if m.get("type") == "event" and m["event"].get("event_type") == "jarvis_surface_changed":
+                data = m["event"].get("data") or {}
+                if any(p.get("id") == panel_id for p in data.get("panels", [])):
+                    got = data; break
+        assert got, "the phone socket never saw the panel go up"
         await other.send(json.dumps({"id": 2, "type": "jarvis/surface/remove", "panel": panel_id}))
-        assert json.loads(await other.recv()).get("success")
+        assert (await result(other, 2)).get("success")
         print("the phone socket saw the panel go up:", panel_id)
 asyncio.run(main())
 '
