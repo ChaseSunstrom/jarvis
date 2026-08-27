@@ -21,7 +21,8 @@
   "normalisation": {
     "lowercase": true,
     "letters_digits_only": "every other character becomes a space; apostrophes are dropped, so don't and dont are the same word",
-    "edge_fillers": ["jarvis", "please", "thanks", "thank you", "hey"],
+    "edge_fillers": ["jarvis", "please", "thanks", "thank you", "hey", "sir", "ma'am", "madam"],
+    "edge_fillers_address_note": "the forms of address come off too: Whisper hears a short Yes. as yes, sir (27 Aug 2026), and yes, ma'am to a house that calls one ma'am is a yes",
     "edge_fillers_note": "removed from either end, repeatedly, before the lists are consulted; never from the middle, so 'yes please turn it on' is not 'yes'"
   },
   "affirmations": [
@@ -59,6 +60,10 @@
     {"name": "yes, go ahead", "pending": [{"tool": "lock_control"}], "utterance": "Yes, go ahead.", "expect": {"kind": "approve", "index": 0}},
     {"name": "fillers at the edges are not words", "pending": [{"tool": "lock_control"}], "utterance": "Jarvis, go ahead please", "expect": {"kind": "approve", "index": 0}},
     {"name": "okay", "pending": [{"tool": "remove_entities"}], "utterance": "okay", "expect": {"kind": "approve", "index": 0}},
+    {"name": "yes, sir approves - Whisper hears a short yes that way", "pending": [{"tool": "lock_control"}], "utterance": "Yes, sir", "expect": {"kind": "approve", "index": 0}},
+    {"name": "yes ma'am approves", "pending": [{"tool": "lock_control"}], "utterance": "yes ma'am", "expect": {"kind": "approve", "index": 0}},
+    {"name": "no, sir denies", "pending": [{"tool": "lock_control"}], "utterance": "No, sir.", "expect": {"kind": "deny", "index": 0}},
+    {"name": "sir alone resolves nothing", "pending": [{"tool": "lock_control"}], "utterance": "sir", "expect": {"kind": "none"}},
     {"name": "no denies", "pending": [{"tool": "lock_control"}], "utterance": "No.", "expect": {"kind": "deny", "index": 0}},
     {"name": "cancel that denies", "pending": [{"tool": "remove_entities"}], "utterance": "cancel that", "expect": {"kind": "deny", "index": 0}},
     {"name": "never mind denies", "pending": [{"tool": "lock_control"}], "utterance": "never mind", "expect": {"kind": "deny", "index": 0}},

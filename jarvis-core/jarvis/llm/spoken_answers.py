@@ -60,7 +60,12 @@ STOPWORDS: frozenset[str] = frozenset(
 
 #: Removed from either end of an utterance before the lists are consulted.
 #: Never from the middle: "yes please turn it on" is not "yes".
-EDGE_FILLERS: tuple[str, ...] = ("jarvis", "please", "thanks", "thank you", "hey")
+#: The forms of address come off too: Whisper hears a short "Yes." as "Yes, sir"
+#: (the confirm scenario, 27 Aug 2026), and a person who says "yes, ma'am" to a
+#: house that calls them ma'am has said yes.
+EDGE_FILLERS: tuple[str, ...] = (
+    "jarvis", "please", "thanks", "thank you", "hey", "sir", "ma'am", "madam",
+)
 
 _NOT_WORD = re.compile(r"[^0-9a-z\s]+")
 

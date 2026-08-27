@@ -235,9 +235,61 @@ def recover(content: str, thinking: str, offered: Iterable[str]) -> Recovered:
 
         calls = _collect(chunk, names)
         if calls:
-            return Recovered(calls, f"bare:{label}", strip_tool_call_markup(content))
+            # The bare form has no markup to strip, so the object itself is
+            # taken out of the text a person sees — with the prose around it
+            # kept, as for the tagged forms.
+            return Recovered(
+                calls, f"bare:{label}", strip_tool_call_markup(without_bare_calls(content, names))
+            )
 
     return Recovered(text=content)
+
+
+def without_bare_calls(text: str, offered: Iterable[str]) -> str:
+    """`text` with every bare JSON object that calls an OFFERED tool cut out.
+
+    The same brace walk `_json_objects` does, keeping the spans. Objects that
+    name no offered tool stay: a reply that quotes some JSON is still prose.
+    """
+    names = {str(name) for name in offered if str(name)}
+    if not text or not names:
+        return text or ""
+    pieces: list[str] = []
+    kept_upto = 0
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text[:MAX_SCAN_CHARS]):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    parsed = json.loads(text[start : index + 1])
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict) and _named(parsed) in names and _as_arguments(parsed) is not None:
+                    pieces.append(text[kept_upto:start])
+                    kept_upto = index + 1
+                start = -1
+            elif depth < 0:
+                depth = 0
+    pieces.append(text[kept_upto:])
+    return "".join(pieces)
 
 
 def strip_tool_call_markup(text: str) -> str:

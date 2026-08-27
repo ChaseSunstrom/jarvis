@@ -813,3 +813,16 @@ is quiet. Done since:
   call back as text, the agent recovered it and the model also called it — the same request held
   twice, so the yes had two things waiting. An identical hold in a conversation is one card now
   (hold-path suites 53).
+- 01:53 — CI on 27815de: one Playwright red, `responsive.spec.ts` at 1024 px, `page.goto('/dashboards')`
+  aborted mid-navigation on the runner (317 passed) — the same runner-side class as the reload flake
+  earlier; `/dashboards` has no client-side redirect of its own. Watched, not waived. The thirteenth
+  rebuild (the one-card rule) is up and re-running the confirm scenario.
+- 02:07 — the thirteenth rebuild: the confirm scenario's lock-again turn read a bare JSON call aloud
+  (the model's claim, then the object, then the real sentence — all spoken), held the request twice, and
+  its one-word yes came back from Whisper as "Yes, sir", which was no yes. `BareCallStripper` on the
+  stream, `without_bare_calls` on the recovered text, the forms of address as edge fillers (contract +4
+  cases), the hold's log line now says what it holds; recovery + spoken-answer suites 87.
+- 03:16 — CI on 1fbad7e green across the three workflows. An hour lost to a suite chain whose waiter
+  matched none of "no tests ran" / "ERROR: file not found" (a batch had named a file that does not exist);
+  released, the suites are 87 + 134 + 60 green. The fourteenth core rebuild is up next, then the confirm,
+  lock, removal, settings and briefing scenarios and the M74 gate.

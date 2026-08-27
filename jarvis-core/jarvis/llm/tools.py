@@ -1457,7 +1457,10 @@ class ToolRegistry:
         payload = request.as_dict()
         payload["description"] = tool.description
         self._fire(EVENT_APPROVAL_REQUIRED, payload, context)
-        _LOGGER.info("Approval required for %s (%s)", tool.name, request.id)
+        _LOGGER.info(
+            "Approval required for %s (%s) in conversation %s: %s",
+            tool.name, request.id, conversation_id, json.dumps(pinned, sort_keys=True, default=str),
+        )
         return self._approval_payload(request, tool)
 
     def _turn_facts(self, context: Any) -> tuple[str | None, bool]:

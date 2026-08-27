@@ -1055,7 +1055,9 @@ web and of Tasker. Local only. Each row here is planned in that document.
     in the settings registry at the same time).
   - 26 Aug 22:28: ticked on the branch — the agent's commits (61b8fba, f1d2a04, 05a505d, 9de37a1,
     476bb77) cherry-picked over M67 and M71 (`speaker` and `spoken` both reach `converse`; the
-    banner keeps M67's sentence and M66's clock), gate 28/28 here. `llm.question_ttl` is in the
+    banner keeps M67's sentence and M66's clock), gate 28/28 here. Heard by the rig on 27 Aug, which
+    found a bare JSON call read aloud, the same request held twice and "Yes, sir" not counted
+    as a yes — all three fixed (docs/verification.md). `llm.question_ttl` is in the
     settings registry now (Question expiry, beside Approval expiry). The spoken yes on the real
     house is `house-confirm-by-voice` in the live rig; its numbers land with the report run.
 - [x] **M67 — Settings under approval** · size M · deps M54 · parallel-ok M66

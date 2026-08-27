@@ -39,7 +39,7 @@ turns:
   - say: "Lock the front door again."
     expect:
       reply_means: "says the lock is waiting on confirmation, or that the door is locked"
-  - say: "Yes."
+  - say: "Yes, go ahead."
     expect:
       transcript_wer: 0.75
       state: {lock.front_door_lock: "locked"}

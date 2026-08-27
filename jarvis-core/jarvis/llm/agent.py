@@ -448,6 +448,123 @@ class TagStripper:
         return tail
 
 
+class BareCallStripper:
+    """Hides a bare JSON tool call — `{"name": …, "arguments": …}` with no
+    markup around it — from a token stream.
+
+    `TagStripper` covers the tagged forms. The untagged one reached a person
+    on 27 Aug 2026: asked to lock the door again, the model wrote "The front
+    door is locked again, Sir." and then the call as a bare object, the
+    serving layer parsed nothing, and the voice path read the object aloud —
+    "Name, lock control, arguments, action, lock, name, front door" — before
+    `_recover_tool_calls` (which reads `ChatResult.content`, not this stream)
+    turned it into the call it was. The object is held from its opening brace
+    while it could still be a call, dropped once it closes as one, and
+    released untouched when it turns out to be something else: a brace in
+    prose, or an object whose first key is not `name`.
+
+    Not a parser of the call — that stays `toolcalls.recover`, bounded by the
+    tools offered. This only decides what a human sees while the stream is
+    still open, so it errs towards hiding: an object that opens with `"name"`
+    is withheld even if recovery later finds it names no tool, and a stream
+    that ends inside one shows nothing of it.
+    """
+
+    #: What the held text must start with to still be a possible call.
+    _HEAD = re.compile(r'^\{\s*"name"\s*:')
+    #: Longer than this and it is not a call anybody will run; release it.
+    MAX_HOLD = 8000
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._held = ""
+
+    def feed(self, delta: str) -> str:
+        if not delta:
+            return ""
+        self._buffer += delta
+        return self._drain(final=False)
+
+    def _drain(self, final: bool) -> str:
+        """Release what is not (or no longer could be) a call. `final` is the
+        end of the stream: a possible call still open is dropped, not shown."""
+        out: list[str] = []
+        while True:
+            if not self._held:
+                if not self._buffer:
+                    break
+                index = self._buffer.find("{")
+                if index == -1:
+                    out.append(self._buffer)
+                    self._buffer = ""
+                    break
+                out.append(self._buffer[:index])
+                self._held, self._buffer = self._buffer[index:], ""
+            else:
+                self._held += self._buffer
+                self._buffer = ""
+            verdict = self._verdict()
+            if verdict == "call":
+                end = self._close()
+                self._buffer = self._held[end:]
+                self._held = ""
+                continue
+            if verdict == "not":
+                out.append(self._held[0])
+                self._buffer = self._held[1:]
+                self._held = ""
+                continue
+            if final:
+                self._held = ""
+            break  # "maybe": keep holding until more arrives, or drop it at the end
+        return "".join(out)
+
+    def _verdict(self) -> str:
+        """`call` when the held text is a complete object opening with
+        `"name"`, `not` when it cannot be one, else `maybe`."""
+        head = self._held[:24]
+        probe = '{"name":'
+        if not self._HEAD.match(head):
+            # Could the text still grow into the head? Compare what there is
+            # against the probe with the whitespace taken out.
+            squashed = re.sub(r"\s+", "", head)
+            if probe.startswith(squashed):
+                return "maybe"
+            return "not"
+        if len(self._held) > self.MAX_HOLD:
+            return "not"
+        return "call" if self._close() else "maybe"
+
+    def _close(self) -> int:
+        """Index just past the brace that closes the held object, or 0."""
+        depth = 0
+        in_string = False
+        escaped = False
+        for index, char in enumerate(self._held):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+        return 0
+
+    def flush(self) -> str:
+        """Whatever is left. A stream that ended inside a possible call shows
+        nothing of it — the same rule as `TagStripper.flush`."""
+        return self._drain(final=True)
+
+
 class ThinkStripper:
     """Drops ``<think>...</think>`` from a token stream, tag-splits and all.
 
@@ -2026,6 +2143,7 @@ class _Round:
             # only; `ChatResult.content` keeps it, which is what the recovery
             # below parses.
             calls = TagStripper("<tool_call>", "</tool_call>")
+            bare = BareCallStripper()
             stream = agent.client.chat(
                 model=self._model or agent.model,
                 messages=self._messages,
@@ -2054,11 +2172,11 @@ class _Round:
                 stream.on_thinking = self._on_thinking
             try:
                 async for delta in stream:
-                    visible = calls.feed(stripper.feed(delta))
+                    visible = bare.feed(calls.feed(stripper.feed(delta)))
                     if visible:
                         emitted += 1
                         yield visible
-                tail = calls.feed(stripper.flush()) + calls.flush()
+                tail = bare.feed(calls.feed(stripper.flush()) + calls.flush()) + bare.flush()
                 if tail:
                     yield tail
 

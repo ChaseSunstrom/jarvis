@@ -941,9 +941,23 @@ jarvis-browser: `tests/test_api.py` (the three text-first cases).
 | The core image has git — the step after the workspace, without which `create_repository` answers "git is not installed" | Automated / Containerised | the packaging test reads the Dockerfile's apt line; the gate runs `git --version` in the running core (2.47.3) |
 | A coding job's `create_repository` lands in `/workspace/<name>` with a `.git` visible on the host side of the crossover | Containerised | the gate replays the operator's request through `POST /api/services/code/create_repository` and checks `jarvis-workspace/m72-probe/.git`; the probe repository stays, since nothing removes one. The live rig has no repository-creating scenario yet |
 
-### Ask and answer (M66, built; the live rig has not heard it)
+### Ask and answer (M66; the live rig has heard it, and found three more faults)
 
-`bash scripts/verify/m66-ask-and-answer.sh` (26 Aug 22:10: 28/28 in a worktree). Server:
+`bash scripts/verify/m66-ask-and-answer.sh` (26 Aug 22:10: 28/28 in a worktree). On the house, the
+twelfth and thirteenth rebuilds (27 Aug 01:2x, 01:5x): a spoken yes runs the removal, the settings
+change and its undo, and the unlock (`house-remove-by-voice`, `settings-by-voice`,
+`house-confirm-by-voice` turns 0–1 all green). The confirm scenario's lock-again turn then found,
+in one breath, three faults no unit test had: the model wrote a claim, then the call as a *bare*
+JSON object, and the serving layer parsed nothing — so the voice path read the object aloud
+("Name, lock control, arguments, action, lock, name, front door") before the recovery turned it
+into the call; the recovered call and the model's own were held as two cards; and Whisper heard
+the rig's short "Yes." as "Yes, sir", which the answer table did not count as a yes. Fixed by
+`BareCallStripper` on the visible stream (the object never reaches the console or the
+synthesiser; `without_bare_calls` takes it out of the recovered text too), one card per identical
+pending request in a conversation, and the forms of address as edge fillers in the contract
+(`yes, sir`, `yes ma'am`, `no, sir`; `sir` alone resolves nothing). The scenario's last yes is
+"Yes, go ahead." now, like its second — a one-word clip gives a WER check nothing to measure.
+Re-verified on the fourteenth rebuild: see the log. Server:
 `jarvis-core/tests/test_spoken_answers.py` (44 — the contract's cases), `test_ask_and_answer.py`
 (21), `test_ask_user.py` (17); harness: `testing/e2e/test_ask_and_answer.py` (a question answered
 by the next turn, an expired one told so — its own harness with a six-second question clock);

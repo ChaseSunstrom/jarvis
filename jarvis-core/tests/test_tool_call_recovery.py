@@ -215,6 +215,66 @@ def test_text_with_no_markup_is_untouched():
 
 
 # ---------------------------------------------------------------------------
+# the bare form, in the text and on the stream (27 Aug 2026)
+# ---------------------------------------------------------------------------
+
+from jarvis.llm.agent import BareCallStripper  # noqa: E402
+from jarvis.llm.toolcalls import without_bare_calls  # noqa: E402
+
+BARE = '{"name": "lock_control", "arguments": {"action": "lock", "name": "front door"}}'
+
+
+def test_a_bare_call_between_two_sentences_leaves_both_sentences():
+    """The reported case: a claim, the call as text, then the real answer."""
+    text = "The front door is locked again, Sir." + BARE + "The lock is waiting on your confirmation, Sir."
+    found = recover(text, "", ["lock_control"])
+    assert [name for name, _ in found.calls] == ["lock_control"]
+    assert "lock_control" not in found.text
+    assert found.text.startswith("The front door is locked again, Sir.")
+    assert found.text.endswith("waiting on your confirmation, Sir.")
+
+
+def test_without_bare_calls_keeps_json_that_calls_nothing_offered():
+    assert without_bare_calls('Try {"name": "x", "arguments": {}} now', ["lock_control"]) == 'Try {"name": "x", "arguments": {}} now'
+    assert without_bare_calls('a {"a": {"b": 1}} b', ["lock_control"]) == 'a {"a": {"b": 1}} b'
+    assert without_bare_calls("", ["lock_control"]) == ""
+
+
+def _stream(text: str, size: int) -> str:
+    stripper = BareCallStripper()
+    out = "".join(stripper.feed(text[i : i + size]) for i in range(0, len(text), size))
+    return out + stripper.flush()
+
+
+@pytest.mark.parametrize("size", [1, 3, 7, 50, 1000])
+def test_the_stream_never_shows_the_bare_call(size: int):
+    text = "The front door is locked again, Sir." + BARE + " The lock is waiting, Sir."
+    assert _stream(text, size) == "The front door is locked again, Sir. The lock is waiting, Sir."
+
+
+@pytest.mark.parametrize("size", [1, 4, 100])
+def test_whitespace_and_a_brace_inside_a_string_do_not_fool_it(size: int):
+    call = '{ "name" : "note", "arguments": {"text": "a } in a string and a \\" quote"} }'
+    assert _stream("Before. " + call + " After.", size) == "Before.  After."
+
+
+@pytest.mark.parametrize("size", [1, 5, 100])
+def test_a_brace_in_prose_is_shown(size: int):
+    assert _stream("Sets are written {1, 2, 3} in maths.", size) == "Sets are written {1, 2, 3} in maths."
+    assert _stream('An object like {"kind": "x"} is not a call.', size) == 'An object like {"kind": "x"} is not a call.'
+    assert _stream("A lone { brace", size) == "A lone { brace"
+
+
+def test_a_stream_that_ends_inside_a_call_shows_none_of_it():
+    assert _stream('Right away. {"name": "lock_control", "arguments": {"action":', 3) == "Right away. "
+
+
+def test_a_stream_that_ends_on_a_possible_head_shows_none_of_it():
+    assert _stream("Right away. {", 100) == "Right away. "
+    assert _stream('Right away. {"na', 100) == "Right away. "
+
+
+# ---------------------------------------------------------------------------
 # end to end, through the agent
 # ---------------------------------------------------------------------------
 
