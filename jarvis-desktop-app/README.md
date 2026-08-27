@@ -84,8 +84,9 @@ would abort with "The SUID sandbox helper binary was found, but is not
 configured correctly". The app checks the helper itself before it starts
 (root, setuid, executable — Chromium's own three) and, when it is not
 usable, turns Chromium's *process* sandbox off for the run and says so on
-stderr. The window's renderer stays sandboxed and context-isolated; the
-console it shows is your own server. No `chmod`, no `sudo` (running as root
+stderr. The renderer's own sandbox goes with it (Electron 33's renderer
+dies with one on and the other off); the console's page stays
+context-isolated with no node in it, and it is your own server. No `chmod`, no `sudo` (running as root
 is refused by Electron anyway, and `--no-sandbox` under `sudo` loses the
 display).
 

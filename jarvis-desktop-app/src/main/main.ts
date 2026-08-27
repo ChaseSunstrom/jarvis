@@ -47,11 +47,22 @@ const config: ShellConfig = loadConfig();
 // isolation — this is Chromium's *process* sandbox, and the console is the
 // operator's own server, not the open web.
 export const SANDBOX_HELPER = join(dirname(process.execPath), "chrome-sandbox");
-if (process.platform === "linux" && !sandboxHelperUsable(SANDBOX_HELPER)) {
+/**
+ * True when Chromium's process sandbox is switched off for this run. The
+ * renderer's own sandbox goes with it: with `--no-sandbox` on and
+ * `sandbox: true` in the window, Electron 33's renderer dies on ANY page
+ * (exit 5 — measured on http, file: and data: alike, 27 Aug 2026), and with
+ * either one alone it lives. Context isolation and no node integration
+ * stay in every case; those are what keep the console's page out of the
+ * shell.
+ */
+export const PROCESS_SANDBOX_OFF = process.platform === "linux" && !sandboxHelperUsable(SANDBOX_HELPER);
+if (PROCESS_SANDBOX_OFF) {
   app.commandLine.appendSwitch("no-sandbox");
   console.warn(
     `${SANDBOX_HELPER} is not setuid root (a downloaded folder cannot carry that), ` +
-      "so Chromium's process sandbox is off for this run; the window's renderer stays sandboxed",
+      "so Chromium's process sandbox is off for this run, and the renderer's with it; " +
+      "the console's page is still context-isolated with no node in it",
   );
 }
 
@@ -159,7 +170,7 @@ function createWindow(): void {
       preload: join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: !PROCESS_SANDBOX_OFF,
     },
   });
   window.once("ready-to-show", () => window?.show());
@@ -187,9 +198,8 @@ function createWindow(): void {
     scheduleRetry();
   });
   window.webContents.on("did-finish-load", () => {
-    // The console answered: the notice window, if one is up, has done its job.
-    unreachable?.close();
-    unreachable = null;
+    // Whatever loaded — the console, or the notice into about:blank — the
+    // window is worth seeing; `ready-to-show` never fires after a failed load.
     window?.show();
   });
   void window.loadURL(config.consoleUrl);
@@ -198,36 +208,25 @@ function createWindow(): void {
 
 const RETRY_S = 5;
 let retry: NodeJS.Timeout | null = null;
-let unreachable: BrowserWindow | null = null;
+let noticeUp = false;
 
 /**
- * The "no console there yet" page, in a window of its own.
- *
- * Its own window, and one whose renderer is NOT sandboxed, because the main
- * window's sandboxed renderer dies loading anything that is not http here
- * (`file:`, `data:` and a custom scheme all crashed with exit 5 under
- * Electron 33 once the process sandbox switch was off — measured on 27 Aug
- * 2026). The page is this app's own static file with no preload, no node
- * and context isolation on, so the renderer sandbox is the one thing it
- * does without; the console keeps its sandboxed window untouched.
+ * The "no console there yet" page, loaded into the main window from this
+ * app's own file — with the URL tried and the reason as query parameters,
+ * which the page writes as text. A file: load lives here because the
+ * renderer sandbox is off whenever the process sandbox is (see
+ * PROCESS_SANDBOX_OFF); with both on it lives too.
  */
 function showUnreachable(url: string, why: string): void {
-  if (unreachable && !unreachable.isDestroyed()) return;
-  unreachable = new BrowserWindow({
-    width: 760,
-    height: 480,
-    show: false,
-    backgroundColor: TOKENS["--jv-bg"],
-    autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false },
-  });
-  unreachable.once("ready-to-show", () => unreachable?.show());
-  unreachable.on("closed", () => {
-    unreachable = null;
-  });
-  void unreachable
+  if (!window || noticeUp) return;
+  noticeUp = true;
+  void window
     .loadFile(join(app.getAppPath(), "src", "renderer", "unreachable.html"), { query: { url, why } })
-    .catch((err: unknown) => console.warn(`could not show the unreachable page: ${String(err)}`));
+    .then(() => window?.show())
+    .catch((err: unknown) => console.warn(`could not show the unreachable page: ${String(err)}`))
+    .finally(() => {
+      noticeUp = false;
+    });
 }
 
 function scheduleRetry(): void {

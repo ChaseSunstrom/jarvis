@@ -49,4 +49,10 @@ test("from a folder whose chrome-sandbox is not setuid root, the process sandbox
   test.skip(process.platform !== "linux", "the setuid helper is a Linux thing");
   const decided = await app.evaluate(({ app: electronApp }) => electronApp.commandLine.hasSwitch("no-sandbox"));
   expect(decided).toBe(true);
+  // ...and the renderer's sandbox goes with it, while isolation stays.
+  const prefs = await app.evaluate(({ BrowserWindow }) => {
+    const p = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences() as Record<string, unknown>;
+    return { sandbox: p.sandbox, contextIsolation: p.contextIsolation, nodeIntegration: p.nodeIntegration };
+  });
+  expect(prefs).toEqual({ sandbox: false, contextIsolation: true, nodeIntegration: false });
 });
