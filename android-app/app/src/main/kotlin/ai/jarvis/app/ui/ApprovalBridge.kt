@@ -114,6 +114,16 @@ object ApprovalBridge {
     }
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Outcome>>()
+
+    /**
+     * Server-held requests (M98): a Tier-3 tool jarvis-core holds for a yes —
+     * `lock_control`, `remove_entities`, `change_setting` — raised on this
+     * phone's consent screen and answered with `jarvis/approve` on the assist
+     * socket. Keyed by the server's request id; the value sends the answer.
+     * Until now the phone showed such a request as a strip row with nothing
+     * to tap (the Android audit, 27 Aug 2026).
+     */
+    private val serverSenders = ConcurrentHashMap<String, (String, Boolean) -> Unit>()
     /** Completed by [raised] when the prompt's activity actually runs. */
     private val onScreen = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
 
@@ -275,16 +285,61 @@ object ApprovalBridge {
      * request that has since timed out.
      */
     fun deliver(requestId: String, approved: Boolean) {
+        val send = serverSenders.remove(requestId)
+        if (send != null) {
+            // A server-held request: the answer goes back on the wire, once.
+            try {
+                send(requestId, approved)
+            } catch (t: Throwable) {
+                Log.w(TAG, "could not send the answer for $requestId", t)
+            }
+            return
+        }
         settle(requestId, if (approved) Outcome.APPROVED else Outcome.DENIED)
     }
 
     /** Called by [ApprovalActivity] when its countdown runs out. */
     fun deliverTimeout(requestId: String) {
+        // A server-held request lapses on the server's own clock; nothing to send.
+        if (serverSenders.remove(requestId) != null) return
         settle(requestId, Outcome.TIMED_OUT)
     }
 
     /** True while a prompt for this id is still waiting for an answer. */
-    fun isPending(requestId: String): Boolean = pending.containsKey(requestId)
+    fun isPending(requestId: String): Boolean =
+        pending.containsKey(requestId) || serverSenders.containsKey(requestId)
+
+    /**
+     * Raise a request jarvis-core is holding (M98) on the consent screen —
+     * keyguard-aware, tapjacking-proof, the same screen the phone's own
+     * Tier-3 actions use — and answer it with [send] when the person decides.
+     * `summary` is the server's own sentence for the card (M66); `waitsSeconds`
+     * the clock it is on, clamped like any other prompt.
+     */
+    fun raiseServerRequest(
+        app: Context,
+        requestId: String,
+        tool: String,
+        summary: String,
+        waitsSeconds: Long,
+        send: (String, Boolean) -> Unit,
+    ): Boolean {
+        if (requestId.isBlank()) return false
+        serverSenders[requestId] = send
+        val raised = raisePrompt(
+            app = app.applicationContext,
+            id = requestId,
+            actionId = tool,
+            params = "",
+            reason = "Jarvis asks before doing this",
+            description = summary.ifBlank { "Jarvis wants to run $tool" },
+            tierLabel = DEFAULT_TIER_LABEL,
+            commandId = null,
+            timeoutMs = clampTimeout(waitsSeconds * 1000L),
+        )
+        if (!raised) serverSenders.remove(requestId)
+        return raised
+    }
 
     /**
      * True while ANY consent prompt is waiting for an answer.
@@ -294,7 +349,7 @@ object ApprovalBridge {
      * button has no request id to ask about. Reading the map rather than
      * keeping a counter, so the two cannot disagree.
      */
-    val anyPending: Boolean get() = pending.isNotEmpty()
+    val anyPending: Boolean get() = pending.isNotEmpty() || serverSenders.isNotEmpty()
 
     /** Callers may shorten the prompt but never lengthen it. */
     fun clampTimeout(requested: Long): Long = when {

@@ -486,6 +486,27 @@ def test_a_question_with_options_is_not_answered_by_voice() -> None:
     )
 
 
+def test_a_held_action_reaches_the_consent_screen_and_answers_on_the_wire() -> None:
+    """M98. A Tier-3 action jarvis-core holds — a lock, a removal, a setting —
+    reached the phone as a strip row with nothing to tap (the Android audit,
+    27 Aug 2026), on the one surface with a keyguard-aware consent screen. Now
+    the bus event raises that screen and the decision goes back as
+    `jarvis/approve` on the assist socket; a held QUESTION still comes through
+    companion.ask, so the event with `answerable` set is left alone."""
+    root = Path(__file__).resolve().parents[1] / "app/src/main/kotlin/ai/jarvis/app"
+    conversation = read(root / "assist/JarvisConversation.kt")
+    bridge = read(root / "ui/ApprovalBridge.kt")
+    client = read(root / "assist/AssistPipelineClient.kt")
+    hook = conversation.index('type == "jarvis_approval_required" && !data.has("answerable")')
+    assert "ApprovalBridge.raiseServerRequest(" in conversation[hook:hook + 900], "the held action is not raised"
+    assert '"jarvis/approve"' in conversation[hook:hook + 1200], "the decision does not go back as jarvis/approve"
+    assert "fun raiseServerRequest(" in bridge and "serverSenders" in bridge
+    deliver = bridge.index("fun deliver(requestId: String, approved: Boolean)")
+    assert "serverSenders.remove(requestId)" in bridge[deliver:deliver + 700], "deliver does not answer a server-held request"
+    assert "pending.isNotEmpty() || serverSenders.isNotEmpty()" in bridge, "a server-held prompt does not count as pending for the headset gate"
+    assert "fun sendCommand(type: String, fields: JSONObject" in client, "the pipeline client cannot send a bare command"
+
+
 def main() -> int:
     tests = [
         (n, f) for n, f in sorted(globals().items())

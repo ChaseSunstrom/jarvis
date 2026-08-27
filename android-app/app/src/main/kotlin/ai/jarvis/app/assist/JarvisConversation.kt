@@ -1,5 +1,6 @@
 package ai.jarvis.app.assist
 
+import ai.jarvis.app.ui.ApprovalBridge
 import org.json.JSONObject
 import android.content.Context
 import android.os.Handler
@@ -817,6 +818,24 @@ class JarvisConversation(
     }
 
     override fun onBusEvent(type: String, data: JSONObject) {
+        // A held ACTION (M98): raised on this phone's consent screen and answered
+        // with jarvis/approve on this socket. A held QUESTION (`answerable` set)
+        // reaches the phone through companion.ask instead, as before.
+        if (type == "jarvis_approval_required" && !data.has("answerable")) {
+            val requestId = data.optString("request_id").ifEmpty { data.optString("id") }
+            ApprovalBridge.raiseServerRequest(
+                context,
+                requestId,
+                data.optString("tool"),
+                data.optString("summary"),
+                data.optLong("ttl", 300L),
+            ) { id, approved ->
+                client?.sendCommand(
+                    "jarvis/approve",
+                    JSONObject().put("request_id", id).put("approved", approved),
+                )
+            }
+        }
         if (activity.apply(type, data)) {
             ui.onActivity(activity)
             if (type.startsWith("vision_look_")) ui.onLooking(activity.lookingCaption().isNotEmpty())

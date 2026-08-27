@@ -194,6 +194,18 @@ class AssistPipelineClient(
     private var ws: WebSocket? = null
     private val nextId = AtomicInteger(1)
 
+    /**
+     * Send one command on this socket — `{id, type, ...fields}` — and return
+     * its id (M98). What the console does with `jarvis/approve`; the phone had
+     * no way to answer a held request on the wire it already holds.
+     */
+    fun sendCommand(type: String, fields: JSONObject = JSONObject()): Int {
+        val id = nextId.getAndIncrement()
+        val msg = JSONObject(fields.toString()).put("id", id).put("type", type)
+        ws?.send(msg.toString())
+        return id
+    }
+
     /** Results awaited by id for [request]; a socket that closes forgets them. */
     private val pending = HashMap<Int, (JSONObject?) -> Unit>()
 

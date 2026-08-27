@@ -936,3 +936,7 @@ is quiet. Done since:
   m54's two reds fixed: the M93/M96 prose had split the commands table the documentation test reads (and
   `assist_pipeline/stop` had no row), and the catalogue test carried a loopback gateway URL. The gates that
   run harness-backed suites move to check_pytest once verify-all is done with lib.sh.
+- 05:39 — M98's second item built: a Tier-3 action jarvis-core holds is raised on the phone's own consent
+  screen (keyguard-aware, tapjacking-proof) with the server's summary and its clock, and the decision goes
+  back as `jarvis/approve` on the assist socket; a held question still comes through companion.ask; the
+  prompt mirror pins it (20/20); gradle building.
