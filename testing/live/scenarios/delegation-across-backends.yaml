@@ -16,11 +16,16 @@ variants: [text]
 turns:
   # Both by address (see research-deep-report.yaml): a name the house has no
   # note of is a question back, not a delegation.
+  # Two pieces of DIFFERENT shape, or the lead is right to send both to one
+  # worker: on the seventeenth house (27 Aug 2026) "read this page" and
+  # "summarise that page" both went to the summarizer, correctly, and the
+  # gate's "two backends" was the scenario's own premise. A page to read and
+  # a repository's tests to run are two kinds of work.
   - say: >
       Two things at once please: find out what the household handbook at
       {{handbook}} says about the cheap electricity rate, and separately have
-      someone summarise what the appliance register at {{handbook}}/appliances.html
-      lists. Don't wait for them.
+      the coder run the fixture repository's tests and tell me which fail.
+      Don't wait for them.
     expect:
       capability: subagents
       task: {kind: delegation, within: 60}
