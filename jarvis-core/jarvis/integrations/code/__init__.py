@@ -1179,6 +1179,12 @@ def one_line_result(run: CodeRun) -> str:
         parts.append(
             f"{len(run.checks) - len(failed)}/{len(run.checks)} checks passed"
         )
+        if failed:
+            # Named, so "2/3 checks passed" cannot be read back as "all tests
+            # pass" when the one that failed was the test run (the live rig's
+            # coding-fix-failing-tests, 27 Aug 2026).
+            names = ", ".join(str(c.get("command") or "?")[:60] for c in failed[:3])
+            parts.append(f"failed: {names}")
     if run.summary:
         parts.append(run.summary.split("\n")[0][:200])
     return " · ".join(parts)[:500]

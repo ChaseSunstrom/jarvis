@@ -1020,3 +1020,18 @@ is quiet. Done since:
   hour: CI's core leg names errored tests now (`-rfE`); the claims register re-measured; jarvis-desktop 853, jarvis-browser
   349, orchestrator 24 green; Android lint clean; the console suite 325/347 under load and 23/23 of the four failed files
   alone. The sixteenth's house (10:21 image) so far: m84 8/8, m74 8/8; m85/m87/m88/m42 red, being read.
+- 11:19 UTC — the sixteenth's house (10:21 image): m84 8/8, m74 8/8, m93 7/7, m97 11/11, m98 16/16, m101 10/10, m104 4/4 —
+  M84, M93, M101, M104 ticked. Its reds, each read to a cause and fixed where the fault was: m100 (the rig spoke inside the
+  house's twenty-second enrolment window — `enrolling` on the speaker payload, the rig waits on it), m85 (the rig settled
+  the scenario's own audit before restarting — earlier scenarios' tasks only now), m87 ("that store is for facts about you"
+  — the remember wording), m88 (`code_task` for an audit — its description), m42 (two research pieces — the delegate
+  wording), m94/m96/m102 (a typed turn was one REST call, with no device and nothing to stop — typed turns run through
+  the pipeline as the console's do), m92 (cover.toggle for "close" — the toggle's wording; "clear the screen" — the
+  tool's; ask-which-light said its question twice over REST — a unit test says the agent says it once), m95 (a reading in
+  the summary needs no tool; a one-minute reminder became a timer — the timer's and schedule_task's wording), m99 (a
+  probe reading frames by position), m86 (the offer went to `companion.ask` alone: with no phone it sat in a queue, was
+  never on the record, and no spoken yes could reach it — an offer is a held question now, on the bar, on a phone, on
+  the record, answered anywhere), m82 (the coding job's "2/3 checks passed" read back as "all tests pass"), m59 (the
+  watch reply left out "changed once"). CI on 313a8b8: all five workflows green — the core leg lists errored tests
+  since `-rfE`. The sixteenth's report run started 11:04; the seventeenth (core rebuilt from this tree, fourteen gates,
+  a report) is armed behind it.

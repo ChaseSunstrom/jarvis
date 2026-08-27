@@ -775,6 +775,27 @@ async def test_a_cancelled_job_keeps_its_branch(jarvis, repo_dir):
 # ---------------------------------------------------------------------------
 # 5. the integration around it
 # ---------------------------------------------------------------------------
+def test_the_one_line_result_names_the_check_that_failed():
+    """"2/3 checks passed" was read back as "all tests now pass" (the live rig,
+    27 Aug 2026) when the one that failed was the test run. The line names it."""
+    from types import SimpleNamespace
+
+    run = SimpleNamespace(
+        branch="jarvis/20260827-abc", files_changed=["src/basket.py"], diff_stat="",
+        checks=[
+            {"command": "ruff check .", "ok": True},
+            {"command": "python -m unittest discover -s . -p \"test_*.py\"", "ok": False},
+            {"command": "python -m compileall -q .", "ok": True},
+        ],
+        summary="",
+    )
+    line = code_integration.one_line_result(run)
+    assert "2/3 checks passed" in line
+    assert "failed: python -m unittest discover" in line
+    run.checks = [{"command": "ruff check .", "ok": True}]
+    assert "failed:" not in code_integration.one_line_result(run)
+
+
 async def test_a_job_reports_done_with_a_one_line_result(jarvis, repo_dir):
     model = FakeModel(
         [

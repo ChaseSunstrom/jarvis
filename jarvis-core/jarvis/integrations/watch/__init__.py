@@ -744,7 +744,11 @@ def _register_tools(jarvis: "Jarvis", manager: WatchManager) -> None:
     )
     registry.register(
         name="list_watches",
-        description="What is being watched: pages, feeds and questions, with when each was last checked and how many times it changed.",
+        description=(
+            "What is being watched: pages, feeds and questions, with when each was last "
+            "checked and how many times it changed. Say the change count back — "
+            "'checked 4 times, 1 change' is the answer to 'what is being watched?'."
+        ),
         parameters=schema_object({}), handler=tool_list, tier=TIER_DIRECT, domain=DOMAIN,
     )
     registry.register(
