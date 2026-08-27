@@ -1,6 +1,8 @@
 package ai.jarvis.app.channel
 
 import ai.jarvis.app.BuildConfig
+import ai.jarvis.app.config.JarvisConfig
+import ai.jarvis.app.config.VoiceIdentityClient
 import ai.jarvis.app.automation.AutomationRuntime
 import ai.jarvis.app.tasks.TaskNotifier
 import ai.jarvis.app.tasks.TaskOverlay
@@ -72,6 +74,34 @@ object DeviceChannelHost {
     val isStarted: Boolean get() = channel != null
 
     /**
+     * Ask the server for the speaker gate's mode the moment the socket has
+     * registered (M98), and cache it the way the enrolment screen does.
+     *
+     * `speakerGateEnforcing` defaults false and was written only after the
+     * Whose-voice screen asked; a phone that never opened it, against a house
+     * that enforces, sent audio-derived turns the server refused while its
+     * own Settings said "speech is turned into text on this phone" (the
+     * Android audit, 27 Aug 2026). Off the main thread: it is a GET.
+     */
+    private fun refreshSpeakerGate(context: Context) {
+        Thread({
+            try {
+                val config = JarvisConfig(context)
+                when (val result = VoiceIdentityClient(config.serverUrl, config.token).status()) {
+                    is VoiceIdentityClient.Result.Ok -> {
+                        val fresh = result.value
+                        config.speakerGateEnforcing = fresh.mode == "enforce" && fresh.enrolled
+                        Log.i(TAG, "speaker gate: enforcing=${config.speakerGateEnforcing}")
+                    }
+                    else -> Log.w(TAG, "speaker gate mode could not be read; keeping the cached value")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "speaker gate refresh failed", t)
+            }
+        }, "jarvis-gate-refresh").start()
+    }
+
+    /**
      * Build the channel, plug it into the automation seams, and start it.
      *
      * Idempotent and safe to call from any component's startup path.
@@ -84,6 +114,7 @@ object DeviceChannelHost {
             JarvisChannel(
                 context = app,
                 configProvider = { ChannelConfig.from(app, BuildConfig.VERSION_NAME) },
+                afterRegistered = { refreshSpeakerGate(app) },
             )
         } catch (t: Throwable) {
             // A phone that cannot open its command channel must still run its

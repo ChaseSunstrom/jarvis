@@ -95,6 +95,13 @@ class JarvisChannel(
      * keeps the snapshot it was opened with.
      */
     private val configProvider: () -> ChannelConfig,
+    /**
+     * Told once the socket is authenticated AND registered (M98). The host uses
+     * it to ask the server for the speaker gate's mode right then, so a phone
+     * that has never opened the Whose-voice screen is not refused every turn
+     * by a house that enforces while its own Settings say the opposite.
+     */
+    private val afterRegistered: (() -> Unit)? = null,
     /** Injected for tests; production reads [AutomationBridge.dispatcher]. */
     private val dispatcherProvider: () -> AutomationBridge.ActionDispatcher? =
         { AutomationBridge.dispatcher },
@@ -558,6 +565,12 @@ class JarvisChannel(
         rememberActionCount(tierTable.size)
         startHeartbeat(current)
         flushEvents(current)
+        try {
+            afterRegistered?.invoke()
+        } catch (t: Throwable) {
+            // A hook must never take the channel down with it.
+            Log.w(TAG, "the after-registered hook failed", t)
+        }
         watchTasks(current)
         // A fresh session means a fresh DevicePresence on the server. Comparing
         // against the pre-reconnect snapshot would leave it on its defaults —

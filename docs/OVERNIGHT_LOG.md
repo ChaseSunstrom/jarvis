@@ -926,3 +926,7 @@ is quiet. Done since:
   names the authored and installed ones; a tool the model writes itself defaults to tier 2 and is a capability
   card, as is a new MCP server or an installed extension; whats_new answers from those cards. Automation API +2,
   create_tool +1, notifications +1; two scenarios; the gate's live half waits.
+- 05:31 — M98's first item built: the phone asks the server for the speaker gate's mode the moment its
+  socket registers (the channel's `afterRegistered` hook; the host's `refreshSpeakerGate`, the same GET and
+  expression as the enrolment screen), so a new phone against an enforcing house is no longer refused every
+  turn while Settings says the opposite; the on-device-turn mirror pins it; gradle building.
