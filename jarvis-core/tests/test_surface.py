@@ -132,3 +132,49 @@ async def test_a_chart_panel_draws_the_entitys_history_in_its_unit(tmp_path):
         assert (await surface_mod.async_history_series(jarvis, ""))["series"] == []
     finally:
         await jarvis.async_stop()
+
+
+# ---------------------------------------------------------------------------
+# M88: a plan on the screen — the surface follows a background job on its own
+# ---------------------------------------------------------------------------
+async def test_a_background_job_with_steps_is_a_task_panel_while_it_runs_and_a_note_when_done(tmp_path):
+    from jarvis.tasks import EVENT_TASK_ADDED, EVENT_TASK_UPDATED
+
+    jarvis, _registry, surface = await booted(tmp_path)
+    job = {"id": "job1", "kind": "background", "title": "Audit every sensor", "status": "running",
+           "steps": [{"title": "list them", "status": "done"}, {"title": "read each", "status": "running"}]}
+    await jarvis.bus.async_fire(EVENT_TASK_ADDED, {"task": job})
+    await jarvis.async_block_till_done()
+    panels = surface.as_payload()["panels"]
+    assert [p["kind"] for p in panels] == ["task"] and panels[0]["task"] == "job1"
+    assert panels[0]["title"] == "Audit every sensor"
+
+    # The same job again is the same panel, not two.
+    await jarvis.bus.async_fire(EVENT_TASK_UPDATED, {"task": {**job, "steps": job["steps"] + [{"title": "write it up", "status": "queued"}]}})
+    await jarvis.async_block_till_done()
+    assert len(surface.as_payload()["panels"]) == 1
+
+    await jarvis.bus.async_fire(EVENT_TASK_UPDATED, {"task": {**job, "status": "done", "result": "Two sensors look wrong: the garage humidity and the hall CO2."}})
+    await jarvis.async_block_till_done()
+    panels = surface.as_payload()["panels"]
+    assert [p["kind"] for p in panels] == ["note"], panels
+    assert panels[0]["title"] == "Finished: Audit every sensor" and "garage humidity" in panels[0]["text"]
+    await jarvis.async_stop()
+
+
+async def test_a_job_without_steps_or_of_another_kind_is_not_followed(tmp_path):
+    from jarvis.tasks import EVENT_TASK_ADDED, EVENT_TASK_UPDATED
+
+    jarvis, _registry, surface = await booted(tmp_path)
+    await jarvis.bus.async_fire(EVENT_TASK_ADDED, {"task": {"id": "a", "kind": "background", "title": "x", "status": "running", "steps": []}})
+    await jarvis.bus.async_fire(EVENT_TASK_ADDED, {"task": {"id": "b", "kind": "research", "title": "y", "status": "running", "steps": [{"title": "s", "status": "running"}]}})
+    await jarvis.async_block_till_done()
+    assert surface.as_payload()["panels"] == []
+    # An errored job leaves nothing behind either — no note of a failure on the screen.
+    await jarvis.bus.async_fire(EVENT_TASK_ADDED, {"task": {"id": "c", "kind": "background", "title": "z", "status": "running", "steps": [{"title": "s", "status": "running"}]}})
+    await jarvis.async_block_till_done()
+    assert len(surface.as_payload()["panels"]) == 1
+    await jarvis.bus.async_fire(EVENT_TASK_UPDATED, {"task": {"id": "c", "kind": "background", "title": "z", "status": "error", "error": "boom", "steps": []}})
+    await jarvis.async_block_till_done()
+    assert surface.as_payload()["panels"] == []
+    await jarvis.async_stop()

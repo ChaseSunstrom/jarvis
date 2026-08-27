@@ -95,3 +95,27 @@ test("a sensor's history draws as a chart, in the sensor's unit", async ({ page 
 	await expect(panel.locator('svg path').first()).toBeVisible();
 	await tell(page, { type: 'jarvis/surface/clear' });
 });
+
+test('a background job with steps puts its plan on the screen, and its result stays as a note (M88)', async ({ page }) => {
+	// The mock drives the job the way jarvis-core reports one; the surface
+	// follows it on its own — nobody says "show me the job".
+	const started = (await tell(page, {
+		type: 'jarvis/test/task_run',
+		kind: 'background',
+		title: 'Audit every sensor',
+		steps: ['list the sensors', 'read each one', 'write it up'],
+		tick_ms: 1500
+	})) as { result?: { task_id?: string } };
+	const plan = page.locator('[data-testid^="surface-task-"]');
+	await expect(plan).toBeVisible({ timeout: 10_000 });
+	await expect(plan).toContainText('Audit every sensor');
+	await expect(plan).toContainText('read each one');
+	expect(started.result?.task_id).toBeTruthy();
+
+	// When it is done the plan comes down and the result stays as a note.
+	await expect(plan).toHaveCount(0, { timeout: 15_000 });
+	const note = page.locator('[data-testid^="surface-text-"]');
+	await expect(note).toBeVisible({ timeout: 10_000 });
+	await expect(page.locator('.surface').getByText('Finished: Audit every sensor')).toBeVisible();
+	await expect(note).toContainText('all twelve read');
+});

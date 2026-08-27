@@ -39,15 +39,21 @@ EVENT_SURFACE_CHANGED = "jarvis_surface_changed"
 
 #: Kinds the console can draw. Each is a dashboard widget the console already
 #: has (M63), plus two for text: a note, and a page's fenced text.
-KINDS = ("entity", "camera", "readings", "sky", "moments", "note", "page", "chart")
+KINDS = ("entity", "camera", "readings", "sky", "moments", "note", "page", "chart", "task")
 #: How many panels fit around an instrument before the screen is a wall.
 MAX_PANELS = 8
 #: The stage is a 12-column grid; a panel is w×h cells. Slots are the places
 #: a new panel goes by default, left and right of the instrument first.
 COLUMNS = 12
+#: Jobs whose plan the screen follows on its own (M88). A reminder or a
+#: research run has its own surface; a background plan has none but this.
+FOLLOWED_KINDS = frozenset({"background"})
+
 SLOTS = ((0, 0), (8, 0), (0, 4), (8, 4), (0, 8), (8, 8), (4, 8), (4, 0))
 DEFAULT_SIZE = {"entity": (4, 2), "camera": (4, 3), "readings": (4, 3), "sky": (4, 2),
-                "moments": (4, 3), "note": (4, 3), "page": (4, 4), "chart": (4, 3)}
+                "moments": (4, 3), "note": (4, 3), "page": (4, 4), "chart": (4, 3),
+    "task": (4, 4),
+}
 MAX_TEXT_CHARS = 4000
 
 
@@ -86,6 +92,7 @@ class Surface:
             "area": _clean(raw.get("area"), 80),
             "note": _clean(raw.get("note"), 80),
             "url": _clean(raw.get("url"), 2048),
+            "task": _clean(raw.get("task"), 64),
             "text": str(raw.get("text") or "")[:MAX_TEXT_CHARS],
             "limit": max(1, min(int(raw.get("limit") or 6), 20)),
             "x": max(0, min(int(raw.get("x") or 0), COLUMNS - 1)),
@@ -95,6 +102,37 @@ class Surface:
             "placed_at": float(raw.get("placed_at") or time.time()),
         }
         return panel
+
+    # --- a plan on the screen (M88) ------------------------------------------
+    async def async_follow_task(self, task: dict[str, Any]) -> None:
+        """A background job with steps is a `task` panel while it runs and a
+        `note` with its result when it is done — the plan beside the instrument,
+        as the operator asked ("kind of like iron man"), without anybody having
+        to say "show me the job"."""
+        task_id = str(task.get("id") or "")
+        if not task_id or str(task.get("kind") or "") not in FOLLOWED_KINDS:
+            return
+        status = str(task.get("status") or "")
+        steps = task.get("steps") or []
+        finished = status in ("done", "error", "cancelled")
+        existing = next((p for p in self.panels if p.get("kind") == "task" and p.get("task") == task_id), None)
+        if not finished:
+            if not steps or existing is not None:
+                return
+            await self.async_place({
+                "kind": "task", "task": task_id, "title": str(task.get("title") or "A job")[:80],
+            })
+            return
+        if existing is not None:
+            self.panels.remove(existing)
+            await self._changed()
+        result = str(task.get("result") or "").strip()
+        if status == "done" and result:
+            await self.async_place({
+                "kind": "note", "note": f"task:{task_id}",
+                "title": f"Finished: {str(task.get('title') or 'a job')[:60]}",
+                "text": result[:MAX_TEXT_CHARS],
+            })
 
     def as_payload(self) -> dict[str, Any]:
         return {"panels": [dict(p) for p in self.panels], "max": MAX_PANELS}
@@ -135,7 +173,7 @@ class Surface:
             return {"status": "error", "error": f"a panel needs a kind from {', '.join(KINDS)}"}
         # The same thing twice is one panel, brought to the front, not two.
         for existing in list(self.panels):
-            same = all(existing.get(k) == panel.get(k) for k in ("kind", "entity", "camera", "area", "note", "url"))
+            same = all(existing.get(k) == panel.get(k) for k in ("kind", "entity", "camera", "area", "note", "url", "task"))
             if same:
                 self.panels.remove(existing)
                 panel["id"] = existing["id"]
@@ -378,4 +416,18 @@ async def async_setup(jarvis: "Jarvis", config: Any = None) -> bool:
     jarvis.data[DOMAIN] = {"surface": surface}
     _register_tools(jarvis, surface)
     _LOGGER.info("Surface: %d panel(s) up", len(surface.panels))
+
+    # M88: the plan follows the job. Off with `surface: plans: false`.
+    if (config or {}).get("plans", True) if isinstance(config, dict) else True:
+        from ...tasks import EVENT_TASK_ADDED, EVENT_TASK_UPDATED
+
+        async def _on_task(event: Any) -> None:
+            task = (getattr(event, "data", None) or {}).get("task") or {}
+            try:
+                await surface.async_follow_task(task)
+            except Exception:  # pragma: no cover - a panel must never fail a job
+                _LOGGER.exception("surface: could not follow task %s", task.get("id"))
+
+        jarvis.bus.listen(EVENT_TASK_ADDED, _on_task)
+        jarvis.bus.listen(EVENT_TASK_UPDATED, _on_task)
     return True

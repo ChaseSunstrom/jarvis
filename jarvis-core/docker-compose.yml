@@ -839,6 +839,10 @@ services:
     container_name: searxng
     restart: unless-stopped
     profiles: [search]
+    # Bounded like every other service (M28's rule): an engine that leaks
+    # under a burst of scrapes must not take the box with it.
+    mem_limit: 1g
+    cpus: 1.0
     network_mode: host
     environment:
       - TZ=${TZ:-Europe/London}

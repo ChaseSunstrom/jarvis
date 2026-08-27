@@ -888,3 +888,9 @@ is quiet. Done since:
   the console image runs as `node`, the live sandbox pinned where it runs (network none, uid 10001, ro,
   cap_drop ALL, one mount), RUNBOOK/DEVIATIONS/the isolation matrix true; packaging +3; gate 3/5, the two
   stack checks wait for the recreate the fifteenth does after verify-all.
+- 04:50 — M88 built: the surface follows a background job on its own — a `task` panel (the job's own
+  card, steps and a stop, from the task record) while it runs, a `note` with the result when done, nothing
+  after an error; `surface: plans: false` turns it off; the console and the mock mirror it (surface suite 7,
+  surface spec 4/4, svelte-check clean). Also: SearXNG bounded (m28's rule), an upstream engine's refusal at
+  init allowlisted in the container-log check (it failed three gates' smoke slices), architecture.md no
+  longer says Ollama, and the second 07:30 alarm M78's fault left on the house was removed.

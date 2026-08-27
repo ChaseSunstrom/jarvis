@@ -16,6 +16,8 @@
 	import Readings from '$lib/dashboards/Readings.svelte';
 	import SkyTonight from '$lib/dashboards/SkyTonight.svelte';
 	import type { EntityState, SurfacePanel } from '$lib/jarvisClient';
+	import TaskCard from '$lib/components/TaskCard.svelte';
+	import type { TaskRow } from '$lib/tasks';
 
 	interface Props {
 		panel: SurfacePanel;
@@ -35,6 +37,9 @@
 		onmove: (id: string, where: { x: number; y: number; w?: number; h?: number }) => void;
 		onremove: (id: string) => void;
 		onswitch?: (entityId: string, service: string) => void;
+		/** M88: the job a `task` panel follows, from the task record. */
+		task?: TaskRow | null;
+		oncancel?: (taskId: string) => void;
 	}
 
 	let {
@@ -42,6 +47,8 @@
 		width,
 		row,
 		entityState = null,
+		task = null,
+		oncancel,
 		still = null,
 		readings = null,
 		sky = null,
@@ -147,6 +154,15 @@
 			<SkyTonight {sky} live />
 		{:else if panel.kind === 'moments'}
 			<Moments moments={moments.slice(0, panel.limit)} live />
+		{:else if panel.kind === 'task'}
+			<!-- M88: the plan beside the instrument — the job's own card, steps and a stop, from the task record. -->
+			<div class="plan" data-testid="surface-task-{panel.id}" data-no-drag>
+				{#if task}
+					<TaskCard {task} onCancel={oncancel ? () => oncancel(task.id) : undefined} />
+				{:else}
+					<p class="muted">Waiting for the job…</p>
+				{/if}
+			</div>
 		{:else if panel.kind === 'note' || panel.kind === 'page'}
 			<div class="text" data-testid="surface-text-{panel.id}">
 				{#if panel.url}<span class="src">{panel.url}</span>{/if}

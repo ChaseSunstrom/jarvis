@@ -150,7 +150,7 @@ export interface PendingApproval {
 /** A panel Jarvis put up on the voice screen (M83): a spec the screen draws live. */
 export interface SurfacePanel {
 	id: string;
-	kind: 'entity' | 'camera' | 'readings' | 'sky' | 'moments' | 'note' | 'page' | 'chart';
+	kind: 'entity' | 'camera' | 'readings' | 'sky' | 'moments' | 'note' | 'page' | 'chart' | 'task';
 	title: string;
 	entity: string;
 	camera: string;
@@ -159,6 +159,8 @@ export interface SurfacePanel {
 	url: string;
 	text: string;
 	limit: number;
+	/** M88: the job a `task` panel follows. */
+	task: string;
 	x: number;
 	y: number;
 	w: number;
@@ -173,7 +175,7 @@ export function toSurfacePanels(rows: unknown): SurfacePanel[] {
 		if (!raw || typeof raw !== 'object') continue;
 		const r = raw as Record<string, unknown>;
 		const kind = String(r.kind ?? '');
-		if (!['entity', 'camera', 'readings', 'sky', 'moments', 'note', 'page', 'chart'].includes(kind)) continue;
+		if (!['entity', 'camera', 'readings', 'sky', 'moments', 'note', 'page', 'chart', 'task'].includes(kind)) continue;
 		out.push({
 			id: String(r.id ?? ''),
 			kind: kind as SurfacePanel['kind'],
@@ -185,6 +187,7 @@ export function toSurfacePanels(rows: unknown): SurfacePanel[] {
 			url: String(r.url ?? ''),
 			text: String(r.text ?? ''),
 			limit: Number(r.limit ?? 6) || 6,
+			task: String(r.task ?? ''),
 			x: Number(r.x ?? 0) || 0,
 			y: Number(r.y ?? 0) || 0,
 			w: Number(r.w ?? 4) || 4,

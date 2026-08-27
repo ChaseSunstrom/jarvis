@@ -9,7 +9,7 @@ and one audit surface.
 
 ```
 Browser HUD (SvelteKit) ─┐
-Android app (Kotlin)     ─┼─► jarvis-core ─► Ollama qwen3:8b (persona + tools)
+Android app (Kotlin)     ─┼─► jarvis-core ─► the model server at LLM_URL (persona + tools)
 Desktop agent (Python)   ─┘        │
                                    ├─► entities, automations, scenes, scripts
                                    ├─► get_user_context / run_background_task
@@ -17,7 +17,7 @@ Desktop agent (Python)   ─┘        │
                                    ├─► deep_research ─► a task, several searches, cited
                                    ├─► start_coding_job ─► a branch, a diff, your own checks
                                    ├─► delegate_to_agents ─► jarvis-orchestrator
-                                   │                          └─► OpenCode ─► Ollama
+                                   │                          └─► OpenCode ─► the same model server
                                    └─► execute_command ─► jarvis-sandbox (network: none)
                             Wyoming: whisper STT 10300 · Piper TTS 10200 · OWW 10400
 ```
@@ -29,7 +29,7 @@ change, because `jarvis-core` implements the same REST/WebSocket/pipeline API
 HA does — see [`standalone.md`](standalone.md).
 
 **Rejected alternatives:** LocalAI/Neon/OVOS as the brain; a generic MCP host
-driving Ollama directly (bypasses the exposure/permission model); a
+driving the model server directly (bypasses the exposure/permission model); a
 Tasker/WebView phone app (no real ASSIST role, no lock-screen activation).
 
 ## Components

@@ -12,6 +12,7 @@
 	import type { Connection } from '$lib/connection';
 	import { describeError } from '$lib/connection';
 	import type { BusEvent, EntityState, Subscription, SurfacePanel as Panel } from '$lib/jarvisClient';
+	import type { TaskRow } from '$lib/tasks';
 	import { toSurfacePanels } from '$lib/jarvisClient';
 
 	let { conn }: { conn: Connection | null } = $props();
@@ -24,6 +25,8 @@
 	let moments = $state<MomentRow[]>([]);
 	let series = $state<Record<string, SeriesData[]>>({});
 	let errors = $state<Record<string, string>>({});
+	// M88: the job each `task` panel follows, by panel id, from the task record.
+	let tasks = $state<Record<string, TaskRow | null>>({});
 	let now = $state(Date.now());
 	let width = $state(0);
 	let host = $state<HTMLElement | null>(null);
@@ -86,6 +89,17 @@
 							errors[p.id] = describeError(e);
 						})
 				);
+			} else if (p.kind === 'task') {
+				jobs.push(
+					client
+						.getTask(p.task)
+						.then((row) => {
+							tasks[p.id] = row;
+						})
+						.catch((e) => {
+							errors[p.id] = describeError(e);
+						})
+				);
 			}
 		}
 		if (kinds.has('sky')) {
@@ -122,6 +136,14 @@
 					panels = list;
 					void loadFor(list, connection);
 				}, 'jarvis_surface_changed')
+			);
+			subs.push(
+				await connection.client.subscribeEvents((event: BusEvent) => {
+					// The plan moves as the job does: the panel's card follows every update.
+					const row = (event.data as { task?: TaskRow })?.task;
+					if (!row?.id) return;
+					for (const p of panels) if (p.kind === 'task' && p.task === row.id) tasks[p.id] = row;
+				}, 'jarvis_task_updated')
 			);
 			subs.push(
 				await connection.client.subscribeEvents((event: BusEvent) => {
@@ -192,6 +214,8 @@
 				{moments}
 				series={series[panel.id] ?? []}
 				error={errors[panel.id] ?? ''}
+				task={tasks[panel.id] ?? null}
+				oncancel={(taskId) => void conn?.client.cancelTask(taskId)}
 				{onmove}
 				{onremove}
 				{onswitch}

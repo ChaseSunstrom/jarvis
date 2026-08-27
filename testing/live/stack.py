@@ -65,6 +65,12 @@ ERROR_ALLOWED = (
     # onnxruntime cannot set thread affinity inside an LXC. It says so once per
     # session and then works perfectly.
     "pthread_setaffinity_np failed",
+    # SearXNG initialising an upstream engine that refuses it (wikidata's 403
+    # on a fresh container, 27 Aug 2026): the engine is suspended and retried
+    # by SearXNG itself, the other engines answer, and the house's search
+    # falls back to the second instance (M68). Logged at ERROR by SearXNG for
+    # what is one engine's rate limit, not the stack's fault.
+    "engine INIT failed",
 )
 
 #: Lines that continue the record above them rather than starting a new one:

@@ -1255,7 +1255,40 @@ export function startMockHA({ port = 0, token = MOCK_TOKEN, log = () => {} } = {
 		// through that the real server cannot produce.
 		if (task.status === 'done') for (const step of task.steps) step.status = 'done';
 		broadcast('jarvis_task_updated', { task: taskDict(task) });
+		followTaskOnSurface(task);
 		return task;
+	};
+
+	// M88, as jarvis-core's surface does it: a background job with steps is a
+	// `task` panel while it runs and a `note` with its result when it is done;
+	// an error or a cancel leaves nothing behind.
+	const followTaskOnSurface = (task) => {
+		if (task.kind !== 'background') return;
+		const finished = ['done', 'error', 'cancelled'].includes(task.status);
+		const at = world.surface.findIndex((p) => p.kind === 'task' && p.task === task.id);
+		let changed = false;
+		if (!finished) {
+			if (!task.steps?.length || at !== -1) return;
+			world.surface.push({
+				id: `panel-${world.surface.length + 1}`, kind: 'task', task: task.id, title: task.title,
+				entity: '', camera: '', area: '', note: '', url: '', text: '', limit: 6,
+				x: world.surface.length % 2 ? 8 : 0, y: Math.floor(world.surface.length / 2) * 4, w: 4, h: 4,
+				placed_at: Date.now() / 1000
+			});
+			changed = true;
+		} else {
+			if (at !== -1) { world.surface.splice(at, 1); changed = true; }
+			if (task.status === 'done' && task.result) {
+				world.surface.push({
+					id: `panel-${world.surface.length + 1}`, kind: 'note', task: '', note: `task:${task.id}`,
+					title: `Finished: ${task.title}`, entity: '', camera: '', area: '', url: '', text: String(task.result), limit: 6,
+					x: world.surface.length % 2 ? 8 : 0, y: Math.floor(world.surface.length / 2) * 4, w: 4, h: 3,
+					placed_at: Date.now() / 1000
+				});
+				changed = true;
+			}
+		}
+		if (changed) broadcast('jarvis_surface_changed', { panels: world.surface.map((p) => ({ ...p })), max: 8 });
 	};
 
 	const removeTask = (id) => {
@@ -3859,6 +3892,7 @@ index 1234567..89abcde 100644
 						id: raw.id || `panel-${world.surface.length + 1}`,
 						kind: raw.kind || 'entity', title: raw.title || '', entity: raw.entity || '', camera: raw.camera || '',
 						area: raw.area || '', note: raw.note || '', url: raw.url || '', text: raw.text || '', limit: raw.limit || 6,
+						task: raw.task || '',
 						x: raw.x ?? (world.surface.length % 2 ? 8 : 0), y: raw.y ?? Math.floor(world.surface.length / 2) * 4,
 						w: raw.w || 4, h: raw.h || 2, placed_at: Date.now() / 1000
 					};
