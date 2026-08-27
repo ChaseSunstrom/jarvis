@@ -45,6 +45,11 @@ point is that nothing has to be opened to see it.
 	}
 
 	interface InstallPlan {
+		/** MCP only (`kind === 'mcp'`: a server is added; nothing is downloaded): the URL and the tier its tools will run at. */
+		url?: string;
+		tier?: number;
+		/** MCP only: the server's one-sentence plan, in words. */
+		note?: string;
 		id: string;
 		kind: string;
 		source: string;
@@ -87,6 +92,23 @@ point is that nothing has to be opened to see it.
 	let busy = $state('');
 	let planError = $state('');
 	let proposal = $state<InstallPlan | null>(null);
+	/** Servers a registry lists that this house cannot install (M108). */
+	let skipped = $state(0);
+
+	// The registries search on their side (the MCP registry lists thousands;
+	// a page of a hundred is what comes back), so a changed query is a new
+	// browse — after a pause, not on every keystroke.
+	let queryTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastQuery = '';
+	$effect(() => {
+		const q = query.trim();
+		if (!loaded || q === lastQuery) return;
+		if (queryTimer) clearTimeout(queryTimer);
+		queryTimer = setTimeout(() => {
+			lastQuery = q;
+			void load();
+		}, 400);
+	});
 
 	async function load(): Promise<void> {
 		if (!conn) return;
@@ -100,10 +122,12 @@ point is that nothing has to be opened to see it.
 				sources?: string[];
 				errors?: SourceError[];
 				error?: string;
-			}>({ type: 'jarvis/extensions/browse' });
+				skipped?: number;
+			}>({ type: 'jarvis/extensions/browse', query: query.trim() });
 			entries = answer.entries ?? [];
 			sources = answer.sources ?? [];
 			sourceErrors = answer.errors ?? [];
+			skipped = answer.skipped ?? 0;
 			err = answer.error ?? '';
 			failed = false;
 		} catch (e) {
@@ -248,7 +272,12 @@ point is that nothing has to be opened to see it.
 						data-jv-row
 					>
 						<div class="what">
-							<span class="id">{entry.id}</span>
+							<span class="id">
+								{entry.id}
+								<Pill tone={entry.kind === 'mcp' ? 'live' : 'neutral'} testid="catalog-kind-{entry.id}">
+									{entry.kind === 'mcp' ? 'MCP' : 'SKILL'}
+								</Pill>
+							</span>
 							<span class="desc">{entry.description}</span>
 							<span class="asks" data-testid="catalog-perms-{entry.id}">
 								{entry.source}{entry.ref ? ` · ${entry.ref}` : ''} · asks for {entry.permissions.length
@@ -288,14 +317,22 @@ point is that nothing has to be opened to see it.
 			</ul>
 		{/if}
 
-		<!-- One line for MCP, whatever the state above: the catalogue cannot
-		     offer a stdio server by design, and the repository hosts no http
-		     server to list, so the way in is the form in the MCP fold. -->
+		<!-- One line for MCP, whatever the state above: a registry offers its
+		     http servers as rows (INSTALL adds one at the default tier and
+		     downloads nothing); a server that runs on this machine is never
+		     offered, and any server can still be added by URL. -->
 		<div class="mcp" data-testid="catalogue-mcp">
 			<p class="note">
-				A catalogue cannot offer a server that runs on this machine. MCP servers are added by URL
-				in the MCP servers fold below; a program this machine starts (stdio) is configured in
-				configuration.yaml with <code>allow_stdio</code>.
+				MCP servers from a registry install as http servers at the default tier — every tool they
+				offer is held for a person until approved, and nothing is downloaded.
+				{#if skipped}
+					<span data-testid="catalogue-skipped">
+						{skipped} {skipped === 1 ? 'server' : 'servers'} in the registry would start a program on
+						this machine and {skipped === 1 ? 'is' : 'are'} not offered.
+					</span>
+				{/if}
+				A server not in any registry is added by URL in the MCP servers fold below; a program this
+				machine starts (stdio) is configured in configuration.yaml with <code>allow_stdio</code>.
 			</p>
 			<Button testid="catalogue-add-mcp" title="Open the MCP servers fold on its add form" onclick={onaddmcp}>
 				ADD BY URL
@@ -310,26 +347,38 @@ point is that nothing has to be opened to see it.
 -->
 <Dialog open={Boolean(proposal)} title={`Install ${proposal?.id ?? ''}?`} onclose={() => (proposal = null)}>
 	{#if proposal}
-		<dl data-testid="install-plan">
-			<dt>From</dt>
-			<dd>{proposal.source} at {proposal.ref || 'no ref'}</dd>
-			<dt>Checksum</dt>
-			<dd class="hash">{proposal.sha256}</dd>
-			<dt>Asks for</dt>
-			<dd data-testid="install-permissions">
-				{proposal.permissions.length ? proposal.permissions.join(', ') : 'nothing'}
-			</dd>
-			<dt>Files</dt>
-			<dd>{proposal.files.join(', ')}</dd>
-		</dl>
-		{#if proposal.hooks.length}
-			<p class="warn" role="alert" data-testid="install-hooks">{proposal.warning}</p>
+		{#if proposal.kind === 'mcp'}
+			<dl data-testid="install-plan" data-kind="mcp">
+				<dt>From</dt>
+				<dd>{proposal.source}{proposal.ref ? ` · ${proposal.ref}` : ''}</dd>
+				<dt>Server</dt>
+				<dd class="hash" data-testid="install-url">{proposal.url}</dd>
+				<dt>Tier</dt>
+				<dd data-testid="install-tier">{proposal.tier}</dd>
+			</dl>
+			<p class="note" data-testid="install-note">{proposal.note}</p>
+		{:else}
+			<dl data-testid="install-plan" data-kind="skill">
+				<dt>From</dt>
+				<dd>{proposal.source} at {proposal.ref || 'no ref'}</dd>
+				<dt>Checksum</dt>
+				<dd class="hash">{proposal.sha256}</dd>
+				<dt>Asks for</dt>
+				<dd data-testid="install-permissions">
+					{proposal.permissions.length ? proposal.permissions.join(', ') : 'nothing'}
+				</dd>
+				<dt>Files</dt>
+				<dd>{proposal.files.join(', ')}</dd>
+			</dl>
+			{#if proposal.hooks.length}
+				<p class="warn" role="alert" data-testid="install-hooks">{proposal.warning}</p>
+			{/if}
+			<p class="note">
+				Nothing in this payload is run — a skill folder is read, never executed. What it can do is
+				tell the model things, and every action it suggests still goes through that action's own
+				approval.
+			</p>
 		{/if}
-		<p class="note">
-			Nothing in this payload is run — a skill folder is read, never executed. What it can do is
-			tell the model things, and every action it suggests still goes through that action's own
-			approval.
-		</p>
 	{/if}
 	{#snippet actions()}
 		<Button onclick={() => (proposal = null)}>CANCEL</Button>
