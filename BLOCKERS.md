@@ -33,8 +33,9 @@ restarts in a loop, and `jarvis-web` reports unhealthy.
 
 **Needed by:** the full-mode latency threshold (median round trip ≤ 2 s).
 
-Measured on this host: a spoken, tool-using turn takes 15–20 s end to end, of
-which ~11 s is streaming and recognising the audio and ~6 s is the model. The
+Measured on this host (24 Aug): a spoken, tool-using turn took 15–20 s end to end, of
+which ~11 s was streaming and recognising the audio and ~6 s the model. By 27 Aug, after
+M60/M70/M74, the median over 63 scenarios is 4.17 s with a p95 of 21.4 s — still over. The
 model is `qwen3.8-27b` on a remote llama-swap; there is no GPU on this box and
 faster-whisper runs on four shared vCPUs.
 
@@ -80,7 +81,7 @@ a restart turn now waits for running tasks first (23a8d5b).
 `docs/verification.md` marked **Unproven**.
 
 No device of any kind is reachable from this run, by instruction. The Kotlin is
-verified by its JVM-side mirrors and (once a JDK is installed) by
+verified by its JVM-side mirrors and — the toolchain is on this host now, see below — by
 `./gradlew assembleDebug`, lint and Robolectric; the on-device gates are listed
 in `docs/ANDROID_DEVICE_TESTS.md` with the exact steps for whoever has the
 hardware.
@@ -175,6 +176,9 @@ second pass follows; the milestone is ticked for the buildable half only, and
 
 ## n8n (M77): the key and the assistant's shape
 
+**Needed by:** M77's live half — the operator's `N8N_API_KEY` and what `/assistant` on their
+server answers (a chat webhook, or the built-in assistant behind a session).
+
 Jarvis's n8n tools are built and tested against a fake n8n. To run against the
 house's server put these in `jarvis-core/.env` (never in the repository):
 
@@ -188,6 +192,9 @@ something else — its URL, auth and reply field decide `ask_n8n_assistant`.
 `bash scripts/verify/m77-n8n.sh` then proves the connection.
 
 ## The orchestrator image cannot reach the Debian mirror (M82)
+
+**Needed by:** M82's coding worker — a route from BuildKit to `deb.debian.org` and GitHub
+(the running orchestrator, on the host network, reaches both; the image build does not).
 
 `jarvis-orchestrator`'s image needs `git`, `curl` and `unzip` from Debian and
 OpenCode from GitHub. On the night of 26 Aug 2026 `apt-get update` against

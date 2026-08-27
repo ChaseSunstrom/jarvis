@@ -236,11 +236,21 @@ class Observer:
         return list((answer or {}).get("notifications") or [])
 
     async def wait_for_notification(self, title_contains: str = "", kind: str = "",
-                                    timeout: float = 120.0) -> dict[str, Any] | None:
+                                    timeout: float = 120.0, since: float = 0.0) -> dict[str, Any] | None:
+        """The first notification matching, recorded at or after `since`.
+
+        `since` is the scenario's own start: the record persists across runs
+        and restarts, so without it a task notification from an earlier gate's
+        run — a failed one, "interrupted when Jarvis restarted" — answered the
+        proactive-moment scenario before its own task had finished (27 Aug
+        2026, inside `make verify-all`).
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             for row in await self.notifications():
                 if kind and row.get("kind") != kind:
+                    continue
+                if since and float(row.get("at") or 0.0) < since:
                     continue
                 if title_contains and title_contains.lower() not in str(
                     row.get("title") or ""

@@ -1453,6 +1453,27 @@ def test_compose_keeps_searxng_behind_the_search_profile(compose: dict[str, Any]
     assert compose["services"]["searxng"]["profiles"] == ["search"]
 
 
+def test_the_orchestrator_is_told_the_same_model_server_as_the_core() -> None:
+    """The root compose hands jarvis-orchestrator LLM_URL, LLM_API_KEY and a
+    planner model that falls back to LLM_MODEL — the names jarvis-core reads.
+
+    Found by the services audit of 27 Aug 2026: the block carried OLLAMA_URL
+    only, so the container pointed at 127.0.0.1:11434, sent no key, and every
+    `delegate_to_agents` call failed behind a green healthcheck.
+    """
+    text = (ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    block = text.split("  jarvis-orchestrator:", 1)[1].split("\n  jarvis-sandbox:", 1)[0]
+    for line in (
+        "- LLM_URL=${LLM_URL:-}",
+        "- LLM_API_KEY=${LLM_API_KEY:-}",
+        "- PLANNER_MODEL=${PLANNER_MODEL:-${LLM_MODEL:-",
+    ):
+        assert line in block, f"the orchestrator's environment lacks {line!r}"
+    main = (ROOT.parent / "jarvis-orchestrator" / "app" / "main.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("LLM_API_KEY"' in main
+    assert "api_key=LLM_API_KEY" in main
+
+
 def test_compose_keeps_the_broker_behind_the_mqtt_profile(compose: dict[str, Any]) -> None:
     """Same argument as SearXNG: most houses already have a broker.
 

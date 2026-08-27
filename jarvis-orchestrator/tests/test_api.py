@@ -44,7 +44,7 @@ def queue_files(ws):
 
 
 def test_healthz_open(client):
-    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/healthz").json()["status"] == "ok"
 
 
 def test_everything_else_needs_token(client):

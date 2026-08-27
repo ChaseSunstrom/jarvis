@@ -34,14 +34,21 @@ assert block, "dashboards is not a declared screen at all"
 entry = block[0]
 within = re.search(r"within: .([^\x27]+).", entry)
 chord = re.search(r"chord: .([a-z ]+).", entry)
-assert within, "dashboards belongs to no destination, so nothing links to it"
+nav = re.search(r"nav: true", entry)
+# A screen is reachable when it is a section of a destination (`within`, the
+# M48 shape) OR a destination itself (`nav: true`, the shape M63 gave it back
+# when the dashboard became the house at a glance). Either links to it; a
+# screen with neither is the one this check exists to catch.
+assert within or nav, "dashboards belongs to no destination and is none, so nothing links to it"
 assert chord, "dashboards lost its keyboard chord"
 # And the phone can get there: it offers the destination dashboards is in.
 tabs = Path("android-app/app/src/main/kotlin/ai/jarvis/app/ui/ConsoleTab.kt").read_text()
-front_door = within.group(1).lstrip("/").upper()
-needle = chr(34) + front_door + chr(34) + ", " + chr(34) + within.group(1) + chr(34)
+door = within.group(1) if within else "/dashboards"
+front_door = door.lstrip("/").upper()
+needle = chr(34) + front_door + chr(34) + ", " + chr(34) + door + chr(34)
 assert needle in tabs, "the phone has no " + front_door + " tab"
-print(f"dashboards: a section of {within.group(1)}, chord {chord.group(1)!r}, reachable from the phone via {front_door}")
+how = f"a section of {within.group(1)}" if within else "a destination of its own"
+print(f"dashboards: {how}, chord {chord.group(1)!r}, reachable from the phone via {front_door}")
 '
 check "console parity mirror passes" python3 android-app/tools/console_parity_test.py
 require_file jarvis-web/src/lib/dashboards/chartTypes.ts

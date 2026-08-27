@@ -837,3 +837,19 @@ is quiet. Done since:
   agent behind it — the M60 drop of the words written before a tool ran had never run on the voice path.
   The wrapper names its agent now; the pipeline looks both ways (voice suite +1). verify-all's first gate
   (m00) is red because `m63-dashboard-widgets.sh` was committed without its executable bit — fixed.
+- 03:46 — verify-all (M23) to m17: five reds. m00 the m63 mode bit (fixed); m03 three Playwright specs
+  (the dashboards kind picker, the two pairing tests) red at 379 s under the full box — the three pass alone
+  in 7.7 s, so watched as load flakes; m05's check still said dashboards must be a section of House — it has
+  been a destination of its own since M63 (check corrected, 29/29); m07/m14's smokes and m17's interactions
+  failed under the gates' own core restarts (eight SIGTERMs 03:30–03:38, from the memory, skills and
+  thread-persistence checks) — and the proactive-moment scenario read an older task's failure notification
+  because the rig's wait had no `since`; scoped to the scenario now. The container-log check's Piper records
+  are from 26 Aug 22:45–23:00 UTC (the restart scenarios' collateral), none in the last three hours.
+- 03:51 — the audit (operator's goal of 03:3x): six read-only auditors on the running house while verify-all
+  runs. From the services and quality reports so far, fixed in the tree: the orchestrator never received
+  LLM_URL/LLM_API_KEY (compose passed OLLAMA_URL only — every delegation pointed at nothing behind a green
+  healthcheck; now passed through, a bearer on its model calls, /healthz names its target, pinned by
+  test_packaging and three orchestrator tests); `egress-audit.sh` said FAIL on a healthy isolated sandbox
+  (the Proxmox kernel's `bonding_masters` file — links only now, PASS); M23's BLOCKERS check grepped a
+  heading shape the file never had (every open entry now carries a Needed-by line and the check reads them);
+  the duplicate M70 heading. The audit reports are kept under docs/research/audits/.

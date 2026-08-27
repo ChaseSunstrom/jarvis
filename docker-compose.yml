@@ -165,9 +165,15 @@ services:
         condition: service_completed_successfully
     network_mode: "host"           # binds :8188; ufw allows the core host only
     environment:
+      # The same model server and key jarvis-core uses (LLM_URL, LLM_API_KEY,
+      # LLM_MODEL in .env): a delegation that talks to a server nobody runs
+      # answers 404 with a green healthcheck. OLLAMA_URL stays as the fallback
+      # for an install that has not been repointed.
+      - LLM_URL=${LLM_URL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
-      - PLANNER_MODEL=${PLANNER_MODEL:-qwen3:8b}
-      - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
+      - PLANNER_MODEL=${PLANNER_MODEL:-${LLM_MODEL:-qwen3:8b}}
+      - CODER_MODEL=${CODER_MODEL:-${LLM_MODEL:-qwen2.5-coder:7b}}
       - WORKSPACE=/workspace
       # Two secrets, deliberately distinct. The service refuses to start if
       # either is unset.

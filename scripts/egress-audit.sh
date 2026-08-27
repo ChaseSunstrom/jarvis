@@ -18,7 +18,11 @@ if docker inspect jarvis-sandbox >/dev/null 2>&1; then
   fi
 
   # Interfaces: only loopback should exist.
-  ifaces=$(docker exec jarvis-sandbox sh -c 'ls /sys/class/net' 2>/dev/null | tr '\n' ' ')
+  # Interfaces are the symlinks in /sys/class/net. A plain `ls` also lists
+  # files the kernel puts there — `bonding_masters` on a host with the bonding
+  # module loaded (Proxmox), which made this say FAIL on a sandbox with no
+  # network at all (27 Aug 2026).
+  ifaces=$(docker exec jarvis-sandbox sh -c 'for f in /sys/class/net/*; do [ -L "$f" ] && basename "$f"; done' 2>/dev/null | tr '\n' ' ')
   say "interfaces: $ifaces"
   for i in $ifaces; do
     if [ "$i" != "lo" ]; then

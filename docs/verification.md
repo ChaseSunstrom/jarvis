@@ -350,7 +350,7 @@ they are the only places that particular bug can come back.
 | Word error rate, routing accuracy and per-stage latency | Automated *and reported* | `.verify/live/results.json`, `docs/LIVE_TEST_REPORT.md` |
 | Every capability, including the ones not built yet | Automated | `bash scripts/verify/live_interaction.sh --full` — scenarios for unfinished capabilities carry `gated-on:` and fail until their milestone lands |
 | A real SearXNG | **Deliberately not, and it is not blocked any more** | Docker works for `jarvisdev` now (M28). The research scenarios still run against `testing/live/fixture_search.py` on purpose: "did it cite three independent sources" is a question about a web this repository owns, and today's internet is not a fixture. They are the seven scenarios that carry `ground: fixture`; everything else talks to the running containers |
-| A 2-second median round trip | **Missed, and reported** | measured 15–20 s per spoken turn on this host (27 B model, no GPU, four shared vCPUs). `ISSUES.md` and `BLOCKERS.md` say what it would take |
+| A 2-second median round trip | **Missed, and reported** | 4.17 s median, 21.4 s p95 on 27 Aug 2026 (the report run of 63 scenarios; 15–20 s when first measured on 24 Aug, before M60/M70/M74) on this host (27 B model, no GPU, four shared vCPUs). `ISSUES.md` and `BLOCKERS.md` say what it would take |
 | A real microphone in a real room | **Unproven** | the rig synthesises speech; acoustics are not simulated |
 
 ### How good it actually is: the intelligence scorecard (M26)
@@ -377,7 +377,7 @@ run of real jobs.
 Measured on this host, 2026-08-25 (harness ground, 12 GB model, no GPU): idle
 median first word 6.2–8.1 s and whole turn 8.0–9.4 s; under load 6.4 s and
 9.3 s. Those are the numbers the ceilings in `run.py` were set from — lower
-than the 15–20 s the scenario suite sees against the stack, because the demo
+than the 4–20 s the scenario suite sees against the stack, because the demo
 house's summary is a fraction of a real one's.
 
 ### The exploratory pass and the live report (M27)
@@ -1002,7 +1002,6 @@ refused); console: `e2e/editable-house.spec.ts` (3), `dashboards/tiles.test.ts` 
 | An entity a platform keeps publishing comes back under a fresh entry; automations naming a removed id are not edited | Documented, not fixed | `Jarvis.async_remove_entity`'s docstring; the automation check reports the stale id |
 | "Remove the X" spoken to the deployed house, confirmed out loud, and gone from the Devices screen | **Unproven** | waits for the live rig |
 
-### A faster voice (M70, in progress)
 ### A faster voice (M70)
 
 `bash scripts/verify/m70-voice-speed.sh` (26 Aug 22:04: 14/14 on the running house). Server: `test_packaging.py`

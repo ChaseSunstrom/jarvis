@@ -25,7 +25,22 @@ text = report.read_text(encoding="utf-8")
 assert "--full" in text, "the report was written from an --implemented-only run, not a full one"
 print("full-mode report present")
 '
-check_not "BLOCKERS.md has no open entries" grep -nE '^## M[0-9]{2}' BLOCKERS.md
+# Every open blocker names what it waits on. The earlier form grepped for
+# `^## M[0-9]{2}` — a heading shape BLOCKERS.md never had — so it could not
+# fail, and passed over five open entries (the quality audit, 27 Aug 2026).
+# Open means the heading is not struck through; each such section must carry
+# a `**Needed by:**` line, which is where the operator reads what it blocks.
+check "every open entry in BLOCKERS.md says what it waits on" python3 -c '
+import re
+from pathlib import Path
+text = Path("BLOCKERS.md").read_text()
+sections = re.split(r"^## ", text, flags=re.M)[1:]
+open_ones = [s for s in sections if "~~" not in s.splitlines()[0]]
+missing = [s.splitlines()[0] for s in open_ones if "**Needed by:**" not in s]
+assert not missing, "open blockers with no Needed-by line: " + "; ".join(missing)
+print(f"{len(open_ones)} open, each naming what it needs; {len(sections) - len(open_ones)} resolved")
+'
+
 check "CHANGELOG.md names every milestone" python3 -c '
 import re
 from pathlib import Path

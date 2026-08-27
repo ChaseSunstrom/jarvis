@@ -811,10 +811,13 @@ state), which are unaffected, and its per-turn WER ceiling is relaxed with a
 pointer to this entry rather than to hide it: the number is still reported in
 `docs/LIVE_TEST_REPORT.md`.
 
-## A voice turn takes 15–20 seconds, against a 2-second target
+## A voice turn takes 4 s at the median and 20 s at p95, against a 2-second target
 
 severity: major
-status: **open** — see `BLOCKERS.md`
+status: **open** — see `BLOCKERS.md`. Re-measured 27 Aug 2026 (the tenth rebuild's
+report run, 63 scenarios): median round trip 4.17 s, p95 21.4 s; the smoke set alone 2.2–2.8 s.
+The 15–20 s below is the 24 Aug measurement this entry was written from, before M60/M70/M74
+(no reasoning on the voice path, Piper at length scale 0.9, speech per segment after tools).
 Regression: the round-trip threshold in `testing/live/runner.py`, which
 fails a `--full` run on a median over two seconds; the per-stage numbers
 are in `docs/LIVE_TEST_REPORT.md`

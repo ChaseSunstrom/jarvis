@@ -39,6 +39,7 @@ def _model_base_url() -> str:
 
 LLM_URL = _model_base_url()
 PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "qwen3:8b")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 CODER_MODEL = os.environ.get("CODER_MODEL", "qwen2.5-coder:7b")
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
 ORCHESTRATOR_TOKEN = os.environ.get("ORCHESTRATOR_TOKEN", "")
@@ -94,7 +95,16 @@ def require_approval_secret(
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    # What it would talk to, so a console can say "delegation: no model"
+    # instead of a green tick over a 404 (the services audit, 27 Aug 2026).
+    # The URL and model names only — never the key.
+    return {
+        "status": "ok",
+        "llm_url": LLM_URL,
+        "planner_model": PLANNER_MODEL,
+        "coder_model": CODER_MODEL,
+        "llm_key_set": bool(LLM_API_KEY),
+    }
 
 
 # ------------------------------------------------------------- delegation
@@ -104,7 +114,7 @@ class DelegateBody(BaseModel):
 
 @app.post("/delegate", dependencies=[Depends(require_token)])
 async def delegate(body: DelegateBody):
-    return await fan_out(body.tasks, LLM_URL, PLANNER_MODEL)
+    return await fan_out(body.tasks, LLM_URL, PLANNER_MODEL, api_key=LLM_API_KEY)
 
 
 # ------------------------------------------------------------ code tasks

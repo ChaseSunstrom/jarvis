@@ -71,6 +71,7 @@ async def fan_out(
     model: str,
     per_task_timeout: float = 120.0,
     max_parallel: int = 3,
+    api_key: str = "",
 ) -> dict[str, Any]:
     """Run tasks in parallel, then synthesize. Returns agents + synthesis."""
     tasks = [t for t in (t.strip() for t in tasks) if t]
@@ -78,7 +79,11 @@ async def fan_out(
         return {"status": "error", "detail": "no tasks", "agents": [], "synthesis": ""}
     sem = asyncio.Semaphore(max_parallel)
 
-    async with httpx.AsyncClient() as client:
+    # The same key jarvis-core sends: a gateway with a master key answers 401
+    # to a bare request, and until 27 Aug 2026 every delegation did exactly
+    # that (the compose file never passed the key, nor the URL).
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    async with httpx.AsyncClient(headers=headers) as client:
 
         async def one(idx: int, task: str) -> dict:
             async with sem:

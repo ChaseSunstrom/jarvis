@@ -1026,6 +1026,7 @@ class Runner:
                 title_contains=str(want_note_moment.get("title_contains") or ""),
                 kind=str(want_note_moment.get("kind") or ""),
                 timeout=float(want_note_moment.get("within") or 120.0),
+                since=getattr(self, "_scenario_started_at", started_at),
             )
             if moment is None:
                 have = [row.get("title") for row in await observer.notifications()]
