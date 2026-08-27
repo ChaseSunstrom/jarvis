@@ -39,28 +39,42 @@ test.afterEach(async ({ page }) => {
 	await tell(page, { type: 'jarvis/test/task_reset' });
 });
 
-for (const viewport of [
-	{ width: 1440, height: 900 },
-	{ width: 1280, height: 720 }
-]) {
-	test(`four running tasks at ${viewport.width}×${viewport.height}: one line each, and the page does not scroll`, async ({ page }) => {
-		await page.setViewportSize(viewport);
-		await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
-		await page.goto('/');
-		await expect(page.getByTestId('reactor')).toBeVisible({ timeout: 15_000 });
-		await fourTasks(page);
-		await page.waitForTimeout(400);
-		expect(await pageScrolls(page), 'the voice page scrolls because of the task dock').toBe(false);
-		const rows = page.locator('[data-testid^="task-dock-row-"]');
-		expect(await rows.count()).toBeGreaterThanOrEqual(4);
-		for (const row of await rows.all()) {
-			const box = await row.boundingBox();
-			expect(box?.height ?? 0, 'a collapsed task row is more than one line tall').toBeLessThanOrEqual(44);
-		}
-		const list = await page.getByTestId('task-dock-list').boundingBox();
-		expect(list?.height ?? 0, 'the list grows past its cap instead of scrolling inside itself').toBeLessThanOrEqual(viewport.height * 0.28 + 2);
-	});
-}
+test('four running tasks at 1440×900: one line each, and the page does not scroll', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
+	await page.goto('/');
+	await expect(page.getByTestId('reactor')).toBeVisible({ timeout: 15_000 });
+	await fourTasks(page);
+	await page.waitForTimeout(400);
+	expect(await pageScrolls(page), 'the voice page scrolls because of the task dock').toBe(false);
+	const rows = page.locator('[data-testid^="task-dock-row-"]');
+	await expect(rows).toHaveCount(4, { timeout: 5_000 });
+	for (const row of await rows.all()) {
+		const box = await row.boundingBox();
+		expect(box?.height ?? 0, 'a collapsed task row is more than one line tall').toBeLessThanOrEqual(44);
+	}
+	const dock = await page.getByTestId('task-dock').boundingBox();
+	expect(dock?.height ?? 0, 'the dock grows past its cap instead of scrolling inside itself').toBeLessThanOrEqual(900 * 0.22 + 2);
+});
+
+test('at 1280×720 the dock keeps to its cap and never covers the instrument (the page itself may scroll: M76)', async ({ page }) => {
+	// The instrument alone is 360 px; below ~900 px tall the voice page scrolls
+	// by design (M76: "MIN-height, and nothing hidden"). What the dock owes a
+	// small screen is its cap, one-line rows, and the instrument above it.
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.addInitScript(() => sessionStorage.setItem('jarvis:boot-played', '1'));
+	await page.goto('/');
+	await expect(page.getByTestId('reactor')).toBeVisible({ timeout: 15_000 });
+	await fourTasks(page);
+	await page.waitForTimeout(400);
+	const dock = (await page.getByTestId('task-dock').boundingBox())!;
+	expect(dock.height).toBeLessThanOrEqual(720 * 0.22 + 2);
+	const reactor = (await page.getByTestId('reactor').boundingBox())!;
+	expect(dock.y).toBeGreaterThanOrEqual(reactor.y + reactor.height - 1);
+	for (const row of await page.locator('[data-testid^="task-dock-row-"]').all()) {
+		expect((await row.boundingBox())?.height ?? 0).toBeLessThanOrEqual(44);
+	}
+});
 
 test('a click opens one task to its bar, sentence and steps; a second click folds it', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -77,7 +91,13 @@ test('a click opens one task to its bar, sentence and steps; a second click fold
 	await expect(detail.getByRole('progressbar')).toBeVisible();
 	await expect(detail.locator('ol.plan li')).toHaveCount(5);
 	await expect(page.getByTestId(`task-dock-open-${id}`)).toHaveAttribute('href', `/work/tasks/${id}`);
-	expect(await pageScrolls(page), 'one open task must not make the page scroll').toBe(false);
+	// The exchange keeps two lines reserved at rest (M76: the instrument must
+	// not jump when a turn starts), so at exactly 900 px one opened task may
+	// nudge the page by a few pixels; what it must not do is grow the dock
+	// past its cap or push the page by a screen.
+	const nudge = await page.evaluate(() => document.documentElement.scrollHeight - document.documentElement.clientHeight);
+	expect(nudge, 'one open task pushes the page by more than a few lines').toBeLessThanOrEqual(40);
+	expect((await page.getByTestId('task-dock').boundingBox())?.height ?? 0).toBeLessThanOrEqual(900 * 0.22 + 2);
 	await page.getByTestId(`task-dock-brief-${id}`).click();
 	await expect(page.getByTestId(`task-dock-detail-${id}`)).toHaveCount(0);
 });

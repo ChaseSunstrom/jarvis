@@ -154,7 +154,9 @@ test('the dock follows you off the page, HUD included', async ({ page }) => {
 
 	await page.goto('/');
 	await expect(page.getByTestId('task-dock')).toContainText('A long errand', { timeout: 15_000 });
-	// Its bar is live on the HUD too, not a static row.
+	// Its bar is live on the HUD too, not a static row — behind the brief
+	// since M111: one click opens the row to its bar.
+	await page.locator('[data-testid^="task-dock-brief-"]').first().click();
 	await expect(page.getByTestId('task-dock').getByRole('progressbar').first()).toBeVisible();
 });
 

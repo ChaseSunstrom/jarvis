@@ -168,10 +168,11 @@
 		display: flex;
 		flex-direction: column;
 		/* The dock as a whole never takes more than a quarter-and-a-bit of the
-		   viewport, header included: on the twentieth house (27 Aug 2026) one
-		   opened task plus three rows pushed the page into a scroll at 1440×900
-		   with the list alone capped. The list scrolls inside what is left. */
-		max-height: min(28vh, 16rem);
+		   viewport, header included: on the twenty-first house (27 Aug 2026) one
+		   opened task took a 28 % dock to 252 px and the page to 980 on a 900 px
+		   screen — the instrument (360 px), the exchange and the bottom dock leave
+		   the tasks about 220 px at 1440×900. The list scrolls inside what is left. */
+		max-height: min(22vh, 13rem);
 		background: var(--jv-panel);
 		border: 1px solid var(--jv-line-hair);
 		border-radius: var(--jv-radius-md);

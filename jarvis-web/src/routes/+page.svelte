@@ -1254,6 +1254,12 @@
 	.tasks:empty {
 		display: none;
 	}
+	/* The grid's gap already separates the dock from the exchange; the dock's
+	   own margin (for the HUD, where it stands alone) is 16 px the voice page
+	   cannot spare at 900 tall with one task open (M111). */
+	.tasks :global(.dock) {
+		margin-bottom: 0;
+	}
 	.field {
 		position: absolute;
 		left: 50%;
