@@ -1655,6 +1655,23 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 27 Aug 11:06: ticked — gate 4/4 on the sixteenth's house (the 10:21 image): `routines.propose ask=false` ran the
     miner over the house's own recorder history and reported its candidates; a seeded draft accepted over the websocket
     became an automation the house listed, and was removed. The morning proposal with its question is the operator's to hear.
+- [ ] **M105 — The gate says no to a voice that is not yours** · size M · deps M71, M79 · parallel-ok M104
+  - Scope: on 27 Aug the operator's own speaker profile (11 samples, threshold 4.93) ACCEPTED the rig's
+    synthetic Piper voice — `en_US-amy-low`, a woman's voice reading "remember that I take my tea with
+    honey" — at 4.15, "match", and filed the memory under the operator. The composite is the mean of z²
+    over 46 dimensions: 19 of timbre, 19 of variability, 8 of pitch, so a pitch block at 9.35 (a different
+    person by any ear) is outvoted by timbre at 3.46 and variability at 2.66. In `enforce` mode that gate
+    would let a stranger's voice — or the house's own TTS — unlock the door. Fix: score blocks as equals
+    (the mean of the three block means, so each kind of evidence is one vote) and veto on any single
+    block far beyond the threshold (twice it), with the reason naming the block ("pitch-mismatch"); the
+    self-scores and the suggested threshold follow the same scoring, so a profile's measured threshold
+    stays honest; the verdict's `blocks` are already on the API for the console to draw. Unit tests with
+    synthetic embeddings pin the impostor-with-the-right-timbre case and the owner-on-a-cold-morning case;
+    the live half enrols the rig's voice as its own person and asserts the synthetic voice is accepted as
+    that person only — never as the operator — and reports the operator's self-scores and suggested
+    threshold under the new scoring (their data; reported, not asserted).
+  - Verify: `bash scripts/verify/m105-not-your-voice.sh`
+  - 27 Aug 11:54: planned.
 ## Final
 - [ ] **M23 — Final integration** · size M · deps M00–M72
   - 26 Aug 15:14: `make verify-all` in full, 11,825 s — 43 gates green, 19 red. Twelve reds

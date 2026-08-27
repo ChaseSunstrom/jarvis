@@ -1919,6 +1919,36 @@ async def test_a_held_offer_answered_no_or_approved_bare_does_the_right_thing(ja
     assert lock.calls == [{"entity_id": "lock.side_door"}]
 
 
+async def test_the_shipped_garage_rule_holds_an_offer_for_the_demo_garage_door(jarvis):
+    """The rule that ships in configuration.yaml, against the demo house's own
+    garage door — which carried no device_class until 27 Aug 2026, so the rule
+    written for it could not fire on any house. Loaded from the file, so a
+    change to either side is caught here."""
+    import yaml
+
+    from jarvis.integrations.demo import DemoCover
+    from jarvis.llm.tools import ToolRegistry
+
+    loader = yaml.SafeLoader
+    loader.add_multi_constructor("!", lambda loader_, suffix, node: None)
+    shipped = Path(__file__).resolve().parents[1] / "config" / "configuration.yaml"
+    cfg = yaml.load(shipped.read_text(), Loader=loader)
+    rules = cfg["narrate"]
+    door = DemoCover("Garage Door", "garage_door", None, 0, "garage")
+    assert door._attr_device_class == "garage"
+    registry = ToolRegistry(jarvis)
+    jarvis.data["llm_tools"] = registry
+    # 06:50 in the house — inside the default quiet hours, which the garage rule refuses
+    await narrate_setup(jarvis, rules, minutes=6 * 60 + 50)
+    attrs = {"friendly_name": "Garage Door", "device_class": "garage", "current_position": 0}
+    await flip(jarvis, "cover.garage_door", "closed", attrs)
+    await flip(jarvis, "cover.garage_door", "opening", {**attrs, "current_position": 50})
+    await flip(jarvis, "cover.garage_door", "open", {**attrs, "current_position": 100})
+    (held,) = registry.pending_for_conversation("anyone")
+    assert held["summary"] == "The garage door has opened — Shall I close it?", held["summary"]
+    assert held["arguments"]["service"] == "cover.close_cover"
+
+
 async def test_without_an_ask_service_the_offer_is_a_notice(jarvis):
     lock = FakeLock(jarvis)
     _manager, companion = await narrate_setup(jarvis, LOCK_RULE)

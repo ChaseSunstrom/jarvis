@@ -58,6 +58,10 @@ PLACE_PHRASES: dict[str, tuple[str, str | None]] = {
 SUBJECT_PHRASES: dict[str, tuple[str, str | None]] = {
     "door": ("The {subject} has opened", "The {subject} has closed"),
     "garage_door": ("The {subject} has opened", "The {subject} has closed"),
+    # Covers say it in Home Assistant's own classes: `garage` and `gate` are
+    # what a cover carries, `garage_door` what a binary sensor does.
+    "garage": ("The {subject} has opened", "The {subject} has closed"),
+    "gate": ("The {subject} has opened", "The {subject} has closed"),
     "window": ("The {subject} has opened", "The {subject} has closed"),
     "opening": ("The {subject} has opened", "The {subject} has closed"),
     "lock": ("The {subject} has been unlocked", "The {subject} has been locked"),

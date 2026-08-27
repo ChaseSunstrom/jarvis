@@ -254,9 +254,20 @@ class DemoClimate(DemoEntity):
 
 class DemoCover(DemoEntity):
     def __init__(
-        self, name: str, unique_id: str, area: str | None = None, position: int = 100
+        self,
+        name: str,
+        unique_id: str,
+        area: str | None = None,
+        position: int = 100,
+        device_class: str | None = None,
     ) -> None:
         super().__init__(name, unique_id, area)
+        # What kind of cover, in Home Assistant's vocabulary (garage, window,
+        # gate, blind …). The shipped narrate rule for a door left open
+        # matches on it, and the demo garage door carried none — so on every
+        # house the rule could never fire for the one cover it was written
+        # for (27 Aug 2026).
+        self._attr_device_class = device_class
         self._position = int(position)
         self._sync()
 
@@ -480,8 +491,8 @@ def build_entities(prefix: str = "") -> dict[str, list[DemoEntity]]:
         ],
         "climate": [DemoClimate(name("Thermostat"), "thermostat", LIVING_ROOM)],
         "cover": [
-            DemoCover(name("Living Room Window"), "living_room_window", LIVING_ROOM, 70),
-            DemoCover(name("Garage Door"), "garage_door", None, 0),
+            DemoCover(name("Living Room Window"), "living_room_window", LIVING_ROOM, 70, "window"),
+            DemoCover(name("Garage Door"), "garage_door", None, 0, "garage"),
         ],
         "lock": [DemoLock(name("Front Door Lock"), "front_door_lock")],
         "fan": [DemoFan(name("Living Room Fan"), "living_room_fan", LIVING_ROOM)],
