@@ -130,7 +130,9 @@ async def test_a_question_is_answered_by_the_next_turn(client, house):
         messages = house.ollama_requests()[-1]["payload"]["messages"]
         assert messages[-1]["role"] == "user" and messages[-1]["content"] == "the corner one"
         assert any(
-            m["role"] == "system" and "answers the question you asked earlier" in m["content"]
+            # A user-role note the user never sees (27 Aug 2026): the gateway in
+            # front of the model refuses a system message anywhere but first.
+            m["role"] == "user" and "answers the question you asked earlier" in m["content"]
             for m in messages
         )
     finally:

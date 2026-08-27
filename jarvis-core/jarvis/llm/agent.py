@@ -1221,8 +1221,22 @@ class ConversationAgent:
             return
         if note:
             # After the history and before the user's words, so the last
-            # message the model reads is still what the user said.
-            messages.insert(len(messages) - 1, {"role": "system", "content": note})
+            # message the model reads is still what the user said. As a USER
+            # note the user never sees, the way the nudges are, and not as a
+            # system message: the gateway in front of the model (LiteLLM, on
+            # this house) answers 400 "System message must be the first
+            # message" to one anywhere else, and every spoken yes on 27 Aug
+            # ran its tool and then said "I couldn't reach the language model".
+            messages.insert(
+                len(messages) - 1,
+                {
+                    "role": "user",
+                    "content": (
+                        "(A note from the house, which the user never sees — answer their "
+                        f"words below in its light, and do not mention this note.) {note}"
+                    ),
+                },
+            )
 
         def _on_thinking(delta: str) -> None:
             # Capped as it accumulates rather than at the end: an unbounded

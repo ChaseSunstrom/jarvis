@@ -787,3 +787,19 @@ is quiet. Done since:
   at once now); one is the vision role with no served model (BLOCKERS §4), and one the
   delegation scenario's known routing variance. Intent and median still miss their thresholds,
   as recorded since 26 Aug; the miss is the rig's and the model's, and the thresholds stand.
+- 01:22 — after the report: M83 ticked (gate 15/15 on the running house), M75 ticked (the browser
+  reads news.bitcoin.com as text in 6.0 s; the gate's own f-string fixed), M71's gate 37/37 on a
+  quiet box and the harness 229/229; M74 waits for the spoken briefing scenario written for it;
+  M82's binary is the mirror; M77 the operator's key. The six scenarios the report failed on the
+  rig's account re-run now with the rig's fixes; the eleventh rebuild follows with n8n's taint and
+  its no-tools-when-unconfigured, then the smoke set and the gates once more.
+- 01:39 — the re-run of the six scenarios found one real fault of the house that no suite had: every
+  spoken yes to a held action ran its tool and then said "I couldn't reach the language model" —
+  the gateway in front of the model (LiteLLM) answers 400 "System message must be the first
+  message" to the system note M66 put after the history, and the harness's scripted model had
+  never objected. The note is a user-role note the user never sees now (the shape the nudges have
+  always had), the fake model refuses a system message anywhere but first as the gateway does
+  (the self-test fails first without the fix, 229/229 with it), and the answer suites are 82.
+  The eleventh rebuild (n8n's taint and its no-tools-when-unconfigured): M75 9/9, M83 15/15;
+  smoke 10/12 with the two misses being this fault and a briefing the model gave in one sentence
+  (the scenario asks for separate sentences now). The twelfth rebuild carries the fix.

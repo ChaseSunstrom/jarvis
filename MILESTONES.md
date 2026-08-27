@@ -1146,6 +1146,8 @@ web and of Tasker. Local only. Each row here is planned in that document.
   - 27 Aug 00:07: "I can't set the enrol mode when enrolling" — the screen only showed the gate's mode.
     `voice.speaker.mode` is a choice on Settings › Voice now (off / observe / enforce), choosable
     before anyone is enrolled and inert until someone is; settings suites 52, settings spec.
+  - 27 Aug 01:22: the gate again on a quiet box after the mode setting and the heartbeat: 37/37; the
+    one red of the busy-box run (the harness self-test) passes 229/229 alone and in full.
 - [x] **M72 — A coding job can create a repository** · size S · deps M19 · parallel-ok M66
   - Scope: "Could not create the workspace /jarvis/workspaces: Permission denied": in the image
     `~/jarvis/workspaces` is `/jarvis/workspaces`, which nothing may write. The core mounts the

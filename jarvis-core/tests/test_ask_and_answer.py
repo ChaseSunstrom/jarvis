@@ -361,7 +361,9 @@ LOCK = call_tool("lock_control", {"action": "lock", "name": "front door"})
 
 
 def _system_notes(fake: FakeOllama) -> list[str]:
-    return [m["content"] for m in fake.last_messages if m["role"] == "system"]
+    # A USER note the user never sees, not a system message (27 Aug 2026: the
+    # gateway in front of the model refuses a system message anywhere but first).
+    return [m["content"] for m in fake.last_messages if m["role"] == "user" and "note from the house" in m["content"]]
 
 
 async def test_a_question_is_answered_by_the_next_turn(tmp_path):

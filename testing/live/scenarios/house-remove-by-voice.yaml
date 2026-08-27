@@ -31,7 +31,9 @@ turns:
           retain: true
           payload: "21.0"
     observe: true
-    wait: 2
+    # Four seconds, not two: a second variant re-announces a sensor the first
+    # removed, and the re-created entity's retained reading lands a beat later.
+    wait: 4
     expect:
       state: {sensor.probe_sensor: "21.0"}
   - say: "Remove the probe sensor from the house."

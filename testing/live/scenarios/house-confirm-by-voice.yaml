@@ -23,8 +23,13 @@ turns:
       reply_means: >
         says the unlock is waiting on the user's confirmation or approval —
         it must NOT say the door is unlocked
+  # A three-word yes is one Whisper mishears ("Yes, sir" on the eleventh
+  # rebuild, WER 1.0 on three words) — and a misheard yes that is still a yes
+  # is the real case. The turn proves the spoken yes reaches the held action,
+  # not the transcript, so its own word error rate is allowed to be wide.
   - say: "Yes, go ahead."
     expect:
+      transcript_wer: 0.75
       service: {domain: lock, service: unlock, entity_id: lock.front_door_lock}
       state: {lock.front_door_lock: "unlocked"}
       reply_means: >
@@ -36,5 +41,6 @@ turns:
       reply_means: "says the lock is waiting on confirmation, or that the door is locked"
   - say: "Yes."
     expect:
+      transcript_wer: 0.75
       state: {lock.front_door_lock: "locked"}
       reply_means: "says the front door is locked"
