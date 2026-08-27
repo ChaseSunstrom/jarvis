@@ -14,15 +14,15 @@ cd "$(dirname "$0")/../.."
 verify_begin "M105" "the gate says no to a voice that is not yours"
 use_venv
 
-check "the composite scores the three blocks as equals, and one block far out is a veto" python3 -c '
+check "the composite scores the three blocks as equals, and one block far out is a veto" bash -c 'cd jarvis-core && python3 -c "
 import inspect
 from jarvis.voice import speaker
 src = inspect.getsource(speaker.VoiceProfile.verify)
-assert "BLOCK_VETO" in src, "no per-block veto in verify()"
-assert "pitch-mismatch" in src or "-mismatch" in src, "the veto does not name its block"
-assert hasattr(speaker, "BLOCK_VETO") and 1.5 <= float(speaker.BLOCK_VETO) <= 3.0, getattr(speaker, "BLOCK_VETO", None)
-print("BLOCK_VETO =", speaker.BLOCK_VETO)
-'
+assert \"BLOCK_VETO\" in src, \"no per-block veto in verify()\"
+assert \"pitch-mismatch\" in src or \"-mismatch\" in src, \"the veto does not name its block\"
+assert hasattr(speaker, \"BLOCK_VETO\") and 1.5 <= float(speaker.BLOCK_VETO) <= 3.0, getattr(speaker, \"BLOCK_VETO\", None)
+print(\"BLOCK_VETO =\", speaker.BLOCK_VETO)
+"'
 check_pytest "the speaker suite: an impostor with the right timbre and the wrong pitch is refused, the owner on a cold morning is not" 'cd jarvis-core && python3 -m pytest tests/test_speaker_gate.py -q --timeout=120 --timeout-method=signal -k "impostor or cold_morning or block"'
 check_pytest "the whole speaker suite still holds" 'cd jarvis-core && python3 -m pytest tests/test_speaker_gate.py -q --timeout=120 --timeout-method=signal'
 check "on the house: the rig's synthetic voice, enrolled as Rig, is accepted as Rig only — never as the operator" python3 scripts/verify/m105_voice_probe.py

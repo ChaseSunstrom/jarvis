@@ -76,6 +76,7 @@ async def main() -> int:
             for who in others:
                 p = (await http.get(f"{base}/api/voice/speaker", headers=headers, params={"label": who})).json()
                 print(f"{who}: samples={p.get('samples')} self_scores={[round(x, 2) for x in (p.get('self_scores') or [])]} suggested={p.get('suggested_threshold')} threshold={p.get('configured_threshold') or p.get('threshold')}")
+                print(f"{who}: block_spreads={p.get('block_spreads')} block_limits={p.get('block_limits')}")
         finally:
             await http.delete(f"{base}/api/voice/speaker", headers=headers, params={"label": "Rig"})
     return 0

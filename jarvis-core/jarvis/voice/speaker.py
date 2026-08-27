@@ -263,6 +263,10 @@ DEFAULT_THRESHOLD = 4.0
 #: morning sits near the threshold, not at double it; a different voice's
 #: pitch sat at 1.9× the operator's threshold while the composite passed.
 BLOCK_VETO = 2.0
+#: The per-block veto line is the owner's own spread in that block times this
+#: (see `VoiceProfile.block_limits`), never below BLOCK_FLOOR × threshold.
+BLOCK_HEADROOM = 2.0
+BLOCK_FLOOR = 1.5
 MIN_THRESHOLD = 1.0
 MAX_THRESHOLD = 25.0
 
@@ -862,8 +866,15 @@ class VoiceProfile:
         self._std = tuple(shrunk)
 
     # --- the decision -------------------------------------------------------
-    def verify(self, embedding: Embedding | tuple[float, ...] | None) -> Verdict:
+    def verify(
+        self, embedding: Embedding | tuple[float, ...] | None, *, veto: bool = True
+    ) -> Verdict:
         """Compare one utterance against the profile.
+
+        `veto=False` scores without the per-block veto: it is what the
+        leave-one-out passes use, because the veto lines are themselves built
+        from leave-one-out scores and a profile measuring its own spread must
+        not consult the spread it is measuring.
 
         Fails closed everywhere it can fail: no profile, too few samples, a
         vector of the wrong length or from another embedder, or `None` because
@@ -965,14 +976,35 @@ class VoiceProfile:
         # a different person whatever the timbre says.
         counted_blocks = [name for name, pair in totals.items() if pair[1] and name not in skipped]
         score = sum(blocks[name] for name in counted_blocks) / len(counted_blocks)
+        # The veto line is the owner's OWN spread in that block, not a fixed
+        # multiple: on the nineteenth house (27 Aug 2026) a Piper voice scored
+        # 4.88 against the operator's 4.93 — inside the composite, with a pitch
+        # block far outside anything the operator's eleven samples ever did,
+        # yet under 2× the threshold. `block_limits` puts the line at the
+        # owner's worst leave-one-out score in each block plus headroom,
+        # never below the threshold (a block may be as far as the whole may)
+        # and never above BLOCK_VETO × threshold (the old line, kept as a
+        # ceiling so a wide profile stays a gate at all).
+        limits = self.block_limits() if veto else {}
         vetoed = next(
-            (name for name in counted_blocks if blocks[name] > self.threshold * BLOCK_VETO), None
+            (
+                name
+                for name in counted_blocks
+                if blocks[name] > limits.get(name, self.threshold * BLOCK_VETO)
+            ),
+            None,
         )
         close_enough = score <= self.threshold and vetoed is None
         accepted = close_enough and not pitchless
-        if vetoed is not None:
+        # The reason names the FIRST thing that would have refused it. A
+        # pitchless utterance inside the threshold is refused for the missing
+        # pitch, not for a block the owner's own spread happened to draw
+        # tightly: "I could not measure your pitch" is the sentence a person
+        # can act on (speak up, come closer); "timbre-mismatch" on a whisper
+        # is not.
+        if vetoed is not None and not (pitchless and score <= self.threshold):
             reason = f"{vetoed}-mismatch"
-        elif not close_enough:
+        elif score > self.threshold:
             reason = "mismatch"
         elif pitchless:
             reason = "unverifiable-no-pitch"
@@ -1025,12 +1057,63 @@ class VoiceProfile:
             if len(rest) < MIN_ENROLMENT_SAMPLES:
                 continue
             trimmed = VoiceProfile(samples=list(rest), threshold=self.threshold)
-            score = trimmed.verify(held_out).score
+            score = trimmed.verify(held_out, veto=False).score
             # Nothing non-finite may leave here. It is not a measurement, it
             # does not survive JSON, and every consumer treats a float as one.
             if math.isfinite(score):
                 scores.append(score)
         return scores
+
+    def block_spreads(self) -> dict[str, float]:
+        """The owner's worst leave-one-out score in each block.
+
+        Where the composite `self_scores` say how far the owner strays as a
+        whole, this says how far each block strays on its own — the pitch of
+        a cold morning, the timbre of a head cold. Empty below the measurable
+        minimum, like `self_scores`.
+        """
+        if len(self.samples) < MIN_MEASURABLE_SAMPLES:
+            return {}
+        worst: dict[str, float] = {}
+        for index in range(len(self.samples)):
+            held_out = self.samples[index]
+            rest = self.samples[:index] + self.samples[index + 1 :]
+            if len(rest) < MIN_ENROLMENT_SAMPLES:
+                continue
+            trimmed = VoiceProfile(samples=list(rest), threshold=self.threshold)
+            verdict = trimmed.verify(held_out, veto=False)
+            for name, value in verdict.blocks.items():
+                if math.isfinite(value) and value > 0:
+                    worst[name] = max(worst.get(name, 0.0), value)
+        return worst
+
+    def block_limits(self, headroom: float = BLOCK_HEADROOM) -> dict[str, float]:
+        """Where each block's veto line sits for THIS owner.
+
+        The owner's worst leave-one-out score in the block times `headroom`,
+        clamped to [threshold × BLOCK_FLOOR, threshold × BLOCK_VETO]. The
+        headroom is 2, not the composite's 1.25: one block of three swings
+        further than their mean does — in the synthetic cast the owner's
+        held-out variability block reached 2.66× the spread of the rest while
+        the composite stayed inside 1.25× — and a line drawn tighter than
+        that refuses the owner on the block that varies most. Cached per
+        sample set: the leave-one-out behind it is N verifies, and `verify`
+        asks every time. What it does NOT do: fall below 1.5× the threshold —
+        a block may always be half again as far as the whole may — or above
+        the old fixed line, which a wide profile keeps.
+        """
+        key = (len(self.samples), self.threshold, headroom)
+        cached = getattr(self, "_limits_cache", None)
+        if cached and cached[0] == key:
+            return dict(cached[1])
+        ceiling = self.threshold * BLOCK_VETO
+        floor = self.threshold * BLOCK_FLOOR
+        limits = {
+            name: min(ceiling, max(floor, spread * headroom))
+            for name, spread in self.block_spreads().items()
+        }
+        self._limits_cache = (key, limits)
+        return dict(limits)
 
     def self_score(self) -> float:
         """Mean leave-one-out score — the headline number, for display."""
@@ -1102,6 +1185,12 @@ class VoiceProfile:
             "self_score": None if not math.isfinite(self_score) else round(self_score, 3),
             "self_scores": [round(value, 3) for value in scores],
             "worst_self_score": round(max(scores), 3) if scores else None,
+            # Per block: how far this owner's own samples stray in each, and
+            # where the veto line sits for them (M105). Drawn by the console
+            # beside the threshold, printed by the M105 probe, so "why was
+            # that voice taken for me" has numbers to answer with.
+            "block_spreads": {k: round(v, 3) for k, v in self.block_spreads().items()},
+            "block_limits": {k: round(v, 3) for k, v in self.block_limits().items()},
             "suggested_threshold": round(self.suggested_threshold(), 3),
             #: False means `suggested_threshold` is DEFAULT_THRESHOLD — a
             #: starting point, not something this owner's voice produced.
